@@ -4,10 +4,33 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const generated = @import("generated");
 
-// ---- One GtkCssProvider per styled node, unique class `nd-<id>`,
-// installed once at display level; update = replace provider content. ----
+// ---- One display-level GtkCssProvider per distinct style, shared by every
+// node that carries it under the class `nds-<n>`. A provider is loaded once
+// and never reloaded: GTK restyles every widget of the display whenever a
+// display provider changes, and looks each widget up in every provider, so a
+// provider per node (reloaded on every style update and never removed) made a
+// hover or an active-row change cost a full restyle that grew with every node
+// ever created. A node changing between styles already seen only swaps its
+// class, which restyles that widget's own subtree. ----
 var gpa: std.mem.Allocator = undefined;
-var providers: std.AutoHashMapUnmanaged(u32, *gtk.CssProvider) = .empty;
+const Shared = struct {
+    provider: *gtk.CssProvider,
+    class: [:0]u8,
+    /// The compiled block under `placeholder_class`: the key in `shared`.
+    key: []u8,
+    refs: u32,
+    /// Counted in `unused`: carried by no node since its last release.
+    idle: bool = false,
+};
+/// Compiled CSS (under `placeholder_class`) -> its provider.
+var shared: std.StringHashMapUnmanaged(*Shared) = .empty;
+var next_class: u32 = 0;
+/// Providers no node carries any more, swept in batches: removing one is a
+/// display-wide restyle too.
+var unused: u32 = 0;
+const unused_sweep_at = 64;
+const placeholder_class = "nd-s";
+const STYLE_KEY = "nd-shared-style";
 var size_requested: std.AutoHashMapUnmanaged(u32, void) = .empty;
 var align_touched: std.AutoHashMapUnmanaged(u32, AlignFlags) = .empty;
 
@@ -178,10 +201,10 @@ fn emitNested(list: *std.ArrayList(u8), allocator: std.mem.Allocator, value: std
 /// (a widget property) out of the CSS block. Unknown keys are simply
 /// skipped here (the caller-facing `applyStyle` does the ND_WARN + error emit);
 /// this half is unit-testable with no GTK display.
-pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Value) ![]u8 {
+pub fn compileCss(allocator: std.mem.Allocator, class: []const u8, style: std.json.Value) ![]u8 {
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(allocator);
-    try list.print(allocator, ".nd-{d} {{", .{node_id});
+    try list.print(allocator, ".{s} {{", .{class});
     if (style == .object) {
         var border_present = false;
         var it = style.object.iterator();
@@ -202,7 +225,7 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
         if (border_present) try list.appendSlice(allocator, "border-style: solid;");
     }
     try list.appendSlice(allocator, "}");
-    try emitFontDescendants(&list, allocator, node_id, style);
+    try emitFontDescendants(&list, allocator, class, style);
     return list.toOwnedSlice(allocator);
 }
 
@@ -225,13 +248,13 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
 /// descendant node's OWN `.nd-<id>` block. A child that sets its own font
 /// under a parent that also sets one gets the parent's, which is the one
 /// ordering GTK's selector engine can express here (it has no `:where()`).
-fn emitFontDescendants(list: *std.ArrayList(u8), allocator: std.mem.Allocator, node_id: u32, style: std.json.Value) !void {
+fn emitFontDescendants(list: *std.ArrayList(u8), allocator: std.mem.Allocator, class: []const u8, style: std.json.Value) !void {
     if (style != .object) return;
     const font = style.object.get("font") orelse return;
     var probe: std.ArrayList(u8) = .empty;
     defer probe.deinit(allocator);
     if (!emitNested(&probe, allocator, font, "font")) return;
-    try list.print(allocator, ".nd-{d} button, .nd-{d} label {{{s}}}", .{ node_id, node_id, probe.items });
+    try list.print(allocator, ".{s} button, .{s} label {{{s}}}", .{ class, class, probe.items });
 }
 
 /// Called from tree.apply at create AND update whenever `props.style` is
@@ -270,24 +293,95 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
         gtk.Widget.setSizeRequest(widget, -1, -1);
     }
 
-    // 2. Build the CSS half (margin excluded by compileCss's `.widget` skip).
-    const css = compileCss(gpa, node_id, style) catch return;
-    defer gpa.free(css);
-    const css_z = gpa.dupeZ(u8, css) catch return;
-    defer gpa.free(css_z);
+    // 2. Build the CSS half (margin excluded by compileCss's `.widget` skip),
+    // under a placeholder class so equal styles compile to equal keys.
+    const key = compileCss(gpa, placeholder_class, style) catch return;
+    const current: ?*Shared = @ptrCast(@alignCast(gobject.Object.getData(widget.as(gobject.Object), STYLE_KEY)));
+    // A style with no CSS left (margin or alignment only) needs no provider.
+    if (std.mem.eql(u8, key, "." ++ placeholder_class ++ " {}")) {
+        gpa.free(key);
+        if (current) |old| {
+            gtk.Widget.removeCssClass(widget, old.class);
+            gobject.Object.setData(widget.as(gobject.Object), STYLE_KEY, null);
+        }
+        return;
+    }
+    const next = if (shared.get(key)) |found| blk: {
+        gpa.free(key);
+        break :blk found;
+    } else createShared(widget, key, style) orelse return;
+    if (current == next) return;
+    if (next.idle) {
+        next.idle = false;
+        unused -|= 1;
+    }
+    next.refs += 1;
+    gtk.Widget.addCssClass(widget, next.class);
+    if (current) |old| gtk.Widget.removeCssClass(widget, old.class);
+    // Replacing the data releases the old style; finalizing the widget
+    // releases the last one.
+    gobject.Object.setDataFull(widget.as(gobject.Object), STYLE_KEY, next, &releaseShared);
+}
 
-    // 3. Install/replace this node's provider (display-level, class-scoped).
-    const provider = providers.get(node_id) orelse blk: {
-        const p = gtk.CssProvider.new();
-        const display = gtk.Widget.getDisplay(widget);
-        gtk.StyleContext.addProviderForDisplay(display, p.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
-        providers.put(gpa, node_id, p) catch {};
-        var cls_buf: [32]u8 = undefined;
-        const cls = std.fmt.bufPrintZ(&cls_buf, "nd-{d}", .{node_id}) catch "nd-x";
-        gtk.Widget.addCssClass(widget, cls);
-        break :blk p;
+/// A new distinct style: its own provider, installed once at display level.
+/// Takes ownership of `key`.
+fn createShared(widget: *gtk.Widget, key: []u8, style: std.json.Value) ?*Shared {
+    if (unused >= unused_sweep_at) sweep(gtk.Widget.getDisplay(widget));
+    const class = std.fmt.allocPrintSentinel(gpa, "nds-{d}", .{next_class}, 0) catch {
+        gpa.free(key);
+        return null;
     };
-    gtk.CssProvider.loadFromString(provider, css_z);
+    next_class += 1;
+    const css = compileCss(gpa, class, style) catch {
+        gpa.free(class);
+        gpa.free(key);
+        return null;
+    };
+    defer gpa.free(css);
+    const css_z = gpa.dupeZ(u8, css) catch {
+        gpa.free(class);
+        gpa.free(key);
+        return null;
+    };
+    defer gpa.free(css_z);
+    const entry = gpa.create(Shared) catch {
+        gpa.free(class);
+        gpa.free(key);
+        return null;
+    };
+    const p = gtk.CssProvider.new();
+    gtk.CssProvider.loadFromString(p, css_z);
+    gtk.StyleContext.addProviderForDisplay(gtk.Widget.getDisplay(widget), p.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
+    entry.* = .{ .provider = p, .class = class, .key = key, .refs = 0 };
+    shared.put(gpa, key, entry) catch {};
+    return entry;
+}
+
+/// GDestroyNotify for a widget's style: runs when the widget changes style or
+/// is finalized. Touches no widget; the provider itself goes in a later sweep.
+fn releaseShared(data: ?*anyopaque) callconv(.c) void {
+    const entry: *Shared = @ptrCast(@alignCast(data orelse return));
+    entry.refs -|= 1;
+    if (entry.refs == 0 and !entry.idle) {
+        entry.idle = true;
+        unused += 1;
+    }
+}
+
+fn sweep(display: *gdk.Display) void {
+    var doomed: std.ArrayList(*Shared) = .empty;
+    defer doomed.deinit(gpa);
+    var it = shared.valueIterator();
+    while (it.next()) |e| if (e.*.refs == 0) doomed.append(gpa, e.*) catch return;
+    for (doomed.items) |e| {
+        _ = shared.remove(e.key);
+        gtk.StyleContext.removeProviderForDisplay(display, e.provider.as(gtk.StyleProvider));
+        e.provider.unref();
+        gpa.free(e.key);
+        gpa.free(e.class);
+        gpa.destroy(e);
+    }
+    unused = 0;
 }
 
 /// Reconciles `widget`'s Adwaita/GTK CSS classes against `value` (a JSON
@@ -363,7 +457,7 @@ test "compileCss emits scoped block, splits margin out, rejects unknown key" {
     const talloc = std.testing.allocator;
     const parsed = try std.json.parseFromSlice(std.json.Value, talloc, "{\"background\":\"#fff\",\"padding\":8,\"margin\":4,\"flex\":1}", .{});
     defer parsed.deinit();
-    const css = try compileCss(talloc, 7, parsed.value);
+    const css = try compileCss(talloc, "nd-7", parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, ".nd-7 {") != null);
     try std.testing.expect(std.mem.indexOf(u8, css, "background-color: #fff;") != null);
@@ -382,7 +476,7 @@ test "compileCss: fontWeight bold emits font-weight: bold with no color-check re
         \\{"font":{"fontWeight":"bold"}}
     , .{});
     defer parsed.deinit();
-    const css = try compileCss(talloc, 9, parsed.value);
+    const css = try compileCss(talloc, "nd-9", parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, "font-weight: bold;") != null);
 }
@@ -393,7 +487,7 @@ test "compileCss repeats the font fields on the node's button and label descenda
         \\{"font":{"fontWeight":"normal"},"background":"#fff"}
     , .{});
     defer parsed.deinit();
-    const css = try compileCss(talloc, 12, parsed.value);
+    const css = try compileCss(talloc, "nd-12", parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, ".nd-12 button, .nd-12 label {font-weight: normal;}") != null);
     // Only the font fields repeat: a background there would paint a second
@@ -406,7 +500,7 @@ test "compileCss emits no descendant block when the style sets no font" {
     const talloc = std.testing.allocator;
     const parsed = try std.json.parseFromSlice(std.json.Value, talloc, "{\"background\":\"#fff\"}", .{});
     defer parsed.deinit();
-    const css = try compileCss(talloc, 13, parsed.value);
+    const css = try compileCss(talloc, "nd-13", parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, "label") == null);
 }
@@ -417,7 +511,7 @@ test "compileCss emits nested font/border fields with implied border-style" {
         \\{"font":{"fontSize":16,"fontWeight":"bold"},"border":{"borderWidth":2,"borderColor":"#003399","borderRadius":6}}
     , .{});
     defer parsed.deinit();
-    const css = try compileCss(talloc, 3, parsed.value);
+    const css = try compileCss(talloc, "nd-3", parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, "font-size: 16px;") != null);
     try std.testing.expect(std.mem.indexOf(u8, css, "font-weight: bold;") != null);

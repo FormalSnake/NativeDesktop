@@ -62,20 +62,44 @@ export async function connect(): Promise<Session> {
   const batch = new Batch();
   const registry = new NodeRegistry();
   let commitId = 0;
+  // ND_PERF_TRACE=1: `ND_PERF event` per host event (handler time) and
+  // `ND_PERF commit` per commit (ops, time since the first event it answers).
+  // `at` is wall-clock microseconds, the clock the host's lines use.
+  const trace = process.env.ND_PERF_TRACE === "1";
+  const at = () => Math.round((performance.timeOrigin + performance.now()) * 1000);
+  let lastEvent = "";
+  let lastEventAt = 0;
   const session: Session = {
     ndp,
     registry,
     batch,
     commit() {
       const ops = batch.drain();
-      if (ops.length) ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+      if (!ops.length) return;
+      ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+      if (trace) {
+        const t = at();
+        console.error(`ND_PERF commit ops=${ops.length} after=${lastEvent || "-"} since_us=${lastEventAt ? t - lastEventAt : -1} at=${t}`);
+        lastEvent = "";
+        lastEventAt = 0;
+      }
     },
     flush() {
       session.commit();
     },
   };
   ndp.onEvent((e: EventMsg) => {
+    if (!trace) {
+      registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+      return;
+    }
+    const t = at();
     registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+    if (!lastEventAt) {
+      lastEvent = e.name;
+      lastEventAt = t;
+    }
+    console.error(`ND_PERF event ${e.name} node=${e.nodeId} handler_us=${at() - t} at=${t}`);
   });
   setSession(session);
   return session;

@@ -1129,7 +1129,7 @@ pub const Server = struct {
         self.tree = tree;
         self.node_png_seq = 0;
 
-        const pid = std.os.linux.getpid();
+        const pid = std.c.getpid();
         self.sock_path = try std.fmt.allocPrintSentinel(gpa, "{s}/nd-automation-{d}.sock", .{ runtime_dir, pid }, 0);
         std.Io.Dir.deleteFileAbsolute(io, self.sock_path) catch {};
 

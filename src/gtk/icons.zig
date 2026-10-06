@@ -57,6 +57,26 @@ pub const data_pixel_size: c_int = 16;
 /// warns once (tagged with `what`) and returns null, so the widget renders
 /// without an icon rather than failing.
 pub fn textureFromData(data: []const u8, what: []const u8) ?*gdk.Texture {
+    // The same favicon comes back on every tab row and every command bar
+    // keystroke, and each decode is a base64 pass plus a PNG decode.
+    const key = std.hash.Wyhash.hash(0, data);
+    if (decoded.get(key)) |t| return @ptrCast(gobject.Object.ref(t.as(gobject.Object)));
+    const texture = decodeTexture(data, what) orelse return null;
+    if (decoded.count() >= decoded_max) {
+        var it = decoded.valueIterator();
+        while (it.next()) |t| gobject.Object.unref(t.*.as(gobject.Object));
+        decoded.clearRetainingCapacity();
+    }
+    decoded.put(std.heap.smp_allocator, key, @ptrCast(gobject.Object.ref(texture.as(gobject.Object)))) catch {};
+    return texture;
+}
+
+/// Decoded textures by a hash of their bytes. Textures are immutable, so one
+/// can back any number of widgets. UI thread only.
+var decoded: std.AutoHashMapUnmanaged(u64, *gdk.Texture) = .empty;
+const decoded_max = 256;
+
+fn decodeTexture(data: []const u8, what: []const u8) ?*gdk.Texture {
     const comma = std.mem.indexOfScalar(u8, data, ',');
     const b64 = if (std.mem.startsWith(u8, data, "data:") and comma != null) data[comma.? + 1 ..] else data;
     const decoder = std.base64.standard.Decoder;

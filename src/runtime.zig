@@ -192,7 +192,7 @@ pub const Runtime = struct {
         self.io = self.threaded.io();
 
         const runtime_dir = parent_env.get("XDG_RUNTIME_DIR") orelse "/tmp";
-        const pid = std.os.linux.getpid();
+        const pid = std.c.getpid();
         self.sock_path = try std.fmt.allocPrintSentinel(gpa, "{s}/nd-{d}.sock", .{ runtime_dir, pid }, 0);
         std.Io.Dir.deleteFileAbsolute(self.io, self.sock_path) catch {};
 

@@ -804,8 +804,18 @@ fn cbBarSlideDone(anim: *adw.Animation, data: ?*anyopaque) callconv(.c) void {
     const fade = adw.TimedAnimation.new(w, gtk.Widget.getOpacity(w), 0, load_bar_fade_ms, target.as(adw.AnimationTarget));
     adw.TimedAnimation.setEasing(fade, .ease_out_cubic);
     stopAnim(w, K_BAR_FADE);
+    _ = adw.Animation.signals.done.connect(fade.as(adw.Animation), ?*anyopaque, &cbBarFadeDone, w, .{});
     gobject.Object.setDataFull(asObject(w), K_BAR_FADE, fade, @ptrCast(&gobject.Object.unref));
     adw.Animation.play(fade.as(adw.Animation));
+}
+
+/// A faded bar is hidden, not just transparent: GTK keeps restyling the
+/// finished bar's progress node every frame while it is shown, which held the
+/// frame clock (and an X round trip per frame) running at idle.
+fn cbBarFadeDone(anim: *adw.Animation, data: ?*anyopaque) callconv(.c) void {
+    const w: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    if (adw.Animation.getValue(anim) > 0) return;
+    gtk.Widget.setVisible(w, 0);
 }
 
 fn stopAnim(w: *gtk.Widget, key: [*:0]const u8) void {
@@ -827,6 +837,7 @@ pub fn progressSetFraction(w: *gtk.Widget, fraction: f64) void {
     // A value below the one shown is a new load: it jumps back, visible again.
     if (target_value < current or gtk.Widget.getOpacity(w) < 1) {
         stopAnim(w, K_BAR_FADE);
+        gtk.Widget.setVisible(w, 1);
         gtk.Widget.setOpacity(w, 1);
         if (target_value < current) {
             gtk.ProgressBar.setFraction(bar, target_value);
@@ -851,6 +862,9 @@ pub fn progressCreated(w: *gtk.Widget, fraction: f64, props: ?std.json.Value) vo
     const classes = p.object.get("cssClasses") orelse return;
     if (classes != .array) return;
     for (classes.array.items) |c| {
-        if (c == .string and std.mem.eql(u8, c.string, "osd")) gtk.Widget.setOpacity(w, 0);
+        if (c == .string and std.mem.eql(u8, c.string, "osd")) {
+            gtk.Widget.setOpacity(w, 0);
+            gtk.Widget.setVisible(w, 0);
+        }
     }
 }

@@ -17,6 +17,7 @@ const protocol = @import("../protocol.zig");
 // distinct (type-incompatible) modules.
 const generated = @import("generated");
 const style = @import("style.zig");
+const perftrace = @import("perftrace.zig");
 const overlay = @import("overlay.zig");
 const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
@@ -55,10 +56,15 @@ pub fn setCtx(ctx: *abi.NdContext) void {
 /// pointer.
 fn emitEventAdapter(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
     const ctx = the_ctx orelse return; // no context registered yet (shouldn't happen post-init)
-    const name_z = arena.dupeZ(u8, name) catch return;
-    const json = std.json.Stringify.valueAlloc(arena, payload, .{ .emit_null_optional_fields = false }) catch return;
-    defer arena.free(json);
-    const json_z = arena.dupeZ(u8, json) catch return;
+    // Every event passes here, so nothing goes on the never-reset arena.
+    const alloc = std.heap.smp_allocator;
+    const name_z = alloc.dupeZ(u8, name) catch return;
+    defer alloc.free(name_z);
+    const json = std.json.Stringify.valueAlloc(alloc, payload, .{ .emit_null_optional_fields = false }) catch return;
+    defer alloc.free(json);
+    const json_z = alloc.dupeZ(u8, json) catch return;
+    defer alloc.free(json_z);
+    if (perftrace.on()) std.debug.print("ND_PERF emit {s} node={d} at={d}\n", .{ name, node_id, perftrace.wall() });
     abi.nd_emit_event(ctx, node_id, name_z, json_z);
 }
 
@@ -68,7 +74,8 @@ fn emitEventAdapter(node_id: u32, name: []const u8, payload: protocol.EventPaylo
 /// `generated.zig`'s `events_ready` assert relies on.
 pub fn initEventsAndStyle() void {
     generated.initEvents(arena, &emitEventAdapter);
-    style.init(arena, &styleErrorAdapter);
+    // Not the arena: style frees what it compiles on every update.
+    style.init(std.heap.smp_allocator, &styleErrorAdapter);
 }
 
 fn styleErrorAdapter(node_id: u32, key: []const u8) void {
@@ -140,7 +147,7 @@ pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8,
 }
 
 pub fn initStyle(sink_err: style.StyleErrorFn) void {
-    style.init(arena, sink_err);
+    style.init(std.heap.smp_allocator, sink_err);
 }
 
 pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value) void {
@@ -201,14 +208,18 @@ pub fn setApp(app: *gtk.Application) void {
     system.setApp(app);
 }
 
+/// Every commit op's props pass through here, so the tree is freed by the
+/// caller (`defer`) rather than left on the never-reset arena. Nothing below
+/// keeps a slice of it: what outlives the call is duped first.
 fn parseJson(json: [*:0]const u8) ?std.json.Parsed(std.json.Value) {
     const s = std.mem.span(json);
     if (s.len == 0) return null;
-    return std.json.parseFromSlice(std.json.Value, arena, s, .{}) catch null;
+    return std.json.parseFromSlice(std.json.Value, std.heap.smp_allocator, s, .{}) catch null;
 }
 
 fn vtCreate(_: *abi.NdContext, kind: [*:0]const u8, props_json: [*:0]const u8) callconv(.c) ?*anyopaque {
     const parsed = parseJson(props_json);
+    defer if (parsed) |p| p.deinit();
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
     const widget = createWidget(global_app, std.mem.span(kind), props) catch return null;
     // The core's handle table OWNS one reference per node (dropped by
@@ -234,24 +245,31 @@ fn vtReleaseNode(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) void {
 
 fn vtApplyProps(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, props_json: [*:0]const u8) callconv(.c) void {
     const parsed = parseJson(props_json);
+    defer if (parsed) |p| p.deinit();
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
     applyProps(w, std.mem.span(kind), props);
     applyCssClassesIfPresent(w, props);
 }
 
-fn parseAttached(json: [*:0]const u8) protocol.Attached {
-    const parsed = parseJson(json) orelse return .{};
-    return protocol.Attached.fromProps(parsed.value);
+/// The strings in the result point into `parsed`, which the caller frees once
+/// the child is placed.
+fn parseAttached(parsed: ?std.json.Parsed(std.json.Value)) protocol.Attached {
+    const p = parsed orelse return .{};
+    return protocol.Attached.fromProps(p.value);
 }
 
 fn vtAppendChild(_: *abi.NdContext, parent: ?*anyopaque, parent_kind: [*:0]const u8, child: ?*anyopaque, attached_json: [*:0]const u8) callconv(.c) void {
-    appendChild(@ptrCast(@alignCast(parent)), std.mem.span(parent_kind), @ptrCast(@alignCast(child)), parseAttached(attached_json));
+    const parsed = parseJson(attached_json);
+    defer if (parsed) |p| p.deinit();
+    appendChild(@ptrCast(@alignCast(parent)), std.mem.span(parent_kind), @ptrCast(@alignCast(child)), parseAttached(parsed));
 }
 
 fn vtInsertBefore(_: *abi.NdContext, parent: ?*anyopaque, parent_kind: [*:0]const u8, child: ?*anyopaque, before: ?*anyopaque, attached_json: [*:0]const u8) callconv(.c) void {
     const before_widget: ?*gtk.Widget = if (before) |b| @ptrCast(@alignCast(b)) else null;
-    insertBefore(@ptrCast(@alignCast(parent)), std.mem.span(parent_kind), @ptrCast(@alignCast(child)), before_widget, parseAttached(attached_json));
+    const parsed = parseJson(attached_json);
+    defer if (parsed) |p| p.deinit();
+    insertBefore(@ptrCast(@alignCast(parent)), std.mem.span(parent_kind), @ptrCast(@alignCast(child)), before_widget, parseAttached(parsed));
 }
 
 fn vtRemoveChild(_: *abi.NdContext, parent: ?*anyopaque, parent_kind: [*:0]const u8, child: ?*anyopaque) callconv(.c) void {
@@ -268,6 +286,7 @@ fn vtSetVisible(_: *abi.NdContext, widget: ?*anyopaque, visible: bool) callconv(
 
 fn vtApplyStyle(_: *abi.NdContext, widget: ?*anyopaque, node_id: u32, style_json: [*:0]const u8) callconv(.c) void {
     const parsed = parseJson(style_json) orelse return;
+    defer parsed.deinit();
     applyStyle(@ptrCast(@alignCast(widget)), node_id, parsed.value);
 }
 
@@ -277,6 +296,7 @@ fn vtConnectEvents(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, 
 
 fn vtWidgetCommand(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, command: [*:0]const u8, arg_json: [*:0]const u8) callconv(.c) void {
     const parsed = parseJson(arg_json);
+    defer if (parsed) |p| p.deinit();
     const arg: ?std.json.Value = if (parsed) |p| p.value else null;
     widgetCommand(@ptrCast(@alignCast(widget)), std.mem.span(kind), std.mem.span(command), arg);
 }
@@ -335,7 +355,9 @@ fn vtReparentChild(
     const child_w: *gtk.Widget = @ptrCast(@alignCast(child));
     const new_parent_w: *gtk.Widget = @ptrCast(@alignCast(new_parent));
     const before_w: ?*gtk.Widget = if (before) |b| @ptrCast(@alignCast(b)) else null;
-    const attached = parseAttached(attached_json);
+    const parsed = parseJson(attached_json);
+    defer if (parsed) |p| p.deinit();
+    const attached = parseAttached(parsed);
 
     _ = gobject.Object.ref(child_w.as(gobject.Object));
     defer gobject.Object.unref(child_w.as(gobject.Object));
@@ -364,6 +386,13 @@ const marshal_alloc = std.heap.smp_allocator;
 fn marshalTrampoline(data: ?*anyopaque) callconv(.c) c_int {
     const job: *MarshalJob = @ptrCast(@alignCast(data.?));
     defer marshal_alloc.destroy(job);
+    if (perftrace.on()) {
+        const start = perftrace.now();
+        job.fn_ptr(job.data);
+        perftrace.job(start);
+        perftrace.hookWindows(global_app);
+        return G_SOURCE_REMOVE;
+    }
     job.fn_ptr(job.data);
     return G_SOURCE_REMOVE;
 }
@@ -677,6 +706,7 @@ fn vtSemanticAction(
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
     const action_s = std.mem.span(action);
     const parsed = parseJson(arg_json);
+    defer if (parsed) |p| p.deinit();
     const args: ?std.json.Value = if (parsed) |p| p.value else null;
 
     // Menu nodes support "click" (→ menu dispatch) and "a11y" (which reads the
