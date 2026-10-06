@@ -18,12 +18,10 @@ import {
   render,
   saveSession,
   sendCommand,
-  useEffect,
-  useRef,
-  useState,
   webviewEngine,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { For, Show, createSignal, createStore, onCleanup, onSettled } from "solid-js";
 import {
   answerPermission,
   dialogSurfacesRoute,
@@ -149,6 +147,30 @@ type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
 
+const VIEWS = ["view", "late", "hidden", "hidden2", "hidden3", "second", "extensions", "actionPage", "closing", "remount", "registrySmall", "registryTab"] as const;
+type ViewName = (typeof VIEWS)[number];
+
+/// The live native node of each probe view, read by the scripted legs below.
+/// Null while the view is unmounted: the closing and remount legs wait on it.
+const views = Object.fromEntries(VIEWS.map((name) => [name, null])) as Record<ViewName, NdNodeRef<"webview"> | null>;
+
+function bind(name: ViewName): (node: NdNodeRef<"webview">) => void {
+  return (node) => {
+    views[name] = node;
+    onCleanup(() => {
+      if (views[name] === node) views[name] = null;
+    });
+  };
+}
+
+/// Reported on whichever view a dialog was drawn over. uninstallExtension
+/// must not raise Chrome's "Remove ...?" confirmation: the app asks instead.
+const chromeDialogs: string[] = [];
+const onChromeDialogSeen = (e: { data: unknown }): void => {
+  const d = e.data as { x: number; y: number; width: number; height: number };
+  chromeDialogs.push(`${d.x},${d.y} ${d.width}x${d.height}`);
+};
+
 function record(kind: string, value: unknown): void {
   (received[kind] ??= []).push(value);
 }
@@ -168,33 +190,35 @@ async function waitFor<T>(kind: string, pred: (v: T) => boolean, what: string, t
 /// One view, the whole window, on the page that asks for every Chromium-drawn
 /// surface. What the app was told about each one is written into a label, so
 /// the drive can read the app's side and the X server's side of the same event.
-function DialogsApp(): React.ReactNode {
-  const view = useRef<NdNodeRef<"webview">>(null);
-  const [events, setEvents] = useState<string[]>([]);
-  const note = (line: string): void => setEvents((prev) => [...prev, line].slice(-12));
+function DialogsApp() {
+  let view: NdNodeRef<"webview"> | undefined;
+  const [events, setEvents] = createSignal<string[]>([]);
+  const note = (line: string): void => {
+    setEvents((prev) => [...prev, line].slice(-12));
+  };
 
   return (
     <window title="ND CEF Dialogs" defaultWidth={1100} defaultHeight={820}>
       <box orientation="vertical" spacing={4} style={{ padding: 8 }}>
-        <label testID="dialogs-events" text={`events=${events.join(" | ")}`} />
+        <label testID="dialogs-events" text={`events=${events().join(" | ")}`} />
         <webview
           testID="wv"
-          ref={view}
+          ref={(n) => (view = n)}
           engine="chromium"
           url={`${LOCAL_BASE}/dialogs`}
           style={{ vexpand: true, hexpand: true }}
           onNavigate={(e) => {
-            if (view.current) permissionNavigated(view.current, e.text);
+            if (view) permissionNavigated(view, e.text);
           }}
           onPermissionRequest={(e) => {
             const d = e.data as PermissionPayload;
             note(`permissionRequest ${d.types}`);
-            answerPermission(view.current, d);
+            answerPermission(view ?? null, d);
           }}
           onPermissionRequestDismissed={(e) => {
             const d = e.data as { id: string };
             note(`permissionDismissed ${d.id}`);
-            permissionWithdrawn(view.current, d.id);
+            permissionWithdrawn(view ?? null, d.id);
           }}
           onChromeDialog={(e) => {
             const d = e.data as { x: number; y: number; width: number; height: number };
@@ -209,60 +233,26 @@ function DialogsApp(): React.ReactNode {
   );
 }
 
-function App(): React.ReactNode {
-  const view = useRef<NdNodeRef<"webview">>(null);
-  const late = useRef<NdNodeRef<"webview">>(null);
-  const hidden = useRef<NdNodeRef<"webview">>(null);
-  const hidden2 = useRef<NdNodeRef<"webview">>(null);
-  const hidden3 = useRef<NdNodeRef<"webview">>(null);
-  const second = useRef<NdNodeRef<"webview">>(null);
-  const extensions = useRef<NdNodeRef<"webview">>(null);
-  const actionPage = useRef<NdNodeRef<"webview">>(null);
-  const closing = useRef<NdNodeRef<"webview">>(null);
-  const [closingKey, setClosingKey] = useState(0);
-  const remount = useRef<NdNodeRef<"webview">>(null);
-  const [remountKey, setRemountKey] = useState(0);
-  const registrySmall = useRef<NdNodeRef<"webview">>(null);
-  const registryTab = useRef<NdNodeRef<"webview">>(null);
-  const [registryPair, setRegistryPair] = useState(false);
-  const [secondOpen, setSecondOpen] = useState(false);
-  const [lateReady, setLateReady] = useState(false);
-  const [actionPopupUrl, setActionPopupUrl] = useState("");
-  const [url, setUrl] = useState(`${BASE}/one`);
-  const [phase, setPhase] = useState("starting");
-  const [results, setResults] = useState<Record<string, string>>({});
-  const started = useRef(false);
+function App() {
+  const [closingKey, setClosingKey] = createSignal(0);
+  const [remountKey, setRemountKey] = createSignal(0);
+  const [registryPair, setRegistryPair] = createSignal(false);
+  const [secondOpen, setSecondOpen] = createSignal(false);
+  const [lateReady, setLateReady] = createSignal(false);
+  const [actionPopupUrl, setActionPopupUrl] = createSignal("");
+  const [url, setUrl] = createSignal(`${BASE}/one`);
+  const [phase, setPhase] = createSignal("starting");
+  const [results, setResults] = createStore<Record<string, string>>({});
 
   const setResult = (name: CheckName, value: string): void =>
-    setResults((prev) => ({ ...prev, [name]: value }));
+    setResults((draft) => {
+      draft[name] = value;
+    });
 
-  // Reported on whichever view a dialog was drawn over. uninstallExtension
-  // must not raise Chrome's "Remove ...?" confirmation: the app asks instead.
-  const chromeDialogs = useRef<string[]>([]);
-  const onChromeDialogSeen = (e: { data: unknown }): void => {
-    const d = e.data as { x: number; y: number; width: number; height: number };
-    chromeDialogs.current.push(`${d.x},${d.y} ${d.width}x${d.height}`);
-  };
-
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+  onSettled(() => {
     void run({
-      view,
-      late,
-      hidden,
-      hidden2,
-      hidden3,
-      second,
-      extensions,
-      chromeDialogs,
-      actionPage,
-      closing,
       setClosingKey,
-      remount,
       setRemountKey,
-      registrySmall,
-      registryTab,
       setRegistryPair,
       setActionPopupUrl,
       setUrl,
@@ -271,16 +261,16 @@ function App(): React.ReactNode {
       setLateReady,
       setSecondOpen,
     });
-  }, []);
+  });
 
   return (
     <>
-    {secondOpen ? (
+    <Show when={secondOpen()}>
       <window title="ND CEF Second" testID="second-window" defaultWidth={420} defaultHeight={320}>
         <box orientation="vertical">
           <webview
             testID="wv-second"
-            ref={second}
+            ref={bind("second")}
             engine="chromium"
             url={`${BASE}/one`}
             onNavigate={(e) => record("secondNavigate", e.text)}
@@ -288,19 +278,19 @@ function App(): React.ReactNode {
           />
         </box>
       </window>
-    ) : null}
+    </Show>
     <window title="ND CEF Probe" defaultWidth={1000} defaultHeight={700}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="probe-phase" text={`phase=${phase}`} />
+        <label testID="probe-phase" text={`phase=${phase()}`} />
         <label testID="probe-base" text={`base=${BASE}`} />
-        {CHECKS.map((name) => (
-          <label key={name} testID={`chk-${name}`} text={`${name}=${results[name] ?? "pending"}`} />
-        ))}
+        <For each={CHECKS}>
+          {(name) => <label testID={`chk-${name}`} text={`${name}=${results[name] ?? "pending"}`} />}
+        </For>
         <webview
           testID="wv"
-          ref={view}
+          ref={bind("view")}
           engine="chromium"
-          url={url}
+          url={url()}
           // A floor, not decoration: the check labels above stack one row per
           // check, and the drives right-click at points inside this view. A
           // check added to the list used to squeeze the view until those points
@@ -327,38 +317,40 @@ function App(): React.ReactNode {
         <tabview selectedIndex={0}>
           <box tabLabel="front" orientation="vertical">
             <label text="front tab" />
-            {closingKey > 0 ? (
-              <webview
-                key={closingKey}
-                testID="wv-closing"
-                ref={closing}
-                engine="chromium"
-                url={`${BASE}/one`}
-                style={{ minHeight: 60 }}
-                onJavaScriptResult={onJavaScriptResult}
-              />
-            ) : null}
-            {remountKey > 0 ? (
-              <webview
-                key={remountKey}
-                testID="wv-remount"
-                ref={remount}
-                engine="chromium"
-                url={`${BASE}/one`}
-                style={{ minHeight: 60 }}
-                onJavaScriptResult={onJavaScriptResult}
-                onCookiesResult={onCookiesResult}
-                onSessionSaved={onSessionSaved}
-              />
-            ) : null}
+            <Show when={closingKey() || undefined} keyed>
+              {(_key) => (
+                <webview
+                  testID="wv-closing"
+                  ref={bind("closing")}
+                  engine="chromium"
+                  url={`${BASE}/one`}
+                  style={{ minHeight: 60 }}
+                  onJavaScriptResult={onJavaScriptResult}
+                />
+              )}
+            </Show>
+            <Show when={remountKey() || undefined} keyed>
+              {(_key) => (
+                <webview
+                  testID="wv-remount"
+                  ref={bind("remount")}
+                  engine="chromium"
+                  url={`${BASE}/one`}
+                  style={{ minHeight: 60 }}
+                  onJavaScriptResult={onJavaScriptResult}
+                  onCookiesResult={onCookiesResult}
+                  onSessionSaved={onSessionSaved}
+                />
+              )}
+            </Show>
             {/* The browser's own shape: a registry view kept at 2x2 on
                 chrome://extensions and a tab the user opened on the same
                 page. */}
-            {registryPair ? (
+            <Show when={registryPair()}>
               <box orientation="vertical">
                 <webview
                   testID="wv-registry-small"
-                  ref={registrySmall}
+                  ref={bind("registrySmall")}
                   engine="chromium"
                   url="chrome://extensions"
                   style={{ minWidth: 2, minHeight: 2 }}
@@ -367,7 +359,7 @@ function App(): React.ReactNode {
                 />
                 <webview
                   testID="wv-registry-tab"
-                  ref={registryTab}
+                  ref={bind("registryTab")}
                   engine="chromium"
                   url="chrome://extensions"
                   style={{ minHeight: 200 }}
@@ -375,7 +367,7 @@ function App(): React.ReactNode {
                   onExtensionsList={onExtensionsList}
                 />
               </box>
-            ) : null}
+            </Show>
           </box>
           <box tabLabel="background" orientation="vertical">
             {/* Three at once, all with their address present in the very
@@ -383,7 +375,7 @@ function App(): React.ReactNode {
                 the app keeps all but the active one hidden. */}
             <webview
               testID="wv-hidden"
-              ref={hidden}
+              ref={bind("hidden")}
               engine="chromium"
               url={`${BASE}/two`}
               onNavigate={(e) => record("hiddenNavigate", e.text)}
@@ -392,14 +384,14 @@ function App(): React.ReactNode {
             />
             <webview
               testID="wv-hidden-2"
-              ref={hidden2}
+              ref={bind("hidden2")}
               engine="chromium"
               url={`${BASE}/one`}
               onJavaScriptResult={onJavaScriptResult}
             />
             <webview
               testID="wv-hidden-3"
-              ref={hidden3}
+              ref={bind("hidden3")}
               engine="chromium"
               url={`${BASE}/popup`}
               onJavaScriptResult={onJavaScriptResult}
@@ -412,19 +404,19 @@ function App(): React.ReactNode {
                 Chromium tells an action's runtime state to. Created with the
                 address rather than navigated to it: Chromium refuses a
                 renderer-initiated navigation to an extension page. */}
-            {actionPopupUrl ? (
+            <Show when={actionPopupUrl()}>
               <webview
                 testID="wv-action"
-                ref={actionPage}
+                ref={bind("actionPage")}
                 engine="chromium"
-                url={actionPopupUrl}
+                url={actionPopupUrl()}
                 onExtensionActions={onExtensionActions}
                 onJavaScriptResult={onJavaScriptResult}
               />
-            ) : null}
+            </Show>
             <webview
               testID="wv-extensions"
-              ref={extensions}
+              ref={bind("extensions")}
               engine="chromium"
               url={CHROME_STYLE ? "chrome://extensions" : ""}
               onExtensionsList={onExtensionsList}
@@ -434,18 +426,18 @@ function App(): React.ReactNode {
             />
           </box>
         </tabview>
-        {lateReady ? (
+        <Show when={lateReady()}>
           <webview
             testID="wv-late"
-            ref={late}
+            ref={bind("late")}
             engine="chromium"
             url={`${LATE_SCHEME}://probe/index.html`}
             style={{ vexpand: true, hexpand: true }}
             onJavaScriptResult={onJavaScriptResult}
             onSchemeRequest={(e) => {
               const request = e.data as { id: string };
-              if (!late.current) return;
-              sendCommand(late.current, "respondScheme", {
+              if (!views.late) return;
+              sendCommand(views.late, "respondScheme", {
                 id: request.id,
                 base64: Buffer.from(LATE_HTML).toString("base64"),
                 mime: "text/html",
@@ -453,7 +445,7 @@ function App(): React.ReactNode {
               });
             }}
           />
-        ) : null}
+        </Show>
       </box>
     </window>
     </>
@@ -461,21 +453,8 @@ function App(): React.ReactNode {
 }
 
 async function run(ctx: {
-  view: React.RefObject<NdNodeRef<"webview"> | null>;
-  late: React.RefObject<NdNodeRef<"webview"> | null>;
-  hidden: React.RefObject<NdNodeRef<"webview"> | null>;
-  hidden2: React.RefObject<NdNodeRef<"webview"> | null>;
-  hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
-  second: React.RefObject<NdNodeRef<"webview"> | null>;
-  extensions: React.RefObject<NdNodeRef<"webview"> | null>;
-  chromeDialogs: React.RefObject<string[]>;
-  actionPage: React.RefObject<NdNodeRef<"webview"> | null>;
-  closing: React.RefObject<NdNodeRef<"webview"> | null>;
   setClosingKey: (k: number) => void;
-  remount: React.RefObject<NdNodeRef<"webview"> | null>;
   setRemountKey: (k: number) => void;
-  registrySmall: React.RefObject<NdNodeRef<"webview"> | null>;
-  registryTab: React.RefObject<NdNodeRef<"webview"> | null>;
   setRegistryPair: (on: boolean) => void;
   setActionPopupUrl: (u: string) => void;
   setUrl: (u: string) => void;
@@ -514,8 +493,8 @@ async function run(ctx: {
     ctx.setUrl(`${BASE}/two`);
     await waitFor<string>("navigate", (u) => u.endsWith("/two"), "second navigate");
     await waitFor<boolean>("back", (v) => v === true, "backAvailable turns on");
-    if (!ctx.view.current) throw new Error("no view ref");
-    sendCommand(ctx.view.current, "goBack", undefined);
+    if (!views.view) throw new Error("no view ref");
+    sendCommand(views.view, "goBack", undefined);
     await waitFor<boolean>("forward", (v) => v === true, "forwardAvailable turns on after goBack");
     return "ok (back and forward availability tracked, goBack applied)";
   });
@@ -536,14 +515,14 @@ async function run(ctx: {
     await webviewEngine.registerScheme(LATE_SCHEME);
     ctx.setLateReady(true);
     for (let i = 0; i < 200; i += 1) {
-      if (ctx.late.current) break;
+      if (views.late) break;
       await new Promise((r) => setTimeout(r, 50));
     }
-    if (!ctx.late.current) throw new Error("the late-scheme view never mounted");
+    if (!views.late) throw new Error("the late-scheme view never mounted");
     const marker = await poll(
       () =>
         executeJavaScript(
-          ctx.late.current!,
+          views.late!,
           "document.getElementById('marker') ? document.getElementById('marker').textContent : ''",
         ),
       (t) => t === "late-scheme-ok",
@@ -560,14 +539,14 @@ async function run(ctx: {
   // world whose script never re-ran reads nothing, and a world whose context id
   // went stale answers with an error instead of a value.
   await step("reload", async () => {
-    if (!ctx.view.current) throw new Error("no view ref");
-    sendCommand(ctx.view.current, "addUserScript", {
+    if (!views.view) throw new Error("no view ref");
+    sendCommand(views.view, "addUserScript", {
       id: "reload-world-mark",
       source: "window.__ndMark = (window.__ndMark || 0) + 1;",
       injectionTime: "start",
       world: "reloadworld",
     });
-    sendCommand(ctx.view.current, "addUserScript", {
+    sendCommand(views.view, "addUserScript", {
       id: "reload-page-mark",
       source: 'document.documentElement.setAttribute("data-nd", "marked");',
       injectionTime: "end",
@@ -581,7 +560,7 @@ async function run(ctx: {
     // ran at all, that it ran again after the reload, and that it ran in the
     // main frame rather than the iframe.
     const before = await pollValue(
-      () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
+      () => executeJavaScript(views.view!, "String(window.__ndMark)", "reloadworld"),
       (v) => Number(v) >= 1,
       "the content script ran in its world",
     );
@@ -590,7 +569,7 @@ async function run(ctx: {
     const where = await pollValue(
       () =>
         executeJavaScript(
-          ctx.view.current!,
+          views.view!,
           'location.pathname + " top=" + (window.top === window)',
           "reloadworld",
         ),
@@ -601,22 +580,22 @@ async function run(ctx: {
       return `fail: the world eval answered from ${JSON.stringify(where)}`;
     }
     await pollValue(
-      () => executeJavaScript(ctx.view.current!, 'document.documentElement.getAttribute("data-nd")'),
+      () => executeJavaScript(views.view!, 'document.documentElement.getAttribute("data-nd")'),
       (v) => v === "marked",
       "the content script reached the page",
     );
 
-    sendCommand(ctx.view.current, "reload");
+    sendCommand(views.view, "reload");
     // A fresh document means a fresh world, so the counter is 1 again rather
     // than 2; reading 2 would mean the old world survived, and an error would
     // mean its context id did not.
     const after = await pollValue(
-      () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
+      () => executeJavaScript(views.view!, "String(window.__ndMark)", "reloadworld"),
       (v) => Number(v) >= 1,
       "the content script ran again after a reload",
     );
     await pollValue(
-      () => executeJavaScript(ctx.view.current!, 'document.documentElement.getAttribute("data-nd")'),
+      () => executeJavaScript(views.view!, 'document.documentElement.getAttribute("data-nd")'),
       (v) => v === "marked",
       "the reloaded page carries the content script's mark",
     );
@@ -639,20 +618,20 @@ async function run(ctx: {
     // The other half of the report: automation against a hidden view must
     // answer, not fail, which is what the extension drive asks of a
     // background page.
-    if (!ctx.hidden.current) throw new Error("the hidden view never mounted");
+    if (!views.hidden) throw new Error("the hidden view never mounted");
     // Every restored view has to answer, not just the first: they all attach
     // their devtools agent independently, and a queue that never drains on one
     // of them is the shape a restored session fails in.
-    const wanted: Array<[React.RefObject<NdNodeRef<"webview"> | null>, string]> = [
-      [ctx.hidden, "/two"],
-      [ctx.hidden2, "/one"],
-      [ctx.hidden3, "/popup"],
+    const wanted: Array<[ViewName, string]> = [
+      ["hidden", "/two"],
+      ["hidden2", "/one"],
+      ["hidden3", "/popup"],
     ];
     const read: string[] = [];
-    for (const [ref, path] of wanted) {
-      if (!ref.current) throw new Error(`a hidden view for ${path} never mounted`);
+    for (const [name, path] of wanted) {
+      if (!views[name]) throw new Error(`a hidden view for ${path} never mounted`);
       const got = await pollValue(
-        () => executeJavaScript(ref.current!, "location.pathname"),
+        () => executeJavaScript(views[name]!, "location.pathname"),
         (v) => v === path,
         `eval against the hidden view on ${path}`,
       );
@@ -676,9 +655,9 @@ async function run(ctx: {
     );
     ctx.setSecondOpen(false);
     // The host surviving is the point; an eval proves it is still serving.
-    if (!ctx.view.current) throw new Error("no view ref");
+    if (!views.view) throw new Error("no view ref");
     const alive = await pollValue(
-      () => executeJavaScript(ctx.view.current!, "String(2 + 2)"),
+      () => executeJavaScript(views.view!, "String(2 + 2)"),
       (v) => v === "4",
       "the host survives closing a window that held a webview",
     );
@@ -695,8 +674,8 @@ async function run(ctx: {
     let settled = 0;
     for (let round = 1; round <= 5; round++) {
       ctx.setClosingKey(round);
-      await until(() => ctx.closing.current !== null, `round ${round}: the view mounts`);
-      const node = ctx.closing.current!;
+      await until(() => views.closing !== null, `round ${round}: the view mounts`);
+      const node = views.closing!;
       await pollValue(() => executeJavaScript(node, "location.pathname"), (v) => v === "/one", `round ${round}: the view loads`);
       const burst: Promise<unknown>[] = [];
       burst.push(executeJavaScript(node, "setTimeout(() => window.close(), 20); 'closing'"));
@@ -711,9 +690,9 @@ async function run(ctx: {
       settled += outcomes.length;
     }
     ctx.setClosingKey(0);
-    if (!ctx.view.current) throw new Error("no view ref");
+    if (!views.view) throw new Error("no view ref");
     const alive = await pollValue(
-      () => executeJavaScript(ctx.view.current!, "String(2 + 2)"),
+      () => executeJavaScript(views.view!, "String(2 + 2)"),
       (v) => v === "4",
       "the host survives browsers closing under in-flight calls",
     );
@@ -728,13 +707,13 @@ async function run(ctx: {
   await step("removedNode", async () => {
     if (!FIRST_PASS) return "skip: runs in the first pass";
     ctx.setRemountKey(1);
-    await until(() => ctx.remount.current !== null, "the remount view mounts");
-    const first = ctx.remount.current!;
+    await until(() => views.remount !== null, "the remount view mounts");
+    const first = views.remount!;
     await pollValue(() => executeJavaScript(first, "location.pathname"), (v) => v === "/one", "the remount view loads");
     ctx.setRemountKey(2);
-    await until(() => ctx.remount.current !== null && ctx.remount.current.id !== first.id, "the keyed remount lands");
+    await until(() => views.remount !== null && views.remount.id !== first.id, "the keyed remount lands");
     const removed = await settleAll(first);
-    const second = ctx.remount.current!;
+    const second = views.remount!;
     await pollValue(() => executeJavaScript(second, "location.pathname"), (v) => v === "/one", "the new view loads");
     const pending = [
       executeJavaScript(second, "new Promise((r) => setTimeout(() => r('late'), 2000))"),
@@ -745,8 +724,8 @@ async function run(ctx: {
     const teardown = await settleWithin(pending, 10000);
     const silent = [...removed, ...teardown].filter((o) => o === "silent").length;
     if (silent > 0) throw new Error(`${silent} command(s) never answered (removed: ${removed.join(",")}; mid-teardown: ${teardown.join(",")})`);
-    if (!ctx.view.current) throw new Error("no view ref");
-    const alive = await executeJavaScript(ctx.view.current, "String(2 + 2)");
+    if (!views.view) throw new Error("no view ref");
+    const alive = await executeJavaScript(views.view, "String(2 + 2)");
     return `ok (removed: ${removed.join(",")}; mid-teardown: ${teardown.join(",")}; eval ${alive})`;
   });
 
@@ -755,9 +734,9 @@ async function run(ctx: {
   // enabled and with the icon the manifest declares.
   await step("extensions", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
-    if (!ctx.extensions.current) throw new Error("no extensions view ref");
+    if (!views.extensions) throw new Error("no extensions view ref");
     const list = await pollValue(
-      () => listExtensions(ctx.extensions.current!),
+      () => listExtensions(views.extensions!),
       (l) => l.length > 0,
       "chrome://extensions reports at least one extension",
     );
@@ -772,9 +751,9 @@ async function run(ctx: {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
     if (!FIRST_PASS) return "skip: runs in the first pass";
     ctx.setRegistryPair(true);
-    await until(() => ctx.registrySmall.current !== null && ctx.registryTab.current !== null, "both registry views mount");
-    const small = ctx.registrySmall.current!;
-    const tab = ctx.registryTab.current!;
+    await until(() => views.registrySmall !== null && views.registryTab !== null, "both registry views mount");
+    const small = views.registrySmall!;
+    const tab = views.registryTab!;
     for (const [name, node] of [["small", small], ["tab", tab]] as const) {
       await pollValue(() => executeJavaScript(node, "location.href"), (v) => v.startsWith("chrome://extensions"), `the ${name} view loads`);
     }
@@ -782,8 +761,8 @@ async function run(ctx: {
     // focus, so thousands pile up in seconds.
     await new Promise((r) => setTimeout(r, 4000));
     const [fromSmall, fromTab] = await settleValues([listExtensions(small), listExtensions(tab)], 10000);
-    if (!ctx.view.current) throw new Error("no view ref");
-    const [alive] = await settleValues([executeJavaScript(ctx.view.current, "String(2 + 2)")], 5000);
+    if (!views.view) throw new Error("no view ref");
+    const [alive] = await settleValues([executeJavaScript(views.view, "String(2 + 2)")], 5000);
     ctx.setRegistryPair(false);
     const counts = [fromSmall, fromTab].map((v) => (Array.isArray(v) ? `${v.length} extension(s)` : String(v)));
     if (counts.some((c) => !c.endsWith("extension(s)")) || alive !== "4") {
@@ -802,7 +781,7 @@ async function run(ctx: {
   await step("extensionsChanged", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
     if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
-    const view = ctx.extensions.current;
+    const view = views.extensions;
     if (!view) throw new Error("no extensions view ref");
     const sources = await watchExtensions(view, (change) => record("extensionsChanged", change.reason));
     if (sources.length === 0) throw new Error("watchExtensions attached to nothing");
@@ -817,7 +796,7 @@ async function run(ctx: {
   await step("runtimeActionState", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
     if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
-    const registry = ctx.extensions.current;
+    const registry = views.extensions;
     if (!registry) throw new Error("no extensions view ref");
 
     const actions = await pollValue(
@@ -831,7 +810,7 @@ async function run(ctx: {
 
     ctx.setActionPopupUrl(manifest.popupUrl);
     const page = await pollValue(
-      async () => ctx.actionPage.current,
+      async () => views.actionPage,
       (ref) => ref !== null,
       "the action fixture's page is mounted",
     );
@@ -874,8 +853,8 @@ async function run(ctx: {
   await step("actionClick", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
     if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
-    const registry = ctx.extensions.current;
-    const page = ctx.view.current;
+    const registry = views.extensions;
+    const page = views.view;
     if (!registry || !page) throw new Error("no view refs");
     const actions = await pollValue(
       () => listExtensionActions(registry),
@@ -906,7 +885,7 @@ async function run(ctx: {
   await step("installExtensionError", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
     if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
-    const view = ctx.extensions.current;
+    const view = views.extensions;
     if (!view) throw new Error("no extensions view ref");
     const started = Date.now();
     try {
@@ -928,7 +907,7 @@ async function run(ctx: {
       ctx.setResult("uninstallSilent", why);
       return why;
     }
-    const view = ctx.extensions.current;
+    const view = views.extensions;
     if (!view) throw new Error("no extensions view ref");
     const path = `${process.cwd()}/scripts/fixtures/chrome-ext-runtime`;
     const installed = await installExtension(view, path);
@@ -950,14 +929,14 @@ async function run(ctx: {
     const enabled = await setExtensionEnabled(view, mine.id, true);
     if (enabled.find((e) => e.id === mine.id)?.enabled !== true) throw new Error("setExtensionEnabled(true) did not take");
 
-    const dialogsBefore = ctx.chromeDialogs.current.length;
+    const dialogsBefore = chromeDialogs.length;
     const left = await uninstallExtension(view, mine.id);
     ctx.setResult(
       "uninstallExtension",
       left.some((e) => e.id === mine.id) ? "fail: still installed" : `ok (${mine.id} removed)`,
     );
     await new Promise((r) => setTimeout(r, 1500));
-    const dialogs = ctx.chromeDialogs.current.slice(dialogsBefore);
+    const dialogs = chromeDialogs.slice(dialogsBefore);
     ctx.setResult("uninstallSilent", dialogs.length === 0 ? `ok (no Chrome dialog; ${dialogsBefore} earlier in the run)` : `fail: Chrome dialog at ${dialogs.join(", ")}`);
     return `ok (installed ${mine.id}, change ${reason}, action ${action.title}, disabled, enabled, removed)`;
   });
@@ -965,7 +944,7 @@ async function run(ctx: {
   // The app's own items, which the engine appends to Chromium's model after a
   // separator. Left in place for the rest of the run so the context-menu gate
   // can right-click and read them back.
-  sendCommand(ctx.view.current, "setContextMenuItems", {
+  sendCommand(views.view!, "setContextMenuItems", {
     items: [
       { id: "probe-any", label: "Probe Item", contexts: ["all"] },
       { id: "probe-link", label: "Probe Link Item", contexts: ["link"] },
@@ -1072,4 +1051,4 @@ async function poll<T>(
   }
 }
 
-await render(DIALOGS_PASS ? <DialogsApp /> : <App />);
+await render(() => (DIALOGS_PASS ? <DialogsApp /> : <App />));
