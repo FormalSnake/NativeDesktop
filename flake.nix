@@ -57,6 +57,11 @@
               <dir>${pkgs.adwaita-fonts}/share/fonts</dir>
               <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
               <dir>${pkgs.noto-fonts-color-emoji}/share/fonts</dir>
+              <!-- Noto Color Emoji is bitmap strikes at 109ppem. This is the
+                   rule every distro's fontconfig ships to scale a strike to the
+                   requested size; without it a label draws the emoji at the
+                   strike's own size. -->
+              <include>${pkgs.fontconfig.out}/share/fontconfig/conf.avail/10-scale-bitmap-fonts.conf</include>
               <cachedir prefix="xdg">fontconfig</cachedir>
               <alias><family>sans-serif</family><prefer>
                 <family>Adwaita Sans</family><family>DejaVu Sans</family>
