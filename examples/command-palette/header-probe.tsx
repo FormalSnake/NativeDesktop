@@ -1,15 +1,16 @@
-import { render, sendCommand, useRef, useState, type NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand, type NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // A browser-shaped window for scripts/header-palette-drive.ts: a search field
 // packed straight into the header bar (the address field), and a command
 // palette opened from a menu accelerator while that field may hold the
 // keyboard. Cmd+L puts the caret in the field with its contents selected.
 
-function App(): React.ReactNode {
-  const [open, setOpen] = useState(false);
-  const [committed, setCommitted] = useState("");
-  const [picked, setPicked] = useState("");
-  const omnibox = useRef<NdNodeRef<"searchinput"> | null>(null);
+function App() {
+  const [open, setOpen] = createSignal(false);
+  const [committed, setCommitted] = createSignal("");
+  const [picked, setPicked] = createSignal("");
+  let omnibox: NdNodeRef<"searchinput"> | undefined;
 
   return (
     <window title="Header Palette" defaultWidth={1280} defaultHeight={720}>
@@ -20,7 +21,7 @@ function App(): React.ReactNode {
             label="Open Location"
             accelerator="primary+l"
             onSelect={() => {
-              if (omnibox.current) sendCommand(omnibox.current, "focus", { select: true });
+              if (omnibox) sendCommand(omnibox, "focus", { select: true });
             }}
           />
           <menuitem testID="menu-palette" label="Command Palette" accelerator="primary+k" onSelect={() => setOpen(true)} />
@@ -42,9 +43,7 @@ function App(): React.ReactNode {
               <searchinput
                 slot="start"
                 testID="omnibox"
-                ref={(node) => {
-                  omnibox.current = node as NdNodeRef<"searchinput"> | null;
-                }}
+                ref={(node) => (omnibox = node)}
                 placeholder="Search or enter address"
                 style={{ hexpand: true, minWidth: 240 }}
                 onActivate={(e) => {
@@ -57,11 +56,11 @@ function App(): React.ReactNode {
               <button slot="end" testID="downloads" iconName="folder-download-symbolic" tooltip="Downloads" cssClasses={["flat"]} />
             </headerbar>
             <box orientation="vertical" spacing={8} style={{ vexpand: true, padding: { top: 12, left: 12, right: 12, bottom: 12 } }}>
-              <label testID="committed-label" text={`Committed: ${committed}`} />
-              <label testID="picked-label" text={`Picked: ${picked}`} />
+              <label testID="committed-label" text={`Committed: ${committed()}`} />
+              <label testID="picked-label" text={`Picked: ${picked()}`} />
               <commandpalette
                 testID="palette"
-                open={open}
+                open={open()}
                 placeholder="Type a command"
                 query=""
                 items={[{ id: "reload", title: "Reload", subtitle: "", iconName: "view-refresh" }]}
@@ -80,4 +79,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
