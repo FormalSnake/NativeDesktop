@@ -906,7 +906,7 @@ fn ndMenuPurgeNode(node: usize) void {
     if (menu_item_info.fetchRemove(node)) |kv| _ = menu_node_ids.remove(kv.value.node_id);
 }
 
-fn ndMenuOwnerRebuild(owner: *gtk.Widget) void {
+fn ndMenuOwnerRebuildNow(owner: *gtk.Widget) void {
     const children = menu_owner_children.get(@intFromPtr(owner)) orelse return;
     const model = ndBuildModelFromList(children.items);
     const mm: ?*gio.MenuModel = if (model) |m| m.as(gio.MenuModel) else null;
@@ -935,14 +935,65 @@ fn ndMenuOwnerRemove(owner: *gtk.Widget, child: *gtk.Widget) void {
 /// mutates AFTER the Menu was appended to its owner (the owner's set model
 /// was built from the old list; GMenu handles aren't live-observed here).
 fn ndMenuOwnersRefresh() void {
-    var it = menu_owner_children.iterator();
-    while (it.next()) |e| ndMenuOwnerRebuild(@ptrFromInt(e.key_ptr.*));
+    menu_pending_all_owners = true;
+    ndMenuScheduleFlush();
+}
+
+fn ndMenuOwnerRebuild(owner: *gtk.Widget) void {
+    menu_pending_owners.put(events_gpa, @intFromPtr(owner), {}) catch return ndMenuOwnerRebuildNow(owner);
+    ndMenuScheduleFlush();
+}
+
+// Model rebuilds wait for the end of the current main-loop pass. Each one
+// walks every registered menu and hands GTK a fresh GMenuModel, and a commit
+// that attaches, removes or relabels N items would rebuild N times.
+// HIGH_IDLE runs after the queued commit jobs and before the frame clock's
+// layout, so the next frame still draws the new model.
+var menu_pending_menubar = false;
+var menu_pending_all_owners = false;
+var menu_pending_owners: std.AutoHashMapUnmanaged(usize, void) = .empty;
+var menu_flush_source: c_uint = 0;
+
+fn ndMenuScheduleFlush() void {
+    if (menu_flush_source != 0) return;
+    menu_flush_source = glib.idleAddFull(glib.PRIORITY_HIGH_IDLE, &ndMenuFlushIdle, null, null);
+}
+
+fn ndMenuFlushIdle(_: ?*anyopaque) callconv(.c) c_int {
+    menu_flush_source = 0;
+    ndMenuFlush();
+    return 0; // G_SOURCE_REMOVE
+}
+
+/// Applies every rebuild scheduled so far. Readers of the model GTK carries
+/// (the menuModel RPC) call it first, so they never see a stale one.
+fn ndMenuFlush() void {
+    if (menu_flush_source != 0) {
+        _ = glib.Source.remove(menu_flush_source);
+        menu_flush_source = 0;
+    }
+    if (menu_pending_menubar) {
+        menu_pending_menubar = false;
+        ndMenuRefreshNow();
+    }
+    if (menu_pending_all_owners) {
+        menu_pending_all_owners = false;
+        menu_pending_owners.clearRetainingCapacity();
+        var it = menu_owner_children.iterator();
+        while (it.next()) |e| ndMenuOwnerRebuildNow(@ptrFromInt(e.key_ptr.*));
+    }
+    if (menu_pending_owners.count() > 0) {
+        var it = menu_pending_owners.keyIterator();
+        while (it.next()) |k| ndMenuOwnerRebuildNow(@ptrFromInt(k.*));
+        menu_pending_owners.clearRetainingCapacity();
+    }
 }
 
 /// Destroy handler for MenuButton/SplitButton owners: drop the child list so
 /// a GLib address reuse can't resurrect a stale menu (mirrors
 /// cbHeaderBarDestroyed's eviction rationale).
 fn cbMenuOwnerDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    _ = menu_pending_owners.remove(@intFromPtr(w));
     if (menu_owner_children.fetchRemove(@intFromPtr(w))) |kv| {
         var list = kv.value;
         for (list.items) |c| _ = menu_node_parent.remove(c);
@@ -1047,6 +1098,11 @@ fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
 }
 
 fn ndMenuRefresh() void {
+    menu_pending_menubar = true;
+    ndMenuScheduleFlush();
+}
+
+fn ndMenuRefreshNow() void {
     const app = menu_app orelse return;
     if (the_menubar == null) return;
     ndMenuEnsureAbout();
@@ -1215,6 +1271,7 @@ fn ndMenuOwnerModel(widget: *gtk.Widget) ?*gio.MenuModel {
 /// `items` for the menuModel RPC, or null when the node owns no menu.
 /// Allocated in `alloc` (the backend's request arena).
 pub fn ndMenuModelItems(widget: *gtk.Widget, alloc: std.mem.Allocator) ?[]const []const u8 {
+    ndMenuFlush();
     const model = ndMenuOwnerModel(widget) orelse return null;
     var out: std.ArrayList([]const u8) = .empty;
     ndMenuModelFlatten(model, "", &out, alloc);
