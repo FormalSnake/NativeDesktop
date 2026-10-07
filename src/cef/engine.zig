@@ -1925,6 +1925,9 @@ const View = struct {
 
     // GTK thread only from here down.
     container: x11.Window = 0,
+    /// The container of a removed view whose browser is still closing. It is
+    /// destroyed once on_before_close is through (see `onDestroy`).
+    closing_container: x11.Window = 0,
     /// Born in a CEF Views window (`viewsHostedFor`), so it has the toolbar
     /// `triggerExtensionAction` clicks through.
     views_hosted: bool = false,
@@ -2869,6 +2872,19 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
                 }
                 if (host.*.close_browser) |close| close(host, 1);
             }
+        }
+        // The container outlives the close. Destroying it here took the
+        // browser's X window with it while the GPU process still had a swap
+        // in flight on it, and tearing down that window's compositor then
+        // waited in Mesa's DRI3 swap barrier for a Present that a destroyed
+        // window never completes: the GPU main thread stopped for every page
+        // until Chromium's watchdog killed it some 30 s later. Parked off
+        // screen, still mapped, the swap completes and nothing is seen.
+        if (view.container != 0) {
+            const size = parkSize(view);
+            x11.moveResize(view.container, park_origin, park_origin, size.w, size.h);
+            view.closing_container = view.container;
+            view.container = 0;
         }
     }
     x11.destroy(view.container);
@@ -5544,6 +5560,8 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.browser_closed) {
         failAllCalls(view);
+        x11.destroy(view.closing_container);
+        view.closing_container = 0;
         return 0;
     }
 
