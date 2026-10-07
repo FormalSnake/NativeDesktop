@@ -121,6 +121,24 @@ pub fn earlyExecuteProcess(argv: []const [*:0]const u8) ?u8 {
     return @truncate(@as(u32, @bitCast(rc)));
 }
 
+/// A SIGTERM or SIGINT sent to the host's process group or cgroup (Ctrl+C,
+/// `kill -- -pgid`, a logout) also reaches the zygote, GPU and utility
+/// processes. Killed under a live browser, the GPU process cannot be relaunched
+/// through the dead zygote, and Chromium LOG(FATAL)s "GPU process isn't
+/// usable" (a SIGTRAP) before the host's graceful quit closes the browsers.
+/// Ignoring them leaves the children to exit when the browser process does.
+/// Set here rather than before cef_execute_process because Chromium resets
+/// both signals to the default early in every child.
+fn ignoreHostQuitSignals() void {
+    const ignore: std.posix.Sigaction = .{
+        .handler = .{ .handler = std.posix.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(.TERM, &ignore, null);
+    std.posix.sigaction(.INT, &ignore, null);
+}
+
 fn mainArgs() c.cef_main_args_t {
     return .{
         .argc = @intCast(main_argv.len),
@@ -1276,10 +1294,11 @@ fn onBeforeChildProcessLaunch(
 
 fn onBeforeCommandLine(
     _: [*c]c.cef_app_t,
-    _: [*c]const c.cef_string_t,
+    process_type: [*c]const c.cef_string_t,
     command_line: [*c]c.cef_command_line_t,
 ) callconv(.c) void {
     defer ref.releaseParam(command_line);
+    if (process_type != null and process_type.*.length > 0) ignoreHostQuitSignals();
     if (command_line == null) return;
     if (command_line.*.append_switch_with_value) |append| {
         // Ozone would otherwise pick Wayland under a Wayland session and
