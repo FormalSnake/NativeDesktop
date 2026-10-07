@@ -29,9 +29,17 @@ for dir in \
   packages/panes \
   packages/ui \
   packages/nd; do
-  echo "publishing $dir"
   (
     cd "$dir"
+    # A version already on the registry was published by hand (a new package's
+    # first release, before npmjs.com lets it have a trusted publisher) or by an
+    # earlier run of this tag that died partway; npm refuses to publish over it.
+    spec="$(jq -r '.name + "@" + .version' package.json)"
+    if [ "$(npm view "$spec" version 2>/dev/null)" = "${spec##*@}" ]; then
+      echo "skipping $dir: $spec is already published"
+      exit 0
+    fi
+    echo "publishing $dir"
     # Take the last .tgz line rather than the whole of stdout: `bun pm pack
     # --quiet` also emits blank//informational lines, and the stray newline
     # ends up inside the path npm then fails to open (ENOENT on a filename
