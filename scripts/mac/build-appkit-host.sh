@@ -7,8 +7,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 
-# Without -Doptimize the core the shell links is a Debug build.
-zig build libnd -Dbackend=abi -Doptimize=ReleaseSafe
+# Without -Doptimize the core the shell links is a Debug build. Without -Dcpu
+# zig targets the runner's own Apple core, so a newer runner would ship code an
+# M1 cannot run.
+zig build libnd -Dbackend=abi -Doptimize=ReleaseSafe -Dcpu=apple_m1
 
 # Zig's archiver emits members Apple's ld rejects ("not 8-byte aligned") and
 # extracts them 0-permission; repack with the system ar/libtool before linking.
