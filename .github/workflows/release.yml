@@ -91,8 +91,16 @@ jobs:
         # A link failure mentioning glibc symbols here means the committed
         # vendor/libghostty-vt linux archive was built against a newer glibc
         # than this container, not a GTK problem.
-        # Without -Doptimize the published host is a Debug build.
-        run: zig build -Doptimize=ReleaseSafe
+        # Without -Doptimize the published host is a Debug build. Without
+        # -Dcpu zig targets the runner's own cpu, which has AVX-512, and the
+        # host dies with SIGILL in main on cpus without it (Intel N-series).
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=x86_64_v2
+      - name: Require a host with no AVX-512
+        run: |
+          if objdump -d zig-out/bin/nd-hello | grep -q '%zmm'; then
+            echo "nd-hello uses AVX-512 instructions" >&2
+            exit 1
+          fi
       - name: Strip + record sonames
         run: |
           strip zig-out/bin/nd-hello
