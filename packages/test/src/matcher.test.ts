@@ -3,7 +3,7 @@
 // Slider's numeric value, a Checkbox's boolean, a Label whose value repeats
 // its text) are the host's, not a hand-written idea of them.
 import { expect, test } from "bun:test";
-import type { GetTreeResult } from "@nativedesktop/core/rpc";
+import type { GetTreeResult } from "@nativedesktop/react/core/rpc";
 import fixture from "./fixtures/gestures-tree.json" with { type: "json" };
 import { asNdNode, nodeChecked, nodeName, renderValue, selectNodes, subtreeText, type NdNode } from "./matcher.ts";
 import { parseSelector } from "./selectors.ts";

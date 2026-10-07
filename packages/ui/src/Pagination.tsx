@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
-import { Spacing } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
+import { Spacing } from "@nativedesktop/react";
 import { computePaginationRange } from "./pagination.ts";
 
 export interface PaginationProps {

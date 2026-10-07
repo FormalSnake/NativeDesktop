@@ -1,7 +1,7 @@
 // Run by renderer.test.tsx in a child process: a render error no app
 // boundary catches has to exit it.
 import { createSignal, Show } from "solid-js";
-import { Batch, NodeRegistry, setSession, setUnhandledErrorPolicy } from "@nativedesktop/core";
+import { Batch, NodeRegistry, setSession, setUnhandledErrorPolicy } from "@nativedesktop/react/core";
 import { render } from "../renderer.ts";
 
 const batch = new Batch();

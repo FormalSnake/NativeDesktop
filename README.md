@@ -14,13 +14,13 @@ restarts the child. The child is a full Bun runtime (`node:fs`, `bun:sqlite`, su
 access), so app logic lives in the same process as the UI with no IPC bridge.
 
 ```bash
-bun add @nativedesktop/cli @nativedesktop/solid solid-js@2.0.0-rc.13
+bun add @nativedesktop/cli @nativedesktop/react solid-js@2.0.0-rc.13
 bunx nd dev src/main.tsx
 ```
 
 ```tsx
 // src/main.tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 function App() {
@@ -85,7 +85,7 @@ cd ../my-app && bun install && bun run dev
   documents, Keychain and libsecret credentials, audio playback with a spectrum feed, and app
   events like `onOpenUrl` and `onFileDrop`. See
   [System Capabilities](docs-site/src/content/docs/native-platform/system-capabilities.md).
-- **Packages**: `@nativedesktop/solid` (the renderer), `core` (the renderer-agnostic session and system APIs), `data` (SQLite in a Bun `Worker` so queries
+- **Packages**: `@nativedesktop/react` (the renderer), `core` (the renderer-agnostic session and system APIs), `data` (SQLite in a Bun `Worker` so queries
   never block the commit loop, ORM-agnostic), `rpc` (typed client with reconnect backoff over
   socket or WebSocket), `panes` (splittable pane-tree state and component), `test` (automation
   harness), `native` (app-owned GTK/AppKit plugin widgets, no framework rebuild).

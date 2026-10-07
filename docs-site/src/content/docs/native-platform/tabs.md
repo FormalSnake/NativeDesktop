@@ -20,7 +20,7 @@ The app model is [multi-window](/native-platform/multi-window/) plus one prop. E
 `<window>` root, and `tabGroup` names the group it belongs to:
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, createSignal } from "solid-js";
 
 function TerminalTab(props: { onNewTab: () => void; onClose: () => void }) {
@@ -105,7 +105,7 @@ your `<headerbar>`; on macOS it's the system Show All Tabs (⇧⌘\, View menu, 
 bar). To open it programmatically:
 
 ```tsx
-import { showTabOverview } from "@nativedesktop/solid";
+import { showTabOverview } from "@nativedesktop/react";
 
 showTabOverview(win); // AdwTabOverview open on GTK, toggleTabOverview on macOS
 ```

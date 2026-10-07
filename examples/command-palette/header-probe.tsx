@@ -1,4 +1,4 @@
-import { render, sendCommand, type NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand, type NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // A browser-shaped window for scripts/header-palette-drive.ts: a search field

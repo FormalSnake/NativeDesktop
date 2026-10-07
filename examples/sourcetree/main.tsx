@@ -6,8 +6,8 @@
 // actionable project row FIRST so the AppKit pointer leg can hit its
 // trailing action button at a predictable y. actionVisibility "always" for
 // the same reason (hover can't be a precondition for a coordinate click).
-import { render, app, hasCommand, hasWidget } from "@nativedesktop/solid";
-import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/solid";
+import { render, app, hasCommand, hasWidget } from "@nativedesktop/react";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
 import { createMemo, createSignal, createStore, onSettled } from "solid-js";
 
 const actions: SourceTreeAction[] = [

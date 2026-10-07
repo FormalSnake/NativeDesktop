@@ -1,5 +1,5 @@
-import { render } from "@nativedesktop/solid";
-import type { TableColumn, TableRow } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
+import type { TableColumn, TableRow } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // M16 gestures probe: every widget here exists to give the input-synthesis

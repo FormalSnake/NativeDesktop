@@ -23,7 +23,7 @@ and Mail list chrome.
 ![A sorted Table with three columns on GNOME (GTK)](../../../assets/screens/gtk/parity-table.png)
 
 ```tsx
-import type { TableColumn, TableRow } from "@nativedesktop/solid";
+import type { TableColumn, TableRow } from "@nativedesktop/react";
 
 const columns: TableColumn[] = [
   { id: "name", title: "Name" },
@@ -87,7 +87,7 @@ are a flat array keyed by `id`/`parentId`, not nested objects. Root nodes omit `
 the same inset style as `<table>` on macOS.
 
 ```tsx
-import type { TreeNode } from "@nativedesktop/solid";
+import type { TreeNode } from "@nativedesktop/react";
 
 const nodeMeta: Omit<TreeNode, "expanded">[] = [
   { id: "fruits", title: "Fruits", hasChildren: true },
@@ -141,7 +141,7 @@ Pick between the three sidebar-ish widgets: `<sourcelist>` for a flat index-addr
 structure.
 
 ```tsx
-import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/solid";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
 
 const actions: SourceTreeAction[] = [
   { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },

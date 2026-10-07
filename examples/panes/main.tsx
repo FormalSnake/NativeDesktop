@@ -4,9 +4,9 @@
 // changes flush() immediately, ratio drags ride the debounce (plus the
 // store's exit hook when the host SIGTERMs the child).
 
-import { createStore, render } from "@nativedesktop/solid";
+import { createStore, render } from "@nativedesktop/react";
 import { PaneTree, createPaneTree, migratePanes, paneLeaves, samePaneShape, seedPanes } from "@nativedesktop/panes";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 import type { PaneModel } from "@nativedesktop/panes";
 
 interface PaneData {

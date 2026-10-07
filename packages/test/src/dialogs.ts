@@ -1,8 +1,8 @@
 // §1.5's ND_AUTOMATION_DIALOG_SCRIPT: typed builder for the per-method FIFO
 // consumed by src/automation_dialogs.zig. Entry shapes mirror the real
 // systemRequest/widgetCommand results verbatim (verified against
-// packages/core/src/system.ts's `dialog` object and
-// packages/core/src/dialogs.ts's Window-scoped helpers), NOT the
+// packages/react/src/core/system.ts's `dialog` object and
+// packages/react/src/core/dialogs.ts's Window-scoped helpers), NOT the
 // {paths:[...]}/{button:0} shapes sketched in the design doc, which predate
 // the landed result types:
 //   - dialog.openFile resolves to a raw string[] (system.ts: `Promise<string[]>`)

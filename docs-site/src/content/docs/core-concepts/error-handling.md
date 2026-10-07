@@ -31,7 +31,7 @@ subscribers.
 ## Observing errors
 
 ```ts
-import { onUnhandledError } from "@nativedesktop/solid";
+import { onUnhandledError } from "@nativedesktop/react";
 
 const off = onUnhandledError((error, context) => {
   // context.kind: "unhandledRejection" | "uncaughtException" |
@@ -50,7 +50,7 @@ closure on every hot re-eval, so register from `onSettled` (with `onCleanup` cal
 ## Changing the policy
 
 ```ts
-import { setUnhandledErrorPolicy } from "@nativedesktop/solid";
+import { setUnhandledErrorPolicy } from "@nativedesktop/react";
 
 setUnhandledErrorPolicy({
   unhandledRejection: "fatal",   // die on orphaned rejections

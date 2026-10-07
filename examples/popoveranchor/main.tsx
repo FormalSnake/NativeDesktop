@@ -1,5 +1,5 @@
-import { Portal, render } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { Portal, render } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // A popover anchored by ref rather than by where it sits in the tree. The

@@ -53,7 +53,7 @@ export { renderSnapshot } from "./snapshot.ts";
 export type { SnapshotOptions } from "./snapshot.ts";
 
 // Tree types a caller needs to type find()/tree() results, re-exported so
-// nothing outside this package has to import @nativedesktop/core/rpc itself.
+// nothing outside this package has to import @nativedesktop/react/core/rpc itself.
 export type {
   Geometry,
   GetTreeResult,
@@ -64,4 +64,4 @@ export type {
   WaitForResult,
   WindowInfo,
   WindowsResult,
-} from "@nativedesktop/core/rpc";
+} from "@nativedesktop/react/core/rpc";

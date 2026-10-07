@@ -14,7 +14,7 @@ import {
   executeJavaScript,
   onJavaScriptResult,
   type NdNodeRef,
-} from "@nativedesktop/solid";
+} from "@nativedesktop/react";
 
 function BrowserTab(props: { url: string; onOpenTab: (u: string) => void }) {
   let wv: NdNodeRef<"webview"> | undefined;
@@ -47,7 +47,7 @@ const ua = await executeJavaScript(wv!, "navigator.userAgent");
 ## Extension surface
 
 ```tsx
-import { webviewEngine, executeJavaScript, getCookies, onCookiesResult } from "@nativedesktop/solid";
+import { webviewEngine, executeJavaScript, getCookies, onCookiesResult } from "@nativedesktop/react";
 
 // Custom schemes bind to a frozen engine configuration — register BEFORE the
 // first <webview> mounts, then answer `schemeRequest` with `respondScheme`.
@@ -104,7 +104,7 @@ way, so knowing about the click costs nothing.
 App items are declared per view and stored by the host until they are replaced:
 
 ```tsx
-import { setContextMenuItems } from "@nativedesktop/solid";
+import { setContextMenuItems } from "@nativedesktop/react";
 
 setContextMenuItems(wv!, [
   { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
@@ -244,7 +244,7 @@ engine hits a response it cannot render, or an attachment.
   `resumeDownload` and `cancelDownload` take `{ id }` on any live view;
   resume also restarts a `failed` download where it stopped when the server
   allows. `startDownload { url }` downloads with the view's profile and comes
-  back as `downloadRequested`. `@nativedesktop/solid` exports typed helpers
+  back as `downloadRequested`. `@nativedesktop/react` exports typed helpers
   for all five and the `DownloadRequest` / `DownloadUpdate` payloads. Chromium's download bubble and download-started animation
   never show; the app's own UI is the report.
 
@@ -539,7 +539,7 @@ way it replays the activation state behind `app.isActive()`, so they are correct
 from the first render.
 
 ```ts
-import { webviewEngine } from "@nativedesktop/solid";
+import { webviewEngine } from "@nativedesktop/react";
 
 if (webviewEngine.active() === "chromium" && webviewEngine.cefStyle() === "chrome") {
   // chrome://extensions and the extension runtime exist here
@@ -845,7 +845,7 @@ Listing extensions, installing them, and their actions:
 import {
   installExtension, listExtensionActions, listExtensions, onExtensionActions,
   onExtensionsList, setExtensionEnabled, uninstallExtension,
-} from "@nativedesktop/solid";
+} from "@nativedesktop/react";
 
 // Chromium exposes its extension registry to chrome://extensions and nowhere
 // else, so every one of these is sent to a view showing that page. A hidden
@@ -1015,7 +1015,7 @@ command is sent to a view showing one, which for an app drawing its own toolbar
 is the popup view it mounts for a click:
 
 ```tsx
-import { readExtensionAction } from "@nativedesktop/solid";
+import { readExtensionAction } from "@nativedesktop/react";
 
 const state = await readExtensionAction(popupView!);
 // { id, tabId, tabUrl, popupUrl, badgeText, badgeColor, title, enabled }

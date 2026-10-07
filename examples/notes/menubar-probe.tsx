@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // NOT imported by main.tsx. A minimal acceptance fixture for the

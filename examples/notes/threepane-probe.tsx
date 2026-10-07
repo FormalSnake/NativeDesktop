@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 // NOT imported by main.tsx. A minimal three-pane (folders / list / content)
 // SplitView probe: exercises the `list` slot end-to-end (schema + both

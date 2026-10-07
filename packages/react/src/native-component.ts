@@ -1,5 +1,5 @@
 import { omit, type Element as SolidElement, type Ref } from "solid-js";
-import { sendNativeCommand } from "@nativedesktop/core";
+import { sendNativeCommand } from "@nativedesktop/react/core";
 import type { JSX, NdNodeRef } from "./generated/intrinsics.ts";
 import { applyRef, createElement, mergeProps, ref, spread, type SolidNode } from "./renderer.ts";
 

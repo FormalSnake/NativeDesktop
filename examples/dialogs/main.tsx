@@ -7,8 +7,8 @@ import {
   onAlertResult,
   onOpenFileResult,
   onSaveFileResult,
-} from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+} from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // Minimal, untabbed native-dialog surface for scripts/dialog-script-drive.ts.
@@ -20,8 +20,8 @@ import { createSignal } from "solid-js";
 // (§1.5) can be exercised on both backends without that dependency.
 //
 // Covers both interception paths: the app-level `dialog.*` systemRequest
-// (packages/core/src/system.ts, ACL-gated but default-granted) and the
-// window-scoped showAlert/openFile/saveFile widgetCommand (packages/core/
+// (packages/react/src/core/system.ts, ACL-gated but default-granted) and the
+// window-scoped showAlert/openFile/saveFile widgetCommand (packages/react/
 // src/dialogs.ts).
 
 function App() {

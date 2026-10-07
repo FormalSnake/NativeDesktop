@@ -10,8 +10,8 @@ import {
   sendCommand,
   setContextMenuItems,
   webviewEngine,
-} from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+} from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { For, Show, createSignal, onSettled } from "solid-js";
 import type { Accessor } from "solid-js";
 

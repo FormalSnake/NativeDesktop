@@ -35,7 +35,7 @@ LOG=$(mktemp)
 # tag) — a pre-existing core/runtime gap, not a packaging defect. counter
 # has no array/object props and is what the sibling m4/m8 smoke scripts
 # already use for this exact kind of packaged-launch proof.
-BUN_OPTIONS="--preload=@nativedesktop/solid/register" ND_SCRIPT=dist/linux/AppDir/app/examples/counter/main.tsx \
+BUN_OPTIONS="--preload=@nativedesktop/react/register" ND_SCRIPT=dist/linux/AppDir/app/examples/counter/main.tsx \
   ./dist/linux/AppDir/usr/bin/gallery >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 80); do grep -q ND_COMMIT_APPLIED "$LOG" && break; sleep 0.1; done

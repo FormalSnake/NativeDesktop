@@ -1,5 +1,5 @@
 import { For } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 
 export interface DescriptionListItem {
   label: string;

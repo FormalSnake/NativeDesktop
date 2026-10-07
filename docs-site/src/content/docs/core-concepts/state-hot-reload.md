@@ -11,13 +11,13 @@ did not touch stay as they were.
 
 `ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and NDP socket
 across an edit but re-evaluates the module graph. Three pieces make that state-preserving, all in
-`@nativedesktop/solid/register`, the preload `nd dev` passes to Bun:
+`@nativedesktop/react/register`, the preload `nd dev` passes to Bun:
 
 - **Refresh transform.** Each component module compiles with Solid's refresh transform. A component
   becomes a proxy over its current implementation, and the module registers an accept callback.
   When the edited module has evaluated, that callback swaps the live proxies to the new code.
 - **Pinned modules.** `solid-js`, its reactive core, the universal renderer, and
-  `@nativedesktop/solid` keep the instance from first evaluation. A fresh copy would own a second
+  `@nativedesktop/react` keep the instance from first evaluation. A fresh copy would own a second
   reactive graph that the mounted tree knows nothing about, or lose the renderer's retained tree.
 - **`render()` after the first call.** Re-evaluating the entry calls `render()` again. Under the
   refresh runtime it records the new `() => <App />` and leaves the mounted tree alone.
@@ -41,7 +41,7 @@ A fresh object created at module scope also counts as a changed dependency of th
 read it, and the runtime remounts them. `examples/counter/main.tsx` creates its pending promise
 inside `App` for this reason.
 
-Put long-lived data in `createStore` from `@nativedesktop/solid`, whose value is persisted to disk
+Put long-lived data in `createStore` from `@nativedesktop/react`, whose value is persisted to disk
 and loaded before `render()` (see [App Data & Storage](/core-concepts/app-data-storage/)), or keep
 it in a component that is not the one being edited. Split a component out when you want to edit
 its markup without resetting its parent's state, as `ClicksLabel` is split from `App` in the
@@ -63,5 +63,5 @@ bun run compile
 When you iterate on the framework's own host, run the child yourself and pass the preload:
 
 ```bash
-BUN_OPTIONS=--preload=@nativedesktop/solid/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
+BUN_OPTIONS=--preload=@nativedesktop/react/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
 ```

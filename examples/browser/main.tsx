@@ -1,5 +1,5 @@
-import { render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { For, Show, createSignal } from "solid-js";
 
 // A very small Min-style browser with NATIVE system tabs: every tab is its

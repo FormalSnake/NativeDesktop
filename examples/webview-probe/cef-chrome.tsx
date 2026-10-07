@@ -1,5 +1,5 @@
-import { render, sendCommand, setContextMenuItems } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand, setContextMenuItems } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal, onSettled } from "solid-js";
 import {
   answerPermission,

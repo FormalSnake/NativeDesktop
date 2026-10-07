@@ -2,7 +2,7 @@
 // over NDP, reacts to button-click events, and drives a timer commit so headless CI can
 // assert ND_COMMIT_APPLIED markers without input synthesis.
 
-import { Ndp, type Op } from "../packages/core/src/ndp.ts";
+import { Ndp, type Op } from "../packages/react/src/core/ndp.ts";
 
 const WIN = 1,
   BOX = 2,

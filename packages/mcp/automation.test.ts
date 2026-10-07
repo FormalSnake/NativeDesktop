@@ -1,6 +1,6 @@
 // Standalone verification for packages/mcp against a mock unix-socket automation
 // host, since the Zig automation server (src/automation.zig) is a concurrently
-// developed track. Mirrors the mock-server pattern in packages/core/src/ndp.test.ts.
+// developed track. Mirrors the mock-server pattern in packages/react/src/core/ndp.test.ts.
 // Run with: nix develop -c bun test packages/mcp/
 
 import { test, expect, afterAll } from "bun:test";

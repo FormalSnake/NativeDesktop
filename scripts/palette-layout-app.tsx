@@ -3,7 +3,7 @@
 // right-aligned hints, a title that opens on a colour emoji, and inline
 // completion on the first row. The window width comes from PALETTE_WIDTH so
 // the drive can run it normal and narrow.
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 const FAVICON =

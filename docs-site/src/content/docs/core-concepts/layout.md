@@ -75,7 +75,7 @@ a `<scrollview>`'s child still fills by default.
 
 `spacing` is the gap between a box's children along its main axis. Its default, `-1`, means "platform
 standard": 6 on GTK (the Adwaita gutter), 8 on AppKit. Import `Spacing`/`ContentMargin` from
-`@nativedesktop/solid` instead of hardcoding either number; see
+`@nativedesktop/react` instead of hardcoding either number; see
 [Spacing scale](/core-concepts/styling-design-language/#spacing-scale).
 
 `padding` insets a container's own children. On GTK it's CSS `padding` on the box. On AppKit it maps

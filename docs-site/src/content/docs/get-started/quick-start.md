@@ -11,7 +11,7 @@ window.
 
 ```bash
 mkdir hello-native && cd hello-native
-bun add @nativedesktop/cli @nativedesktop/solid solid-js
+bun add @nativedesktop/cli @nativedesktop/react solid-js
 bun add -d typescript @types/bun
 ```
 
@@ -36,7 +36,7 @@ Create a `tsconfig.json`. `jsx: "preserve"` leaves the JSX to Solid's compiler, 
     "moduleResolution": "bundler",
     "lib": ["ESNext"],
     "jsx": "preserve",
-    "jsxImportSource": "@nativedesktop/solid",
+    "jsxImportSource": "@nativedesktop/react",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
@@ -47,8 +47,8 @@ Create a `tsconfig.json`. `jsx: "preserve"` leaves the JSX to Solid's compiler, 
 ```
 
 Bun does not compile Solid JSX on its own. `nd dev`, `nd build` and `nd package` preload
-`@nativedesktop/solid/register`, which runs the `.tsx` files of any package that depends on
-`@nativedesktop/solid` through Solid's compiler. There is nothing to configure.
+`@nativedesktop/react/register`, which runs the `.tsx` files of any package that depends on
+`@nativedesktop/react` through Solid's compiler. There is nothing to configure.
 
 There is no scaffolding command for a published install yet; these files are the whole setup. In a
 framework checkout, `./scripts/new-app.sh ../my-app` copies `template/`.
@@ -58,7 +58,7 @@ framework checkout, `./scripts/new-app.sh ../my-app` copies `template/`.
 Create `src/main.tsx`, the default entry point for `nd dev`:
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function App() {
   return (
@@ -92,7 +92,7 @@ State is a Solid signal. Replace `src/main.tsx`:
 
 ```tsx
 import { createSignal } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function App() {
   const [clicks, setClicks] = createSignal(0);

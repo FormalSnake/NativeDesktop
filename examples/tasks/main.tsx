@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, createMemo, createSignal } from "solid-js";
 
 // ND Tasks: the "smallest real app", a single-pane task list. The chrome

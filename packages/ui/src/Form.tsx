@@ -1,4 +1,4 @@
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 
 export interface FormProps {
   title?: string;

@@ -52,10 +52,10 @@ interface CodeDiagnostic {
 }
 ```
 
-`CodeDiagnostic` is re-exported from `@nativedesktop/solid`, so import it directly:
+`CodeDiagnostic` is re-exported from `@nativedesktop/react`, so import it directly:
 
 ```ts
-import type { CodeDiagnostic } from "@nativedesktop/solid";
+import type { CodeDiagnostic } from "@nativedesktop/react";
 ```
 
 `line`/`column` are 1-based, what every compiler and language server reports. A click on a squiggle

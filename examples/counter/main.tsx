@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { Loading, createMemo, createSignal, onCleanup } from "solid-js";
 
 // Its own component so a hot edit to it leaves App, and the clicks signal App

@@ -39,7 +39,7 @@ properties on macOS and real GTK CSS classes on Linux. See
 
 ## Shared code with other Solid apps
 
-`@nativedesktop/solid` declares `solid-js` as a `peerDependency` instead of vendoring a copy, so in
+`@nativedesktop/react` declares `solid-js` as a `peerDependency` instead of vendoring a copy, so in
 a monorepo a NativeDesktop app hoists the same `solid-js` instance as a web app that uses Solid.
 Logic written with signals and stores, with no JSX and nothing from NativeDesktop, is shared
 verbatim. Desktop-only UI lives in `.desktop.tsx` files. See

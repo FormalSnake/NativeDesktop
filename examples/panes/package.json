@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@nativedesktop/panes": "workspace:*",
-    "@nativedesktop/solid": "workspace:*",
+    "@nativedesktop/react": "workspace:*",
     "@nativedesktop/cli": "workspace:*",
     "solid-js": "2.0.0-rc.13"
   }

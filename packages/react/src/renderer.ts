@@ -19,8 +19,8 @@ import {
   type Handler,
   type Session,
   type WidgetType,
-} from "@nativedesktop/core";
-import { lat, type Op } from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
+import { lat, type Op } from "@nativedesktop/react/core";
 
 type Kind = WidgetType | "#text" | "#root";
 

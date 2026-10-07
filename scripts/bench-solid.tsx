@@ -1,8 +1,8 @@
 // Renderer bench: mount, one-row and all-rows updates, markers under
 // ND_BENCH_SOLID. Each sample runs from the signal write to the CommitBatch
 // handed to NDP. Solid JSX needs the transform registered first, so run it as
-//   BUN_OPTIONS=--preload=./packages/solid/src/register.ts ND_SCRIPT=scripts/bench-solid.tsx <host>
-import { render, nextCommit } from "@nativedesktop/solid";
+//   BUN_OPTIONS=--preload=./packages/react/src/register.ts ND_SCRIPT=scripts/bench-solid.tsx <host>
+import { render, nextCommit } from "@nativedesktop/react";
 import { createSignal, For } from "solid-js";
 
 const N = Number(process.env.ND_BENCH_NODES ?? 2000);

@@ -22,7 +22,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@nativedesktop/core": "workspace:*",
-    "@nativedesktop/host": "workspace:*"
+    "@nativedesktop/host": "workspace:*",
+    "@nativedesktop/react": "workspace:*"
   }
 }

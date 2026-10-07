@@ -14,8 +14,8 @@ flowchart TB
     subgraph CHILD["Bun · TypeScript child process"]
         direction TB
         APP["Your Solid app · TSX"]
-        RECON["@nativedesktop/solid<br/>Solid 2.0 universal renderer"]
-        NDPC["NDP client<br/>packages/core/src/ndp.ts"]
+        RECON["@nativedesktop/react<br/>Solid 2.0 universal renderer"]
+        NDPC["NDP client<br/>packages/react/src/core/ndp.ts"]
         PLAT["Platform.backend · Platform.os"]
         APP --> RECON --> NDPC
         NDPC -.->|"backend from helloAck"| PLAT
@@ -41,7 +41,7 @@ flowchart TB
 
 ## The child
 
-Your components run once and build a tree of native nodes. The renderer (`@nativedesktop/solid`,
+Your components run once and build a tree of native nodes. The renderer (`@nativedesktop/react`,
 built on Solid's universal renderer) never mutates a widget directly: a signal change re-runs only
 the JSX expression that read it, which records a structural op (`create`, `append`, `update`,
 `setText`). The ops from one tick are gathered into a `CommitBatch` and sent to the host as one NDP
@@ -52,7 +52,7 @@ reads `process.platform`.
 An update whose value did not change emits no op, and a prop the expression stopped supplying is
 sent as an explicit removal rather than silently vanishing from the commit.
 
-The binary NDP encoder (`packages/core/src/ndp-binary.ts`) measures faster than `JSON.stringify` on a large mount: a single growable buffer with one cached view, reused across
+The binary NDP encoder (`packages/react/src/core/ndp-binary.ts`) measures faster than `JSON.stringify` on a large mount: a single growable buffer with one cached view, reused across
 writes instead of reallocated per primitive.
 
 ## The host: one core, two backends
@@ -94,6 +94,6 @@ the way a user does.
 
 Three JSON schemas (`schema/widgets.json`, `schema/protocol.json`, `schema/rpc.json`) feed
 `tools/codegen.ts`, which emits both sides of every boundary: the Zig structs in `src/generated/`,
-the TypeScript types in `packages/solid/src/generated/`, the Swift bindings, and the widget docs.
+the TypeScript types in `packages/react/src/generated/`, the Swift bindings, and the widget docs.
 Rename or retype a field and both sides fail to compile at once instead of producing a silent wire
 mismatch.

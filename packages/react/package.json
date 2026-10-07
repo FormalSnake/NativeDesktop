@@ -1,5 +1,5 @@
 {
-  "name": "@nativedesktop/solid",
+  "name": "@nativedesktop/react",
   "version": "0.5.0",
   "type": "module",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
-    "directory": "packages/solid"
+    "directory": "packages/react"
   },
   "publishConfig": {
     "access": "public"
@@ -18,7 +18,9 @@
     ".": "./src/index.ts",
     "./register": "./src/register.ts",
     "./jsx-runtime": "./src/jsx-runtime.ts",
-    "./build": "./src/build.ts"
+    "./build": "./src/build.ts",
+    "./core": "./src/core/index.ts",
+    "./core/rpc": "./src/core/generated/rpc.ts"
   },
   "bin": {
     "nd-solid-build": "./src/build.ts"
@@ -32,7 +34,6 @@
   "dependencies": {
     "@babel/core": "7.29.7",
     "@babel/preset-typescript": "7.29.7",
-    "@nativedesktop/core": "workspace:*",
     "@solidjs/compiler": "2.0.0-rc.13",
     "@solidjs/universal": "2.0.0-rc.13",
     "babel-preset-solid": "2.0.0-rc.2"

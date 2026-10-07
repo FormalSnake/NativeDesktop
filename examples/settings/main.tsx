@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { Match, Show, Switch, createMemo, createSignal, createStore } from "solid-js";
 
 // ND Settings — a two-pane preferences window built from the framework's

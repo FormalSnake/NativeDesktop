@@ -6,7 +6,7 @@
 // still carries the mark it was given on its first load, with no second load:
 // the live widget moved and the page never reloaded.
 // ND_HOST_BINARY picks the host (e.g. swift/.build/release/NDShell).
-import type { JsonNode } from "../packages/core/src/generated/rpc.ts";
+import type { JsonNode } from "../packages/react/src/core/generated/rpc.ts";
 import { launchApp, expect, poll } from "../packages/test/src/index.ts";
 
 const server = Bun.serve({

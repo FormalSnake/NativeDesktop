@@ -39,7 +39,7 @@ nd build --strict
 
 Clicking a link never navigates the view; it fires `linkActivated` and leaves handling up to you.
 Pair it with [`openExternal`](/native-platform/system-capabilities/#shell-helpers) from
-`@nativedesktop/solid` to open it in the OS default browser.
+`@nativedesktop/react` to open it in the OS default browser.
 
 ## Supported subset
 

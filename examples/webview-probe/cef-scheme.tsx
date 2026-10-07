@@ -1,5 +1,5 @@
-import { render, sendCommand, webviewEngine } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand, webviewEngine } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { Show, createSignal, onSettled } from "solid-js";
 
 // Bench for the reserved-scheme question: can a scheme handler factory serve

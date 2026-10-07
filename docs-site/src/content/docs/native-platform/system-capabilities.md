@@ -3,7 +3,7 @@ title: System Capabilities
 description: Native file dialogs, clipboard, notifications, recent documents, credentials, live appearance, and app-level OS events, with one API and real native behavior on each backend.
 ---
 
-`@nativedesktop/solid` exposes the OS-level surface a desktop app eventually needs as promise-based
+`@nativedesktop/react` exposes the OS-level surface a desktop app eventually needs as promise-based
 calls: file pickers, clipboard, notifications, Open Recent, the system credential store, audio
 playback, live light/dark and accent color, and app lifecycle events like activation and file drops.
 Every call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
@@ -13,7 +13,7 @@ Service, `AVPlayer` and GStreamer) from the same app code on both backends.
 ## Dialogs
 
 ```tsx
-import { dialog } from "@nativedesktop/solid";
+import { dialog } from "@nativedesktop/react";
 
 async function openMarkdownFile() {
   const paths = await dialog.openFile({
@@ -45,7 +45,7 @@ command channel, or the About panel, which only the `<window>` version exposes.
 ## Clipboard
 
 ```tsx
-import { clipboard } from "@nativedesktop/solid";
+import { clipboard } from "@nativedesktop/react";
 
 <button label="Copy link" onClick={() => clipboard.writeText("https://example.com/")} />;
 ```
@@ -57,7 +57,7 @@ clipboard holds no text, but reading the clipboard is default-denied; see
 ## Notifications
 
 ```tsx
-import { notifications } from "@nativedesktop/solid";
+import { notifications } from "@nativedesktop/react";
 import { createEffect, onCleanup, onSettled } from "solid-js";
 
 function NotifyOnDone(props: { done: boolean; runId: string }) {
@@ -91,7 +91,7 @@ unsubscribe function, so it composes with `onCleanup`.
 ## Recent documents
 
 ```tsx
-import { recentDocuments } from "@nativedesktop/solid";
+import { recentDocuments } from "@nativedesktop/react";
 
 await recentDocuments.add("/Users/me/notes.md");
 ```
@@ -102,7 +102,7 @@ Recent" menu on macOS and `GtkRecentManager` on GTK.
 ## Credentials
 
 ```tsx
-import { credentials } from "@nativedesktop/solid";
+import { credentials } from "@nativedesktop/react";
 
 await credentials.set("my-app", "api-token", secretValue);
 const token = await credentials.get("my-app", "api-token"); // null if not found
@@ -116,7 +116,7 @@ is default-denied.
 ## Audio
 
 ```tsx
-import { audio } from "@nativedesktop/solid";
+import { audio } from "@nativedesktop/react";
 import { createSignal, onCleanup, onSettled } from "solid-js";
 
 function PlayerWithMeter(props: { path: string }) {
@@ -184,7 +184,7 @@ There are two event subscriptions; each returns an unsubscribe function like the
 ## Appearance
 
 ```tsx
-import { system } from "@nativedesktop/solid";
+import { system } from "@nativedesktop/react";
 import { createSignal, onCleanup, onSettled } from "solid-js";
 
 function AccentDot() {
@@ -207,7 +207,7 @@ See [Styling & Design Language](/core-concepts/styling-design-language/#dark-mod
 ## App-level events
 
 ```tsx
-import { app } from "@nativedesktop/solid";
+import { app } from "@nativedesktop/react";
 import { onCleanup, onSettled } from "solid-js";
 
 function FileDropTarget(props: { onFiles: (paths: string[]) => void }) {
@@ -236,7 +236,7 @@ no buffering yet), so register these as early as possible. See [Packaging](/pack
 ## Shell helpers
 
 ```tsx
-import { openExternal, openPath, revealPath } from "@nativedesktop/solid";
+import { openExternal, openPath, revealPath } from "@nativedesktop/react";
 
 await openExternal("https://example.com/");   // OS default browser
 await openPath("/Users/me/notes.md");          // OS default app for the file

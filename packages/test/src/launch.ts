@@ -29,7 +29,7 @@ import {
   type WebViewInfo,
   type WindowInfo,
   type WindowsResult,
-} from "@nativedesktop/core/rpc";
+} from "@nativedesktop/react/core/rpc";
 import { TimedClient } from "./client.ts";
 import { Cursor } from "./cursor.ts";
 import { type DialogScript, dialogScriptEnv } from "./dialogs.ts";

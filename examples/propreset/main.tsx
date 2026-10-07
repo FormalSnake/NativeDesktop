@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // A prop that disappears from JSX has to leave the native widget too. Every

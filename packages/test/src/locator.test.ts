@@ -2,7 +2,7 @@
 // loop, the strict-mode refusal, the stale-ref retry and the polling matchers
 // are covered without a host process.
 import { expect as bunExpect, test } from "bun:test";
-import type { GetTreeResult, JsonNode } from "@nativedesktop/core/rpc";
+import type { GetTreeResult, JsonNode } from "@nativedesktop/react/core/rpc";
 import fixture from "./fixtures/gestures-tree.json" with { type: "json" };
 import { AutomationRpcError } from "./socket.ts";
 import { Locator, LocatorError, LocatorFactory, StrictModeError, TimeoutError, type LocatorClient } from "./index.ts";

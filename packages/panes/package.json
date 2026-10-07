@@ -22,12 +22,11 @@
     ".": "./src/index.ts"
   },
   "peerDependencies": {
-    "@nativedesktop/solid": "workspace:^",
+    "@nativedesktop/react": "workspace:^",
     "solid-js": "2.0.0-rc.13"
   },
   "devDependencies": {
-    "@nativedesktop/core": "workspace:*",
-    "@nativedesktop/solid": "workspace:*",
+    "@nativedesktop/react": "workspace:*",
     "solid-js": "2.0.0-rc.13"
   }
 }

@@ -24,7 +24,7 @@ This file is intentionally short and is not kept in sync with schema changes by 
 ## cssClasses across platforms
 
 `cssClasses?: string[]` is validated on the Solid side against an Adwaita/GTK allowlist
-(`packages/core/src/css-classes-validate.ts`) and rides in the ordinary create/update `props`
+(`packages/react/src/core/css-classes-validate.ts`) and rides in the ordinary create/update `props`
 JSON; it is not nested under `style` and does not touch the C-ABI vtable.
 
 - **GTK** applies each class verbatim via `gtk_widget_add_css_class` (`src/gtk/style.zig`'s

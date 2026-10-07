@@ -1,5 +1,5 @@
 import { For, type Accessor } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 
 /** Renders one tree node keyed on its kind and id. A model op copies every
  * node on the path it touched, so the same pane arrives as a new object:

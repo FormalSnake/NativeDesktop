@@ -140,7 +140,7 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean): void {
       let line = `[nd] ${KIND_LABEL[kind]}: ${error.message}\n${error.stack ?? ""}`;
       if (!fatal && isHot() && !s.hintShown) {
         s.hintShown = true;
-        line += "\n[nd] the app kept running. Register onUnhandledError() from @nativedesktop/solid to handle these.";
+        line += "\n[nd] the app kept running. Register onUnhandledError() from @nativedesktop/react to handle these.";
       }
       console.error(line);
     }

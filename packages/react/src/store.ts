@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, type Accessor } from "solid-js";
-import type { Store } from "@nativedesktop/core";
+import type { Store } from "@nativedesktop/react/core";
 
 /** The store's value (or a selection of it) as a signal, subscribed for the
  *  lifetime of the calling owner. `select` must be pure. */

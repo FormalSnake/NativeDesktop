@@ -65,7 +65,7 @@ export function socketTransport(target: { path: string } | { host: string; port:
     let buffer = "";
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
-    // Outbound backpressure (the hazard packages/core/src/ndp.ts documents): a Bun
+    // Outbound backpressure (the hazard packages/react/src/core/ndp.ts documents): a Bun
     // socket write can accept fewer bytes than given (or -1 while closing),
     // and the unwritten remainder must be queued and flushed from `drain`,
     // or it is silently lost and the NDJSON stream is mis-framed from that

@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, createSignal } from "solid-js";
 
 // NOT imported by main.tsx. The acceptance fixture for menu child ORDER,

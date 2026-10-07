@@ -11,9 +11,9 @@ import {
   showToast,
   onToastButtonClicked,
   onToastDismissed,
-} from "@nativedesktop/solid";
+} from "@nativedesktop/react";
 import { For, Show, createMemo, createSignal } from "solid-js";
-import type { NdNodeRef, SourceTreeAction, SourceTreeNode, TableColumn, TableRow, TreeNode } from "@nativedesktop/solid";
+import type { NdNodeRef, SourceTreeAction, SourceTreeNode, TableColumn, TableRow, TreeNode } from "@nativedesktop/react";
 
 // Widget gallery: every widget here has live controlled state + testIDs,
 // driven headlessly by scripts/m5b-drive.ts and scripts/m5c-drive.ts over
@@ -122,7 +122,7 @@ function App() {
 
   // Window ref: showAlert/openFile/saveFile/showAbout are commands scoped to
   // this <window> node, correlated to their *Result events by the window's
-  // own wire id (see packages/core/src/dialogs.ts's header comment).
+  // own wire id (see packages/react/src/core/dialogs.ts's header comment).
   const [win, setWin] = createSignal<NdNodeRef<"window">>();
   const [toast, setToast] = createSignal<NdNodeRef<"toastoverlay">>();
 

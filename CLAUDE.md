@@ -31,7 +31,7 @@ silently.
 
 **Two processes per app.** A native **host** (Zig, owns `main()` + the OS event
 loop + the authoritative retained widget tree) and a **Bun/TypeScript child**
-(runs your Solid 2.0 app). `@nativedesktop/solid` is an `@solidjs/universal`
+(runs your Solid 2.0 app). `@nativedesktop/react` is an `@solidjs/universal`
 renderer: components run once, signals update only the props and children
 that read them, and each change becomes an op batched into a `CommitBatch`
 sent to the host over **NDP**: length-prefixed JSON over a local
@@ -78,20 +78,20 @@ processes). Use `@nativedesktop/data` (below) to keep the main thread free.
 Renaming a field is a compile error on both the Zig and TS sides. Never
 hand-edit `tools/codegen.ts` or the generated files.
 
-**Wire protocol perf:** the binary NDP commit encoder (`packages/core/src/ndp-binary.ts`)
+**Wire protocol perf:** the binary NDP commit encoder (`packages/react/src/core/ndp-binary.ts`)
 now measures faster than `JSON.stringify` on a large mount: a single growable
 `ArrayBuffer` with one cached `DataView`, rebuilt only when the buffer grows,
 replaces a `new DataView` allocation on every primitive write
 (`scripts/bench-10k.ts`, sized by `ND_BENCH_NODES`, is the wire gate;
 `scripts/bench-solid.tsx`, timing mount, one-row and all-rows updates to the
 CommitBatch, is the renderer gate). Inbound
-framing (`packages/core/src/ndp.ts`) tracks head/tail offsets into the accumulated
+framing (`packages/react/src/core/ndp.ts`) tracks head/tail offsets into the accumulated
 buffer instead of `Buffer.concat`-ing every chunk. Host-side (`src/runtime.zig`,
 `src/protocol.zig`): a `CommitBatch` is decoded and gated on the reader
 thread, and the UI thread only runs `tree.apply`; outbound frames (events,
 `changed`, terminal output) are handed to a writer thread instead of written
 inline, so a full socket buffer never blocks the run loop. The Solid
-renderer's `setProperty` (`packages/solid/src/renderer.ts`) runs per prop
+renderer's `setProperty` (`packages/react/src/renderer.ts`) runs per prop
 when the signal behind it changes; it compares the new value against the
 previous one with core's `propsEqual` (by value, up to 4 levels deep), so an
 effect that rebuilds an equal `style`/`rows` object emits no update op. Props
@@ -276,7 +276,7 @@ reaches the host ahead of the create.
 `loadFailed`, `newWindow` (host denies the popup, app opens a native tab),
 `downloadRequested` (engine download cancelled, app downloads via Bun),
 `javaScriptResult`; commands `goBack`, `goForward`, `reload`, `stop`,
-`executeJavaScript` (promise helper in `@nativedesktop/solid`), `setZoom`,
+`executeJavaScript` (promise helper in `@nativedesktop/react`), `setZoom`,
 `setUserAgent`, `openDevTools`. Context menus are the engine's own by default
 (`contextMenuMode="native"`, the alternative being `"suppress"`): the app's
 `setContextMenuItems` tree (types, checkboxes, radio groups, submenus,
@@ -338,7 +338,7 @@ band around the threshold).
 
 ### App-facing APIs added recently
 - **System capabilities** (parity with native-sdk.dev's capability pack) —
-  promise-based APIs from `@nativedesktop/solid` (`packages/core/src/
+  promise-based APIs from `@nativedesktop/react` (`packages/react/src/core/
   system.ts`): `dialog.openFile/saveFile/showMessage`, `clipboard.readText/
   writeText`, `notifications.show/onClick`, `recentDocuments.add/clear`,
   `credentials.set/get/delete` (Keychain / dlopen'd libsecret), and app-level
@@ -352,7 +352,7 @@ band around the threshold).
   `core:clipboard.read` and `core:credentials` need an `ND_ACL_GRANTS`
   manifest (`{"defaultWindow":[...]}` or per-window `grants`). Pure-TS
   helpers (no host round-trip, unsandboxed by design): `openExternal` /
-  `openPath` / `revealPath` (`packages/core/src/shell.ts`).
+  `openPath` / `revealPath` (`packages/react/src/core/shell.ts`).
 - **Audio playback + spectrum** — `audio.play({path|url, volume?, spectrum?})`
   → handle; `pause/resume/stop/seek/setVolume`; `audio.onState` (transition
   events: playing/paused/ended/stopped/error, position/duration ms) and
@@ -373,7 +373,7 @@ band around the threshold).
   XML (`packages/nd/src/package/identity.ts`). OS launches land as
   `app.onOpenFile` / `app.onOpenUrl` events.
 - **App data dir** — `getAppDataDir()` / `ensureAppDataDir()` from
-  `@nativedesktop/solid` (`packages/core/src/paths.ts`). Electron-style
+  `@nativedesktop/react` (`packages/react/src/core/paths.ts`). Electron-style
   userData path; app name comes from the app's `package.json` `name`. macOS
   `~/Library/Application Support/<name>`, Linux `$XDG_DATA_HOME/<name>`
   (→ `~/.local/share/<name>`).
@@ -392,8 +392,8 @@ band around the threshold).
   or `migrate()` at startup via the sqlite-proxy migrator. `drizzle-orm`/`kysely`
   are devDependencies only — never a library dep to keep updated.
 - **Per-window dialogs + toasts** — `showAlert`/`openFile`/`saveFile`/`showAbout`
-  (`packages/core/src/dialogs.ts`) and `showToast`/`dismissToast`
-  (`packages/core/src/toast.ts`) are promise-wrapped imperative commands on
+  (`packages/react/src/core/dialogs.ts`) and `showToast`/`dismissToast`
+  (`packages/react/src/core/toast.ts`) are promise-wrapped imperative commands on
   `<window>`/`<toastoverlay>`: `sendCommand` kicks the native dialog/toast off,
   a matching `*Result`/`toast*` event settles the promise. Dialogs correlate by
   the window's own wire id (only one pending per window — a second call
@@ -423,7 +423,7 @@ band around the threshold).
   app-controlled state, never native state, so an unrelated re-render can't
   silently collapse a branch the user opened.
 - **Survivable error policy**: `setUnhandledErrorPolicy` / `onUnhandledError`
-  (`packages/core/src/errors.ts`): `uncaughtException` defaults to fatal,
+  (`packages/react/src/core/errors.ts`): `uncaughtException` defaults to fatal,
   `unhandledRejection` to report-and-survive (`ND_FATAL_REJECTIONS=1` flips
   it). Render-phase errors: one an app `<Errored>` boundary catches reports
   non-fatal; one no boundary catches lands in the boundary the renderer wraps
@@ -433,8 +433,8 @@ band around the threshold).
   host stashes overlay text only for fatal=true and prints
   `ND_RUNTIME_ERROR_NONFATAL` otherwise, so a stale report never becomes
   overlay text.
-- **Settings store**: `createStore` (`packages/core/src/store.ts`) /
-  `useStoreValue` (`packages/solid/src/store.ts`, an accessor): versioned
+- **Settings store**: `createStore` (`packages/react/src/core/store.ts`) /
+  `useStoreValue` (`packages/react/src/store.ts`, an accessor): versioned
   `${name}.json` under the app data dir. Intended launch shape: `await store.load()` above `render()`, which
   makes `get()` synchronous inside components (no loading flash, no restore
   effect). Writes are debounced, serialized on one promise chain, land via
@@ -469,7 +469,7 @@ band around the threshold).
   ToolbarView top/content/bottom slots + bar styles, AdwViewSwitcher tab views,
   SplitView breakpoints + Window `sizeChanged`, empty-state AdwStatusPage on
   data views, `accentColor` in the appearance payload, and the spacing scale
-  `Spacing`/`ContentMargin` (`packages/core/src/metrics.ts`). AppKit:
+  `Spacing`/`ContentMargin` (`packages/react/src/core/metrics.ts`). AppKit:
   system-drawn toolbar items (labels, overflow, customization,
   NSToolbarItemGroup runs), badges, edge-to-edge content via
   NSBackgroundExtensionView, ~50 new SF Symbol mappings, window `toolbarStyle`/
@@ -477,7 +477,7 @@ band around the threshold).
   now the platform standard (8 AppKit / 6 GTK) instead of 0**; the schema
   default `-1` is the sentinel for it.
 - **Feature detection + app state**: `hasWidget(type)` / `hasCommand(type,
-  command)` (`packages/core/src/platform.ts`) answer from a helloAck host
+  command)` (`packages/react/src/core/platform.ts`) answer from a helloAck host
   manifest, replacing try/catch around `sendCommand` (fallback semantics for
   hosts predating the fields). `app.isActive()` is synchronous, kept current by
   host-side state replay after HelloAck. `NotificationOptions.data` is echoed
@@ -528,18 +528,18 @@ band around the threshold).
 - **AppKit backend:** `swift/Sources/NDShell/` (hand-written) +
   `swift/Sources/NDGen/` (generated) + `swift/Sources/CNd/` (bridges `libnd.a`);
   build scripts under `scripts/mac/`.
-- **JS packages:** `packages/core` (`@nativedesktop/core`, shipped as source:
+- **JS packages:** `packages/react` (`@nativedesktop/react/core`, shipped as source:
   renderer-agnostic NDP client `ndp.ts` + binary encoder `ndp-binary.ts`,
   session/handshake, Batch/NodeRegistry, wire ids, prop diff and
   dropped-prop reset, sendCommand/moveNode, `Platform`, paths, store, errors,
   system/dialogs/toast/webview APIs, and the generated schema-meta/protocol/
-  rpc/widgets TS), `packages/solid`
-  (`@nativedesktop/solid`: `@solidjs/universal` renderer over core, Solid JSX
+  rpc/widgets TS), `packages/react`
+  (`@nativedesktop/react`: `@solidjs/universal` renderer over core, Solid JSX
   intrinsics, `Portal`/`createPool`; `register.ts` is the Bun plugin that runs
   babel-preset-solid's universal transform and swaps solid-js's SSR build
   for its client build, and treats every `.jsx`/`.tsx` as Solid; `nd dev`,
-  `nd build`, `nd package` and `launchApp` preload it through `BUN_OPTIONS=--preload=@nativedesktop/solid/register`
-  for an app whose `dependencies` list `@nativedesktop/solid`
+  `nd build`, `nd package` and `launchApp` preload it through `BUN_OPTIONS=--preload=@nativedesktop/react/register`
+  for an app whose `dependencies` list `@nativedesktop/react`
   (`packages/host/src/preload.ts`; packaged launches read `preload` from
   nd-app.json), so a Solid app is a single `.tsx` entry. Bun's BUN_OPTIONS
   has no reliable quoting, hence the bare specifier rather than a path.

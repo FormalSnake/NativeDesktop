@@ -1,5 +1,5 @@
 import { For, createSignal, type Accessor } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 import { applyTileDrop, moveTile, placeTile, raiseTile, removeTile, resizeTile, tileDragPayload, updateTile } from "./tiles.ts";
 import type { Tile, TileModel, TilePlacement, TileSize } from "./tiles.ts";
 

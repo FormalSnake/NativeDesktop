@@ -1,5 +1,5 @@
-import { executeJavaScript, onJavaScriptResult, render, webviewEngine } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { executeJavaScript, onJavaScriptResult, render, webviewEngine } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createEffect, createSignal, onSettled, untrack } from "solid-js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

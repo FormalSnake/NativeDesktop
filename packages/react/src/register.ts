@@ -1,7 +1,7 @@
 // Makes `bun <entry>.tsx` able to run a Solid app. It has to load before
 // anything imports solid-js, so it runs as a preload: `nd dev`, `nd package`
-// and @nativedesktop/test's launchApp put `--preload=@nativedesktop/solid/register`
-// in BUN_OPTIONS for an app that depends on @nativedesktop/solid
+// and @nativedesktop/test's launchApp put `--preload=@nativedesktop/react/register`
+// in BUN_OPTIONS for an app that depends on @nativedesktop/react
 // (@nativedesktop/host's preload.ts), and this package's bunfig.toml preloads
 // it for `bun test`.
 //
@@ -14,7 +14,7 @@
 //   of the client build instead (the dev build under `nd dev`, which the
 //   refresh runtime requires).
 // - Every .jsx/.tsx goes through babel-preset-solid's universal transform,
-//   whose compiled output imports its helpers from @nativedesktop/solid.
+//   whose compiled output imports its helpers from @nativedesktop/react.
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
 import type { PluginObj, TransformOptions } from "@babel/core";
 import { existsSync } from "node:fs";
@@ -43,7 +43,7 @@ const jsx = /\.[jt]sx$/;
 //   module's previous accept callbacks run once its new copy has evaluated,
 //   and those patch the live component proxies to the new code.
 // - A fresh solid-js would own a second reactive graph that the live tree
-//   knows nothing about, and a fresh @nativedesktop/solid would lose the
+//   knows nothing about, and a fresh @nativedesktop/react would lose the
 //   renderer's retained tree. So the reactive core, the universal renderer
 //   and this package are pinned: the first evaluation of each file records
 //   its namespace on globalThis, and every later load of the file is a facade

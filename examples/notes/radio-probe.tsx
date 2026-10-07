@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { Show, createSignal } from "solid-js";
 
 // Regression probe for the radio-group use-after-free: a conditionally

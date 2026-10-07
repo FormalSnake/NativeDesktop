@@ -12,7 +12,7 @@
       "name": "adblock-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -20,7 +20,7 @@
       "name": "arcchrome-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -28,7 +28,7 @@
       "name": "browser-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -36,7 +36,7 @@
       "name": "cef-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -44,7 +44,7 @@
       "name": "command-palette-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -52,7 +52,7 @@
       "name": "counter-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -60,7 +60,7 @@
       "name": "dialogs-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -68,7 +68,7 @@
       "name": "errors-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -76,7 +76,7 @@
       "name": "gallery-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -84,7 +84,7 @@
       "name": "gestures-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -92,7 +92,7 @@
       "name": "headerfield-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -100,7 +100,7 @@
       "name": "inspector-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -108,7 +108,7 @@
       "name": "locators-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -116,7 +116,7 @@
       "name": "multiwindow-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -125,7 +125,7 @@
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/native": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -133,7 +133,7 @@
       "name": "ndwidgets-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -141,7 +141,7 @@
       "name": "notes-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -150,7 +150,7 @@
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/panes": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -159,7 +159,7 @@
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/panes": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "@nativedesktop/ui": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
@@ -168,7 +168,7 @@
       "name": "popoveranchor-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -176,7 +176,7 @@
       "name": "propreset-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -184,7 +184,7 @@
       "name": "remote-terminal-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -192,7 +192,7 @@
       "name": "settings-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -200,7 +200,7 @@
       "name": "sourcetree-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -208,7 +208,7 @@
       "name": "tasks-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -216,7 +216,7 @@
       "name": "terminal-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -224,13 +224,9 @@
       "name": "webview-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
-    },
-    "packages/core": {
-      "name": "@nativedesktop/core",
-      "version": "0.5.0",
     },
     "packages/data": {
       "name": "@nativedesktop/data",
@@ -293,12 +289,33 @@
       "name": "@nativedesktop/panes",
       "version": "0.5.0",
       "devDependencies": {
-        "@nativedesktop/core": "workspace:*",
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
       "peerDependencies": {
-        "@nativedesktop/solid": "workspace:^",
+        "@nativedesktop/react": "workspace:^",
+        "solid-js": "2.0.0-rc.13",
+      },
+    },
+    "packages/react": {
+      "name": "@nativedesktop/react",
+      "version": "0.5.0",
+      "bin": {
+        "nd-solid-build": "./src/build.ts",
+      },
+      "dependencies": {
+        "@babel/core": "7.29.7",
+        "@babel/preset-typescript": "7.29.7",
+        "@solidjs/compiler": "2.0.0-rc.13",
+        "@solidjs/universal": "2.0.0-rc.13",
+        "babel-preset-solid": "2.0.0-rc.2",
+      },
+      "devDependencies": {
+        "@types/babel__core": "7.20.5",
+        "solid-js": "2.0.0-rc.13",
+        "typescript": "7.0.2",
+      },
+      "peerDependencies": {
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -315,46 +332,23 @@
         "solid-js",
       ],
     },
-    "packages/solid": {
-      "name": "@nativedesktop/solid",
-      "version": "0.5.0",
-      "bin": {
-        "nd-solid-build": "./src/build.ts",
-      },
-      "dependencies": {
-        "@babel/core": "7.29.7",
-        "@babel/preset-typescript": "7.29.7",
-        "@nativedesktop/core": "workspace:*",
-        "@solidjs/compiler": "2.0.0-rc.13",
-        "@solidjs/universal": "2.0.0-rc.13",
-        "babel-preset-solid": "2.0.0-rc.2",
-      },
-      "devDependencies": {
-        "@types/babel__core": "7.20.5",
-        "solid-js": "2.0.0-rc.13",
-        "typescript": "7.0.2",
-      },
-      "peerDependencies": {
-        "solid-js": "2.0.0-rc.13",
-      },
-    },
     "packages/test": {
       "name": "@nativedesktop/test",
       "version": "0.5.0",
       "dependencies": {
-        "@nativedesktop/core": "workspace:*",
         "@nativedesktop/host": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
       },
     },
     "packages/ui": {
       "name": "@nativedesktop/ui",
       "version": "0.5.0",
       "devDependencies": {
-        "@nativedesktop/solid": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "solid-js": "2.0.0-rc.13",
       },
       "peerDependencies": {
-        "@nativedesktop/solid": "workspace:^",
+        "@nativedesktop/react": "workspace:^",
         "solid-js": "2.0.0-rc.13",
       },
     },
@@ -442,8 +436,6 @@
 
     "@nativedesktop/cli": ["@nativedesktop/cli@workspace:packages/nd"],
 
-    "@nativedesktop/core": ["@nativedesktop/core@workspace:packages/core"],
-
     "@nativedesktop/data": ["@nativedesktop/data@workspace:packages/data"],
 
     "@nativedesktop/host": ["@nativedesktop/host@workspace:packages/host"],
@@ -458,9 +450,9 @@
 
     "@nativedesktop/panes": ["@nativedesktop/panes@workspace:packages/panes"],
 
-    "@nativedesktop/rpc": ["@nativedesktop/rpc@workspace:packages/rpc"],
+    "@nativedesktop/react": ["@nativedesktop/react@workspace:packages/react"],
 
-    "@nativedesktop/solid": ["@nativedesktop/solid@workspace:packages/solid"],
+    "@nativedesktop/rpc": ["@nativedesktop/rpc@workspace:packages/rpc"],
 
     "@nativedesktop/test": ["@nativedesktop/test@workspace:packages/test"],
 

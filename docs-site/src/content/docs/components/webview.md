@@ -14,8 +14,8 @@ to both engines unless a difference is called out.
 ![The webview widget rendering a page inside the browser example on GNOME (GTK)](../../../assets/screens/gtk/browser.png)
 
 ```tsx
-import { render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 function App() {
@@ -163,13 +163,13 @@ sendCommand(page, "setZoom", 1.5);
 | `setContextMenuItems` | `{ items: ContextMenuItem[] }` | Replaces the items merged into the engine's context menu (see below). |
 
 `executeJavaScript` has no synchronous return path. Use the `executeJavaScript(node, code)` helper
-from `@nativedesktop/solid` rather than the raw command: it generates the `id`, sends the command,
+from `@nativedesktop/react` rather than the raw command: it generates the `id`, sends the command,
 and returns a `Promise<string>` that settles from the matching `javaScriptResult` event. Wire the
 widget's `onJavaScriptResult` prop straight to the paired `onJavaScriptResult` export so the
 promise has something to settle it:
 
 ```tsx
-import { executeJavaScript, onJavaScriptResult } from "@nativedesktop/solid";
+import { executeJavaScript, onJavaScriptResult } from "@nativedesktop/react";
 
 <webview ref={page} url={url()} onJavaScriptResult={onJavaScriptResult} />;
 // …later:
@@ -188,7 +188,7 @@ developer extras are on) and the app's items are appended to it after a separato
 per view with the `setContextMenuItems` helper; the host stores the tree until it is replaced.
 
 ```tsx
-import { setContextMenuItems } from "@nativedesktop/solid";
+import { setContextMenuItems } from "@nativedesktop/react";
 
 setContextMenuItems(page!, [
   { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
@@ -299,7 +299,7 @@ from config; `registerScheme` then installs the handler behind it. The call itse
 both engines.
 
 ```tsx
-import { webviewEngine } from "@nativedesktop/solid";
+import { webviewEngine } from "@nativedesktop/react";
 
 await webviewEngine.registerScheme("crx");
 // then, on the webview that made the request:

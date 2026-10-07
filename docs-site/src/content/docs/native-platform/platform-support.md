@@ -11,10 +11,10 @@ description: What's landed, what's planned, and how each platform is verified.
 
 ## Detecting the platform at runtime
 
-`Platform` from `@nativedesktop/solid` exposes two independent axes, because they can disagree:
+`Platform` from `@nativedesktop/react` exposes two independent axes, because they can disagree:
 
 ```tsx
-import { Platform } from "@nativedesktop/solid";
+import { Platform } from "@nativedesktop/react";
 
 Platform.backend; // "gtk" | "appkit": the native widget layer actually drawing
 Platform.os;      // "macos" | "linux" | "windows": where the process runs

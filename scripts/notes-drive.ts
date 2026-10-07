@@ -22,7 +22,7 @@
 // after the click ack, a real async NDP round trip) uses poll().
 import { launchApp, findNode, poll } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
-import { widgetMeta } from "../packages/core/src/generated/schema-meta.ts";
+import { widgetMeta } from "../packages/react/src/core/generated/schema-meta.ts";
 
 interface SourceListRow {
   title: string;
@@ -76,7 +76,7 @@ if (titleInput0.text !== "Welcome to ND Notes") throw new Error(`unexpected seed
 // (editor) — and each pane's first child is a <headerbar> (role toolbar).
 // getTree's `type` field is the schema widget name; look up each node's
 // accessibility role from the same generated table the codegen emits
-// (packages/core/src/generated/schema-meta.ts) rather than assuming a wire
+// (packages/react/src/core/generated/schema-meta.ts) rather than assuming a wire
 // "role" field exists.
 const splitNode = await app.mustFind("split");
 const splitRole = widgetMeta[splitNode.type]?.role;

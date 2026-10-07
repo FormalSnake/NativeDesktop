@@ -19,7 +19,7 @@ the schema's compile-time guarantees.
 ## Solid API
 
 ```tsx
-import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/solid";
+import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/react";
 
 interface ColorProps { color: string }
 interface ColorEvent { source: "gtk" | "appkit" }
@@ -38,7 +38,7 @@ const ColorView = defineNativeComponent<ColorProps, ColorEvent>({ viewKind: "app
 identifies which factory the plugin registered, `props` is JSON-serialized across the ABI, and
 `onNativeEvent` receives `{ name, data }` as the plugin emits them. A ref exposes
 `send(command, arg?)` for one-shot imperative calls, or call `sendNativeCommand(ref,
-command, arg)` from `@nativedesktop/solid` directly. That is a sibling channel to the schema-typed
+command, arg)` from `@nativedesktop/react` directly. That is a sibling channel to the schema-typed
 `sendCommand`/`hasCommand` in [Imperative Commands & Refs](/core-concepts/imperative-commands/):
 `<nativeview>` declares no `commands` in `schema/widgets.json`, so `sendNativeCommand` skips
 validation and hands the command straight to the plugin's `command` handler.
@@ -151,7 +151,7 @@ forwards a `color` prop, emits a `pressed` event on click, and answers a `reset`
 
 ```tsx
 // examples/nativeview-demo/main.tsx
-import { defineNativeComponent, render, type NativeComponentRef } from "@nativedesktop/solid";
+import { defineNativeComponent, render, type NativeComponentRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 interface ColorProps { color: string }

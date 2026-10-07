@@ -1,5 +1,5 @@
-import { render, Portal, moveNode, executeJavaScript, onJavaScriptResult } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, Portal, moveNode, executeJavaScript, onJavaScriptResult } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { Show, createSignal, onSettled } from "solid-js";
 
 // One <webview> moves between two windows

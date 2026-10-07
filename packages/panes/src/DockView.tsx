@@ -1,5 +1,5 @@
 import { For, Show, createSignal, type Accessor } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 import {
   activateTab,
   activeDockTabIndex,

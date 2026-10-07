@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, createSignal } from "solid-js";
 
 // Locator probe: the widgets scripts/locator-drive.ts needs to exercise the

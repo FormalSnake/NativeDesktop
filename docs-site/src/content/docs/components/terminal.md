@@ -13,7 +13,7 @@ own text stack: CoreText on macOS, cairo and Pango on GTK. Keystrokes go straigh
 ![The terminal widget running a shell on GNOME (GTK)](../../../assets/screens/gtk/terminal.png)
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function App() {
   return (

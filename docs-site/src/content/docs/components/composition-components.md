@@ -8,7 +8,7 @@ component here renders ordinary intrinsics (`<box>`, `<row>`, `<button>`, `<expa
 no state of its own beyond what a controlled prop gives it. Nothing in this package touches
 `schema/widgets.json` or the ABI, the same precedent `@nativedesktop/panes` set for `PaneTree` (see
 [Split Views](/native-platform/split-views/)). Install it as a workspace dependency and import from
-`@nativedesktop/ui`; it peer-depends on `@nativedesktop/solid` and `solid-js`.
+`@nativedesktop/ui`; it peer-depends on `@nativedesktop/react` and `solid-js`.
 
 ## Accordion
 

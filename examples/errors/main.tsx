@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { Errored, Show, createSignal } from "solid-js";
 
 function Thrower(): never {

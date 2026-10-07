@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, Show, createSignal } from "solid-js";
 
 // A terminal app with REAL native chrome AND native system tabs — the

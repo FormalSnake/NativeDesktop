@@ -9,10 +9,10 @@ your components.
 
 ## `getAppDataDir()` / `ensureAppDataDir()`
 
-Both are exported from `@nativedesktop/solid` and `@nativedesktop/core` (`packages/core/src/paths.ts`):
+Both are exported from `@nativedesktop/react` and `@nativedesktop/react/core` (`packages/react/src/core/paths.ts`):
 
 ```tsx
-import { ensureAppDataDir, getAppDataDir } from "@nativedesktop/solid";
+import { ensureAppDataDir, getAppDataDir } from "@nativedesktop/react";
 
 getAppDataDir(); // resolve the path; does not create it
 ensureAppDataDir(); // resolve AND mkdir -p it, returning the same path
@@ -44,11 +44,11 @@ opening a database there.
 ## `createStore`: versioned JSON settings
 
 For settings, layouts, and other small persistent state, `createStore` (exported from
-`@nativedesktop/solid` and `@nativedesktop/core`, `packages/core/src/store.ts`; not the `createStore` from `solid-js`) manages one `${name}.json` file under
+`@nativedesktop/react` and `@nativedesktop/react/core`, `packages/react/src/core/store.ts`; not the `createStore` from `solid-js`) manages one `${name}.json` file under
 `getAppDataDir()` (or a `dir` override):
 
 ```tsx
-import { createStore, render, useStoreValue } from "@nativedesktop/solid";
+import { createStore, render, useStoreValue } from "@nativedesktop/react";
 
 const settings = createStore<{ theme: string }>({
   name: "settings", // -> <appDataDir>/settings.json
@@ -113,7 +113,7 @@ thread that runs your components, where a slow query stalls UI updates.
 call is a `postMessage` round-trip, so a slow `SELECT` blocks the worker instead of your app.
 
 ```tsx
-import { ensureAppDataDir } from "@nativedesktop/solid";
+import { ensureAppDataDir } from "@nativedesktop/react";
 import { openDatabase } from "@nativedesktop/data";
 
 const db = await openDatabase(`${ensureAppDataDir()}/app.sqlite`);

@@ -14,7 +14,7 @@ generates:
 
 - `src/generated/`, the Zig bindings for the GTK backend: widget construction, prop application,
   event wiring.
-- TypeScript intrinsics and schema metadata consumed by `packages/solid` and `packages/core`.
+- TypeScript intrinsics and schema metadata consumed by `packages/react` and `packages/react`.
 - The Swift arms of the AppKit backend under `swift/Sources/NDGen/`.
 - The generated reference docs, `docs/widgets.md` and `docs/styling.md`.
 
@@ -50,8 +50,8 @@ bridges `libnd.a`.
 
 | Package | What it is |
 |---|---|
-| `@nativedesktop/solid` | The renderer app code imports: `render`, `Portal`, `moveNode`, `defineNativeComponent`, the intrinsic widget types, and the app APIs re-exported from core. Turns Solid's updates into NDP `CommitBatch` ops. `solid-js` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. Its `register` entry is the Bun preload that compiles Solid JSX, and `nd-solid-build` compiles an app ahead of time. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
-| `@nativedesktop/core` | The renderer-agnostic half: the NDP client, dialogs, toasts, the webview and system APIs, `createStore`, error policy. Shipped as TypeScript source. |
+| `@nativedesktop/react` | The renderer app code imports: `render`, `Portal`, `moveNode`, `defineNativeComponent`, the intrinsic widget types, and the app APIs re-exported from core. Turns Solid's updates into NDP `CommitBatch` ops. `solid-js` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. Its `register` entry is the Bun preload that compiles Solid JSX, and `nd-solid-build` compiles an app ahead of time. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
+| `@nativedesktop/react/core` | The renderer-agnostic half: the NDP client, dialogs, toasts, the webview and system APIs, `createStore`, error policy. Shipped as TypeScript source. |
 | `@nativedesktop/cli` | The `nd` CLI (bin `nd`). `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation, `nd build` runs the app's `compile` script (`nd-solid-build`), `nd package` assembles the platform bundle, `nd doctor` checks toolchain/config readiness. See [Quick Start](/get-started/quick-start/) and [Packaging](/packaging/). |
 | `@nativedesktop/host` | `resolveHostBinary()` finds the prebuilt host for the current platform under `bin/<os>-<arch>/`, and builds one on first run inside this checkout. |
 | `@nativedesktop/data` | Worker-backed `bun:sqlite`, so queries never block the commit loop. `@nativedesktop/data/solid` adds `createQuery`. See [App Data & Storage](/core-concepts/app-data-storage/). |
@@ -80,12 +80,12 @@ all of them with screenshots). The ones to read first:
 
 What `scripts/new-app.sh` copies to start a new app:
 
-- A `package.json` linking `@nativedesktop/solid`, `@nativedesktop/native`, `@nativedesktop/cli`
+- A `package.json` linking `@nativedesktop/react`, `@nativedesktop/native`, `@nativedesktop/cli`
   (bin `nd`), and transitively `@nativedesktop/host` through `file:` paths into this checkout, so a
   scaffold made from a checkout exercises the checkout rather than the npm registry the template's
   own `^0.1.0` ranges point at.
 - A `src/main.tsx` entry.
-- A `tsconfig.json` with `jsx: "preserve"` and `jsxImportSource: "@nativedesktop/solid"`.
+- A `tsconfig.json` with `jsx: "preserve"` and `jsxImportSource: "@nativedesktop/react"`.
 - A `bunfig.toml` pinning `install.linker = "hoisted"`. Bun 1.3+ defaults a lockfile-less install to the isolated linker
   once workspaces are involved, which can leave a `file:`/`link:`-referenced package's own
   dependencies unresolved at runtime.

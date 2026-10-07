@@ -1,6 +1,6 @@
 import { For, createMemo } from "solid-js";
-import type { JSX, NdNodeRef } from "@nativedesktop/solid";
-import { Spacing, sendCommand } from "@nativedesktop/solid";
+import type { JSX, NdNodeRef } from "@nativedesktop/react";
+import { Spacing, sendCommand } from "@nativedesktop/react";
 import { otpCellChanged, otpChars } from "./otp.ts";
 
 export interface OtpInputProps {

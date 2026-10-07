@@ -1,5 +1,5 @@
-import { render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // The Arc window shape: no toolbar, a full-height sidebar whose first row

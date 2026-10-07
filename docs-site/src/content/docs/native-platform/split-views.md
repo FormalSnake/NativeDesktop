@@ -88,7 +88,7 @@ Each split renders as a real native `GtkPaned` or `NSSplitView` with a draggable
 
 ```tsx
 import { Show } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 import { PaneTree, createPaneTree, seedPanes } from "@nativedesktop/panes";
 
 function Editor(): JSX.Element {

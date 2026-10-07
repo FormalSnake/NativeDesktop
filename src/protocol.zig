@@ -2,7 +2,7 @@ const std = @import("std");
 
 // Frame/struct shapes are GENERATED from schema/protocol.json (the single
 // source of truth shared with the TS mirror,
-// packages/core/src/generated/protocol.ts): a field rename or type change
+// packages/react/src/core/generated/protocol.ts): a field rename or type change
 // there regenerates both sides, so drift is a compile error, not a silent
 // wire break. This file re-exports them under the existing `protocol.*`
 // names and keeps the hand-written framing/encode helpers + golden-byte
@@ -92,7 +92,7 @@ const type_name_max = 32;
 /// The frame's `type`, for routing, without parsing the frame.
 ///
 /// Every frame the host receives is our own encoder's output
-/// (packages/core/src/ndp.ts), which builds each frame from an object literal whose
+/// (packages/react/src/core/ndp.ts), which builds each frame from an object literal whose
 /// first member is `type`, so the value starts at a fixed offset and routing
 /// costs a prefix compare instead of a JSON parse of the whole (possibly
 /// multi-megabyte) frame. A frame shaped any other way falls back to the full

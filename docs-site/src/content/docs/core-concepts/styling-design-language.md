@@ -106,11 +106,11 @@ For a live accent color (a status dot, a chart series), read `system.getAppearan
 
 ## Spacing scale
 
-For bespoke layout (`<box spacing>`, `style.padding`), `@nativedesktop/solid` exports the platform's
+For bespoke layout (`<box spacing>`, `style.padding`), `@nativedesktop/react` exports the platform's
 design-language scale instead of magic numbers:
 
 ```tsx
-import { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/solid";
+import { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/react";
 
 <box spacing={Spacing.sm} style={{ padding: ContentMargin }} />;
 ```

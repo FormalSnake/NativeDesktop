@@ -1,9 +1,9 @@
 import { test, expect, beforeAll } from "bun:test";
 import { createSignal, Errored, For, Show } from "solid-js";
-import { Batch, NodeRegistry, onUnhandledError, setSession, setUnhandledErrorPolicy, type Op } from "@nativedesktop/core";
+import { Batch, NodeRegistry, onUnhandledError, setSession, setUnhandledErrorPolicy, type Op } from "@nativedesktop/react/core";
 import { render, nextCommit, Portal, createPool, Activity } from "./renderer.ts";
 import { defineNativeComponent, type NativeComponentRef } from "./native-component.ts";
-import { eventForHandler } from "@nativedesktop/core";
+import { eventForHandler } from "@nativedesktop/react/core";
 
 const commits: Op[][] = [];
 const registry = new NodeRegistry();

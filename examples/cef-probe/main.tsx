@@ -19,8 +19,8 @@ import {
   saveSession,
   sendCommand,
   webviewEngine,
-} from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+} from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { For, Show, createSignal, createStore, onCleanup, onSettled } from "solid-js";
 import {
   answerPermission,

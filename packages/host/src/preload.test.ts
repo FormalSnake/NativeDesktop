@@ -12,13 +12,13 @@ function app(pkg: object): string {
 
 describe("preloadEnv", () => {
   test("a Solid app gets the register preload", () => {
-    const dir = app({ dependencies: { "@nativedesktop/solid": "0.4.54" } });
+    const dir = app({ dependencies: { "@nativedesktop/react": "0.4.54" } });
     expect(preloadEnv(dir, undefined)).toEqual({ BUN_OPTIONS: `--preload=${SOLID_PRELOAD}` });
   });
 
   test("an app without a runtime Solid dependency gets nothing", () => {
-    expect(preloadEnv(app({ dependencies: { "@nativedesktop/core": "0.4.54" } }), undefined)).toEqual({});
-    expect(preloadEnv(app({ devDependencies: { "@nativedesktop/solid": "0.4.54" } }), undefined)).toEqual({});
+    expect(preloadEnv(app({ dependencies: { "@nativedesktop/react/core": "0.4.54" } }), undefined)).toEqual({});
+    expect(preloadEnv(app({ devDependencies: { "@nativedesktop/react": "0.4.54" } }), undefined)).toEqual({});
   });
 
   test("existing BUN_OPTIONS are kept and the flag is not repeated", () => {

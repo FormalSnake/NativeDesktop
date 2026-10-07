@@ -15,7 +15,7 @@ independent OS window on both backends, all driven by the same Bun/Solid process
 ## Rendering more than one window
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function App() {
   return (
@@ -66,7 +66,7 @@ the owner tree, so Solid disposes the old instance and creates a fresh one, whic
 a native destroy and create. For a `<webview>` that throws away the WKWebView/WebKitGTK instance and
 rebuilds it: the page reloads and scroll position, form input, and JS state go with it.
 
-Three exports from `@nativedesktop/solid` (`packages/solid/src/renderer.ts`) work around it:
+Three exports from `@nativedesktop/react` (`packages/react/src/renderer.ts`) work around it:
 
 ```ts
 function createPool(): Pool
@@ -88,8 +88,8 @@ A node rendered via `createPortal` is a live native widget the moment it mounts.
 no window until the first `moveNode` call places it somewhere visible.
 
 ```tsx
-import { render, Portal, moveNode } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, Portal, moveNode } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { Show, createSignal } from "solid-js";
 
 function App() {

@@ -1,5 +1,5 @@
 import { createSignal, onCleanup } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 
 export interface HoverCardProps {
   content: JSX.Element;

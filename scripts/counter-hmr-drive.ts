@@ -13,7 +13,7 @@
 // ND_HOST_BINARY picks the host (e.g. swift/.build/release/NDShell).
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { JsonNode } from "../packages/core/src/generated/rpc.ts";
+import type { JsonNode } from "../packages/react/src/core/generated/rpc.ts";
 import { launchApp, expect, poll } from "../packages/test/src/index.ts";
 
 const exampleDir = join(import.meta.dir, "..", "examples", "counter");

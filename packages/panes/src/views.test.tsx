@@ -1,7 +1,7 @@
 import { test, expect, beforeAll } from "bun:test";
 import { flush } from "solid-js";
-import { Batch, NodeRegistry, setSession, type Op } from "@nativedesktop/core";
-import { render, nextCommit } from "@nativedesktop/solid";
+import { Batch, NodeRegistry, setSession, type Op } from "@nativedesktop/react/core";
+import { render, nextCommit } from "@nativedesktop/react";
 import { PaneTree, createPaneTree } from "./PaneTree.tsx";
 import { seedPanes } from "./model.ts";
 

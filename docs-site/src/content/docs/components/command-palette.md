@@ -13,7 +13,7 @@ Cmd-K pattern. The widget never filters, ranks, or reorders anything. Every keys
 ![The command palette open over the demo app on GNOME (GTK)](../../../assets/screens/gtk/commandpalette-open.png)
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createMemo, createSignal } from "solid-js";
 
 interface Command {

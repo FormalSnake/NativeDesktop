@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 // A <window> with no defaultWidth/defaultHeight: the acceptance fixture for
 // sizing a window from its content. Both boxes carry an explicit minWidth /

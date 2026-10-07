@@ -20,13 +20,13 @@ sed -i "s/nativedesktop-app/$NAME/" "$DEST/package.json"
 DEST_ABS="$(cd "$DEST" && pwd)"
 REL_PACKAGES="$(realpath --relative-to="$DEST_ABS" "$REPO_ROOT/packages")"
 sed -i \
-  -e "s#\"@nativedesktop/solid\": \"[^\"]*\"#\"@nativedesktop/solid\": \"file:${REL_PACKAGES}/solid\"#" \
+  -e "s#\"@nativedesktop/react\": \"[^\"]*\"#\"@nativedesktop/react\": \"file:${REL_PACKAGES}/solid\"#" \
   -e "s#\"@nativedesktop/native\": \"[^\"]*\"#\"@nativedesktop/native\": \"file:${REL_PACKAGES}/native\"#" \
   -e "s#\"@nativedesktop/cli\": \"[^\"]*\"#\"@nativedesktop/cli\": \"file:${REL_PACKAGES}/nd\"#" \
   "$DEST/package.json"
 
 # packages/nd depends on "@nativedesktop/host": "workspace:*" and
-# packages/solid on "@nativedesktop/core": "workspace:*", which only resolve
+# packages/react on "@nativedesktop/react/core": "workspace:*", which only resolve
 # inside this monorepo's workspace. Reached via the file: edges above from a
 # destination outside it, those transitive specs can't resolve, so pin them
 # the same way with overrides.
@@ -37,7 +37,7 @@ const pkg = await Bun.file(path).json();
 pkg.overrides = {
   ...(pkg.overrides ?? {}),
   "@nativedesktop/host": `file:${relPackages}/host`,
-  "@nativedesktop/core": `file:${relPackages}/core`,
+  "@nativedesktop/react/core": `file:${relPackages}/core`,
 };
 await Bun.write(path, JSON.stringify(pkg, null, 2) + "\n");
 '

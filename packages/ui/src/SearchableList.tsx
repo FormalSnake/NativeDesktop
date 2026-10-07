@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
-import { Spacing } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
+import { Spacing } from "@nativedesktop/react";
 import { filterItems } from "./searchable-list.ts";
 import type { SearchableListFilter, SearchableListItem } from "./searchable-list.ts";
 

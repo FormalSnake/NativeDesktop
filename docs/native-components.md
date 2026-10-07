@@ -7,7 +7,7 @@ operations to a factory that library registers.
 ## Solid API
 
 ```tsx
-import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/solid";
+import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/react";
 
 const MapView = defineNativeComponent<
   { latitude: number; longitude: number },

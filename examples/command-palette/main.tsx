@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createMemo, createSignal, onSettled } from "solid-js";
 
 // Controlled command palette as a remote-style directory picker: the app owns

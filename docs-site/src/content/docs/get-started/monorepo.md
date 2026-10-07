@@ -3,7 +3,7 @@ title: Monorepo & Code Sharing
 description: How a NativeDesktop app shares signals and logic with other Solid apps in the same workspace, and how .desktop.tsx keeps desktop UI separate.
 ---
 
-`@nativedesktop/solid` declares `solid-js` as a `peerDependency` (`2.0.0-rc.13`) rather than
+`@nativedesktop/react` declares `solid-js` as a `peerDependency` (`2.0.0-rc.13`) rather than
 vendoring a copy, so a NativeDesktop app can sit in a monorepo next to a web app built on Solid and
 share a logic package with it.
 
@@ -29,7 +29,7 @@ my-product/
     └── shared-state/       # signals and stores: plain .ts, from "solid-js"
 ```
 
-`apps/desktop` depends on `@nativedesktop/solid`, `@nativedesktop/cli`, and `packages/shared-state`.
+`apps/desktop` depends on `@nativedesktop/react`, `@nativedesktop/cli`, and `packages/shared-state`.
 `apps/web` depends on `packages/shared-state` too. Every app in the workspace resolves the same
 hoisted `solid-js`, so `packages/shared-state` needs no NativeDesktop-specific code.
 
@@ -58,7 +58,7 @@ signal.
 Prettier, and Bun understand with no extra configuration. It resolves through extensionless
 imports, so `import { Panel } from "./Panel.desktop"` finds `Panel.desktop.tsx`, and it goes
 through the same Solid transform as any other `.tsx` in a package that depends on
-`@nativedesktop/solid`. `template/src/App.tsx` and `template/src/Panel.desktop.tsx` show the split:
+`@nativedesktop/react`. `template/src/App.tsx` and `template/src/Panel.desktop.tsx` show the split:
 
 ```tsx
 // template/src/Panel.desktop.tsx
@@ -81,11 +81,11 @@ than the DOM, stays in the desktop file.
 ## Which `.tsx` files get the transform
 
 The Solid transform applies to a `.tsx` or `.jsx` file whose nearest `package.json` is
-`@nativedesktop/solid` or depends on it. A file outside such a package opts in with a pragma
+`@nativedesktop/react` or depends on it. A file outside such a package opts in with a pragma
 that TypeScript reads as well:
 
 ```tsx
-/** @jsxImportSource @nativedesktop/solid */
+/** @jsxImportSource @nativedesktop/react */
 ```
 
 Any other `.tsx` keeps Bun's own transform. A shared package that holds no NativeDesktop JSX needs
@@ -93,7 +93,7 @@ neither.
 
 ## Publishing a shared package
 
-Give your own `shared-state` package the same shape as `@nativedesktop/solid`: declare `solid-js` as
+Give your own `shared-state` package the same shape as `@nativedesktop/react`: declare `solid-js` as
 a `peerDependency` rather than a regular dependency, so it keeps resolving to whichever single
 `solid-js` instance the consuming workspace hoists.
 

@@ -17,7 +17,7 @@ its output with libghostty-vt, and draws the cell grid natively. Keystrokes go s
 your Solid code never touches them.
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function App() {
   return (
@@ -49,7 +49,7 @@ button (and any native "new tab" gesture) fires `onNewTabRequested`, and a nativ
 
 ```tsx
 import { createSignal, For } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function TerminalTab(props: { id: number; onNewTab: () => void; onClose: () => void }) {
   return (
@@ -138,7 +138,7 @@ The finished file:
 
 ```tsx
 import { createSignal, For, Show } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function TerminalTab(props: { id: number; withMenu: boolean; onNewTab: () => void; onClose: () => void }) {
   return (

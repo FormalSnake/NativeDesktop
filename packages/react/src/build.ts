@@ -26,7 +26,7 @@ function importsSolid(specifier: string, from: string, seen: Map<string, boolean
   let uses = false;
   try {
     const pkg = JSON.parse(readFileSync(require.resolve(`${name}/package.json`, { paths: [from] }), "utf8"));
-    uses = [pkg.dependencies, pkg.peerDependencies].some((d) => d && ("solid-js" in d || "@nativedesktop/solid" in d));
+    uses = [pkg.dependencies, pkg.peerDependencies].some((d) => d && ("solid-js" in d || "@nativedesktop/react" in d));
   } catch {}
   seen.set(name, uses);
   return uses;

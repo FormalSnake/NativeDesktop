@@ -231,8 +231,8 @@ describe("buildDesktopEntry / appRunTemplate", () => {
 
   test("AppRun appends a renderer preload to BUN_OPTIONS, and only when one is set", () => {
     const base = { entry: "main.tsx", cwd: ".", slug: "counter", pluginPaths: [] };
-    expect(appRunTemplate({ ...base, preload: "@nativedesktop/solid/register" })).toContain(
-      'export BUN_OPTIONS="${BUN_OPTIONS:+$BUN_OPTIONS }--preload=@nativedesktop/solid/register"',
+    expect(appRunTemplate({ ...base, preload: "@nativedesktop/react/register" })).toContain(
+      'export BUN_OPTIONS="${BUN_OPTIONS:+$BUN_OPTIONS }--preload=@nativedesktop/react/register"',
     );
     expect(appRunTemplate(base)).not.toContain("BUN_OPTIONS");
   });

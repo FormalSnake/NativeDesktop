@@ -1,5 +1,5 @@
-import { Portal, render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { Portal, render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // The browser-toolbar shape: nav buttons at the start, an address field that

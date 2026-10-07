@@ -15,7 +15,7 @@ button styling. Along the way you meet the four widgets every app starts with: `
 Start with a static window:
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function Counter() {
   return (
@@ -40,7 +40,7 @@ Wire the count to a signal and add a button:
 
 ```tsx
 import { createSignal } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function Counter() {
   const [count, setCount] = createSignal(0);
@@ -106,7 +106,7 @@ The finished file:
 
 ```tsx
 import { createSignal } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 function Counter() {
   const [count, setCount] = createSignal(0);

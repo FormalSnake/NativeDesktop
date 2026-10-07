@@ -6,7 +6,7 @@
 // them, so each reader falls back to what the older wire already carried (a
 // boolean `value` is the checked state, `text` is the accessible name) and a
 // selector behaves the same against either host.
-import type { JsonNode } from "@nativedesktop/core/rpc";
+import type { JsonNode } from "@nativedesktop/react/core/rpc";
 import type { SelectorPart, TextSpec } from "./selectors.ts";
 
 /** getTree's node, narrowed so `children` recurses as NdNode. */

@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 // One chromium view, so the profile and the fixture extension's worker come
 // up. scripts/native-messaging-drive.ts does the rest over CDP.

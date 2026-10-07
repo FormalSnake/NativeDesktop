@@ -1,5 +1,5 @@
-import { render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // Zoom gate (ND_CEF_STYLE=chrome), driven by scripts/cef-zoom-drive.ts on both

@@ -1,5 +1,5 @@
-import { Portal, moveNode, render, sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { Portal, moveNode, render, sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 import { Show, createSignal, onSettled } from "solid-js";
 
 // Moving one live `<webview>` between two host windows, driven by

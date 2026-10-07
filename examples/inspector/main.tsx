@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // Inspector example — the acceptance surface for the HIG design-gap batch:

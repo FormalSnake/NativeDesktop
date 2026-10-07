@@ -1,5 +1,5 @@
-import { sendCommand } from "@nativedesktop/core";
-import type { NdNodeRef } from "@nativedesktop/core";
+import { sendCommand } from "@nativedesktop/react/core";
+import type { NdNodeRef } from "@nativedesktop/react/core";
 
 // The page the dialog-surface gates drive: one entry point per surface that
 // Chromium draws itself rather than asking a CEF handler about. Shared by the

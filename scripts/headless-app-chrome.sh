@@ -80,7 +80,7 @@ curl -s --max-time 1 "$FIXTURE" >/dev/null || { echo "FAIL: the fixture server n
 
 # The app under test starts on the fixture with two tabs, so no leg depends on
 # typing an address before it can assert anything, and the tab-switch legs have
-# a second live view. An app that does not use @nativedesktop/core's store
+# a second live view. An app that does not use @nativedesktop/react/core's store
 # ignores this and starts wherever it starts.
 seed_store() {
   local dir="$1"

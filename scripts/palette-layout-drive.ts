@@ -14,7 +14,7 @@
 // (default /tmp/nd-palette-layout). Marker: ND_PALETTE_LAYOUT_OK.
 import { mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { PaletteLayout } from "@nativedesktop/core/rpc";
+import type { PaletteLayout } from "@nativedesktop/react/core/rpc";
 import { SOLID_PRELOAD, withPreload } from "@nativedesktop/host";
 import { type AppHandle, launchApp } from "../packages/test/src/index.ts";
 import { decodePng, inkBandHeight, modalFill } from "./capture-ink.ts";

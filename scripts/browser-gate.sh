@@ -49,10 +49,10 @@ step() {
 check_codegen() {
   bun tools/codegen.ts >/dev/null || return 1
   local after_first
-  after_first=$(git status --porcelain src/generated packages/core/src/generated packages/solid/src/generated swift/Sources/NDGen)
+  after_first=$(git status --porcelain src/generated packages/react/src/core/generated packages/react/src/generated swift/Sources/NDGen)
   bun tools/codegen.ts >/dev/null || return 1
   local after_second
-  after_second=$(git status --porcelain src/generated packages/core/src/generated packages/solid/src/generated swift/Sources/NDGen)
+  after_second=$(git status --porcelain src/generated packages/react/src/core/generated packages/react/src/generated swift/Sources/NDGen)
   if [ -n "$after_first" ]; then
     echo "generated files are stale — commit the output of \`bun tools/codegen.ts\`:"
     echo "$after_first"

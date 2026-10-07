@@ -1,5 +1,5 @@
 import { For } from "solid-js";
-import type { JSX } from "@nativedesktop/solid";
+import type { JSX } from "@nativedesktop/react";
 import { accordionDragPayload, nextExpandedIds, parseAccordionDrag, reorderedIds } from "./accordion.ts";
 
 export interface AccordionItem {

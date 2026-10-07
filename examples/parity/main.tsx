@@ -1,6 +1,6 @@
 import { For, Show, createSignal } from "solid-js";
-import { render, Spacing, ContentMargin, ContentWidth, openExternal } from "@nativedesktop/solid";
-import type { JSX, SourceTreeNode, TableColumn, TableRow } from "@nativedesktop/solid";
+import { render, Spacing, ContentMargin, ContentWidth, openExternal } from "@nativedesktop/react";
+import type { JSX, SourceTreeNode, TableColumn, TableRow } from "@nativedesktop/react";
 import {
   Accordion,
   DescriptionList,

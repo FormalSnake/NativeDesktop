@@ -31,14 +31,14 @@ automation socket.
 If `nativedesktop.config.ts` declares app-owned native plugins, `nd` runs their cached build
 commands first and passes the resulting shared-library paths to the prebuilt host. It never rebuilds
 NativeDesktop itself. See `docs/native-components.md` in the framework checkout and `native/README.md`
-here. `defineNativeComponent` from `@nativedesktop/solid` gives such a view a typed component.
+here. `defineNativeComponent` from `@nativedesktop/react` gives such a view a typed component.
 
 When you are iterating on the framework's own Zig or Swift host rather than this app, invoke the raw
 form against your freshly built binary, since `nd dev` prefers the prebuilt one. The Solid JSX
 transform is a Bun preload, so pass it yourself:
 
 ```bash
-BUN_OPTIONS=--preload=@nativedesktop/solid/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
+BUN_OPTIONS=--preload=@nativedesktop/react/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
 ```
 
 ## Writing components
@@ -49,7 +49,7 @@ effect, and pass props as values (`<Panel open={open()} />`). Refs are plain var
 callbacks: `let win: NdNodeRef<"window"> | undefined` with `<window ref={win}>`.
 
 Primitives (`createSignal`, `createMemo`, `For`, `Show`, `Errored`, `Loading`) come from
-`solid-js`; the widgets, `render` and the platform APIs come from `@nativedesktop/solid`.
+`solid-js`; the widgets, `render` and the platform APIs come from `@nativedesktop/react`.
 `src/hooks/useToggle.ts` is plain `solid-js` with no JSX, so the same file also works in a web Solid
 app.
 
@@ -58,7 +58,7 @@ components you did not edit stay.
 
 ## How this app links to the framework
 
-`package.json` depends on the published npm packages: `@nativedesktop/solid` (the renderer and its
+`package.json` depends on the published npm packages: `@nativedesktop/react` (the renderer and its
 Bun preload), `solid-js`, `@nativedesktop/native` (native-plugin headers), and `@nativedesktop/cli`
 (the `nd` bin, which pulls in `@nativedesktop/host` and the prebuilt host binary for your platform).
 Optional additions from the same family: `@nativedesktop/data` (worker-backed SQLite, with
@@ -76,7 +76,7 @@ Two framework defaults worth knowing from day one:
   the app keeps running; an uncaught exception is fatal (the host paints the crash overlay). A
   render error under an `<Errored>` boundary is reported and the boundary shows its fallback; one no
   boundary catches is fatal. Tune the async half with `setUnhandledErrorPolicy` and subscribe with
-  `onUnhandledError`, both from `@nativedesktop/solid`.
+  `onUnhandledError`, both from `@nativedesktop/react`.
 - **Settings persist through `createStore`.** A versioned JSON file under the app data dir; call
   `await store.load()` before `render()` and `store.get()` is synchronous in every component, with
   `useStoreValue(store)` for a signal of it. Writes are debounced and crash-safe.

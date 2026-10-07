@@ -1,12 +1,12 @@
 // Framed JSON-RPC 2.0 client for the NativeDesktop automation socket.
-// Wire format matches NDP: u32 LE length prefix + UTF-8 JSON (packages/core/src/ndp.ts),
+// Wire format matches NDP: u32 LE length prefix + UTF-8 JSON (packages/react/src/core/ndp.ts),
 // but the payload here is a JSON-RPC 2.0 request/response, not an NDP message.
 // Method names and params/result shapes are GENERATED from schema/rpc.json
 // (the single source of truth shared with the Zig host, src/automation.zig via
 // src/generated/rpc.zig) — `call` is constrained by the generated RpcMethods
 // map, so a schema change is a compile error here, tRPC-style.
 
-import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/core/rpc";
+import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/react/core/rpc";
 
 interface JsonRpcError {
   code: number;

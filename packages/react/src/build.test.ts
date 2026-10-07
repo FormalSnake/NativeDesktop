@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "./build.ts";
 
-test("an ahead-of-time build emits universal output importing its helpers from @nativedesktop/solid", async () => {
+test("an ahead-of-time build emits universal output importing its helpers from @nativedesktop/react", async () => {
   const outdir = mkdtempSync(join(tmpdir(), "nd-solid-build-"));
   try {
     const path = await buildApp({ entry: join(import.meta.dir, "fixtures/uncaught-render.tsx"), outdir });

@@ -1,5 +1,5 @@
-import { render } from "@nativedesktop/solid";
-import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
 import { Show, createSignal } from "solid-js";
 
 // NOT imported by main.tsx. The window chrome a browser-style app builds: a

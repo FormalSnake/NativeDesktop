@@ -16,18 +16,18 @@ platform comes along automatically.
   everything required. The full table, including the optional libraries behind `<webview>`, audio,
   and credentials, is in
   [runtime-deps.md](https://github.com/FormalSnake/NativeDesktop/blob/main/docs/runtime-deps.md).
-- **Solid 2.0.** `@nativedesktop/solid` declares `solid-js@2.0.0-rc.13` as a peer dependency.
+- **Solid 2.0.** `@nativedesktop/react` declares `solid-js@2.0.0-rc.13` as a peer dependency.
 
 ## Install
 
 ```bash
-bun add @nativedesktop/cli @nativedesktop/solid solid-js
+bun add @nativedesktop/cli @nativedesktop/react solid-js
 ```
 
 This gives you:
 
 - `@nativedesktop/cli`: the `nd` command (`nd dev`, `nd build`, `nd package`, `nd doctor`).
-- `@nativedesktop/solid`: the renderer, the intrinsic widgets, and the system APIs. Its JSX transform loads as a Bun preload, which `nd dev`, `nd build` and `nd package` pass for you.
+- `@nativedesktop/react`: the renderer, the intrinsic widgets, and the system APIs. Its JSX transform loads as a Bun preload, which `nd dev`, `nd build` and `nd package` pass for you.
 - `solid-js`: a real peer copy, shared with any other Solid code beside it.
 
 For editor support and typechecking, add the type packages:

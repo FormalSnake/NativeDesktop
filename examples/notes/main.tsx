@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { For, Show, createMemo, createSignal, createStore } from "solid-js";
 
 // ND Notes — a note-taking app used as a framework-suitability stress test

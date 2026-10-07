@@ -41,7 +41,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
 
 ## Box (`<box>`)
 
@@ -131,7 +131,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## TextInput (`<textinput>`)
 
@@ -168,7 +168,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
 `sendCommand(ref, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
@@ -197,7 +197,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 `sendCommand(ref, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
@@ -226,7 +226,7 @@ Automation role: `checkbox`. Text source: `label`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## Radio (`<radio>`)
 
@@ -254,7 +254,7 @@ Automation role: `radio`. Text source: `label`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## Select (`<select>`)
 
@@ -281,7 +281,7 @@ Automation role: `combobox`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 `options` is create-only in v1.
 
@@ -590,7 +590,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `focus`.
 
 ## NativeView (`<nativeview>`)
 
@@ -646,7 +646,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `revealSidebar`, `concealSidebar`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `revealSidebar`, `concealSidebar`.
 
 Attached props (set on children):
 
@@ -719,7 +719,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `revealTopBars`, `concealTopBars`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `revealTopBars`, `concealTopBars`.
 
 Attached props (set on children):
 
@@ -763,7 +763,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
 `sendCommand(ref, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
@@ -1063,7 +1063,7 @@ Automation role: `switch`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## ToggleButton (`<togglebutton>`)
 
@@ -1145,7 +1145,7 @@ Automation role: `spinbutton`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## LinkButton (`<linkbutton>`)
 
@@ -1404,7 +1404,7 @@ Automation role: `group`. Text source: none. Children: single.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `showToast`, `dismissToast`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `showToast`, `dismissToast`.
 
 ## DatePicker (`<datepicker>`)
 
@@ -1648,7 +1648,7 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `copy`, `paste`, `selectAll`, `clearSelection`, `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`, `focus`.
 
 `palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors, either 16 or 256 entries in ANSI index order (entry 0 is black, 1 red, up to 15 bright white for the 16-color form). Leave it unset for the backend's built-in default palette. `foreground` and `background` are the default text and cell colors, also `#rrggbb`, and are distinct from the `background` and `color` `style` props, which paint the widget's own view chrome rather than the terminal's cells.
 
@@ -1836,7 +1836,7 @@ Automation role: `combobox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 ## Breadcrumb (`<breadcrumb>`)
 
@@ -2056,7 +2056,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/solid`): `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `focus`.
 
 `sendCommand(ref, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 

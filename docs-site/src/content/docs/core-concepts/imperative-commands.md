@@ -39,8 +39,8 @@ Every intrinsic accepts a `ref`. It resolves to an `NdNodeRef<T>` (the node's wi
 intrinsic type, `{ id, type }`), which is the handle `sendCommand` addresses:
 
 ```tsx
-import { sendCommand } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 
 let page: NdNodeRef<"webview"> | undefined;
 
@@ -68,7 +68,7 @@ When your app may run against host builds of different ages, ask before sending 
 `sendCommand` in try/catch:
 
 ```tsx
-import { hasCommand, hasWidget, sendCommand } from "@nativedesktop/solid";
+import { hasCommand, hasWidget, sendCommand } from "@nativedesktop/react";
 
 if (hasCommand("window", "present")) sendCommand(win, "present");
 if (hasWidget("sourcetree")) {

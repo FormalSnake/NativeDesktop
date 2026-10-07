@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 // A REMOTE terminal: the <terminal remote> widget opens the ndremote byte-plane

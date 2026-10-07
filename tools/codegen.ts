@@ -3,7 +3,7 @@
 // TS/JSX intrinsics, Zig widget appliers, docs, and automation meta tables;
 // reads schema/protocol.json + schema/rpc.json and emits BOTH sides of the
 // NDP frame / automation-RPC contracts (Zig structs into src/generated/,
-// TS types into packages/core/src/generated/) so a field rename or type
+// TS types into packages/react/src/core/generated/) so a field rename or type
 // change is a compile error on whichever side still uses the old shape.
 // Deterministic: everything is emitted in schema-declaration order.
 // Run: `bun tools/codegen.ts`. Never hand-edit the generated files.
@@ -245,7 +245,7 @@ function genZigCssClassSpec(s: Schema): string {
 
 // ---- artifact (a): TS/JSX intrinsics ----
 // Renderer-agnostic half: widget names, the node handle, StyleProp and the
-// shared item shapes, emitted once into @nativedesktop/core.
+// shared item shapes, emitted once into @nativedesktop/react/core.
 function genWidgetsShared(s: Schema): string {
   let out = HEADER_TS;
   out += "export type WidgetName = " + s.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n";
@@ -264,7 +264,7 @@ function genIntrinsics(s: Schema): string {
   const shared = ["WidgetName", "WidgetType", "NdNodeRef", "StyleProp", ...(s.types ?? []).map((t) => t.name)];
   let out = HEADER_TS;
   out += 'import type { Element as SolidElement } from "solid-js";\n';
-  out += `import type { ${shared.join(", ")} } from "@nativedesktop/core";\n\n`;
+  out += `import type { ${shared.join(", ")} } from "@nativedesktop/react/core";\n\n`;
   out += `export type { ${shared.join(", ")} };\n\n`;
   out += "export namespace JSX {\n";
   out += "  export interface IntrinsicElements {\n";
@@ -10320,7 +10320,7 @@ function genWidgetSections(s: Schema, notes: Record<string, string>): string {
       out += "\n";
     }
     if ((w.commands ?? []).length) {
-      out += `Imperative commands (via \`sendCommand(ref, …)\` from \`@nativedesktop/solid\`): ${w.commands!.map((c) => "`" + c + "`").join(", ")}.\n\n`;
+      out += `Imperative commands (via \`sendCommand(ref, …)\` from \`@nativedesktop/react\`): ${w.commands!.map((c) => "`" + c + "`").join(", ")}.\n\n`;
       if (w.commands!.includes("focus") && w.automation?.role === "textbox") {
         out += "`sendCommand(ref, \"focus\", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.\n\n";
       }
@@ -10423,7 +10423,7 @@ function genZigHostManifest(s: Schema): string {
 // ---- artifacts (g)+(h): NDP protocol frames + automation RPC (tRPC-style dual emission) ----
 // schema/protocol.json and schema/rpc.json are the single sources of truth for
 // the Zig<->Bun wire contracts that used to be hand-mirrored (src/protocol.zig
-// vs packages/core/src/ndp.ts; src/automation.zig vs packages/mcp). Both sides are
+// vs packages/react/src/core/ndp.ts; src/automation.zig vs packages/mcp). Both sides are
 // emitted from the same schema, so a field rename or type change becomes a
 // compile error on whichever side still uses the old shape instead of a
 // silent runtime break. Zig field DECLARATION ORDER is wire byte order
@@ -10627,7 +10627,7 @@ function genProtocolTs(s: ProtocolSchema, widgets: Schema): string {
   out += "// Zig host — verbatim, no renaming.\n\n";
   out += `export const NDP_VERSION = ${s.ndpVersion};\n\n`;
   // Same union genWidgetsShared emits, duplicated here (from the same schema, so
-  // no drift is possible) to keep this module dependency-free: packages/core/src/ndp.ts
+  // no drift is possible) to keep this module dependency-free: packages/react/src/core/ndp.ts
   // imports it and must not drag renderer types into the runtime's typecheck.
   out += "export type WidgetName = " + widgets.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n\n";
   for (const t of s.types) {
@@ -10777,22 +10777,22 @@ const schema = (await Bun.file(resolve(ROOT, "schema/widgets.json")).json()) as 
     }
   }
 }
-await writeIfChanged("packages/core/src/generated/widgets.ts", genWidgetsShared(schema));
-await writeIfChanged("packages/solid/src/generated/intrinsics.ts", genIntrinsics(schema));
-await writeIfChanged("packages/core/src/generated/schema-meta.ts", genSchemaMeta(schema));
+await writeIfChanged("packages/react/src/core/generated/widgets.ts", genWidgetsShared(schema));
+await writeIfChanged("packages/react/src/generated/intrinsics.ts", genIntrinsics(schema));
+await writeIfChanged("packages/react/src/core/generated/schema-meta.ts", genSchemaMeta(schema));
 await writeIfChanged("src/generated/widgets.zig", genZig(schema));
 await writeIfChanged("docs/widgets.md", genDocs(schema));
 await writeIfChanged("docs-site/src/content/docs/components/widget-reference.md", genSiteDocs(schema));
 await writeIfChanged("docs/styling.md", genStyleDocs(schema));
 await writeIfChanged("swift/Sources/NDGen/Widgets.swift", genSwift(schema));
-await writeIfChanged("packages/core/src/generated/widget-types.ts", genWidgetTypesTs(schema));
+await writeIfChanged("packages/react/src/core/generated/widget-types.ts", genWidgetTypesTs(schema));
 await writeIfChanged("src/generated/widget_types.zig", genWidgetTypesZig(schema));
 
 const protocolSchema = (await Bun.file(resolve(ROOT, "schema/protocol.json")).json()) as ProtocolSchema;
-await writeIfChanged("packages/core/src/generated/protocol.ts", genProtocolTs(protocolSchema, schema));
+await writeIfChanged("packages/react/src/core/generated/protocol.ts", genProtocolTs(protocolSchema, schema));
 await writeIfChanged("src/generated/protocol.zig", genProtocolZig(protocolSchema));
 
 const rpcSchema = (await Bun.file(resolve(ROOT, "schema/rpc.json")).json()) as RpcSchema;
-await writeIfChanged("packages/core/src/generated/rpc.ts", genRpcTs(rpcSchema));
+await writeIfChanged("packages/react/src/core/generated/rpc.ts", genRpcTs(rpcSchema));
 await writeIfChanged("src/generated/rpc.zig", genRpcZig(rpcSchema));
 console.log("codegen complete");

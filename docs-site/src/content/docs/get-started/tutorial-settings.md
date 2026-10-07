@@ -18,7 +18,7 @@ Settings windows are a sidebar plus a content pane. `<splitview>` is the real na
 
 ```tsx
 import { createSignal } from "solid-js";
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 
 const pages = [
   { id: "general", label: "General", blurb: "Startup and status" },
@@ -181,7 +181,7 @@ Replace the Solid store with a framework store at module scope. It shares a name
 `createStore` from `solid-js`, so import it under another name:
 
 ```tsx
-import { createStore as createSettingsStore, render, useStoreValue } from "@nativedesktop/solid";
+import { createStore as createSettingsStore, render, useStoreValue } from "@nativedesktop/react";
 
 const store = createSettingsStore<Settings>({ name: "settings", version: 1, defaults });
 ```
@@ -226,8 +226,8 @@ import {
   render,
   showAlert,
   useStoreValue,
-} from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+} from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 ```
 
 ```tsx
@@ -292,8 +292,8 @@ import {
   render,
   showAlert,
   useStoreValue,
-} from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+} from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 
 interface Settings {
   launchAtLogin: boolean;

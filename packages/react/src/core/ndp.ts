@@ -59,7 +59,7 @@ export class Ndp {
   private backendName = "unknown";
   // Host capability manifest (helloAck hostWidgets/hostCommands). null when
   // the host predates the fields — callers fall back to their own schema
-  // tables (see packages/core/src/platform.ts's setHostManifest).
+  // tables (see packages/react/src/core/platform.ts's setHostManifest).
   private hostWidgetsSet: Set<string> | null = null;
   private hostCommandsSet: Set<string> | null = null;
   // systemRequest/systemResponse correlation (system capabilities API, M15):

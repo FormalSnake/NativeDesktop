@@ -64,11 +64,11 @@ ignored by every other chart type, which read `y` instead.
 palette. The widget never sorts, filters, or rewrites `points`. The app owns the data, the same
 contract as `<table>`'s `rows`.
 
-`ChartSeries` and `ChartPoint` are re-exported from `@nativedesktop/solid`, so import them
+`ChartSeries` and `ChartPoint` are re-exported from `@nativedesktop/react`, so import them
 directly rather than relying on structural typing:
 
 ```ts
-import type { ChartPoint, ChartSeries } from "@nativedesktop/solid";
+import type { ChartPoint, ChartSeries } from "@nativedesktop/react";
 ```
 
 ## Props

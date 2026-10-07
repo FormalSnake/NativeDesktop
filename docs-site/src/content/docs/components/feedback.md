@@ -57,8 +57,8 @@ content rather than one tab or panel, so a toast floats above every screen the u
 when you queue it:
 
 ```tsx
-import { showToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/solid";
-import type { NdNodeRef } from "@nativedesktop/solid";
+import { showToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 
 let toastRef: NdNodeRef<"toastoverlay"> | undefined;
 
@@ -82,7 +82,7 @@ async function handleDelete() {
 }
 ```
 
-`showToast` and `dismissToast` (from `@nativedesktop/solid`, backed by `packages/core/src/toast.ts`)
+`showToast` and `dismissToast` (from `@nativedesktop/react`, backed by `packages/react/src/core/toast.ts`)
 are [imperative commands](/core-concepts/imperative-commands/) wrapped in a promise:
 
 | Function | Signature | Resolves to |

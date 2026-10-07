@@ -8,8 +8,8 @@
 // instead of silently falling back to per-batch JSON (ndp.ts's
 // BinaryUnsupportedValue fallback). ND_BENCH_NODES picks the tree size;
 // ND_BENCH_HOLD_MS how long to stay alive so the host finishes applying.
-import { Ndp } from "../packages/core/src/ndp.ts";
-import { encodeCommitBatchBinary } from "../packages/core/src/ndp-binary.ts";
+import { Ndp } from "../packages/react/src/core/ndp.ts";
+import { encodeCommitBatchBinary } from "../packages/react/src/core/ndp-binary.ts";
 
 const N = Number(process.env.ND_BENCH_NODES ?? 10000);
 const holdMs = Number(process.env.ND_BENCH_HOLD_MS ?? 2000);

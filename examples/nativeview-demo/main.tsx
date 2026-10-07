@@ -1,4 +1,4 @@
-import { defineNativeComponent, render, type NativeComponentRef } from "@nativedesktop/solid";
+import { defineNativeComponent, render, type NativeComponentRef } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 interface ColorProps { color: string }

@@ -1,6 +1,6 @@
 // babel-preset-solid's universal transform, shared by the runtime plugin
 // (register.ts) and the ahead-of-time build (build.ts). The compiled output
-// imports its helpers from @nativedesktop/solid.
+// imports its helpers from @nativedesktop/react.
 /// <reference path="./babel-presets.d.ts" />
 import { transformAsync, type PluginItem, type TransformOptions } from "@babel/core";
 import presetTypescript from "@babel/preset-typescript";
@@ -21,7 +21,7 @@ export async function transformSolid(source: string, filename: string, options: 
     plugins: options.plugins ?? [],
     presets: [
       [presetTypescript, { isTSX: true, allExtensions: true }],
-      [presetSolid, { generate: "universal", moduleName: "@nativedesktop/solid" }],
+      [presetSolid, { generate: "universal", moduleName: "@nativedesktop/react" }],
     ],
   });
   if (!out?.code) throw new Error(`babel-preset-solid produced no output for ${filename}`);

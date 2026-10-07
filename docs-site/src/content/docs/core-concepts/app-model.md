@@ -4,10 +4,10 @@ description: How a NativeDesktop app is structured as a JSX tree rooted at a win
 ---
 
 A NativeDesktop app is a Solid component tree rooted at a `<window>` intrinsic, rendered with `render()` from
-`@nativedesktop/solid`:
+`@nativedesktop/react`:
 
 ```tsx
-import { render } from "@nativedesktop/solid";
+import { render } from "@nativedesktop/react";
 import { createSignal } from "solid-js";
 
 function App() {

@@ -20,12 +20,12 @@ export { defineNativeComponent } from "./native-component.ts";
 export type { NativeComponentOptions, NativeComponentProps, NativeComponentRef } from "./native-component.ts";
 export { useStoreValue } from "./store.ts";
 export type { JSX } from "./generated/intrinsics.ts";
-export { sendCommand, sendNativeCommand, moveNode } from "@nativedesktop/core";
-export { Platform, hasWidget, hasCommand } from "@nativedesktop/core";
-export type { Backend, OS } from "@nativedesktop/core";
-export { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/core";
-export type { SpacingScale } from "@nativedesktop/core";
-export { getAppDataDir, ensureAppDataDir } from "@nativedesktop/core";
+export { sendCommand, sendNativeCommand, moveNode } from "@nativedesktop/react/core";
+export { Platform, hasWidget, hasCommand } from "@nativedesktop/react/core";
+export type { Backend, OS } from "@nativedesktop/react/core";
+export { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/react/core";
+export type { SpacingScale } from "@nativedesktop/react/core";
+export { getAppDataDir, ensureAppDataDir } from "@nativedesktop/react/core";
 export {
   executeJavaScript,
   onJavaScriptResult,
@@ -52,7 +52,7 @@ export {
   cancelDownload,
   newWindowRequest,
   acceptExtensionInstall,
-} from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
 export type {
   Cookie,
   DownloadRequest,
@@ -67,7 +67,7 @@ export type {
   InstalledExtension,
   NewWindowDisposition,
   NewWindowRequest,
-} from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
 export {
   showAlert,
   openFile,
@@ -77,7 +77,7 @@ export {
   onAlertResult,
   onOpenFileResult,
   onSaveFileResult,
-} from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
 export type {
   DialogButton,
   ShowAlertOptions,
@@ -87,9 +87,9 @@ export type {
   WindowSaveFileOptions,
   WindowSaveFileResult,
   ShowAboutOptions,
-} from "@nativedesktop/core";
-export { showToast, dismissToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/core";
-export type { ToastPriority, ShowToastOptions, ToastResult } from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
+export { showToast, dismissToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/react/core";
+export type { ToastPriority, ShowToastOptions, ToastResult } from "@nativedesktop/react/core";
 export type {
   NdNodeRef,
   WidgetType,
@@ -103,8 +103,8 @@ export type {
   ChartSeries,
   CodeDiagnostic,
   MenuEntry,
-} from "@nativedesktop/core";
-export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio, webviewEngine } from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
+export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio, webviewEngine } from "@nativedesktop/react/core";
 export type {
   FileFilter,
   OpenFileOptions,
@@ -121,9 +121,9 @@ export type {
   ContentBlockingList,
   ContentBlockingLoadOptions,
   ContentBlockingConfigureOptions,
-} from "@nativedesktop/core";
-export { openExternal, openPath, revealPath } from "@nativedesktop/core";
-export { onUnhandledError, setUnhandledErrorPolicy } from "@nativedesktop/core";
-export type { NdErrorKind, NdErrorContext, NdErrorHandler, UnhandledErrorPolicy } from "@nativedesktop/core";
-export { createStore } from "@nativedesktop/core";
-export type { Store, StoreOptions } from "@nativedesktop/core";
+} from "@nativedesktop/react/core";
+export { openExternal, openPath, revealPath } from "@nativedesktop/react/core";
+export { onUnhandledError, setUnhandledErrorPolicy } from "@nativedesktop/react/core";
+export type { NdErrorKind, NdErrorContext, NdErrorHandler, UnhandledErrorPolicy } from "@nativedesktop/react/core";
+export { createStore } from "@nativedesktop/react/core";
+export type { Store, StoreOptions } from "@nativedesktop/react/core";
