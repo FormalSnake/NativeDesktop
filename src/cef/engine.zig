@@ -202,7 +202,7 @@ fn closeBrowsersInOrder() void {
     var it = live_views.keyIterator();
     while (it.next()) |key| {
         const view: *View = @ptrFromInt(key.*);
-        const host = hostPtr(view) orelse continue;
+        const host = hostOf(view) orelse continue;
         if (view.devtools_window.load(.acquire) == 0) continue;
         if (host.*.close_dev_tools) |close_dev_tools| close_dev_tools(host);
         devtools = true;
@@ -212,19 +212,13 @@ fn closeBrowsersInOrder() void {
     it = live_views.keyIterator();
     while (it.next()) |key| {
         const view: *View = @ptrFromInt(key.*);
-        const host = hostPtr(view) orelse continue;
+        const host = hostOf(view) orelse continue;
         if (host.*.close_browser) |close| close(host, 1);
     }
     const waited = waitForViews(&View.browserOpen, 5000);
     tr("shutdown browsers closed after {d}ms", .{waited});
     const windows = waitForViews(&View.viewsWindowOpen, 3000);
     tr("shutdown views windows destroyed after {d}ms", .{windows});
-}
-
-fn hostPtr(view: *View) ?[*c]c.cef_browser_host_t {
-    const raw = view.host.load(.acquire);
-    if (raw == 0) return null;
-    return @ptrFromInt(raw);
 }
 
 /// Blocks the quitting thread until no live view answers `open`, or until the
