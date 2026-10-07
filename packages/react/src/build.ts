@@ -15,7 +15,7 @@ import { transformSolid } from "./transform.ts";
 // The framework's Solid entry points by name. @nativedesktop/data and /rpc
 // keep their main entries external: they import no solid-js, and data's
 // sqlite worker is loaded from its own file.
-const framework = /^(solid-js|@solidjs\/|@nativedesktop\/(solid|core|panes)$|@nativedesktop\/[^/]+\/solid$)/;
+const framework = /^(solid-js|@solidjs\/|@nativedesktop\/(react|react\/core|panes)$|@nativedesktop\/[^/]+\/solid$)/;
 
 /// Whether `specifier`'s package imports solid-js itself, judged by its
 /// package.json: a third-party Solid library is bundled for the same reason.

@@ -13,7 +13,7 @@ test("an ahead-of-time build emits universal output importing its helpers from @
     expect(code).toContain('createElement("window")');
     expect(code).not.toContain("jsx");
     // The renderer and solid-js are in the bundle, from their production builds.
-    expect(code).not.toMatch(/from "(solid-js|@solidjs\/[^"]+|@nativedesktop\/(solid|core))"/);
+    expect(code).not.toMatch(/from "(solid-js|@solidjs\/[^"]+|@nativedesktop\/react(\/core)?)"/);
     expect(code).toContain("@solidjs/signals/dist/prod/");
   } finally {
     rmSync(outdir, { recursive: true, force: true });
