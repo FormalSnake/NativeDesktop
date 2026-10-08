@@ -90,6 +90,12 @@ fn pluginCommandReplyJson(gpa: std.mem.Allocator, manager: *plugin.Manager, plug
     return std.fmt.allocPrint(gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch null;
 }
 
+/// How long an input event holds the UI thread for the app's reply. A
+/// sidebar click's commit arrives 1.5 to 3 ms after the event on a host
+/// throttled to two E-cores, with a tail past 8 ms when the machine is busy.
+/// Past half a 60 Hz frame, showing the press matters more than batching it.
+const reply_hold_us = 8000;
+
 pub const Runtime = struct {
     gpa: std.mem.Allocator,
     threaded: std.Io.Threaded,
@@ -142,6 +148,12 @@ pub const Runtime = struct {
     // Set by `stop` before it kills the child, so the disconnect it causes is
     // reported as the host's own shutdown rather than as the child dying.
     stopping: std.atomic.Value(bool) = .init(false),
+    // Bumped by the reader thread once a decoded CommitBatch is queued for the
+    // UI thread; `holdForReply` futex-waits on it.
+    commits_queued: std.atomic.Value(u32) = .init(0),
+    // UI thread only: set while a commit or widget command is being applied,
+    // so an event the apply itself fires never holds for a reply.
+    applying: bool = false,
 
     var singleton: ?*Runtime = null;
     /// Last app.activate/app.deactivate transition, recorded even before the
@@ -307,8 +319,48 @@ pub const Runtime = struct {
     pub fn sendEvent(self: *Runtime, node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         self.seq += 1;
         marker.lat("host.event", "seq={d} node={d} name={s}", .{ self.seq, node_id, name });
+        const queued = self.commits_queued.load(.acquire);
         const ev = protocol.Event{ .seq = self.seq, .nodeId = node_id, .name = name, .payload = payload };
         self.writeFrameOpts(ev, .{ .emit_null_optional_fields = false });
+        if (!self.applying and holdsForReply(name)) self.holdForReply(queued);
+    }
+
+    /// Discrete user actions whose reply usually changes what is on screen.
+    /// Continuous streams (hover, scroll, text edits, drags) are left out:
+    /// holding on each of them would add up.
+    fn holdsForReply(name: []const u8) bool {
+        const names = [_][]const u8{
+            "clicked",       "activate",           "activated",           "rowActivated",
+            "itemActivated", "selected",           "selectionChanged",    "toggled",
+            "middleClicked", "leadingIconClicked", "trailingIconClicked", "actionClicked",
+            "buttonClicked", "toastButtonClicked", "contextMenuSelected", "contextMenuItemClicked",
+            "submit",        "nodeExpanded",       "nodeCollapsed",
+        };
+        for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+        return false;
+    }
+
+    /// Blocks the UI thread, for at most `reply_hold_us`, until the reader
+    /// thread queues a commit that arrived after this event went out. The
+    /// commit's main-loop source runs at default priority, above the frame
+    /// clock's paint, so the press feedback and the app's reply land in one
+    /// frame instead of the reply waiting out a whole layout and paint that
+    /// only showed the press (about 1.6 ms on a throttled GTK host). An app
+    /// that sends nothing back costs the bound, once per click.
+    fn holdForReply(self: *Runtime, queued: u32) void {
+        if (!self.connected.load(.acquire)) return;
+        const deadline = std.Io.Clock.Timestamp.fromNow(self.io, .{ .raw = .fromMicroseconds(reply_hold_us), .clock = .awake });
+        while (self.commits_queued.load(.acquire) == queued) {
+            const left = deadline.durationFromNow(self.io);
+            if (left.raw.nanoseconds <= 0) break;
+            self.io.futexWaitTimeout(u32, &self.commits_queued.raw, queued, .{ .duration = left }) catch break;
+        }
+        marker.lat("host.holdEnd", "replied={}", .{self.commits_queued.load(.acquire) != queued});
+    }
+
+    fn noteCommitQueued(self: *Runtime) void {
+        _ = self.commits_queued.fetchAdd(1, .release);
+        self.io.futexWake(u32, &self.commits_queued.raw, 1);
     }
 
     fn writeFrame(self: *Runtime, value: anytype) void {
@@ -707,6 +759,7 @@ pub const Runtime = struct {
         };
         job.* = .{ .rt = self, .batch = parsed.value, .json = parsed, .bytes = bytes };
         abi_backend.vtable.marshal_async(abi_backend.ctx, &applyOnUi, job);
+        self.noteCommitQueued();
     }
 
     fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {
@@ -724,6 +777,7 @@ pub const Runtime = struct {
         };
         job.* = .{ .rt = self, .batch = decoded.batch, .binary = decoded };
         abi_backend.vtable.marshal_async(abi_backend.ctx, &applyOnUi, job);
+        self.noteCommitQueued();
     }
 
     fn applyOnUi(data: ?*anyopaque) callconv(.c) void {
@@ -736,6 +790,8 @@ pub const Runtime = struct {
             self.gpa.destroy(job);
         }
         marker.lat("host.applyStart", "commit={d} ops={d}", .{ job.batch.commitId, job.batch.ops.len });
+        self.applying = true;
+        defer self.applying = false;
         self.tree.apply(job.batch);
         marker.lat("host.applyEnd", "commit={d}", .{job.batch.commitId});
     }
@@ -945,6 +1001,8 @@ pub const Runtime = struct {
         }
         const parsed = std.json.parseFromSlice(protocol.WidgetCommand, self.gpa, job.bytes, .{ .ignore_unknown_fields = true }) catch return;
         defer parsed.deinit();
+        self.applying = true;
+        defer self.applying = false;
         // Same core-UI gate as commit application: a widget command is an
         // ordinary UI op on an already-committed node.
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
