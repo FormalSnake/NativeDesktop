@@ -1494,6 +1494,7 @@ var keysym_to_keycode: ?FnKeysymToKeycode = null;
 
 pub const keysym_tab: c_ulong = 0xff09;
 pub const keysym_space: c_ulong = 0x20;
+pub const keysym_shift: c_ulong = 0xffe1;
 
 fn loadXTest() bool {
     if (!xtest_attempted) {

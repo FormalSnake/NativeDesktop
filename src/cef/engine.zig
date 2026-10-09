@@ -669,10 +669,28 @@ fn dialogOverView(view: *View) bool {
 /// window that comes back from behind its parent's edge has no contents to
 /// show and Chromium presents a new frame only when its window changes size,
 /// so a page that was moved back and not resized returned as a blank rectangle.
+///
+/// Read off the page's window before it goes: the dialog's scrim is meant to
+/// dim the page, and with the window parked there is nothing under it but the
+/// window's background.
 fn standAside(view: *View) void {
     if (view.container == 0) return;
+    if (view.aside_still == null and !view.moving and view.placed) {
+        const page = view.cef_window.load(.acquire);
+        if (x11.capture(if (page != 0) @intCast(page) else view.container)) |still| {
+            view.aside_still = still;
+            gtk.Picture.setPaintable(@ptrCast(@alignCast(view.widget)), @ptrCast(still));
+        }
+    }
     view.aside = true;
     parkContainer(view);
+}
+
+fn dropAsideStill(view: *View) void {
+    const still = view.aside_still orelse return;
+    view.aside_still = null;
+    if (!view.moving) gtk.Picture.setPaintable(@ptrCast(@alignCast(view.widget)), null);
+    gobject.Object.unref(@ptrCast(@alignCast(still)));
 }
 
 /// Re-reads the dialog state of `widget`'s window and moves the pages there out
@@ -936,7 +954,11 @@ fn onInstallActivate(_: ?*anyopaque) callconv(.c) c_int {
 fn onInstallPress(_: ?*anyopaque) callconv(.c) c_int {
     const w = install_window;
     if (w == 0) return 0;
-    if (!x11.pressKey(x11.keysym_tab) or !x11.pressKey(x11.keysym_space)) return finishInstallPrompt("unanswered, no XTest");
+    // Under XWayland the first XTest key, the one that switches the master
+    // keyboard over from the compositor's slave, never reaches the prompt:
+    // that was the Tab, so Space pressed Cancel. A Shift press, which no
+    // dialog acts on, goes first and is the one lost.
+    if (!x11.pressKey(x11.keysym_shift) or !x11.pressKey(x11.keysym_tab) or !x11.pressKey(x11.keysym_space)) return finishInstallPrompt("unanswered, no XTest");
     install_deadline_us = glib.getMonotonicTime() + install_wait_us;
     _ = glib.timeoutAdd(install_check_ms, &onInstallCheck, null);
     return 0;
@@ -1956,6 +1978,9 @@ const View = struct {
     /// What the page showed when the slide began, drawn stretched over the
     /// page's rectangle while its window is cut to nothing.
     still: ?*gdk.Texture = null,
+    /// What the page showed as a dialog came up over it, drawn in its place
+    /// under the dialog's scrim while the page itself stands aside.
+    aside_still: ?*gdk.Texture = null,
     motion_started_us: i64 = 0,
     motion_ended_us: i64 = 0,
     /// Each resize of the page during a slide asks the page to report back
@@ -2142,7 +2167,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     if (!ensureInitialized()) return null;
 
     // Reserves the rectangle the X11 child window is tracked against, and
-    // draws nothing but the still a sliding sidebar stretches (syncMotion).
+    // draws nothing but a still of the page: the one a sliding sidebar
+    // stretches (syncMotion), or the one under a dialog (standAside).
     const picture = gtk.Picture.new();
     gtk.Picture.setCanShrink(picture, 1);
     gtk.Picture.setContentFit(picture, .fill);
@@ -2860,6 +2886,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     if (focused_view == view) focused_view = null;
     forgetParked(view);
     motionFinish(view, false);
+    dropAsideStill(view);
     if (view.park_source != 0) {
         _ = glib.Source.remove(view.park_source);
         view.park_source = 0;
@@ -3181,6 +3208,7 @@ fn syncBounds(view: *View) void {
         return standAside(view);
     }
     view.aside = bar != null;
+    dropAsideStill(view);
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const native_widget: *gtk.Widget = @ptrCast(@alignCast(native));
     var rect: graphene.Rect = undefined;
