@@ -6006,7 +6006,7 @@ pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8,
     // declares it (see UNIVERSAL_COMMANDS in tools/codegen.ts).
     if (std.mem.eql(u8, command, "focus") and !std.mem.eql(u8, kind, "Terminal")) return ndGrabFocus(widget, arg);
     if (std.mem.eql(u8, kind, "Window")) {
-        if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present")) return ndtabs_gtk.command(widget, command, arg);
+        if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present") or std.mem.eql(u8, command, "setFullscreen")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         ndEntryCommand(widget, command);

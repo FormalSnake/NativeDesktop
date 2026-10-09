@@ -127,6 +127,9 @@ func ndWindowTabsCommand(_ view: NSView, _ command: String, _ argJson: String) {
         // one means switching the OS tab bar to it, then ordering front.
         win.tabGroup?.selectedWindow = win
         win.makeKeyAndOrderFront(nil)
+    case "setFullscreen":
+        let on = parseProps(argJson)["fullscreen"] as? Bool ?? true
+        if win.styleMask.contains(.fullScreen) != on { win.toggleFullScreen(nil) }
     default:
         break
     }
@@ -193,6 +196,18 @@ final class NDWindowTabDelegate: NSObject, NSWindowDelegate {
         guard let win = notification.object as? NSWindow,
               let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
         ndEmitEvent(nodeID, "focused", "{\"checked\":false}")
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
+        ndEmitEvent(nodeID, "fullscreenChanged", "{\"checked\":true}")
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
+        ndEmitEvent(nodeID, "fullscreenChanged", "{\"checked\":false}")
     }
 
     /// sizeChanged {width, height} — the window's content size in points

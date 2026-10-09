@@ -2539,7 +2539,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     // tools/codegen.ts).
     if command == "focus" && kind != "Terminal" { return ndFocusView(view, select: ndFocusSelects(argJson)) }
     if kind == "Window" {
-        if command == "showTabOverview" || command == "present" { ndWindowTabsCommand(view, command, argJson); return }
+        if command == "showTabOverview" || command == "present" || command == "setFullscreen" { ndWindowTabsCommand(view, command, argJson); return }
         ndWindowCommand(view, command, argJson)
     } else if kind == "TextInput" {
         ndEntryCommand(view, command)

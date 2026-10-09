@@ -3862,7 +3862,7 @@ const ZIG_COMMANDS: Record<string, string> = {
   Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
   // Dialogs parent on the Window node's OWN handle (multi-window correct);
   // tab commands route to tabs.zig first.
-  Window: "        if (std.mem.eql(u8, command, \"showTabOverview\") or std.mem.eql(u8, command, \"present\")) return ndtabs_gtk.command(widget, command, arg);\n        nddialog_gtk.command(widget, command, arg);\n",
+  Window: "        if (std.mem.eql(u8, command, \"showTabOverview\") or std.mem.eql(u8, command, \"present\") or std.mem.eql(u8, command, \"setFullscreen\")) return ndtabs_gtk.command(widget, command, arg);\n        nddialog_gtk.command(widget, command, arg);\n",
   ToastOverlay: "        ndtoast_gtk.command(widget, command, arg);\n",
 };
 
@@ -5537,6 +5537,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.permissionRequestDismissed": { signal: "",       target: "webview", cb: "", suppress: false },
   "WebView.zoomChanged":         { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.pictureInPicture":    { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.fullscreenChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.contentBlocked":      { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
@@ -5564,6 +5565,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Window.closed":               { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Window.focused":              { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Window.sizeChanged":          { signal: "",              target: "windowtabs",    cb: "", suppress: false },
+  "Window.fullscreenChanged":    { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Row.activated":               { signal: "activated",     target: "widget", cb: "cbRowActivated", suppress: false },
   "SwitchRow.toggled":           { signal: "notify::active", target: "widget", cb: "cbSwitchRowToggled", suppress: true },
   "ToggleButton.toggled":        { signal: "toggled",          target: "widget", cb: "cbToggleButtonToggled", suppress: true },
@@ -9294,6 +9296,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.permissionRequestDismissed": { selector: "webview", payload: "data" },
   "WebView.zoomChanged":         { selector: "webview", payload: "data" },
   "WebView.pictureInPicture":    { selector: "webview", payload: "data" },
+  "WebView.fullscreenChanged":   { selector: "webview", payload: "checked" },
   "WebView.contentBlocked":      { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
@@ -9349,6 +9352,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Window.closed":               { selector: "windowtabs",    payload: "data" },
   "Window.focused":              { selector: "windowtabs",    payload: "checked" },
   "Window.sizeChanged":          { selector: "windowtabs",    payload: "data" },
+  "Window.fullscreenChanged":    { selector: "windowtabs",    payload: "checked" },
   // Row/SwitchRow fire from their hand-written views (NDShell/Rows.swift) —
   // one connect records the nodeID (webview idiom).
   "Row.activated":               { selector: "row",           payload: "none" },
@@ -9542,7 +9546,7 @@ const SWIFT_COMMANDS: Record<string, string> = {
   // Dialogs resolve the owning NSWindow from the node's OWN handle
   // (ndWindow(for:)) — multi-window correct, no gWindow (M15). Tab commands
   // route to WindowTabs.swift first.
-  Window: "        if command == \"showTabOverview\" || command == \"present\" { ndWindowTabsCommand(view, command, argJson); return }\n        ndWindowCommand(view, command, argJson)\n",
+  Window: "        if command == \"showTabOverview\" || command == \"present\" || command == \"setFullscreen\" { ndWindowTabsCommand(view, command, argJson); return }\n        ndWindowCommand(view, command, argJson)\n",
   ToastOverlay: "        ndToastOverlayCommand(view, command, argJson)\n",
 };
 

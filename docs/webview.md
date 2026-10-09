@@ -353,6 +353,15 @@ what `requestPictureInPicture()` settled to. Chromium engine only (CDP
 `Runtime.evaluate`'s `userGesture`); WebKit has no equivalent and ignores the
 field.
 
+`fullscreenChanged` (`{ checked }`) fires when the page enters or leaves
+element fullscreen (`requestFullscreen`, a video's fullscreen button, Esc).
+The page then fills the view and nothing more: taking the window fullscreen
+(the window's `setFullscreen` command, `{ fullscreen }`) and hiding the app's
+chrome is the app's call. `exitFullscreen` takes the page back out, for an app
+shortcut or a window that left fullscreen on its own (the window's
+`fullscreenChanged`). Chromium engine only; WebKitGTK fullscreens the window
+itself and fires neither.
+
 Every promise helper (`executeJavaScript`, `getCookies`, `saveSession`, the
 extension calls) rejects when its view is removed before the answer arrives,
 and rejects at once when called on a view that is already gone, so a keyed
