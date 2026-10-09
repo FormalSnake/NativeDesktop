@@ -47,6 +47,7 @@ mainstream distribution.
 | `libwebkitgtk-6.0.so.4` (+ `glib-networking` for TLS) | `<webview>` | webview area renders an unavailable placeholder |
 | `libgstreamer-1.0.so.0` + gst-plugins-base/-good | `audio.*` playback and spectrum | audio calls reject with "audio unavailable" |
 | `libsecret-1.so.0` | `credentials.*` | credential calls reject |
+| `libpipewire-0.3.so.0` (+ xdg-desktop-portal with a ScreenCast backend) | `getDisplayMedia` in the Chromium engine under Wayland | `getDisplayMedia` rejects with NotReadableError |
 
 ### NixOS
 
@@ -66,7 +67,7 @@ is in.
 ldd node_modules/@nativedesktop/host-linux-x64/bin/nd-hello
 
 # the optional sonames, individually
-ldconfig -p | grep -E 'libwebkitgtk-6.0.so.4|libgstreamer-1.0.so.0|libsecret-1.so.0'
+ldconfig -p | grep -E 'libwebkitgtk-6.0.so.4|libgstreamer-1.0.so.0|libsecret-1.so.0|libpipewire-0.3.so.0'
 ```
 
 The release workflow records the full `ldd` output of every published binary

@@ -1418,6 +1418,11 @@ fn onBeforeCommandLine(
     // VA-API decode through the GL path, which Chromium leaves off on Linux.
     // Without libva or a driver for the GPU the decoder stays in software.
     appendJoined(command_line, "enable-features", "AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL");
+    // Chromium only defaults to the xdg-desktop-portal ScreenCast (PipeWire)
+    // capturer under ozone wayland. With ozone pinned to x11 it would read the
+    // XWayland root instead, which a Wayland compositor leaves black. Outside a
+    // Wayland session WebRTC still picks the X11 capturer.
+    appendJoined(command_line, "enable-features", "WebRTCPipeWireCapturer");
     // Background services with no surface in an embedded browser: Cast device
     // discovery, Google's page hints and autofill form signatures, and
     // Translate, whose language detection otherwise runs on every page load.
@@ -10684,6 +10689,14 @@ fn onRequestMediaAccessPermission(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    // Chrome answers screen capture with its own tab/window/screen picker, which
+    // is the consent; an Allow/Block prompt in front of it would hand CEF a bare
+    // mask, and CEF then shares the whole primary screen without asking which.
+    const desktop: u32 = @intCast(c.CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE | c.CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE);
+    if (chromeStyle() and requested_permissions & desktop != 0) {
+        ref.releaseParam(callback);
+        return 0;
+    }
     const view = PermissionObj.of(self).payload;
     postPermissionRequest(view, browser, frame, 0, requesting_origin, requested_permissions, @intFromPtr(callback), true);
     return 1;
