@@ -3,6 +3,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gio = @import("gio");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
 const adw = @import("adw");
 const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
@@ -132,6 +133,7 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     // `onWindowAdded` releases it so closing that window quits the app.
     gio.Application.hold(app.as(gio.Application));
     _ = gtk.Application.signals.window_added.connect(app, ?*anyopaque, &onWindowAdded, null, .{});
+    if (!(if (global_environ_map.?.get("ND_DEV")) |v| std.mem.eql(u8, v, "1") else false)) guardInspectorKeys();
     // Kill the bun child when the app tears down, so it dies with the parent
     // instead of being orphaned.
     _ = gio.Application.signals.shutdown.connect(app.as(gio.Application), ?*anyopaque, &onShutdown, null, .{});
@@ -174,6 +176,48 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
             }
         }
     }
+}
+
+// GTK opens its Inspector on ctrl+shift+I and ctrl+shift+D in every window
+// unless the user's GSettings turn the keybinding off, and it is on by default.
+// Ctrl+shift+I is also Chrome's DevTools chord, so outside ND_DEV the chord is
+// the app's accelerator or nothing. The class binding sits on GtkWindow, in the
+// bubble phase, so a capture-phase controller on every toplevel (dialogs
+// included) keeps the key from it.
+fn guardInspectorKeys() void {
+    const list = gtk.Window.getToplevels();
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(list)), "items-changed", @ptrCast(&onToplevelsChanged), null, null, .{});
+    onToplevelsChanged(list, 0, 0, gio.ListModel.getNItems(list), null);
+}
+
+fn onToplevelsChanged(list: *gio.ListModel, position: c_uint, _: c_uint, added: c_uint, _: ?*anyopaque) callconv(.c) void {
+    var i = position;
+    while (i < position + added) : (i += 1) {
+        const item = gio.ListModel.getItem(list, i) orelse continue;
+        defer gobject.Object.unref(@ptrCast(@alignCast(item)));
+        const win: *gtk.Window = @ptrCast(@alignCast(item));
+        if (gobject.Object.getData(win.as(gobject.Object), "nd-inspector-guard") != null) continue;
+        gobject.Object.setData(win.as(gobject.Object), "nd-inspector-guard", @ptrFromInt(1));
+        const keys = gtk.EventControllerKey.new();
+        gtk.EventController.setPropagationPhase(keys.as(gtk.EventController), .capture);
+        _ = gtk.EventControllerKey.signals.key_pressed.connect(keys, ?*anyopaque, &onInspectorKey, null, .{});
+        gtk.Widget.addController(win.as(gtk.Widget), keys.as(gtk.EventController));
+    }
+}
+
+fn onInspectorKey(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk.ModifierType, _: ?*anyopaque) callconv(.c) c_int {
+    if (!mods.control_mask or !mods.shift_mask) return 0;
+    const accel: [*:0]const u8 = switch (keyval) {
+        'I', 'i' => "<Control><Shift>i",
+        'D', 'd' => "<Control><Shift>d",
+        else => return 0,
+    };
+    // The app's own accelerators share this phase and run in whichever order
+    // the controllers were added, so one the app declared is left to it.
+    const app = global_app orelse return 1;
+    const actions: [*:null]?[*:0]u8 = @ptrCast(gtk.Application.getActionsForAccel(app, accel));
+    defer glib.strfreev(actions);
+    return @intFromBool(actions[0] == null);
 }
 
 fn onWindowAdded(_: *gtk.Application, window: *gtk.Window, _: ?*anyopaque) callconv(.c) void {

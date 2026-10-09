@@ -584,6 +584,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `zoomChanged` | `onZoomChanged` | data |
 | `pictureInPicture` | `onPictureInPicture` | data |
 | `contentBlocked` | `onContentBlocked` | data |
+| `externalProtocol` | `onExternalProtocol` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |

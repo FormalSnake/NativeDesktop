@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "NativeDesktop",
   "version": "1.0",
-  "description": "Keeps Chromium's own download UI off screen; the app reports downloads.",
+  "description": "Keeps Chromium's own download UI off screen and reports which tabs make sound.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtucR0zLECfN0dhTysVJ8oK3uLOZk8euXQu682Ijae7hjSeclMdftiYLwL6gu8MXTQpHSdgDcIoZQG2T/HKy5jkxo4zR5gvQSyXN3iyRqfKVN4565+1MC53A+qZDT/URSUVckufDPN8ScUy4HFG2QEf5orM2Nx4I4rvw0/9gv/tWobGedEuA4w792CUhuCZKqlKplQSmD/29EjqiK+KPC/PcSiBFqznVue2XXpUefKTGpw8fKzAzLWXEKkm/nQ7DsGdPjqFcofHXPWNk/ebHrGbek1M2i7b2jhaiOKWS20BxkKqY1HU7bT2EL1utWMLG1vNsAS/zvfPDVBytjMAVs9QIDAQAB",
-  "permissions": ["downloads", "downloads.ui"],
+  "permissions": ["downloads", "downloads.ui", "debugger"],
   "background": { "service_worker": "background.js" }
 }

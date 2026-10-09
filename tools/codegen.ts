@@ -5537,6 +5537,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.zoomChanged":         { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.pictureInPicture":    { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.contentBlocked":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.externalProtocol":    { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
   "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
@@ -9293,6 +9294,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.zoomChanged":         { selector: "webview", payload: "data" },
   "WebView.pictureInPicture":    { selector: "webview", payload: "data" },
   "WebView.contentBlocked":      { selector: "webview", payload: "data" },
+  "WebView.externalProtocol":    { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
   "Terminal.titleChanged":       { selector: "terminal", payload: "text" },
