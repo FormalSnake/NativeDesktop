@@ -10047,6 +10047,13 @@ fn pageFileDialog(
         .filters = .empty,
         .callback = callback,
     };
+    // CEF has no mode for ui::SelectFileDialog's SELECT_FOLDER
+    // (showDirectoryPicker): it hands that over as an open-file request with
+    // the title and default path dropped. A real one (showOpenFilePicker, a
+    // file input) always carries at least the last-used directory.
+    const no_filters = accept_filters == null or api.string_list_size(accept_filters) == 0;
+    if (mode == c.FILE_DIALOG_OPEN and job.title == null and job.default_path == null and no_filters)
+        job.mode = c.FILE_DIALOG_OPEN_FOLDER;
     if (accept_filters != null) {
         var i: usize = 0;
         while (i < api.string_list_size(accept_filters)) : (i += 1) {
@@ -10058,7 +10065,7 @@ fn pageFileDialog(
         }
     }
     ref.addRefParam(callback);
-    tr("pageFileDialog node={d} mode={d}", .{ view.node_id, mode });
+    tr("pageFileDialog node={d} mode={d}", .{ view.node_id, job.mode });
     _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &showPageFileDialog, job, null);
     return 1;
 }

@@ -75,6 +75,11 @@ export async function packageLinuxApp(
   // dereference: true - `bun` on PATH is frequently a nix-store symlink.
   cpSync(bunPath, join(appdir, "usr", "bin", "bun"), { dereference: true });
   chmodSync(join(appdir, "usr", "bin", "bun"), 0o755);
+  // GTK aborts on a missing schema the moment a file chooser leaves open mode,
+  // portal or not, and some hosts (NixOS) keep GTK's schemas off the search
+  // path. AppRun appends this dir after the host's own, so it only fills a gap.
+  mkdirSync(join(appdir, "usr/share/glib-2.0/schemas"), { recursive: true });
+  cpSync(join(import.meta.dir, "gtk4-schemas/gschemas.compiled"), join(appdir, "usr/share/glib-2.0/schemas/gschemas.compiled"));
 
   if (engine === "chromium") {
     const version = cefVersionFor(config.webview?.cef);
