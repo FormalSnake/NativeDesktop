@@ -144,7 +144,8 @@ fn writeAll(bytes: []const u8) bool {
     return true;
 }
 
-/// Events for one flat session, or null to stop them. `session` is copied.
+/// Events for one flat session, or null to stop them. `session` is copied; ""
+/// is the browser's own session.
 pub fn listen(session: []const u8, wanted: ?Listener) void {
     lock();
     defer unlock();
@@ -190,10 +191,12 @@ fn dispatch(bytes: []const u8) void {
     };
     if (root.get("method")) |method| {
         if (method != .string) return;
-        const session = root.get("sessionId") orelse return;
-        if (session != .string) return;
+        const session: []const u8 = switch (root.get("sessionId") orelse std.json.Value{ .string = "" }) {
+            .string => |id| id,
+            else => return,
+        };
         lock();
-        const l = listeners.get(session.string);
+        const l = listeners.get(session);
         unlock();
         if (l) |found| found.event(found.ctx, method.string, root.get("params") orelse .null);
         return;

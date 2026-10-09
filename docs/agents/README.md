@@ -61,7 +61,9 @@ grep for in the host's stderr (all `ND_*` markers print to stderr; capture `2>&1
 commit isn't showing up as expected.
 
 `ND_DEV=1` (env var on the host) selects `bun --hot` for the child process and enables the
-crash-overlay's Restart button; this is what `nd dev` sets for you.
+crash-overlay's Restart button; this is what `nd dev` sets for you. On GTK it also leaves GTK's
+Inspector on ctrl+shift+I and ctrl+shift+D; without it those chords are the app's accelerators or
+nothing.
 
 ## HMR: what actually preserves state
 

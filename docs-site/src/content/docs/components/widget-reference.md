@@ -616,6 +616,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `pictureInPicture` | `onPictureInPicture` | data |
 | `fullscreenChanged` | `onFullscreenChanged` | checked |
 | `contentBlocked` | `onContentBlocked` | data |
+| `externalProtocol` | `onExternalProtocol` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |

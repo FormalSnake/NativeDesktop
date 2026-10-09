@@ -723,6 +723,7 @@
         { "name": "pictureInPicture", "ndpName": "onPictureInPicture", "payload": "data" },
         { "name": "fullscreenChanged", "ndpName": "onFullscreenChanged", "payload": "checked" },
         { "name": "contentBlocked", "ndpName": "onContentBlocked", "payload": "data" },
+        { "name": "externalProtocol", "ndpName": "onExternalProtocol", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },

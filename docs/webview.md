@@ -579,6 +579,18 @@ it, Chrome's window and toolbar do not.
   and closes before it is presented. Chrome's own accelerators for a new window,
   tab, incognito window, view-source, print, history, downloads and the
   extensions page are refused through `cef_command_handler_t::on_chrome_command`.
+- A link to another application's scheme (mailto:, zoommtg:, a custom one)
+  launches nothing. It reaches the app as `externalProtocol`
+  (`{ data: { url, scheme, appName } }`, `appName` empty when the desktop has no
+  application for the scheme), only after a user gesture, and the app confirms
+  and opens it (`openExternal`), as Chrome's "Open …?" dialog does. A scheme
+  `navigator.registerProtocolHandler` accepts (web+ and Chromium's safelist)
+  goes on to Chromium first, so a page registered for it loads, and arrives as
+  `externalProtocol` only when no page is.
+- `audioStateChanged` reports Chrome's own audible state (`playing`, which
+  lags the sound by a moment as Chrome's tab speaker does, and `muted`). CEF has
+  no callback for it: the framework's built-in extension reads `chrome.tabs` and
+  reports through a binding on its service worker over the browser pipe.
 - DevTools is docked inside the view: `openDevTools`, `closeDevTools`, F12 and
   ctrl+shift+I open Chrome's inspector as a second browser in the same embedding
   window, and toggle it off again. The shortcut

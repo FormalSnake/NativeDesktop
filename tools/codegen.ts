@@ -5540,6 +5540,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.fullscreenChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.contentBlocked":      { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.closeApproved":       { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.externalProtocol":    { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
   "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
@@ -9300,6 +9301,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.fullscreenChanged":   { selector: "webview", payload: "checked" },
   "WebView.contentBlocked":      { selector: "webview", payload: "data" },
   "WebView.closeApproved":       { selector: "webview", payload: "none" },
+  "WebView.externalProtocol":    { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
   "Terminal.titleChanged":       { selector: "terminal", payload: "text" },

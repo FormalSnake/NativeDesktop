@@ -1673,6 +1673,7 @@ fn ensureInitialized() bool {
     initialized = true;
     init_failed = false;
     browser_pipe.start();
+    watchTabAudio();
     ensureSchemeFactories();
     // cef_initialize swapped the process's signal actions for Chromium's; give
     // the embedder its chance to take them back (src/gtk/main.zig).
@@ -1962,6 +1963,14 @@ const View = struct {
     /// onBeforeDevToolsPopup on the CEF UI thread: the devtools window is
     /// allowed only when the app asked for it, never conjured by the page.
     devtools_requested: std.atomic.Value(bool) = .init(false),
+    /// Whether the last navigation to another application's scheme had a user
+    /// gesture. Written by on_before_browse on the CEF UI thread, read when
+    /// the request's handler is made on the IO thread, which comes after.
+    external_gesture: std.atomic.Value(bool) = .init(false),
+    /// This view's page target, which names it in the framework extension's
+    /// audible reports. GTK thread.
+    page_target: ?[]u8 = null,
+    audible: bool = false,
     menu_lock: SpinLock = .{},
     menu_items: []ctxmenu.Item = &.{},
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
@@ -3006,6 +3015,11 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
     if (focused_view == view) focused_view = null;
+    if (view.page_target) |id| {
+        if (tab_audio.fetchRemove(id)) |kv| alloc.free(kv.key);
+        alloc.free(id);
+        view.page_target = null;
+    }
     forgetParked(view);
     motionFinish(view, false);
     dropPageDialogs(view);
@@ -4771,19 +4785,23 @@ fn onOpenUrlFromTab(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     const url = dupeStr(target_url);
+    const view = RequestHandlerObj.of(self).payload;
     if (url) |u| {
         if (externalScheme(u)) {
-            handOutside(u, user_gesture != 0);
+            handOutside(view, u, user_gesture != 0);
             return 1;
         }
     }
-    postNewWindow(RequestHandlerObj.of(self).payload, url, dispositionName(disposition), user_gesture != 0);
+    postNewWindow(view, url, dispositionName(disposition), user_gesture != 0);
     return 1;
 }
 
 /// A navigation to a scheme no browser draws (mailto:, tel:, zoommtg:, …).
 /// Chrome style answers it with its own "Open …?" dialog or a blank tab; here
-/// it goes to the desktop's handler for the scheme and the page stays put.
+/// the app is asked (`externalProtocol`) and the page stays put. A scheme a
+/// page can register a handler for goes on to Chromium, which rewrites it to
+/// the registered page; one with no handler comes back through
+/// `onProtocolExecution`.
 fn onBeforeBrowse(
     self: [*c]c.cef_request_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -4812,8 +4830,62 @@ fn onBeforeBrowse(
         alloc.free(url);
         return 0;
     }
-    handOutside(url, user_gesture != 0);
+    const view = RequestHandlerObj.of(self).payload;
+    if (handlerScheme(url)) {
+        view.external_gesture.store(user_gesture != 0, .release);
+        alloc.free(url);
+        return 0;
+    }
+    handOutside(view, url, user_gesture != 0);
     return 1;
+}
+
+/// Schemes `navigator.registerProtocolHandler` accepts: web+ and Chromium's
+/// safelist (third_party/blink/common/custom_handlers/protocol_handler_utils.cc).
+const handler_safelist = [_][]const u8{
+    "bitcoin", "cabal", "dat",    "did",   "doi",    "dweb",   "ethereum", "ftp",     "geo",   "hyper",
+    "im",      "ipfs",  "ipns",   "irc",   "ircs",   "magnet", "mailto",   "matrix",  "mms",   "news",
+    "nntp",    "openpgp4fpr", "sftp", "sip", "sms",  "smsto",  "ssb",      "ssh",     "tel",   "urn",
+    "webcal",  "wtai",  "xmpp",
+};
+
+fn handlerScheme(url: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return false;
+    const scheme = url[0..colon];
+    if (scheme.len > 4 and std.ascii.eqlIgnoreCase(scheme[0..4], "web+")) return true;
+    for (handler_safelist) |known| {
+        if (std.ascii.eqlIgnoreCase(scheme, known)) return true;
+    }
+    return false;
+}
+
+const ExternalObj = ref.Counted(c.cef_resource_request_handler_t, ExternalRequest);
+const ExternalRequest = struct { view: *View, gesture: bool };
+
+/// A navigation to a handler scheme Chromium had no registered page for. IO
+/// thread. Chromium's own launch is refused, and the app is asked instead.
+fn onProtocolExecution(
+    self: [*c]c.cef_resource_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    allow_os_execution: [*c]c_int,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    if (allow_os_execution != null) allow_os_execution.* = 0;
+    // The navigation fails with ERR_UNKNOWN_URL_SCHEME next, and Chromium would
+    // commit an error page over the page the link was on. Stopping it here,
+    // before the failure reaches the UI thread, keeps the page.
+    if (browser != null and frame != null) {
+        const is_main = if (frame.*.is_main) |f| f(frame) != 0 else false;
+        if (is_main) if (browser.*.stop_load) |stop| stop(browser);
+    }
+    if (request == null) return;
+    const url = requestUrl(request) orelse return;
+    const ext = ExternalObj.of(self).payload;
+    handOutside(ext.view, url, ext.gesture);
 }
 
 /// Schemes a browser view renders itself. Anything else is another
@@ -4840,28 +4912,35 @@ fn externalScheme(url: []const u8) bool {
     return true;
 }
 
-/// Adopts `url`. Only a navigation the user asked for launches anything: a page
+/// Adopts `url`. Only a navigation the user asked for reaches the app: a page
 /// cannot start another application on its own, which is Chrome's rule too.
-fn handOutside(url: []u8, user_gesture: bool) void {
+/// The app confirms, as Chrome's "Open …?" dialog does, and opens it.
+fn handOutside(view: *View, url: []u8, user_gesture: bool) void {
     tr("externalScheme url={s} gesture={}", .{ url, user_gesture });
     if (!user_gesture) {
         std.debug.print("ND_WARN WebView engine=chromium: {s} not opened, no user gesture\n", .{url});
         alloc.free(url);
         return;
     }
-    const owned = alloc.dupeZ(u8, url) catch {
-        alloc.free(url);
-        return;
-    };
-    alloc.free(url);
-    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &launchOutside, owned.ptr, null);
+    post(.{ .view = view, .name = "externalProtocol", .text = url });
 }
 
-fn launchOutside(data: ?*anyopaque) callconv(.c) c_int {
-    const uri: [*:0]u8 = @ptrCast(data.?);
-    defer alloc.free(std.mem.span(uri));
-    gio.AppInfo.launchDefaultForUriAsync(uri, null, null, null, null);
-    return 0;
+/// `externalProtocol` on the GTK thread: the desktop's application for the
+/// scheme is named, empty when there is none.
+fn emitExternalProtocol(view: *View, url: []const u8) void {
+    const f = emit orelse return;
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return;
+    const scheme = alloc.dupeZ(u8, url[0..colon]) catch return;
+    defer alloc.free(scheme);
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    const app_info = gio.AppInfo.getDefaultForUriScheme(scheme);
+    defer if (app_info) |i| gobject.Object.unref(@ptrCast(@alignCast(i)));
+    const name: []const u8 = if (app_info) |i| std.mem.span(gio.AppInfo.getDisplayName(i)) else "";
+    payload.put(alloc, "url", .{ .string = url }) catch return;
+    payload.put(alloc, "scheme", .{ .string = scheme }) catch return;
+    payload.put(alloc, "appName", .{ .string = name }) catch return;
+    f(view.node_id, "externalProtocol", .{ .data = .{ .object = payload } });
 }
 
 /// Chrome's wording: the proxy by host and port, a site by origin with a
@@ -4971,6 +5050,11 @@ fn onGetResourceRequestHandler(
     const view = RequestHandlerObj.of(self).payload;
     const url = requestUrl(request) orelse return null;
     defer alloc.free(url);
+    if (handlerScheme(url)) {
+        const h = ExternalObj.create(.{ .view = view, .gesture = view.external_gesture.load(.acquire) }) orelse return null;
+        h.cef.on_protocol_execution = &onProtocolExecution;
+        return h.cptr();
+    }
     if (adblock.isSchemeUrl(url)) {
         if (disable_default_handling != null) disable_default_handling.* = 1;
         const top = if (browser != null) mainFrameUrl(browser) else null;
@@ -5880,7 +5964,7 @@ fn onBeforePopup(
     const url = dupeStr(target_url);
     if (url) |u| {
         if (externalScheme(u)) {
-            handOutside(u, user_gesture != 0);
+            handOutside(LifeObj.of(self).payload, u, user_gesture != 0);
             return 1;
         }
     }
@@ -6346,6 +6430,8 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         f(view.node_id, "browserCommand", .{ .text = text });
     } else if (std.mem.eql(u8, box.name, "fullscreenChanged")) {
         f(view.node_id, "fullscreenChanged", .{ .checked = box.flag });
+    } else if (std.mem.eql(u8, box.name, "externalProtocol")) {
+        emitExternalProtocol(view, box.text orelse return 0);
     } else if (std.mem.eql(u8, box.name, "pictureInPicture")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
@@ -6801,6 +6887,8 @@ const Call = union(enum) {
     painted: u32,
     /// `onHangWatch`'s ping, by sequence number.
     hang_ping: u32,
+    /// Target.getTargetInfo's reply naming the view's own page target.
+    page_target,
 };
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
@@ -6904,7 +6992,7 @@ fn callFree(call: Call) void {
         },
         .add_channel_script => |s| alloc.free(s.name),
         .cookies => |id| alloc.free(id),
-        .agent_ready, .frame_tree, .painted, .hang_ping => {},
+        .agent_ready, .frame_tree, .painted, .hang_ping, .page_target => {},
         .trigger => |t| {
             alloc.free(t.id);
             alloc.free(t.extension);
@@ -7030,6 +7118,7 @@ fn agentReady(view: *View) void {
     // The main frame has to be known before any world-scoped call can be aimed;
     // frameNavigated keeps it current from here on.
     _ = cdpSendRaw(view, "Page.getFrameTree", "", .frame_tree);
+    _ = cdpSendRaw(view, "Target.getTargetInfo", "", .page_target);
     view.cdp_ready = true;
     const items = view.queued.toOwnedSlice(alloc) catch return;
     defer alloc.free(items);
@@ -7538,6 +7627,17 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
     switch (call) {
         .ignore, .agent_ready, .hang_ping => {},
         .painted => |gen| motionPainted(view, gen),
+        .page_target => {
+            const target = switch (root) {
+                .object => |o| o.get("targetInfo") orelse .null,
+                else => .null,
+            };
+            const id = stringField(target, "targetId") orelse return;
+            const copy = alloc.dupe(u8, id) catch return;
+            if (view.page_target) |old| alloc.free(old);
+            view.page_target = copy;
+            if (tab_audio.get(id)) |state| emitTabAudio(view, state);
+        },
         .trigger => |t| {
             const target = switch (root) {
                 .object => |o| o.get("targetInfo") orelse .null,
@@ -9634,15 +9734,9 @@ fn cmdSetMuted(view: *View, arg: ?std.json.Value) void {
         else => return,
     };
     set_muted(host, @intFromBool(muted));
-    // CEF reports playback state through cef_audio_handler's capture stream,
-    // not as a mute notification, so the state change the app asked for is
-    // reported from here. `playing` stays false: nothing is observed.
-    const f = emit orelse return;
-    var payload: std.json.ObjectMap = .empty;
-    defer payload.deinit(alloc);
-    payload.put(alloc, "playing", .{ .bool = false }) catch return;
-    payload.put(alloc, "muted", .{ .bool = muted }) catch return;
-    f(view.node_id, "audioStateChanged", .{ .data = .{ .object = payload } });
+    // Reported at once rather than waiting on the extension's echo, which
+    // never comes where the extension is not loaded.
+    emitTabAudio(view, .{ .audible = view.audible, .muted = muted });
 }
 
 fn cmdSetZoom(view: *View, arg: ?std.json.Value) void {
@@ -12837,3 +12931,114 @@ const MenuClick = struct {
         alloc.free(self.selection);
     }
 };
+
+// ============================================================================
+// Audible tabs
+// ============================================================================
+//
+// Chromium knows when a tab makes sound (RecentlyAudibleHelper, behind Chrome's
+// speaker icon) and CEF reports it nowhere: cef_audio_handler_t only starts once
+// the stream is diverted away from the speakers. The framework extension reads
+// it from chrome.tabs and calls a binding this host adds to its service worker
+// over the browser pipe, naming the tab's page target. Attaching also keeps the
+// worker from being stopped while idle.
+
+const tab_audio_binding = "__ndTabAudio";
+
+const TabAudio = struct { audible: bool, muted: bool };
+
+/// The last report per page target, so a view whose target is learned after
+/// the report still gets it. GTK thread.
+var tab_audio: std.StringHashMapUnmanaged(TabAudio) = .empty;
+
+/// Context for the pipe's callbacks, which need a pointer and use none.
+var tab_audio_ctx: u8 = 0;
+
+fn watchTabAudio() void {
+    if (!chromeStyle() or !browser_pipe.available()) return;
+    browser_pipe.listen("", browser_pipe.listener(&onBrowserTargetEvent, &tab_audio_ctx));
+    _ = browser_pipe.call("Target.setDiscoverTargets", "{\"discover\":true,\"filter\":[{\"type\":\"service_worker\"}]}", null, &ignoreReply, &tab_audio_ctx);
+}
+
+/// Reader thread.
+fn onBrowserTargetEvent(_: *anyopaque, method: []const u8, params: std.json.Value) void {
+    if (!std.mem.eql(u8, method, "Target.targetCreated")) return;
+    const target_info = switch (params) {
+        .object => |o| o.get("targetInfo") orelse return,
+        else => return,
+    };
+    const url = stringField(target_info, "url") orelse return;
+    if (!std.mem.startsWith(u8, url, "chrome-extension://" ++ framework_extension_id ++ "/")) return;
+    const target = stringField(target_info, "targetId") orelse return;
+    const call = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\",\"flatten\":true}}", .{target}) catch return;
+    defer alloc.free(call);
+    _ = browser_pipe.call("Target.attachToTarget", call, null, &onAudioWorkerAttached, &tab_audio_ctx);
+}
+
+/// Reader thread.
+fn onAudioWorkerAttached(_: *anyopaque, ok: bool, result: std.json.Value) void {
+    if (!ok) return;
+    const session = stringField(result, "sessionId") orelse return;
+    browser_pipe.listen(session, browser_pipe.listener(&onAudioWorkerEvent, &tab_audio_ctx));
+    _ = browser_pipe.call("Runtime.enable", "{}", session, &ignoreReply, &tab_audio_ctx);
+    _ = browser_pipe.call("Runtime.addBinding", "{\"name\":\"" ++ tab_audio_binding ++ "\"}", session, &ignoreReply, &tab_audio_ctx);
+}
+
+const TabAudioReport = struct { target: []u8, state: TabAudio };
+
+/// Reader thread.
+fn onAudioWorkerEvent(_: *anyopaque, method: []const u8, params: std.json.Value) void {
+    if (!std.mem.eql(u8, method, "Runtime.bindingCalled")) return;
+    const name = stringField(params, "name") orelse return;
+    if (!std.mem.eql(u8, name, tab_audio_binding)) return;
+    const text = stringField(params, "payload") orelse return;
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch return;
+    defer parsed.deinit();
+    const target = stringField(parsed.value, "target") orelse return;
+    const report = alloc.create(TabAudioReport) catch return;
+    report.* = .{
+        .target = alloc.dupe(u8, target) catch {
+            alloc.destroy(report);
+            return;
+        },
+        .state = .{ .audible = boolField(parsed.value, "audible"), .muted = boolField(parsed.value, "muted") },
+    };
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliverTabAudio, report, null);
+}
+
+fn boolField(root: std.json.Value, key: []const u8) bool {
+    if (root != .object) return false;
+    return switch (root.object.get(key) orelse return false) {
+        .bool => |b| b,
+        else => false,
+    };
+}
+
+fn deliverTabAudio(data: ?*anyopaque) callconv(.c) c_int {
+    const report: *TabAudioReport = @ptrCast(@alignCast(data.?));
+    defer alloc.destroy(report);
+    tr("tabAudio target={s} audible={} muted={}", .{ report.target, report.state.audible, report.state.muted });
+    const slot = tab_audio.getOrPut(alloc, report.target) catch {
+        alloc.free(report.target);
+        return 0;
+    };
+    if (slot.found_existing) alloc.free(report.target);
+    slot.value_ptr.* = report.state;
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        const id = view.page_target orelse continue;
+        if (std.mem.eql(u8, id, slot.key_ptr.*)) emitTabAudio(view, report.state);
+    }
+    return 0;
+}
+
+fn emitTabAudio(view: *View, state: TabAudio) void {
+    view.audible = state.audible;
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "playing", .{ .bool = state.audible }) catch return;
+    payload.put(alloc, "muted", .{ .bool = state.muted }) catch return;
+    f(view.node_id, "audioStateChanged", .{ .data = .{ .object = payload } });
+}
