@@ -110,7 +110,8 @@ export function appRunTemplate(s: AppRunSpec): string {
     "#!/usr/bin/env bash\n" +
     'HERE="$(dirname "$(readlink -f "$0")")"\n' +
     `export ND_SCRIPT="$HERE/app/${s.entry}"\n` +
-    'export PATH="$HERE/usr/bin:$PATH"\n';
+    'export PATH="$HERE/usr/bin:$PATH"\n' +
+    'export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:$HERE/usr/share"\n';
   if (s.appId) script += `export ND_APP_ID="${s.appId}"\n`;
   // Every CEF process reads these, and each has to be settled before
   // cef_initialize. The :- form keeps an explicit override ahead of the bundle,

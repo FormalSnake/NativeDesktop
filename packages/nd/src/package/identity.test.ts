@@ -211,6 +211,7 @@ describe("buildDesktopEntry / appRunTemplate", () => {
     expect(script).toContain('export ND_APP_ID="com.nativedesktop.gallery"');
     expect(script).toContain('export ND_PLUGIN_PATHS="$HERE/app/native/libdemo.so"');
     expect(script).toContain('exec "$HERE/usr/bin/gallery" "$@"');
+    expect(script).toContain('export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:$HERE/usr/share"');
     expect(script).not.toContain("ND_WEBVIEW_ENGINE");
   });
 
