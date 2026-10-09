@@ -498,6 +498,16 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
     if (host == null) return;
     defer ref.releaseParam(host);
 
+    // A document picture-in-picture window is a window the page asked for and
+    // the user sees, not one of Chrome's stray browsers. Its window handle
+    // resolves to the app's own top-level, so unmapping or keeping it here
+    // takes the app window off screen.
+    const pip_until = pending_doc_pip_sink_until.swap(0, .acq_rel);
+    if (pip_until != 0 and glib.getMonotonicTime() <= pip_until) {
+        tr("sinkCreated id={d} pictureInPicture", .{if (browser.*.get_identifier) |get_id| get_id(browser) else 0});
+        return;
+    }
+
     // Unmapped before anything else: closing a browser is asynchronous and the
     // window would otherwise be on screen for the length of the teardown. Out
     // of the window manager's hands too, because Views maps it again: a tiling
@@ -839,6 +849,10 @@ var pip_windows: std.AutoHashMapUnmanaged(usize, PipWindow) = .empty;
 /// would then take it for one of Chromium's dialogs.
 var pending_doc_pip_view: std.atomic.Value(usize) = .init(0);
 var pending_doc_pip_until: std.atomic.Value(i64) = .init(0);
+/// The same request as seen by the sink client: Chromium hands the document
+/// window's browser to get_default_client, and on_after_created there is the
+/// first callback that can tell it apart from a browser Chrome made for itself.
+var pending_doc_pip_sink_until: std.atomic.Value(i64) = .init(0);
 /// Windows already looked at and found not to be picture-in-picture: a window
 /// does not become one later (the floating video's aspect hint is there before
 /// it maps, a document window is new), so each costs its X round trips once
@@ -5743,8 +5757,9 @@ fn onBeforePopup(
     // Chrome's own browser of TYPE_PICTURE_IN_PICTURE: CEF builds it whatever
     // this returns, and refusing it only rejects the page's promise. It goes
     // through without a client of ours, so it never reaches on_after_created as
-    // one of this view's browsers. The client arrived with a reference CEF only
-    // drops when it gets the same pointer back. Alloy has no such browser, and
+    // one of this view's browsers; it reaches the sink client's instead. The
+    // client arrived with a reference CEF only drops when it gets the same
+    // pointer back. Alloy has no such browser, and
     // there the popup stays refused.
     if (disposition == c.CEF_WOD_NEW_PICTURE_IN_PICTURE and chromeStyle()) {
         if (client != null) {
@@ -5752,6 +5767,7 @@ fn onBeforePopup(
             client.* = null;
         }
         pending_doc_pip_until.store(glib.getMonotonicTime() + pending_doc_pip_us, .release);
+        pending_doc_pip_sink_until.store(glib.getMonotonicTime() + pending_doc_pip_us, .release);
         pending_doc_pip_view.store(@intFromPtr(LifeObj.of(self).payload), .release);
         return 0;
     }

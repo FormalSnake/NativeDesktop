@@ -92,18 +92,27 @@ pub fn pinWindow(pid: u32, title: []const u8) Pin {
         // Pin toggles, and a user's own window rule may already have pinned it.
         const pinned = if (o.get("pinned")) |p| p == .bool and p.bool else false;
         if (pinned) return .pinned;
-        var cmd: [128]u8 = undefined;
         // Pinning takes a floating window only.
         const floating = if (o.get("floating")) |f| f == .bool and f.bool else false;
-        if (!floating) {
-            const float = std.fmt.bufPrint(&cmd, "dispatch setfloating address:{s}", .{address.string}) catch return .not_yet;
-            if (request(float)) |answer| alloc.free(answer);
-        }
-        const pin = std.fmt.bufPrint(&cmd, "dispatch pin address:{s}", .{address.string}) catch return .not_yet;
-        const answer = request(pin) orelse return .not_yet;
-        defer alloc.free(answer);
-        return if (std.mem.startsWith(u8, answer, "ok")) .pinned else .not_yet;
+        if (!floating) _ = dispatchOnWindow("setfloating", "float", address.string);
+        return if (dispatchOnWindow("pin", "pin", address.string)) .pinned else .not_yet;
     }
     return .not_yet;
+}
+
+/// A window dispatcher by its legacy name, then by its Lua one: a session
+/// configured in Lua (Hyprland 0.55 and later) reads `dispatch` as Lua and
+/// refuses the legacy spelling.
+fn dispatchOnWindow(legacy: []const u8, lua: []const u8, address: []const u8) bool {
+    var cmd: [192]u8 = undefined;
+    const old = std.fmt.bufPrint(&cmd, "dispatch {s} address:{s}", .{ legacy, address }) catch return false;
+    if (request(old)) |answer| {
+        defer alloc.free(answer);
+        if (std.mem.startsWith(u8, answer, "ok")) return true;
+    }
+    const new = std.fmt.bufPrint(&cmd, "eval hl.dispatch(hl.dsp.window.{s}({{ action = \"enable\", window = \"address:{s}\" }}))", .{ lua, address }) catch return false;
+    const answer = request(new) orelse return false;
+    defer alloc.free(answer);
+    return std.mem.startsWith(u8, answer, "ok");
 }
 
