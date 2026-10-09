@@ -39,6 +39,7 @@ const hyprland = @import("hyprland.zig");
 const pip_landing = @import("pip_landing.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
 const ndchrome = @import("../gtk/chrome.zig");
+const dialogsurface = @import("../gtk/dialogsurface.zig");
 const gtkmenu = @import("gtkmenu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
@@ -1357,6 +1358,10 @@ fn onBeforeCommandLine(
         // Domain Reliability uploads network error samples to Google; nothing
         // in an embedded browser reads them.
         appendFlag(command_line, append, "disable-domain-reliability");
+        // Chrome style otherwise sends an HTTP auth challenge to Chrome's own
+        // login prompt, which cannot be shown in this embedding and answers
+        // ERR_INVALID_AUTH_CREDENTIALS; this routes it to get_auth_credentials.
+        appendFlag(command_line, append, "disable-chrome-login-prompt");
     }
     // VA-API decode through the GL path, which Chromium leaves off on Linux.
     // Without libva or a driver for the GPU the decoder stays in software.
@@ -1982,6 +1987,10 @@ const View = struct {
     /// What the page showed as a dialog came up over it, drawn in its place
     /// under the dialog's scrim while the page itself stands aside.
     aside_still: ?*gdk.Texture = null,
+    /// Page dialogs waiting for the user, oldest first. Only the head is ever
+    /// on screen, and only while the view is: a background tab's dialog waits
+    /// for the tab, as it does in Chrome.
+    page_dialogs: std.ArrayList(*PageDialog) = .empty,
     motion_started_us: i64 = 0,
     motion_ended_us: i64 = 0,
     /// Each resize of the page during a slide asks the page to report back
@@ -2250,6 +2259,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     download_handler.cef.on_download_updated = &onDownloadUpdated;
     jsdialog_handler.cef.on_jsdialog = &onJsDialog;
     jsdialog_handler.cef.on_before_unload_dialog = &onBeforeUnloadDialog;
+    jsdialog_handler.cef.on_reset_dialog_state = &onResetDialogState;
     dialog_handler.cef.on_file_dialog = &onFileDialog;
     context_menu_handler.cef.on_before_context_menu = &onBeforeContextMenu;
     context_menu_handler.cef.run_context_menu = &onRunContextMenu;
@@ -2302,6 +2312,7 @@ fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     // covered until then.
     x11.raise(view.container);
     releasePopoverGrab(view);
+    showPageDialog(view);
 }
 
 /// A page in an autohide GtkPopover (an extension's action popup) never saw a
@@ -2905,6 +2916,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     if (focused_view == view) focused_view = null;
     forgetParked(view);
     motionFinish(view, false);
+    dropPageDialogs(view);
     dropAsideStill(view);
     if (view.park_source != 0) {
         _ = glib.Source.remove(view.park_source);
@@ -4149,6 +4161,8 @@ fn onEngineTick(_: ?*anyopaque) callconv(.c) c_int {
         // A page that stood aside for a dialog nobody told the engine about
         // closing would otherwise stay there.
         if (view.aside and !dialogOverView(view)) syncBounds(view);
+        // A dialog that arrived while its tab was in the background.
+        showPageDialog(view);
     }
     return 1;
 }
@@ -4736,28 +4750,45 @@ fn launchOutside(data: ?*anyopaque) callconv(.c) c_int {
     return 0;
 }
 
-/// Chrome style answers an HTTP auth challenge with Chromium's own login
-/// window, which this embedding may not have. The framework gives an app no way
-/// to supply credentials, so the challenge is refused: 0 cancels the request and
-/// the page gets the 401 it would have got if the user pressed Cancel.
+/// Chrome's wording: the proxy by host and port, a site by origin with a
+/// warning when the password would cross the network in the clear.
+fn authDialogBody(origin_url: [*c]const c.cef_string_t, is_proxy: bool, host: [*c]const c.cef_string_t, port: c_int) ![]const u8 {
+    if (is_proxy) {
+        const name = dupeStr(host) orelse try alloc.dupe(u8, "");
+        defer alloc.free(name);
+        return std.fmt.allocPrint(alloc, "The proxy {s}:{d} requires a username and password.", .{ name, port });
+    }
+    const raw = dupeStr(origin_url) orelse try alloc.dupe(u8, "");
+    defer alloc.free(raw);
+    const origin = originForm(raw);
+    defer alloc.free(origin);
+    if (std.mem.startsWith(u8, origin, "https://")) return alloc.dupe(u8, origin);
+    return std.fmt.allocPrint(alloc, "{s}\nYour connection to this site is not private", .{origin});
+}
+
+/// IO thread. Chrome's sign-in dialog, as a page dialog: Cancel leaves the page
+/// with the 401 or 407 it was sent.
 fn onGetAuthCredentials(
-    _: [*c]c.cef_request_handler_t,
+    self: [*c]c.cef_request_handler_t,
     browser: [*c]c.cef_browser_t,
     origin_url: [*c]const c.cef_string_t,
-    _: c_int,
-    _: [*c]const c.cef_string_t,
-    _: c_int,
+    is_proxy: c_int,
+    host: [*c]const c.cef_string_t,
+    port: c_int,
     _: [*c]const c.cef_string_t,
     _: [*c]const c.cef_string_t,
     callback: [*c]c.cef_auth_callback_t,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
-    defer ref.releaseParam(callback);
-    if (dupeStr(origin_url)) |origin| {
-        defer alloc.free(origin);
-        std.debug.print("ND_WARN WebView engine=chromium: HTTP authentication refused for {s}; no credential surface in this engine\n", .{origin});
-    }
-    return 0;
+    tr("authChallenge proxy={d} port={d}", .{ is_proxy, port });
+    const body = authDialogBody(origin_url, is_proxy != 0, host, port) catch &.{};
+    postPageDialog(RequestHandlerObj.of(self).payload, .{
+        .kind = .auth,
+        .heading = alloc.dupe(u8, "Sign in") catch &.{},
+        .body = body,
+        .callback = @intFromPtr(callback),
+    });
+    return 1;
 }
 
 // ============================================================================
@@ -5344,12 +5375,32 @@ fn onLoadError(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     if (error_code == ERR_ABORTED) return;
+    // A Chrome style browser answers a certificate error with Chrome's own
+    // interstitial, whose Advanced section is the only way on to the site. An
+    // app covering it with an error page of its own would take that away.
+    if (isCertError(error_code) and chromeStyleBrowser(browser)) return;
     post(.{
         .view = LoadObj.of(self).payload,
         .name = "loadFailed",
         .text = dupeStr(failed_url),
         .extra = dupeStr(error_text),
     });
+}
+
+/// net::IsCertificateError: ERR_CERT_COMMON_NAME_INVALID down to, not
+/// including, ERR_CERT_END.
+fn isCertError(code: c.cef_errorcode_t) bool {
+    return code <= -200 and code > -220;
+}
+
+fn chromeStyleBrowser(browser: [*c]c.cef_browser_t) bool {
+    if (browser == null) return false;
+    const get_host = browser.*.get_host orelse return false;
+    const host = get_host(browser);
+    if (host == null) return false;
+    defer ref.releaseOwned(host);
+    const get_style = host.*.get_runtime_style orelse return false;
+    return get_style(host) == c.CEF_RUNTIME_STYLE_CHROME;
 }
 
 // ============================================================================
@@ -5638,6 +5689,11 @@ const Emission = struct {
     download_update: ?DownloadUpdate = null,
     /// The view's blocked count changed (`contentBlocked`).
     adblock_report: bool = false,
+    /// A page dialog to put up. It holds the callback, so the GTK side owns
+    /// answering it from here on.
+    page_dialog: ?*PageDialog = null,
+    /// Chromium cancelled the view's script dialogs (`on_reset_dialog_state`).
+    reset_dialogs: bool = false,
 };
 
 fn post(e: Emission) void {
@@ -5693,6 +5749,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (!live_views.contains(@intFromPtr(box.view))) {
         if (box.menu_request) |req| cancelMenuRequest(req);
         if (box.permission) |req| answerPermissionRequest(req, .dismiss);
+        if (box.page_dialog) |d| finishPageDialog(d, false);
         if (box.download) |req| answerDownload(req, null);
         if (box.download_update) |u| {
             // A download outlives the view that started it for as long as
@@ -5722,6 +5779,16 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.permission) |req| {
         announcePermissionRequest(view, req);
+        return 0;
+    }
+
+    if (box.page_dialog) |d| {
+        queuePageDialog(view, d);
+        return 0;
+    }
+
+    if (box.reset_dialogs) {
+        resetPageDialogs(view);
         return 0;
     }
 
@@ -10109,28 +10176,37 @@ fn answerJsDialog(callback: [*c]c.cef_jsdialog_callback_t, accepted: bool, text:
 }
 
 fn onJsDialog(
-    _: [*c]c.cef_jsdialog_handler_t,
+    self: [*c]c.cef_jsdialog_handler_t,
     browser: [*c]c.cef_browser_t,
-    _: [*c]const c.cef_string_t,
+    origin_url: [*c]const c.cef_string_t,
     dialog_type: c.cef_jsdialog_type_t,
-    _: [*c]const c.cef_string_t,
-    _: [*c]const c.cef_string_t,
+    message_text: [*c]const c.cef_string_t,
+    default_prompt_text: [*c]const c.cef_string_t,
     callback: [*c]c.cef_jsdialog_callback_t,
     suppress_message: [*c]c_int,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
-    defer ref.releaseParam(callback);
     if (suppress_message != null) suppress_message.* = 0;
 
     const next = automation_dialogs.take("webview.scriptDialog");
+    if (next == .unscripted) {
+        const kind: PageDialog.Kind = switch (dialog_type) {
+            JSDIALOGTYPE_CONFIRM => .confirm,
+            JSDIALOGTYPE_PROMPT => .prompt,
+            else => .alert,
+        };
+        postPageDialog(JsDialogHandlerObj.of(self).payload, .{
+            .kind = kind,
+            .heading = jsDialogHeading(browser, origin_url),
+            .body = dupeStr(message_text) orelse (alloc.dupe(u8, "") catch &.{}),
+            .default_text = if (kind == .prompt) dupeStr(default_prompt_text) else null,
+            .callback = @intFromPtr(callback),
+        });
+        return 1;
+    }
+    defer ref.releaseParam(callback);
     switch (next) {
-        .unscripted => {
-            // No app-side sheet on this engine yet, and a dialog nobody answers
-            // parks the page's JS thread for good, so it is dismissed rather
-            // than left open. An alert is "seen" either way.
-            answerJsDialog(callback, dialog_type == JSDIALOGTYPE_ALERT, null);
-            return 1;
-        },
+        .unscripted => unreachable,
         .exhausted => {
             std.debug.print("ND_WARN WebView scriptDialog: the automation dialog script ran out of answers; dismissing\n", .{});
             answerJsDialog(callback, false, null);
@@ -10159,20 +10235,266 @@ fn onJsDialog(
     }
 }
 
-/// Leaving a page is never blocked: the framework gives an app no way to
-/// express a policy for onbeforeunload, and the WebKit backend answers the
-/// same way for the same reason.
+/// Chrome's "Leave site?". The page's own message is not shown, as in every
+/// current browser: it was the vector for pages that talked people into staying.
 fn onBeforeUnloadDialog(
-    _: [*c]c.cef_jsdialog_handler_t,
+    self: [*c]c.cef_jsdialog_handler_t,
     browser: [*c]c.cef_browser_t,
     _: [*c]const c.cef_string_t,
-    _: c_int,
+    is_reload: c_int,
     callback: [*c]c.cef_jsdialog_callback_t,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
-    defer ref.releaseParam(callback);
-    answerJsDialog(callback, true, null);
+    postPageDialog(JsDialogHandlerObj.of(self).payload, .{
+        .kind = if (is_reload != 0) .reload else .leave,
+        .heading = alloc.dupe(u8, if (is_reload != 0) "Reload site?" else "Leave site?") catch &.{},
+        .body = alloc.dupe(u8, "Changes that you made may not be saved.") catch &.{},
+        .callback = @intFromPtr(callback),
+    });
     return 1;
+}
+
+fn onResetDialogState(self: [*c]c.cef_jsdialog_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    post(.{ .view = JsDialogHandlerObj.of(self).payload, .name = "resetDialogs", .reset_dialogs = true });
+}
+
+/// Chrome's title for a script dialog: the asking origin without an http or
+/// https scheme, "This page" for any other scheme, and "An embedded page" when
+/// the frame asking is not of the main frame's origin.
+fn jsDialogHeading(browser: [*c]c.cef_browser_t, origin_url: [*c]const c.cef_string_t) []const u8 {
+    const raw = dupeStr(origin_url) orelse (alloc.dupe(u8, "") catch &.{});
+    defer alloc.free(raw);
+    const origin = originForm(raw);
+    defer alloc.free(origin);
+    const main_raw = mainFrameUrl(browser) orelse (alloc.dupe(u8, "") catch &.{});
+    defer alloc.free(main_raw);
+    const main = originForm(main_raw);
+    defer alloc.free(main);
+    const embedded = main.len != 0 and !std.mem.eql(u8, main, origin);
+    const shown: ?[]const u8 = for ([_][]const u8{ "http://", "https://" }) |prefix| {
+        if (std.mem.startsWith(u8, origin, prefix)) break origin[prefix.len..];
+    } else null;
+    const out = if (shown) |s|
+        (if (embedded)
+            std.fmt.allocPrint(alloc, "An embedded page at {s} says", .{s})
+        else
+            std.fmt.allocPrint(alloc, "{s} says", .{s}))
+    else
+        alloc.dupe(u8, if (embedded) "An embedded page on this page says" else "This page says");
+    return out catch &.{};
+}
+
+// ============================================================================
+// Page dialogs
+// ============================================================================
+//
+// What a page asks the user directly: a script dialog, "Leave site?", and an
+// HTTP or proxy sign-in. Chrome draws each as a tab-modal views dialog, which
+// in this embedding is a toplevel of its own; here each is an AdwAlertDialog in
+// the view's window, presented through the dialog surface so the page stands
+// aside for it. The request is made on whichever CEF thread asked and handed to
+// the GTK one with its callback, which is answered exactly once from there.
+
+const PageDialog = struct {
+    const Kind = enum { alert, confirm, prompt, leave, reload, auth };
+
+    kind: Kind,
+    heading: []const u8,
+    body: []const u8,
+    default_text: ?[]const u8 = null,
+    /// `cef_jsdialog_callback_t`, or `cef_auth_callback_t` for `.auth`. The
+    /// handler's own reference, adopted.
+    callback: usize,
+
+    // GTK thread only.
+    view: ?*View = null,
+    alert: ?*adw.AlertDialog = null,
+    response_handler: c_ulong = 0,
+    /// The prompt's text, or the sign-in's username.
+    first: ?*gtk.Editable = null,
+    password: ?*gtk.Editable = null,
+};
+
+fn postPageDialog(view: *View, d: PageDialog) void {
+    const box = alloc.create(PageDialog) catch {
+        var copy = d;
+        answerPageDialog(&copy, false);
+        return;
+    };
+    box.* = d;
+    post(.{ .view = view, .name = "pageDialog", .page_dialog = box });
+}
+
+fn queuePageDialog(view: *View, d: *PageDialog) void {
+    d.view = view;
+    view.page_dialogs.append(alloc, d) catch {
+        finishPageDialog(d, false);
+        return;
+    };
+    tr("pageDialog node={d} kind={s} queued={d}", .{ view.node_id, @tagName(d.kind), view.page_dialogs.items.len });
+    showPageDialog(view);
+}
+
+/// Puts the oldest waiting dialog up if none is, and the view is where the
+/// user can see what is asking.
+fn showPageDialog(view: *View) void {
+    if (view.page_dialogs.items.len == 0) return;
+    const d = view.page_dialogs.items[0];
+    if (d.alert != null) return;
+    if (!viewOnShow(view) or gtk.Widget.getRoot(view.widget) == null) return;
+
+    const heading = alloc.dupeZ(u8, d.heading) catch return;
+    defer alloc.free(heading);
+    const body = alloc.dupeZ(u8, d.body) catch return;
+    defer alloc.free(body);
+    const alert = adw.AlertDialog.new(heading.ptr, body.ptr);
+    const accept_label: [*:0]const u8 = switch (d.kind) {
+        .alert, .confirm, .prompt => "OK",
+        .leave => "Leave",
+        .reload => "Reload",
+        .auth => "Sign In",
+    };
+    if (d.kind != .alert) adw.AlertDialog.addResponse(alert, "cancel", "Cancel");
+    adw.AlertDialog.addResponse(alert, "accept", accept_label);
+    adw.AlertDialog.setResponseAppearance(alert, "accept", .suggested);
+    adw.AlertDialog.setDefaultResponse(alert, "accept");
+    // Escape answers as Cancel does; an alert has nothing else to answer.
+    adw.AlertDialog.setCloseResponse(alert, if (d.kind == .alert) "accept" else "cancel");
+
+    switch (d.kind) {
+        .prompt => {
+            const entry = gtk.Entry.new();
+            gtk.Entry.setActivatesDefault(entry, 1);
+            const editable = entry.as(gtk.Editable);
+            if (d.default_text) |t| {
+                if (alloc.dupeZ(u8, t)) |z| {
+                    defer alloc.free(z);
+                    gtk.Editable.setText(editable, z.ptr);
+                } else |_| {}
+            }
+            adw.AlertDialog.setExtraChild(alert, entry.as(gtk.Widget));
+            d.first = editable;
+        },
+        .auth => {
+            const list = gtk.ListBox.new();
+            gtk.ListBox.setSelectionMode(list, .none);
+            gtk.Widget.addCssClass(list.as(gtk.Widget), "boxed-list");
+            const user = adw.EntryRow.new();
+            adw.PreferencesRow.setTitle(user.as(adw.PreferencesRow), "Username");
+            adw.EntryRow.setActivatesDefault(user, 1);
+            const password = adw.PasswordEntryRow.new();
+            adw.PreferencesRow.setTitle(password.as(adw.PreferencesRow), "Password");
+            adw.EntryRow.setActivatesDefault(password.as(adw.EntryRow), 1);
+            gtk.ListBox.append(list, user.as(gtk.Widget));
+            gtk.ListBox.append(list, password.as(gtk.Widget));
+            adw.AlertDialog.setExtraChild(alert, list.as(gtk.Widget));
+            d.first = user.as(gtk.Editable);
+            d.password = password.as(gtk.Editable);
+        },
+        else => {},
+    }
+
+    d.alert = alert;
+    // Held past the dialog's own close: a reset can force it shut and drop the
+    // request before GTK has finished with it.
+    _ = gobject.Object.ref(alert.as(gobject.Object));
+    d.response_handler = gobject.signalConnectData(alert.as(gobject.Object), "response", @ptrCast(&onPageDialogResponse), d, null, .{});
+    dialogsurface.present(alert.as(adw.Dialog), view.widget);
+    if (d.first) |first| {
+        _ = gtk.Widget.grabFocus(first.as(gtk.Widget));
+        if (d.kind == .prompt) gtk.Editable.selectRegion(first, 0, -1);
+    }
+    tr("pageDialog shown node={d} kind={s}", .{ view.node_id, @tagName(d.kind) });
+}
+
+fn onPageDialogResponse(_: *adw.AlertDialog, response: [*:0]const u8, data: ?*anyopaque) callconv(.c) void {
+    const d: *PageDialog = @ptrCast(@alignCast(data orelse return));
+    const view = d.view orelse return;
+    const accepted = std.mem.eql(u8, std.mem.span(response), "accept");
+    for (view.page_dialogs.items, 0..) |queued, i| {
+        if (queued != d) continue;
+        _ = view.page_dialogs.orderedRemove(i);
+        break;
+    }
+    tr("pageDialog answered node={d} kind={s} accepted={}", .{ view.node_id, @tagName(d.kind), accepted });
+    finishPageDialog(d, accepted);
+    showPageDialog(view);
+}
+
+fn finishPageDialog(d: *PageDialog, accepted: bool) void {
+    answerPageDialog(d, accepted);
+    alloc.destroy(d);
+}
+
+/// Answers Chromium and frees what `d` holds. The text fields are read here, so
+/// the dialog has to still be alive; it is let go of last.
+fn answerPageDialog(d: *PageDialog, accepted: bool) void {
+    defer {
+        alloc.free(d.heading);
+        alloc.free(d.body);
+        if (d.default_text) |t| alloc.free(t);
+        if (d.alert) |alert| {
+            gobject.signalHandlerDisconnect(alert.as(gobject.Object), d.response_handler);
+            gobject.Object.unref(alert.as(gobject.Object));
+        }
+    }
+    const first: ?[]const u8 = if (d.first) |e| std.mem.span(gtk.Editable.getText(e)) else null;
+    switch (d.kind) {
+        .auth => {
+            const cb: [*c]c.cef_auth_callback_t = @ptrFromInt(d.callback);
+            defer ref.releaseParam(cb);
+            if (accepted) {
+                if (cb.*.cont) |cont| {
+                    var user = std.mem.zeroes(c.cef_string_t);
+                    defer clearStr(&user);
+                    var password = std.mem.zeroes(c.cef_string_t);
+                    defer clearStr(&password);
+                    _ = setStr(&user, first orelse "");
+                    if (d.password) |p| _ = setStr(&password, std.mem.span(gtk.Editable.getText(p)));
+                    cont(cb, &user, &password);
+                    return;
+                }
+            }
+            if (cb.*.cancel) |cancel| cancel(cb);
+        },
+        else => {
+            const cb: [*c]c.cef_jsdialog_callback_t = @ptrFromInt(d.callback);
+            defer ref.releaseParam(cb);
+            // An alert is "seen" however it was closed.
+            answerJsDialog(cb, accepted or d.kind == .alert, if (accepted and d.kind == .prompt) first orelse "" else null);
+        },
+    }
+}
+
+/// Chromium has cancelled the view's script dialogs, a navigation having made
+/// them moot. A sign-in belongs to a request, which ends on its own terms.
+fn resetPageDialogs(view: *View) void {
+    var i: usize = 0;
+    while (i < view.page_dialogs.items.len) {
+        const d = view.page_dialogs.items[i];
+        if (d.kind == .auth) {
+            i += 1;
+            continue;
+        }
+        _ = view.page_dialogs.orderedRemove(i);
+        closePageDialog(d, false);
+    }
+    showPageDialog(view);
+}
+
+fn dropPageDialogs(view: *View) void {
+    for (view.page_dialogs.items) |d| closePageDialog(d, false);
+    view.page_dialogs.deinit(alloc);
+    view.page_dialogs = .empty;
+}
+
+fn closePageDialog(d: *PageDialog, accepted: bool) void {
+    const alert = d.alert orelse return finishPageDialog(d, accepted);
+    _ = gobject.Object.ref(alert.as(gobject.Object));
+    defer gobject.Object.unref(alert.as(gobject.Object));
+    finishPageDialog(d, accepted);
+    _ = adw.Dialog.forceClose(alert.as(adw.Dialog));
 }
 
 /// Explicit rather than defaulted: a null `can_download` leaves the decision to
