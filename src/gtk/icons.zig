@@ -3,6 +3,8 @@ const gtk = @import("gtk");
 const gdk = @import("gdk");
 const glib = @import("glib");
 const gobject = @import("gobject");
+const gsk = @import("gsk");
+const cairo = @import("cairo");
 
 // Icon names cross the wire as freedesktop names (the same names macOS maps to
 // SF Symbols in swift/Sources/NDShell/Icons.swift). GTK renders a bare
@@ -112,6 +114,13 @@ fn decodeTexture(data: []const u8, what: []const u8) ?*gdk.Texture {
 
     const bytes = glib.Bytes.new(buf.ptr, size);
     defer bytes.unref();
+    // GDK decodes PNG, JPEG and TIFF itself and hands everything else to
+    // gdk-pixbuf, whose SVG loader comes from librsvg and is often absent
+    // (NixOS's system loaders.cache has none, and a packaged app uses the
+    // host's), so an SVG favicon goes through GTK's own renderer instead.
+    if (isSvg(buf[0..size])) {
+        if (svgTexture(bytes)) |t| return t;
+    }
     var err: ?*glib.Error = null;
     return gdk.Texture.newFromBytes(bytes, &err) orelse {
         if (err) |e| {
@@ -120,6 +129,62 @@ fn decodeTexture(data: []const u8, what: []const u8) ?*gdk.Texture {
         }
         return null;
     };
+}
+
+fn isSvg(bytes: []const u8) bool {
+    const head = bytes[0..@min(bytes.len, 1024)];
+    return std.mem.indexOf(u8, head, "<svg") != null;
+}
+
+/// The square an SVG is rasterized into: four times `data_pixel_size`, so the
+/// icon stays sharp at every scale factor GTK draws a 16px slot at.
+const svg_raster_px: c_int = data_pixel_size * 4;
+
+const SvgNewFromBytes = *const fn (*glib.Bytes) callconv(.c) ?*gdk.Paintable;
+var svg_new_from_bytes: ?SvgNewFromBytes = null;
+var svg_lookup_done = false;
+
+/// `gtk_svg_new_from_bytes` arrived in GTK 4.22; resolved at runtime so an
+/// older libgtk still loads the host and falls back to gdk-pixbuf.
+fn svgNewFromBytes() ?SvgNewFromBytes {
+    if (svg_lookup_done) return svg_new_from_bytes;
+    svg_lookup_done = true;
+    var lib = std.DynLib.open("libgtk-4.so.1") catch return null;
+    svg_new_from_bytes = lib.lookup(SvgNewFromBytes, "gtk_svg_new_from_bytes");
+    return svg_new_from_bytes;
+}
+
+fn svgTexture(bytes: *glib.Bytes) ?*gdk.Texture {
+    const new_svg = svgNewFromBytes() orelse return null;
+    const paintable = new_svg(bytes) orelse return null;
+    defer gobject.Object.unref(@ptrCast(@alignCast(paintable)));
+
+    var w: f64 = @floatFromInt(svg_raster_px);
+    var h: f64 = w;
+    const ratio = gdk.Paintable.getIntrinsicAspectRatio(paintable);
+    if (ratio > 1) h = w / ratio else if (ratio > 0) w = h * ratio;
+
+    const snapshot = gtk.Snapshot.new();
+    gdk.Paintable.snapshot(paintable, snapshot.as(gdk.Snapshot), w, h);
+    const node = gtk.Snapshot.freeToNode(snapshot) orelse return null;
+    defer gsk.RenderNode.unref(node);
+
+    const pw: c_int = @intFromFloat(@ceil(w));
+    const ph: c_int = @intFromFloat(@ceil(h));
+    const surface = cairo.Surface.imageCreate(.argb32, pw, ph);
+    defer cairo.Surface.destroy(surface);
+    const cr = cairo.Context.create(surface);
+    gsk.RenderNode.draw(node, cr);
+    cairo.Context.destroy(cr);
+    cairo.Surface.flush(surface);
+
+    const data = cairo.Surface.imageGetData(surface) orelse return null;
+    const stride: usize = @intCast(cairo.Surface.imageGetStride(surface));
+    const pixels = glib.Bytes.new(data, stride * @as(usize, @intCast(ph)));
+    defer pixels.unref();
+    // Cairo's ARGB32 is native-endian premultiplied, which on every target GTK
+    // runs on here is GDK's B8G8R8A8_PREMULTIPLIED.
+    return gdk.MemoryTexture.new(pw, ph, .b8g8r8a8_premultiplied, pixels, stride).as(gdk.Texture);
 }
 
 /// `textureFromData` wrapped in a GtkImage at `data_pixel_size`, for the slots
