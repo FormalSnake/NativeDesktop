@@ -92,6 +92,8 @@ const nd_base_css =
     \\list.nd-palette-list { background: none; }
     \\list.nd-palette-list > row { min-height: 40px; padding: 0 10px; margin: 0 6px; border-radius: 9px; }
     \\list.nd-palette-list > row:hover:not(:selected) { background: none; }
+    \\.nd-page-dialog { background-color: var(--dialog-bg-color); color: var(--dialog-fg-color); border-radius: 15px; padding: 22px 24px 20px; box-shadow: inset 0 0 0 1px var(--border-color); }
+    \\.nd-page-dialog .nd-page-dialog-buttons > button { min-height: 34px; padding: 0 18px; border-radius: 9px; }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 

@@ -478,6 +478,10 @@ final class NDCefWebView: NSView {
             browser.map { $0.pointee.reload?($0) }
         case "stop":
             browser.map { $0.pointee.stop_load?($0) }
+        case "requestClose":
+            // Not asked here yet: the GTK host's dry run (`requestClose` in
+            // src/cef/engine.zig) has no AppKit peer.
+            emitData("closeApproved", [:])
         case "setZoom":
             guard let zoom = arg as? NSNumber else {
                 ndCefWarn("malformed setZoom arg")

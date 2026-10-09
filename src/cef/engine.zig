@@ -2068,6 +2068,12 @@ const View = struct {
     /// on screen, and only while the view is: a background tab's dialog waits
     /// for the tab, as it does in Chrome.
     page_dialogs: std.ArrayList(*PageDialog) = .empty,
+    /// A `requestClose` dry run is in flight. Set on the GTK thread, taken by
+    /// `onBeforeBrowse` on the CEF UI thread.
+    close_probe: std.atomic.Value(bool) = .init(false),
+    close_probe_timer: c_uint = 0,
+    /// The window close this view's dry run answers to, if any.
+    window_hold: ?*WindowHold = null,
     motion_started_us: i64 = 0,
     motion_ended_us: i64 = 0,
     /// Each resize of the page during a slide asks the page to report back
@@ -2765,6 +2771,8 @@ fn focusEligible(view: *View) bool {
     // A page standing aside for a dialog is parked off the window: the dialog
     // has the keyboard, and the page may not take it back until it comes home.
     if (view.aside) return false;
+    // A tab-modal dialog over the page has the keyboard.
+    if (pageCardShown(view)) return false;
     return view.size_w.load(.acquire) >= focusable_min_px and view.size_h.load(.acquire) >= focusable_min_px;
 }
 
@@ -2939,6 +2947,7 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     view.in_popover.store(false, .release);
     marker.lat("cef.unmap", "node={d}", .{view.node_id});
+    hidePageDialog(view);
     disconnectLayout(view);
     disconnectActive(view);
     motionFinish(view, false);
@@ -3000,6 +3009,15 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     forgetParked(view);
     motionFinish(view, false);
     dropPageDialogs(view);
+    if (view.close_probe_timer != 0) {
+        _ = glib.Source.remove(view.close_probe_timer);
+        view.close_probe_timer = 0;
+    }
+    // A page gone mid-ask cannot hold its window open.
+    if (view.window_hold) |hold| {
+        view.window_hold = null;
+        windowHoldStep(hold, true);
+    }
     dropAsideStill(view);
     closeHangDialog(view);
     if (view.park_source != 0) {
@@ -3659,6 +3677,7 @@ fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64, 
         const cw_h = r.f_size.f_height;
         if (cw_w < 2 or cw_h < 2 or (cw_w < 8 and cw_h < 8)) continue;
         covers[cover_n] = r;
+        if (gtk.Widget.hasCssClass(cw, page_dialog_class) != 0) radii[cover_n] = page_dialog_radius;
         cover_n += 1;
     }
     // A probe view a couple of pixels square (an extension action's badge
@@ -3946,6 +3965,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "installExtension")) return cmdInstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "uninstallExtension")) return cmdUninstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "setExtensionEnabled")) return cmdSetExtensionEnabled(view, arg);
+    if (std.mem.eql(u8, cmd, "requestClose")) return startCloseProbe(view);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -4765,7 +4785,7 @@ fn onOpenUrlFromTab(
 /// Chrome style answers it with its own "Open …?" dialog or a blank tab; here
 /// it goes to the desktop's handler for the scheme and the page stays put.
 fn onBeforeBrowse(
-    _: [*c]c.cef_request_handler_t,
+    self: [*c]c.cef_request_handler_t,
     browser: [*c]c.cef_browser_t,
     frame: [*c]c.cef_frame_t,
     request: [*c]c.cef_request_t,
@@ -4781,6 +4801,13 @@ fn onBeforeBrowse(
     if (raw == null) return 0;
     defer freeUserfree(raw);
     const url = dupeStr(raw) orelse return 0;
+    // The dry run of a close, through beforeunload: never loaded.
+    if (std.mem.eql(u8, url, close_probe_url)) {
+        alloc.free(url);
+        const view = RequestHandlerObj.of(self).payload;
+        if (view.close_probe.swap(false, .acq_rel)) post(.{ .view = view, .name = "closeProbe", .close_probe = true });
+        return 1;
+    }
     if (!externalScheme(url)) {
         alloc.free(url);
         return 0;
@@ -6090,6 +6117,8 @@ const Emission = struct {
     page_dialog: ?*PageDialog = null,
     /// Chromium cancelled the view's script dialogs (`on_reset_dialog_state`).
     reset_dialogs: bool = false,
+    /// The page let a `requestClose` dry run through.
+    close_probe: bool = false,
 };
 
 fn post(e: Emission) void {
@@ -6145,7 +6174,9 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (!live_views.contains(@intFromPtr(box.view))) {
         if (box.menu_request) |req| cancelMenuRequest(req);
         if (box.permission) |req| answerPermissionRequest(req, .dismiss);
-        if (box.page_dialog) |d| finishPageDialog(d, false);
+        // A page asking to be left while its view is gone is being closed:
+        // turning it down would keep a browser nobody can see alive.
+        if (box.page_dialog) |d| finishPageDialog(d, d.kind == .leave or d.kind == .reload);
         if (box.download) |req| answerDownload(req, null);
         if (box.download_update) |u| {
             // A download outlives the view that started it for as long as
@@ -6185,6 +6216,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.reset_dialogs) {
         resetPageDialogs(view);
+        return 0;
+    }
+
+    if (box.close_probe) {
+        closeProbeDone(view, true);
         return 0;
     }
 
@@ -11045,10 +11081,16 @@ fn jsDialogHeading(browser: [*c]c.cef_browser_t, origin_url: [*c]const c.cef_str
 //
 // What a page asks the user directly: a script dialog, "Leave site?", and an
 // HTTP or proxy sign-in. Chrome draws each as a tab-modal views dialog, which
-// in this embedding is a toplevel of its own; here each is an AdwAlertDialog in
-// the view's window, presented through the dialog surface so the page stands
-// aside for it. The request is made on whichever CEF thread asked and handed to
-// the GTK one with its callback, which is answered exactly once from there.
+// in this embedding would be a toplevel of its own. Here each is a card at the
+// top of the page, a layer of the GtkOverlay the page sits in, so the rest of
+// the window stays usable and the card goes and comes back with its tab. The
+// page's window is cut around the card (`syncShape`) like around any layer
+// over it. A page in no overlay gets an AdwAlertDialog over its window instead.
+// The request is made on whichever CEF thread asked and handed to the GTK one
+// with its callback, which is answered exactly once from there.
+
+const page_dialog_radius: f64 = 15;
+const page_dialog_class = "nd-page-dialog";
 
 const PageDialog = struct {
     const Kind = enum { alert, confirm, prompt, leave, reload, auth };
@@ -11061,10 +11103,15 @@ const PageDialog = struct {
     /// handler's own reference, adopted.
     callback: usize,
 
-    // GTK thread only.
+    // GTK thread only. One of `card` and `alert` once it has been put up.
     view: ?*View = null,
+    card: ?*gtk.Widget = null,
+    /// The overlay `card` is a layer of. Both held until the card is taken
+    /// down, since the window can go first.
+    overlay: ?*gtk.Overlay = null,
     alert: ?*adw.AlertDialog = null,
     response_handler: c_ulong = 0,
+    accept_button: ?*gtk.Widget = null,
     /// The prompt's text, or the sign-in's username.
     first: ?*gtk.Editable = null,
     password: ?*gtk.Editable = null,
@@ -11090,32 +11137,65 @@ fn queuePageDialog(view: *View, d: *PageDialog) void {
     showPageDialog(view);
 }
 
-/// Puts the oldest waiting dialog up if none is, and the view is where the
-/// user can see what is asking.
+fn pageCardShown(view: *View) bool {
+    if (view.page_dialogs.items.len == 0) return false;
+    const card = view.page_dialogs.items[0].card orelse return false;
+    return gtk.Widget.getVisible(card) != 0;
+}
+
+/// Puts the oldest waiting dialog up, or back up after its tab was away, once
+/// the view is where the user can see what is asking. A window being closed
+/// asks its background tabs too, over the whole window.
 fn showPageDialog(view: *View) void {
     if (view.page_dialogs.items.len == 0) return;
     const d = view.page_dialogs.items[0];
     if (d.alert != null) return;
-    if (!viewOnShow(view) or gtk.Widget.getRoot(view.widget) == null) return;
+    if (d.card) |card| {
+        if (gtk.Widget.getVisible(card) != 0 or !viewOnShow(view)) return;
+        gtk.Widget.setVisible(card, 1);
+        x11.setInputPassthrough(view.container, true);
+        focusPageDialog(d);
+        syncBrowserFocus(view);
+        return;
+    }
+    if (viewOnShow(view)) {
+        if (pageOverlay(view)) |overlay| return putUpCard(view, d, overlay);
+    } else if (view.window_hold == null) return;
+    if (gtk.Widget.getRoot(view.widget) == null) return;
+    putUpAlert(view, d);
+}
 
-    const heading = alloc.dupeZ(u8, d.heading) catch return;
-    defer alloc.free(heading);
-    const body = alloc.dupeZ(u8, d.body) catch return;
-    defer alloc.free(body);
-    const alert = adw.AlertDialog.new(heading.ptr, body.ptr);
-    const accept_label: [*:0]const u8 = switch (d.kind) {
+/// Off with its tab, and back with it (`showPageDialog` from `onMap`).
+fn hidePageDialog(view: *View) void {
+    if (view.page_dialogs.items.len == 0) return;
+    const card = view.page_dialogs.items[0].card orelse return;
+    gtk.Widget.setVisible(card, 0);
+    if (!view.under_bar) x11.setInputPassthrough(view.container, false);
+}
+
+/// The overlay the page is the base of, where the card is a layer above it.
+fn pageOverlay(view: *View) ?*gtk.Overlay {
+    var it: ?*gtk.Widget = gtk.Widget.getParent(view.widget);
+    while (it) |cur| : (it = gtk.Widget.getParent(cur)) {
+        if (!gobject.ext.isA(cur, gtk.Overlay)) continue;
+        const overlay: *gtk.Overlay = @ptrCast(@alignCast(cur));
+        const base = gtk.Overlay.getChild(overlay) orelse continue;
+        if (base == view.widget or gtk.Widget.isAncestor(view.widget, base) != 0) return overlay;
+    }
+    return null;
+}
+
+fn acceptLabel(kind: PageDialog.Kind) [*:0]const u8 {
+    return switch (kind) {
         .alert, .confirm, .prompt => "OK",
         .leave => "Leave",
         .reload => "Reload",
         .auth => "Sign In",
     };
-    if (d.kind != .alert) adw.AlertDialog.addResponse(alert, "cancel", "Cancel");
-    adw.AlertDialog.addResponse(alert, "accept", accept_label);
-    adw.AlertDialog.setResponseAppearance(alert, "accept", .suggested);
-    adw.AlertDialog.setDefaultResponse(alert, "accept");
-    // Escape answers as Cancel does; an alert has nothing else to answer.
-    adw.AlertDialog.setCloseResponse(alert, if (d.kind == .alert) "accept" else "cancel");
+}
 
+/// The prompt's field or the sign-in's two rows, the same in either surface.
+fn pageDialogFields(d: *PageDialog) ?*gtk.Widget {
     switch (d.kind) {
         .prompt => {
             const entry = gtk.Entry.new();
@@ -11127,8 +11207,8 @@ fn showPageDialog(view: *View) void {
                     gtk.Editable.setText(editable, z.ptr);
                 } else |_| {}
             }
-            adw.AlertDialog.setExtraChild(alert, entry.as(gtk.Widget));
             d.first = editable;
+            return entry.as(gtk.Widget);
         },
         .auth => {
             const list = gtk.ListBox.new();
@@ -11142,12 +11222,142 @@ fn showPageDialog(view: *View) void {
             adw.EntryRow.setActivatesDefault(password.as(adw.EntryRow), 1);
             gtk.ListBox.append(list, user.as(gtk.Widget));
             gtk.ListBox.append(list, password.as(gtk.Widget));
-            adw.AlertDialog.setExtraChild(alert, list.as(gtk.Widget));
             d.first = user.as(gtk.Editable);
             d.password = password.as(gtk.Editable);
+            return list.as(gtk.Widget);
         },
-        else => {},
+        else => return null,
     }
+}
+
+fn putUpCard(view: *View, d: *PageDialog, overlay: *gtk.Overlay) void {
+    const heading = alloc.dupeZ(u8, d.heading) catch return;
+    defer alloc.free(heading);
+    const body = alloc.dupeZ(u8, d.body) catch return;
+    defer alloc.free(body);
+
+    const card_box = gtk.Box.new(.vertical, 0);
+    const card = card_box.as(gtk.Widget);
+    gtk.Widget.addCssClass(card, page_dialog_class);
+    gtk.Widget.setHalign(card, .center);
+    gtk.Widget.setValign(card, .start);
+    gtk.Widget.setMarginTop(card, 12);
+    gtk.Widget.setMarginStart(card, 12);
+    gtk.Widget.setMarginEnd(card, 12);
+
+    const title = gtk.Label.new(heading.ptr);
+    gtk.Widget.addCssClass(title.as(gtk.Widget), "title-4");
+    gtk.Label.setXalign(title, 0);
+    gtk.Label.setWrap(title, 1);
+    gtk.Label.setWrapMode(title, .word_char);
+    gtk.Box.append(card_box, title.as(gtk.Widget));
+
+    if (d.body.len != 0) {
+        const message = gtk.Label.new(body.ptr);
+        gtk.Label.setXalign(message, 0);
+        gtk.Label.setWrap(message, 1);
+        gtk.Label.setWrapMode(message, .word_char);
+        gtk.Label.setSelectable(message, 1);
+        gtk.Label.setWidthChars(message, 24);
+        gtk.Label.setMaxWidthChars(message, 52);
+        gtk.Widget.setMarginTop(message.as(gtk.Widget), 10);
+        gtk.Box.append(card_box, message.as(gtk.Widget));
+    } else {
+        gtk.Label.setWidthChars(title, 24);
+        gtk.Label.setMaxWidthChars(title, 52);
+    }
+
+    if (pageDialogFields(d)) |fields| {
+        gtk.Widget.setMarginTop(fields, 14);
+        gtk.Box.append(card_box, fields);
+        // The window's default widget is the app's, not this card's.
+        switch (d.kind) {
+            .prompt => {
+                gtk.Entry.setActivatesDefault(@ptrCast(@alignCast(fields)), 0);
+                _ = gobject.signalConnectData(fields.as(gobject.Object), "activate", @ptrCast(&onPageCardAccept), d, null, .{});
+            },
+            .auth => {
+                adw.EntryRow.setActivatesDefault(@ptrCast(@alignCast(d.first.?)), 0);
+                adw.EntryRow.setActivatesDefault(@ptrCast(@alignCast(d.password.?)), 0);
+            },
+            else => {},
+        }
+    }
+
+    const buttons = gtk.Box.new(.horizontal, 8);
+    gtk.Widget.addCssClass(buttons.as(gtk.Widget), "nd-page-dialog-buttons");
+    gtk.Widget.setHalign(buttons.as(gtk.Widget), .end);
+    gtk.Widget.setMarginTop(buttons.as(gtk.Widget), 18);
+    if (d.kind != .alert) {
+        const cancel = gtk.Button.newWithLabel("Cancel");
+        _ = gobject.signalConnectData(cancel.as(gobject.Object), "clicked", @ptrCast(&onPageCardCancel), d, null, .{});
+        gtk.Box.append(buttons, cancel.as(gtk.Widget));
+    }
+    const accept = gtk.Button.newWithLabel(acceptLabel(d.kind));
+    gtk.Widget.addCssClass(accept.as(gtk.Widget), "suggested-action");
+    _ = gobject.signalConnectData(accept.as(gobject.Object), "clicked", @ptrCast(&onPageCardAccept), d, null, .{});
+    gtk.Box.append(buttons, accept.as(gtk.Widget));
+    gtk.Box.append(card_box, buttons.as(gtk.Widget));
+    d.accept_button = accept.as(gtk.Widget);
+
+    // Enter in a sign-in row; Escape anywhere in the card.
+    if (d.kind == .auth) {
+        _ = gobject.signalConnectData(d.first.?.as(gobject.Object), "entry-activated", @ptrCast(&onPageCardAccept), d, null, .{});
+        _ = gobject.signalConnectData(d.password.?.as(gobject.Object), "entry-activated", @ptrCast(&onPageCardAccept), d, null, .{});
+    }
+    const keys = gtk.EventControllerKey.new();
+    _ = gobject.signalConnectData(keys.as(gobject.Object), "key-pressed", @ptrCast(&onPageCardKey), d, null, .{});
+    gtk.Widget.addController(card, keys.as(gtk.EventController));
+
+    d.card = card;
+    d.overlay = overlay;
+    _ = gobject.Object.ref(card.as(gobject.Object));
+    _ = gobject.Object.ref(overlay.as(gobject.Object));
+    gtk.Overlay.addOverlay(overlay, card);
+    x11.setInputPassthrough(view.container, true);
+    focusPageDialog(d);
+    syncBrowserFocus(view);
+    tr("pageDialog shown node={d} kind={s} surface=card", .{ view.node_id, @tagName(d.kind) });
+}
+
+fn focusPageDialog(d: *PageDialog) void {
+    if (d.first) |first| {
+        _ = gtk.Widget.grabFocus(first.as(gtk.Widget));
+        if (d.kind == .prompt) gtk.Editable.selectRegion(first, 0, -1);
+    } else if (d.accept_button) |button| {
+        _ = gtk.Widget.grabFocus(button);
+    }
+}
+
+fn onPageCardAccept(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    respondPageDialog(@ptrCast(@alignCast(data orelse return)), true);
+}
+
+fn onPageCardCancel(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    respondPageDialog(@ptrCast(@alignCast(data orelse return)), false);
+}
+
+fn onPageCardKey(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, _: gdk.ModifierType, data: ?*anyopaque) callconv(.c) c_int {
+    if (keyval != gdk.KEY_Escape) return 0;
+    const d: *PageDialog = @ptrCast(@alignCast(data orelse return 0));
+    // An alert has only the one answer.
+    respondPageDialog(d, d.kind == .alert);
+    return 1;
+}
+
+fn putUpAlert(view: *View, d: *PageDialog) void {
+    const heading = alloc.dupeZ(u8, d.heading) catch return;
+    defer alloc.free(heading);
+    const body = alloc.dupeZ(u8, d.body) catch return;
+    defer alloc.free(body);
+    const alert = adw.AlertDialog.new(heading.ptr, body.ptr);
+    if (d.kind != .alert) adw.AlertDialog.addResponse(alert, "cancel", "Cancel");
+    adw.AlertDialog.addResponse(alert, "accept", acceptLabel(d.kind));
+    adw.AlertDialog.setResponseAppearance(alert, "accept", .suggested);
+    adw.AlertDialog.setDefaultResponse(alert, "accept");
+    // Escape answers as Cancel does; an alert has nothing else to answer.
+    adw.AlertDialog.setCloseResponse(alert, if (d.kind == .alert) "accept" else "cancel");
+    if (pageDialogFields(d)) |fields| adw.AlertDialog.setExtraChild(alert, fields);
 
     d.alert = alert;
     // Held past the dialog's own close: a reset can force it shut and drop the
@@ -11155,24 +11365,27 @@ fn showPageDialog(view: *View) void {
     _ = gobject.Object.ref(alert.as(gobject.Object));
     d.response_handler = gobject.signalConnectData(alert.as(gobject.Object), "response", @ptrCast(&onPageDialogResponse), d, null, .{});
     dialogsurface.present(alert.as(adw.Dialog), view.widget);
-    if (d.first) |first| {
-        _ = gtk.Widget.grabFocus(first.as(gtk.Widget));
-        if (d.kind == .prompt) gtk.Editable.selectRegion(first, 0, -1);
-    }
-    tr("pageDialog shown node={d} kind={s}", .{ view.node_id, @tagName(d.kind) });
+    focusPageDialog(d);
+    tr("pageDialog shown node={d} kind={s} surface=alert", .{ view.node_id, @tagName(d.kind) });
 }
 
 fn onPageDialogResponse(_: *adw.AlertDialog, response: [*:0]const u8, data: ?*anyopaque) callconv(.c) void {
     const d: *PageDialog = @ptrCast(@alignCast(data orelse return));
+    respondPageDialog(d, std.mem.eql(u8, std.mem.span(response), "accept"));
+}
+
+fn respondPageDialog(d: *PageDialog, accepted: bool) void {
     const view = d.view orelse return;
-    const accepted = std.mem.eql(u8, std.mem.span(response), "accept");
     for (view.page_dialogs.items, 0..) |queued, i| {
         if (queued != d) continue;
         _ = view.page_dialogs.orderedRemove(i);
         break;
     }
     tr("pageDialog answered node={d} kind={s} accepted={}", .{ view.node_id, @tagName(d.kind), accepted });
-    finishPageDialog(d, accepted);
+    const leaving = d.kind == .leave;
+    closePageDialog(d, accepted);
+    // "Leave site?" turned down: a close that was asking stays open.
+    if (leaving and !accepted and view.close_probe.load(.acquire)) closeProbeDone(view, false);
     showPageDialog(view);
 }
 
@@ -11238,17 +11451,169 @@ fn resetPageDialogs(view: *View) void {
 }
 
 fn dropPageDialogs(view: *View) void {
-    for (view.page_dialogs.items) |d| closePageDialog(d, false);
+    for (view.page_dialogs.items) |d| closePageDialog(d, d.kind == .leave or d.kind == .reload);
     view.page_dialogs.deinit(alloc);
     view.page_dialogs = .empty;
 }
 
 fn closePageDialog(d: *PageDialog, accepted: bool) void {
+    const view = d.view;
+    if (d.card) |card| {
+        const overlay = d.overlay.?;
+        defer {
+            gobject.Object.unref(card.as(gobject.Object));
+            gobject.Object.unref(overlay.as(gobject.Object));
+        }
+        finishPageDialog(d, accepted);
+        if (gtk.Widget.getParent(card) == overlay.as(gtk.Widget)) gtk.Overlay.removeOverlay(overlay, card);
+        if (view) |v| {
+            if (live_views.contains(@intFromPtr(v)) and !v.under_bar) x11.setInputPassthrough(v.container, false);
+        }
+        return;
+    }
     const alert = d.alert orelse return finishPageDialog(d, accepted);
     _ = gobject.Object.ref(alert.as(gobject.Object));
     defer gobject.Object.unref(alert.as(gobject.Object));
     finishPageDialog(d, accepted);
     _ = adw.Dialog.forceClose(alert.as(adw.Dialog));
+}
+
+// ============================================================================
+// Closing a page the way Chrome does
+// ============================================================================
+//
+// Chrome asks a page's beforeunload before a tab or window closes, and the page
+// survives a "Stay". CEF can only ask as part of closing the browser, which
+// leaves nothing to stay on, so this asks with a navigation instead: Chromium
+// runs beforeunload before any navigation starts, and `onBeforeBrowse` cancels
+// the one it lets through before anything is unloaded. The page is untouched
+// either way, and the close goes ahead (`closeApproved`, or the held window
+// closing) only once it has agreed.
+
+const close_probe_url = "https://nd-close-probe.invalid/";
+/// How long a probe may go unanswered with no dialog up before the page is
+/// taken as agreeing: a page that neither prompts nor navigates (a hung or
+/// crashed renderer) must not keep its tab open for good.
+const close_probe_wait_ms: c_uint = 3000;
+
+/// GTK thread: the `requestClose` command, and each page of a held window.
+fn startCloseProbe(view: *View) void {
+    const browser = browserOf(view) orelse return closeProbeDone(view, true);
+    const get_frame = browser.get_main_frame orelse return closeProbeDone(view, true);
+    const frame = get_frame(browser);
+    if (frame == null) return closeProbeDone(view, true);
+    defer ref.releaseParam(frame);
+    const load = frame.*.load_url orelse return closeProbeDone(view, true);
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (!setStr(&s, close_probe_url)) return closeProbeDone(view, true);
+    view.close_probe.store(true, .release);
+    if (view.close_probe_timer != 0) _ = glib.Source.remove(view.close_probe_timer);
+    view.close_probe_timer = glib.timeoutAdd(close_probe_wait_ms, &onCloseProbeTimeout, view);
+    tr("closeProbe node={d}", .{view.node_id});
+    load(frame, &s);
+}
+
+fn onCloseProbeTimeout(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    if (!live_views.contains(@intFromPtr(view))) return 0;
+    if (!view.close_probe.load(.acquire)) {
+        view.close_probe_timer = 0;
+        return 0;
+    }
+    // Waiting on the user is not a page that went quiet.
+    if (view.page_dialogs.items.len != 0) return 1;
+    view.close_probe_timer = 0;
+    closeProbeDone(view, true);
+    return 0;
+}
+
+/// GTK thread: the page agreed to close, or the user chose to stay.
+fn closeProbeDone(view: *View, approved: bool) void {
+    view.close_probe.store(false, .release);
+    if (view.close_probe_timer != 0) {
+        _ = glib.Source.remove(view.close_probe_timer);
+        view.close_probe_timer = 0;
+    }
+    tr("closeProbe done node={d} approved={}", .{ view.node_id, approved });
+    if (view.window_hold) |hold| {
+        view.window_hold = null;
+        return windowHoldStep(hold, approved);
+    }
+    if (approved) {
+        if (emit) |f| f(view.node_id, "closeApproved", .{});
+    }
+}
+
+/// A window close waiting on its pages, asked one at a time so only one
+/// "Leave site?" is ever up.
+const WindowHold = struct {
+    window: *gtk.Window,
+    views: std.ArrayList(*View) = .empty,
+    next: usize = 0,
+};
+
+const WINDOW_HOLD_KEY = "nd-cef-close-hold";
+const WINDOW_APPROVED_KEY = "nd-cef-close-approved";
+
+/// A close the app asked for itself, which nothing asks about.
+pub fn approveWindowClose(window: *gtk.Window) void {
+    gobject.Object.setData(window.as(gobject.Object), WINDOW_APPROVED_KEY, @ptrFromInt(1));
+}
+
+/// The window's close-request, run ahead of every other handler. True holds
+/// the close while the window's pages are asked; it is made again once they
+/// have all agreed.
+pub fn holdWindowClose(window: *gtk.Window) bool {
+    const obj = window.as(gobject.Object);
+    if (gobject.Object.getData(obj, WINDOW_APPROVED_KEY) != null) {
+        gobject.Object.setData(obj, WINDOW_APPROVED_KEY, null);
+        return false;
+    }
+    if (gobject.Object.getData(obj, WINDOW_HOLD_KEY) != null) return true;
+    const hold = alloc.create(WindowHold) catch return false;
+    hold.* = .{ .window = window };
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (view.container == 0 or browserOf(view) == null) continue;
+        const root = gtk.Widget.getRoot(view.widget) orelse continue;
+        if (@as(*gtk.Widget, @ptrCast(@alignCast(root))) != window.as(gtk.Widget)) continue;
+        hold.views.append(alloc, view) catch {};
+    }
+    if (hold.views.items.len == 0) {
+        hold.views.deinit(alloc);
+        alloc.destroy(hold);
+        return false;
+    }
+    _ = gobject.Object.ref(obj);
+    gobject.Object.setData(obj, WINDOW_HOLD_KEY, hold);
+    tr("windowCloseHold pages={d}", .{hold.views.items.len});
+    windowHoldStep(hold, true);
+    return true;
+}
+
+fn windowHoldStep(hold: *WindowHold, approved: bool) void {
+    if (approved) {
+        while (hold.next < hold.views.items.len) {
+            const view = hold.views.items[hold.next];
+            hold.next += 1;
+            if (!live_views.contains(@intFromPtr(view))) continue;
+            view.window_hold = hold;
+            return startCloseProbe(view);
+        }
+    }
+    const window = hold.window;
+    const obj = window.as(gobject.Object);
+    gobject.Object.setData(obj, WINDOW_HOLD_KEY, null);
+    hold.views.deinit(alloc);
+    alloc.destroy(hold);
+    tr("windowCloseHold done approved={}", .{approved});
+    if (approved) {
+        approveWindowClose(window);
+        gtk.Window.close(window);
+    }
+    gobject.Object.unref(obj);
 }
 
 /// Explicit rather than defaulted: a null `can_download` leaves the decision to

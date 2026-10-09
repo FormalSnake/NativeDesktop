@@ -39,6 +39,7 @@ const protocol = @import("../protocol.zig");
 const ndbasecss = @import("basecss.zig");
 const nddecoration = @import("decoration.zig");
 const ndwebview = @import("webview.zig");
+const cef = @import("../cef/backend.zig");
 const ndchrome = @import("chrome.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
@@ -747,6 +748,7 @@ pub fn closeNode(widget: *gtk.Widget) void {
     }
     defer _ = gobject.Object.unref(@as(*gobject.Object, @ptrCast(@alignCast(widget))));
     if (hasFlag(widget, K_WIN_CLOSED)) return;
+    cef.approveWindowClose(@ptrCast(@alignCast(widget)));
     gtk.Window.close(@ptrCast(@alignCast(widget)));
 }
 

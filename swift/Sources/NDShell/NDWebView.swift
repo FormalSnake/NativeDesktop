@@ -236,6 +236,8 @@ final class NDWebView: WKWebView {
         case "goForward": if canGoForward { goForward() }
         case "reload": reload()
         case "stop": stopLoading()
+        // WKWebView has no way to run beforeunload without leaving the page.
+        case "requestClose": emitEvent("closeApproved", json: "{}")
         case "executeJavaScript":
             guard let id = obj["id"] as? String, let code = obj["code"] as? String else {
                 ndWarn("malformed executeJavaScript arg")

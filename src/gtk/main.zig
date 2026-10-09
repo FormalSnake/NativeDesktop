@@ -243,7 +243,10 @@ fn onOpen(_: *gtk.Application, files: [*]*gio.File, n_files: c_int, _: [*:0]u8, 
     system.handleOpen(ctx, files, n_files);
 }
 
-fn onCloseRequest(_: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
+fn onCloseRequest(window: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
+    // Connected first, so a close the window's pages are still being asked
+    // about stops here, before anything below or in tabs.zig has run.
+    if (cef.holdWindowClose(window)) return 1;
     const app = global_app orelse return 0;
     // Closing a non-last window must not tear the core down.
     const windows = gtk.Application.getWindows(app);
