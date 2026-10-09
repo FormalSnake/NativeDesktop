@@ -35,13 +35,14 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `closed` | `onClosed` | data |
 | `focused` | `onFocused` | checked |
 | `sizeChanged` | `onSizeChanged` | data |
+| `fullscreenChanged` | `onFullscreenChanged` | checked |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`, `setFullscreen`.
 
 ## Box (`<box>`)
 
@@ -583,6 +584,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `permissionRequestDismissed` | `onPermissionRequestDismissed` | data |
 | `zoomChanged` | `onZoomChanged` | data |
 | `pictureInPicture` | `onPictureInPicture` | data |
+| `fullscreenChanged` | `onFullscreenChanged` | checked |
 | `contentBlocked` | `onContentBlocked` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
@@ -590,7 +592,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `exitFullscreen`, `focus`.
 
 ## NativeView (`<nativeview>`)
 

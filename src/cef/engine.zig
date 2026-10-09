@@ -2248,6 +2248,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     display_handler.cef.on_title_change = &onTitleChange;
     display_handler.cef.on_loading_progress_change = &onLoadingProgressChange;
     display_handler.cef.on_favicon_urlchange = &onFaviconUrlChange;
+    display_handler.cef.on_fullscreen_mode_change = &onFullscreenModeChange;
 
     load_handler.cef.on_load_start = &onLoadStart;
     load_handler.cef.on_loading_state_change = &onLoadingStateChange;
@@ -3894,6 +3895,9 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdStartDownload(view, arg);
     } else if (std.mem.eql(u8, cmd, "setMuted")) {
         cmdSetMuted(view, arg);
+    } else if (std.mem.eql(u8, cmd, "exitFullscreen")) {
+        const host = hostOf(view) orelse return;
+        if (host.exit_fullscreen) |exit| exit(host, 1);
     } else if (std.mem.eql(u8, cmd, "setZoom")) {
         cmdSetZoom(view, arg);
     } else if (std.mem.eql(u8, cmd, "focus")) {
@@ -5271,6 +5275,20 @@ fn onTitleChange(
     post(.{ .view = DisplayObj.of(self).payload, .name = "titleChanged", .text = dupeStr(title) });
 }
 
+/// Chrome style sizes the page to the browser's own area and nothing more: the
+/// browser is a child of the app's window, so taking the window fullscreen and
+/// its chrome away is the app's to do on this event.
+fn onFullscreenModeChange(
+    self: [*c]c.cef_display_handler_t,
+    browser: [*c]c.cef_browser_t,
+    fullscreen: c_int,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    if (isDevToolsBrowser(DisplayObj.of(self).payload, browser)) return;
+    tr("fullscreenChanged node={d} on={}", .{ DisplayObj.of(self).payload.node_id, fullscreen != 0 });
+    post(.{ .view = DisplayObj.of(self).payload, .name = "fullscreenChanged", .flag = fullscreen != 0 });
+}
+
 fn onLoadingProgressChange(
     self: [*c]c.cef_display_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -5860,6 +5878,8 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;
         f(view.node_id, "browserCommand", .{ .text = text });
+    } else if (std.mem.eql(u8, box.name, "fullscreenChanged")) {
+        f(view.node_id, "fullscreenChanged", .{ .checked = box.flag });
     } else if (std.mem.eql(u8, box.name, "pictureInPicture")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);

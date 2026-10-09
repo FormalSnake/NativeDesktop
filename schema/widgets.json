@@ -192,13 +192,14 @@
         { "name": "closed", "ndpName": "onClosed", "payload": "data" },
         { "name": "focused", "ndpName": "onFocused", "payload": "checked" },
         { "name": "sizeChanged", "ndpName": "onSizeChanged", "payload": "data" },
+        { "name": "fullscreenChanged", "ndpName": "onFullscreenChanged", "payload": "checked" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
         { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
         { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
-      "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
+      "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present", "setFullscreen"],
       "automation": { "role": "window", "textFrom": "title" }
     },
     {
@@ -719,6 +720,7 @@
         { "name": "permissionRequestDismissed", "ndpName": "onPermissionRequestDismissed", "payload": "data" },
         { "name": "zoomChanged", "ndpName": "onZoomChanged", "payload": "data" },
         { "name": "pictureInPicture", "ndpName": "onPictureInPicture", "payload": "data" },
+        { "name": "fullscreenChanged", "ndpName": "onFullscreenChanged", "payload": "checked" },
         { "name": "contentBlocked", "ndpName": "onContentBlocked", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
@@ -737,7 +739,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
-        "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "triggerExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled", "acceptExtensionInstall",
+        "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "triggerExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled", "acceptExtensionInstall", "exitFullscreen",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

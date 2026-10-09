@@ -639,6 +639,7 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     if (owningWindow(widget)) |win| {
         _ = gobject.signalConnectObject(@ptrCast(@alignCast(win)), "notify::default-width", @ptrCast(&cbWindowSizeNotify), @ptrCast(@alignCast(widget)), .{});
         _ = gobject.signalConnectObject(@ptrCast(@alignCast(win)), "notify::default-height", @ptrCast(&cbWindowSizeNotify), @ptrCast(@alignCast(widget)), .{});
+        _ = gobject.signalConnectObject(@ptrCast(@alignCast(win)), "notify::fullscreened", @ptrCast(&cbWindowFullscreenNotify), @ptrCast(@alignCast(widget)), .{});
     }
     _ = gtk.Widget.signals.destroy.connect(widget, ?*anyopaque, &onHandleDestroy, null, .{});
 }
@@ -663,6 +664,15 @@ fn cbWindowSizeNotify(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) cal
     setData(handle, K_SIZE_DEBOUNCE, @ptrFromInt(@as(usize, id)));
 }
 
+/// Reported for whoever changed it: the app, or the window manager's own
+/// fullscreen key.
+fn cbWindowFullscreenNotify(win: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const handle: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    const f = emit orelse return;
+    const node_id = binNodeId(handle) orelse return;
+    f(node_id, "fullscreenChanged", .{ .checked = gtk.Window.isFullscreen(@ptrCast(@alignCast(win))) != 0 });
+}
+
 fn cbEmitWindowSize(user_data: ?*anyopaque) callconv(.c) c_int {
     const handle: *gtk.Widget = @ptrCast(@alignCast(user_data.?));
     setData(handle, K_SIZE_DEBOUNCE, null);
@@ -681,7 +691,17 @@ fn cbEmitWindowSize(user_data: ?*anyopaque) callconv(.c) c_int {
 }
 
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
-    _ = arg;
+    if (std.mem.eql(u8, cmd, "setFullscreen")) {
+        const win = owningWindow(widget) orelse return;
+        const on = blk: {
+            const a = arg orelse break :blk true;
+            if (a != .object) break :blk true;
+            const v = a.object.get("fullscreen") orelse break :blk true;
+            break :blk v == .bool and v.bool;
+        };
+        if (on) gtk.Window.fullscreen(win) else gtk.Window.unfullscreen(win);
+        return;
+    }
     if (std.mem.eql(u8, cmd, "showTabOverview")) {
         const win = owningWindow(widget) orelse return;
         const raw = getData(win, K_OVERVIEW) orelse {
