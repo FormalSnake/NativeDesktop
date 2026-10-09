@@ -466,6 +466,10 @@ fn sinkGetRequestHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_request_h
 /// the browser it picked every time it is used, so one unmap at creation does
 /// not hold and the window watcher below unmaps it on every tick.
 var kept_window: usize = 0;
+/// Where a top-level of Chromium's that nobody may see waits: off every
+/// screen, in X's signed 16-bit coordinates.
+const park_far_x: c_int = -30000;
+const park_far_y: c_int = -30000;
 /// The kept browser's host, held so the ordered shutdown can close it. Cleared
 /// when CEF reports the browser closed.
 var kept_host: ?[*c]c.cef_browser_host_t = null;
@@ -480,11 +484,14 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
     defer ref.releaseParam(host);
 
     // Unmapped before anything else: closing a browser is asynchronous and the
-    // window would otherwise be on screen for the length of the teardown.
+    // window would otherwise be on screen for the length of the teardown. Out
+    // of the window manager's hands too, because Views maps it again: a tiling
+    // manager laid the kept browser out beside the app on every install, and
+    // scrolled the app off its screen to show it.
     var window: usize = 0;
     if (host.*.get_window_handle) |get_window| {
         window = x11.toplevelOf(@intCast(get_window(host)));
-        if (window != 0) x11.hide(window);
+        if (window != 0) x11.unmanage(window, park_far_x, park_far_y);
     }
     const keep = kept_window == 0 and window != 0;
     if (keep) {
@@ -868,6 +875,10 @@ fn hookRootMaps() void {
 
 fn onXEvent(_: *gdk.Display, xevent: *const anyopaque, _: ?*anyopaque) callconv(.c) c_int {
     const w = x11.mappedWindow(xevent);
+    if (w != 0 and w == install_window) {
+        parkInstallPrompt(w);
+        return 0;
+    }
     if (w != 0 and !claimInstallPrompt(w)) hideDownloadAnimation(w);
     return 0;
 }
@@ -882,7 +893,8 @@ fn onXEvent(_: *gdk.Display, xevent: *const anyopaque, _: ?*anyopaque) callconv(
 // asked about and no switch or policy skips. The first top-level of this
 // process big enough to be a dialog that maps while armed is taken as the
 // prompt: it stays mapped, which Views needs before it enables the accept
-// button, with an empty shape so nothing of it is drawn. Views takes no key
+// button, but is taken from the window manager, parked off screen and given
+// an empty shape, so nothing of it is drawn or laid out. Views takes no key
 // sent with XSendEvent and none in a widget it does not believe active, so the
 // prompt is activated through the window manager and answered with XTest:
 // Tab from the Cancel button it focuses first to "Add extension", then Space.
@@ -901,10 +913,13 @@ var install_window: usize = 0;
 var install_deadline_us: i64 = 0;
 /// The prompt has been handed back to the user.
 var install_shown = false;
+var install_parks: u32 = 0;
+const install_parks_max: u32 = 8;
 
 fn cmdAcceptExtensionInstall() void {
     if (!chromeStyle()) return;
     install_armed_until_us = glib.getMonotonicTime() + install_arm_us;
+    x11.unmanageNextDialog(install_armed_until_us, park_far_x, park_far_y);
     hookRootMaps();
     tr("installPrompt armed", .{});
 }
@@ -913,15 +928,21 @@ fn cmdAcceptExtensionInstall() void {
 fn claimInstallPrompt(w: usize) bool {
     if (install_window != 0 or glib.getMonotonicTime() >= install_armed_until_us) return false;
     if (w == 0 or w == kept_window or isPendingSinkWindow(w)) return false;
-    if (x11.isGdkSurface(w) or x11.windowPid(w) != self_pid or x11.isOverrideRedirect(w)) return false;
+    // The one override-redirect window taken is the prompt the namer marked
+    // as Chromium created it (`x11.unmanageNextDialog`).
+    const marked = w == x11.unmanagedDialog();
+    if (x11.isGdkSurface(w) or x11.windowPid(w) != self_pid or (x11.isOverrideRedirect(w) and !marked)) return false;
     const geo = x11.geometry(w) orelse return false;
     if (geo.w < install_min_w or geo.h < install_min_h) return false;
     install_armed_until_us = 0;
+    x11.cancelUnmanage();
     install_window = w;
     install_shown = false;
+    install_parks = 0;
     adopted_windows.put(alloc, w, {}) catch {};
     x11.setShape(w, &.{});
-    tr("installPrompt claimed window={x} {d}x{d}", .{ w, geo.w, geo.h });
+    parkInstallPrompt(w);
+    tr("installPrompt claimed window={x} {d}x{d} marked={}", .{ w, geo.w, geo.h, marked });
     _ = glib.timeoutAdd(install_first_press_ms, &onInstallActivate, null);
     _ = glib.timeoutAdd(install_shape_ms, &onInstallShape, null);
     return true;
@@ -932,10 +953,26 @@ fn claimInstallPrompt(w: usize) bool {
 /// is gone.
 const install_shape_ms: c_uint = 40;
 
+/// Views centres the prompt again whenever it resizes it (the icon and the
+/// permission list arrive after it maps), and XWayland draws it there whatever
+/// its shape says. Moved back while mapped, Hyprland went on drawing it where
+/// it was; it follows a window's position as the window maps, so the prompt
+/// is mapped again off screen, a bounded number of times.
+fn parkInstallPrompt(w: usize) void {
+    if (install_shown or install_parks >= install_parks_max) return;
+    const geo = x11.geometry(w) orelse return;
+    if (geo.x == park_far_x and geo.y == park_far_y) return;
+    install_parks += 1;
+    tr("installPrompt parked window={x} from {d},{d}", .{ w, geo.x, geo.y });
+    x11.unmanage(w, park_far_x, park_far_y);
+    x11.show(w);
+}
+
 fn onInstallShape(_: ?*anyopaque) callconv(.c) c_int {
     const w = install_window;
     if (w == 0 or install_shown) return 0;
     x11.setShape(w, &.{});
+    parkInstallPrompt(w);
     return 1;
 }
 
@@ -959,6 +996,7 @@ fn onInstallPress(_: ?*anyopaque) callconv(.c) c_int {
     // keyboard over from the compositor's slave, never reaches the prompt:
     // that was the Tab, so Space pressed Cancel. A Shift press, which no
     // dialog acts on, goes first and is the one lost.
+    tr("installPrompt keys window={x} focus={x}", .{ w, x11.focused() });
     if (!x11.pressKey(x11.keysym_shift) or !x11.pressKey(x11.keysym_tab) or !x11.pressKey(x11.keysym_space)) return finishInstallPrompt("unanswered, no XTest");
     install_deadline_us = glib.getMonotonicTime() + install_wait_us;
     _ = glib.timeoutAdd(install_check_ms, &onInstallCheck, null);
