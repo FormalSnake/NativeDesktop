@@ -3577,6 +3577,9 @@ fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64, 
         const cw_h = r.f_size.f_height;
         if (cw_w < 2 or cw_h < 2 or (cw_w < 8 and cw_h < 8)) continue;
         covers[cover_n] = r;
+        // A toast is a pill; cut square, its corners would show the window
+        // behind the page.
+        if (std.mem.eql(u8, std.mem.span(gtk.Widget.getCssName(cw)), "toast")) radii[cover_n] = cw_h / 2;
         cover_n += 1;
     }
     // A probe view a couple of pixels square (an extension action's badge

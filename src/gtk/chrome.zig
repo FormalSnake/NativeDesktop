@@ -693,6 +693,20 @@ pub fn coversOver(w: *gtk.Widget, out: []*gtk.Widget) usize {
                 }
             }
         }
+        // A toast floats over the page the overlay holds, and AdwToastOverlay
+        // is not a GtkOverlay.
+        if (gobject.ext.isA(cur, adw.ToastOverlay)) {
+            const base = adw.ToastOverlay.getChild(@ptrCast(@alignCast(cur)));
+            var child = gtk.Widget.getFirstChild(cur);
+            while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+                if (base != null and c == base.?) continue;
+                if (gtk.Widget.getMapped(c) == 0 or gtk.Widget.getOpacity(c) <= 0) continue;
+                if (n < out.len) {
+                    out[n] = c;
+                    n += 1;
+                }
+            }
+        }
         if (gobject.ext.isA(cur, adw.ToolbarView) and getFlag(cur, K_AUTOHIDE)) {
             var child = gtk.Widget.getFirstChild(cur);
             while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
