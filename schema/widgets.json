@@ -694,6 +694,7 @@
         { "name": "forwardAvailable", "ndpName": "onForwardAvailable", "payload": "checked" },
         { "name": "loadProgress", "ndpName": "onLoadProgress", "payload": "value" },
         { "name": "loadFailed", "ndpName": "onLoadFailed", "payload": "data" },
+        { "name": "renderProcessGone", "ndpName": "onRenderProcessGone", "payload": "data" },
         { "name": "newWindow", "ndpName": "onNewWindow", "payload": "text" },
         { "name": "browserCommand", "ndpName": "onBrowserCommand", "payload": "text" },
         { "name": "downloadRequested", "ndpName": "onDownloadRequested", "payload": "data" },
