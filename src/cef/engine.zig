@@ -6050,7 +6050,7 @@ fn onBeforePopup(
     frame: [*c]c.cef_frame_t,
     _: c_int,
     target_url: [*c]const c.cef_string_t,
-    _: [*c]const c.cef_string_t,
+    target_name: [*c]const c.cef_string_t,
     disposition: c.cef_window_open_disposition_t,
     user_gesture: c_int,
     features: [*c]const c.cef_popup_features_t,
@@ -6097,7 +6097,14 @@ fn onBeforePopup(
     }
     if (user_gesture == 0 and !popupsAllowed(browser, frame)) {
         tr("popupBlocked node={d} url={?s}", .{ view.node_id, url });
-        post(.{ .view = view, .name = "popupBlocked", .text = url, .extra = alloc.dupe(u8, dispositionName(disposition)) catch null });
+        post(.{
+            .view = view,
+            .name = "popupBlocked",
+            .text = url,
+            .extra = alloc.dupe(u8, dispositionName(disposition)) catch null,
+            .target_name = dupeStr(target_name),
+            .features = popupFeatures(features),
+        });
         return 1;
     }
     if (view.adopt_popups.load(.acquire) and chromeStyle()) {
@@ -6269,6 +6276,11 @@ fn takePendingPopup(id_text: []const u8) ?*View {
 
 fn replayPopupBacklog(data: ?*anyopaque) callconv(.c) c_int {
     const view: *View = @ptrCast(@alignCast(data.?));
+    // The lines createBrowser and on_after_created trace for every other
+    // view, now that this one has a node id to put in them.
+    tr("embed node={d} parent=0x{x} container=0x{x} adopted popup={d}", .{ view.node_id, view.container_parent, view.container, view.popup_id });
+    const cef_window = view.cef_window.load(.acquire);
+    if (cef_window != 0) tr("created node={d} cefWindow=0x{x}", .{ view.node_id, cef_window });
     var backlog = view.popup_backlog;
     view.popup_backlog = .empty;
     defer backlog.deinit(alloc);
@@ -6512,6 +6524,9 @@ const Emission = struct {
     popup: u32 = 0,
     /// What window.open asked for in its features, in CSS pixels.
     features: ?PopupFeatures = null,
+    /// The window name a blocked window.open asked for, so the app can open it
+    /// again as asked.
+    target_name: ?[]u8 = null,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -6561,6 +6576,7 @@ fn post(e: Emission) void {
 fn freeEmission(box: *Emission) void {
     if (box.text) |t| alloc.free(t);
     if (box.extra) |t| alloc.free(t);
+    if (box.target_name) |t| alloc.free(t);
     if (box.menu_hit) |h| {
         h.deinit();
         alloc.destroy(h);
@@ -6793,6 +6809,18 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         defer payload.deinit(alloc);
         payload.put(alloc, "url", .{ .string = box.text orelse "" }) catch return 0;
         payload.put(alloc, "disposition", .{ .string = box.extra orelse "foregroundTab" }) catch return 0;
+        if (box.target_name) |name| {
+            if (name.len != 0) payload.put(alloc, "target", .{ .string = name }) catch return 0;
+        }
+        var bounds: std.json.ObjectMap = .empty;
+        defer bounds.deinit(alloc);
+        if (box.features) |want| {
+            if (want.x) |v| bounds.put(alloc, "x", .{ .integer = v }) catch {};
+            if (want.y) |v| bounds.put(alloc, "y", .{ .integer = v }) catch {};
+            if (want.width) |v| bounds.put(alloc, "width", .{ .integer = v }) catch {};
+            if (want.height) |v| bounds.put(alloc, "height", .{ .integer = v }) catch {};
+            payload.put(alloc, "features", .{ .object = bounds }) catch {};
+        }
         f(view.node_id, "popupBlocked", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;

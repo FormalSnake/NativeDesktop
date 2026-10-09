@@ -1044,6 +1044,16 @@ fn ndMenuFirstHeaderBar(widget: *gtk.Widget, out: *?*adw.HeaderBar) void {
     }
 }
 
+/// A header in a window transient for another (`presentation="sheet"`): a
+/// secondary window such as a pop-up carries its title and close button, never
+/// the app's menu.
+fn ndMenuInSheet(hb: *adw.HeaderBar) bool {
+    const root = gtk.Widget.getRoot(hb.as(gtk.Widget)) orelse return false;
+    const root_w: *gtk.Widget = @ptrCast(@alignCast(root));
+    const window = gobject.ext.cast(gtk.Window, root_w) orelse return false;
+    return gtk.Window.getTransientFor(window) != null;
+}
+
 /// The AdwHeaderBar of the split layout's innermost CONTENT pane — the header the
 /// app declares last, where GNOME homes the primary menu button. Found
 /// structurally (drill `getContent` through the nested-split pair), so it is
@@ -1061,6 +1071,7 @@ fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
     var root: *gtk.Widget = undefined;
     var found_root = false;
     for (menu_headerbars.items) |hb| {
+        if (ndMenuInSheet(hb)) continue;
         if (gtk.Widget.getRoot(hb.as(gtk.Widget))) |r| {
             root = @ptrCast(@alignCast(r));
             found_root = true;
@@ -1108,8 +1119,19 @@ fn ndMenuRefreshNow() void {
     ndMenuEnsureAbout();
     const model = ndBuildMenubarModel() orelse return;
     if (menu_headerbars.items.len > 0) {
-        const any_hb = menu_headerbars.items[menu_headerbars.items.len - 1];
-        const target = ndMenuContentHeaderBar() orelse any_hb;
+        var any_hb: ?*adw.HeaderBar = null;
+        var i = menu_headerbars.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (ndMenuInSheet(menu_headerbars.items[i])) continue;
+            any_hb = menu_headerbars.items[i];
+            break;
+        }
+        // Every header is a sheet's: the button stays where it is.
+        const target = ndMenuContentHeaderBar() orelse any_hb orelse {
+            if (menu_primary_button) |btn| gtk.MenuButton.setMenuModel(btn, model.as(gio.MenuModel));
+            return;
+        };
         if (menu_primary_button == null) {
             const btn = gtk.MenuButton.new();
             // Own a strong ref (sinks the floating ref): rehoming does
