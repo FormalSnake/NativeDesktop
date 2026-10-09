@@ -373,25 +373,25 @@ sending them as `deny` would have Chromium record a block. `dismiss` maps to
 own in CEF, so there `deny` and `dismiss` both cancel the request; what differs
 is that a dismissal writes nothing.
 
-**The app owns persistence, and Chromium is stopped from also owning it.**
-Chromium treats both `allow` and `deny` as an explicit user action and writes
-the answer into the profile's content settings, after which that origin never
-asks again and the app's own store stops being consulted. CEF 151 exposes no
-one-time grant (`cef_permission_request_result_t` is accept/deny/dismiss/ignore
-and nothing else), so the engine puts the answer back to the profile default
-through `cef_request_context_t::set_content_setting` as soon as CEF reports it
-is done with the prompt (`on_dismiss_permission_prompt` for the prompt route,
-straight after the answer for the media route). The app is therefore asked every
-time and decides from its own store. A permission type CEF 151 names no content
-setting for is left alone rather than guessed at.
+**Chromium owns persistence, as it does in Chrome.** `allow` and `deny` are
+written into the profile's content settings, so the origin is not asked again,
+across reloads and restarts, and `Notification.permission`,
+`permissions.query` and anything else that reads the decision later see it.
+The getUserMedia route records nothing on its own, so the engine writes its
+camera and microphone answers itself. `dismiss` writes nothing. An app keeping
+its own list of decisions (for a site-info panel) mirrors Chromium's; it is not
+consulted by Chromium.
 
 `resetPermissions` takes `{ origin?, types? }` and puts Chromium's stored
 decisions back to the profile default, which is what a browser's own "Reset
-Permissions" needs to make a blocked site ask again. `types` takes the same
-names `permissionRequest` reports (`"geolocation"`, `"camera"`, …) and defaults
-to all of them. `origin` defaults to every origin the engine has answered a
-permission for since the process started: CEF 151 can clear one origin's
-setting, but has no clear-all for a content type.
+Permissions" needs to make a site ask again. `types` takes the same names
+`permissionRequest` reports (`"geolocation"`, `"camera"`, …). With both
+`origin` and `types` it clears exactly those, whichever run the decision was
+made in; that is the form a revoke uses. Without `types` it clears what the
+engine has answered since the process started, and without `origin` it covers
+every origin it has answered for: CEF 151 can clear one origin's setting, but
+has no clear-all for a content type, and a type Chromium never registered
+would abort the browser process.
 
 `getCookies`/`setCookie`/`deleteCookie` act on the view's own profile.
 Deletion matches by name plus whichever of domain/path is given, and both
@@ -630,9 +630,9 @@ it, Chrome's window and toolbar do not.
   built. Without it Chromium draws a Views bubble anchored to a toolbar that
   does not exist: on GTK that lands inside the browser's X window at the top
   left of the page, on AppKit it becomes a window of its own that follows the
-  invisible anchor. The answer is cleared out of Chromium's content settings
-  again, and a prompt Chromium retires arrives as `permissionRequestDismissed`;
-  both are in the command notes above.
+  invisible anchor. The answer stays in Chromium's content settings, and a
+  prompt Chromium retires arrives as `permissionRequestDismissed`; both are in
+  the command notes above.
 - What is left Chromium-drawn, measured by the gate's `dialogs` pass: the
   WebAuthn sheet (`navigator.credentials.get`/`create`), HTTP basic auth, the
   "save password" bubble and the autofill surfaces. On GTK all of them are
