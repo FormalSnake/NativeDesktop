@@ -458,7 +458,9 @@ fn sinkGetRequestHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_request_h
 /// browser a TYPE_POPUP (libcef chrome_browser_host_impl.cc), and the lookup
 /// wants a tabbed one. So the first browser Chrome makes for itself is kept as
 /// the tabbed browser every later lookup finds, and every one after it is
-/// closed as before.
+/// closed as before. The kept one is closed too once the lookup that made it
+/// is done with it (`kept_browser_close_ms`): it is a tab to Chrome, and the
+/// share picker offers every tab of the profile.
 /// The top-level, not the browser's own window: CEF answers
 /// `get_window_handle` with the window the web contents draw into, which for a
 /// browser Chrome owns is a child of the Widget's frame, and unmapping the
@@ -474,6 +476,19 @@ const park_far_y: c_int = -30000;
 /// when CEF reports the browser closed.
 var kept_host: ?[*c]c.cef_browser_host_t = null;
 var kept_browser_id: c_int = 0;
+/// Chrome makes its tabbed browser in `OnInstallSuccess`, the moment the
+/// install lands, and the post-install step reads it as soon as the extension
+/// is loaded, which it already is by then. Five seconds is margin, not a
+/// measured wait. The next lookup makes and keeps a new one.
+const kept_browser_close_ms: c_uint = 5000;
+
+fn onCloseKeptBrowser(_: ?*anyopaque) callconv(.c) c_int {
+    if (shutting_down) return 0;
+    const host = kept_host orelse return 0;
+    tr("keptBrowserClose id={d}", .{kept_browser_id});
+    if (host.*.close_browser) |close| close(host, 1);
+    return 0;
+}
 
 fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
@@ -499,6 +514,7 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
         ref.addRefParam(host);
         kept_host = host;
         if (browser.*.get_identifier) |get_id| kept_browser_id = get_id(browser);
+        _ = glib.timeoutAdd(kept_browser_close_ms, &onCloseKeptBrowser, null);
     }
 
     const url = mainFrameUrl(browser);
@@ -1385,6 +1401,9 @@ fn onBeforeCommandLine(
         // waits forever for a UI thread that never quits.
         appendFlag(command_line, append, "hide-crash-restore-bubble");
         if (browser_pipe.available()) appendFlag(command_line, append, "remote-debugging-pipe");
+        // `Extensions.loadUnpacked`, which `installExtension` is, refuses
+        // without it. The pipe is the framework's own; no port is opened.
+        if (browser_pipe.available()) appendFlag(command_line, append, "enable-unsafe-extension-debugging");
     }
     // The pipe alone turns on Blink's AutomationControlled, which is what sets
     // navigator.webdriver, and sites such as Google Search then answer with a
@@ -1409,14 +1428,16 @@ fn onBeforeCommandLine(
 }
 
 /// The framework's own extension, loaded into Chrome style beside the app's.
-/// Its only job is `chrome.downloads.setUiOptions({ enabled: false })`, the one
-/// switch that keeps Chromium's download bubble and download-started animation
-/// from being created at all (no feature, command-line switch or pref in CEF
-/// 151 does, and --load-component-extension is not in the release build).
-/// The AppKit host writes the same files (NDCefFrameworkExtension.swift).
+/// Its background calls `chrome.downloads.setUiOptions({ enabled: false })`,
+/// the one switch that keeps Chromium's download bubble and download-started
+/// animation from being created at all (no feature, command-line switch or
+/// pref in CEF 151 does, and --load-component-extension is not in the release
+/// build), and its registry page is where the extension commands run. The
+/// AppKit host writes its own copy (NDCefFrameworkExtension.swift).
 pub const framework_extension_id = "pfbmaghgajhpjaobhbamhamgbcelckhd";
 const framework_extension_manifest = @embedFile("framework-extension/manifest.json");
 const framework_extension_background = @embedFile("framework-extension/background.js");
+const framework_extension_registry = @embedFile("framework-extension/registry.html");
 var framework_extension_dir: ?[:0]u8 = null;
 
 fn writeFrameworkExtension(root: []const u8) void {
@@ -1425,6 +1446,7 @@ fn writeFrameworkExtension(root: []const u8) void {
     const files = [_]struct { name: []const u8, body: []const u8 }{
         .{ .name = "manifest.json", .body = framework_extension_manifest },
         .{ .name = "background.js", .body = framework_extension_background },
+        .{ .name = "registry.html", .body = framework_extension_registry },
     };
     for (files) |f| {
         const path = std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, f.name }, 0) catch {
@@ -1917,17 +1939,6 @@ const View = struct {
     /// allowed only when the app asked for it, never conjured by the page.
     devtools_requested: std.atomic.Value(bool) = .init(false),
     menu_lock: SpinLock = .{},
-    /// The answer `installExtension` parks for the directory chooser that
-    /// `chrome.developerPrivate.loadUnpacked` opens. Written on the GTK thread
-    /// by the command, read on the CEF UI thread by `on_file_dialog`.
-    dialog_lock: SpinLock = .{},
-    pending_dialog_path: ?[]u8 = null,
-    /// Whether an `installExtension` is still waiting for an answer on this
-    /// view. A chooser that opens while one is, with no path parked for it, is
-    /// the install asking a second time; letting CEF put its own directory
-    /// chooser up there is a dialog nobody will ever answer and an install
-    /// promise that never settles.
-    install_in_flight: bool = false,
     menu_items: []ctxmenu.Item = &.{},
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
     next_menu_command: c_int = menu_command_first,
@@ -2132,9 +2143,6 @@ const View = struct {
     main_frame: ?[]u8 = null,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     channels: std.StringHashMapUnmanaged(Channel) = .empty,
-    /// Whether the registry-change binding is already on this view. Adding one
-    /// twice is a protocol error rather than a no-op.
-    extensions_watched: bool = false,
     /// Work parked until the world it names has an execution context, and the
     /// clock that expires it if that never happens.
     deferred: std.ArrayList(Deferred) = .empty,
@@ -7288,11 +7296,6 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
         .json_result => |result| {
             defer alloc.free(result.id);
             defer alloc.free(result.what);
-            if (std.mem.startsWith(u8, result.what, "installExtension")) {
-                view.dialog_lock.lock();
-                view.install_in_flight = false;
-                view.dialog_lock.unlock();
-            }
             const f = emit orelse return;
             var payload: std.json.ObjectMap = .empty;
             defer payload.deinit(alloc);
@@ -7715,13 +7718,6 @@ fn worldForBinding(view: *View, binding: []const u8) ?[]const u8 {
 fn onBindingCalled(view: *View, root: std.json.Value) void {
     const binding = stringField(root, "name") orelse return;
     const payload_text = stringField(root, "payload") orelse return;
-    if (std.mem.eql(u8, binding, extensions_changed_binding)) {
-        var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
-        defer parsed.deinit();
-        const reason = stringField(parsed.value, "reason") orelse "";
-        emitExtensionsChanged(view, reason, stringField(parsed.value, "id") orelse "");
-        return;
-    }
     const world = worldForBinding(view, binding) orelse return;
 
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
@@ -8001,96 +7997,511 @@ fn cmdExecuteJavaScript(view: *View, arg: ?std.json.Value) void {
     if (!startEval(view, sink, code, world)) alloc.free(id_copy);
 }
 
-/// Chromium keeps its extension registry behind chrome.developerPrivate, which
-/// only chrome://extensions has, so this runs there: an app lists extensions by
-/// pointing a view (a hidden one will do) at chrome://extensions and sending
-/// this command to it. Anywhere else the answer is an error rather than a
-/// silent empty list.
-const list_extensions_js =
-    \\(async () => {
-    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
-    \\    throw new Error("listExtensions needs a view showing chrome://extensions");
-    \\  }
-    \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
-    \\    { includeDisabled: true, includeTerminated: true }, resolve));
-    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
-    \\    id: e.id,
-    \\    name: e.name,
-    \\    version: e.version,
-    \\    enabled: e.state === "ENABLED",
-    \\    iconUrl: e.iconUrl || "",
-    \\    optionsUrl: (e.optionsPage && e.optionsPage.url) || "",
-    \\  })));
+/// Every registry command runs in a page the framework opens itself over the
+/// browser pipe, never in the view it was sent to: that view is only where the
+/// answer lands. A target created with `hidden: true` belongs to no tab strip
+/// and no window, and Chrome's share picker offers every tab strip of the
+/// profile, so a view the app kept on chrome://extensions for this was offered
+/// to every page that asked to share a tab.
+///
+/// The list, the switches and the change events are `chrome.management` in the
+/// framework extension's own page, opened once and kept for the run.
+/// `listExtensionActions` needs where each extension lives on disk, which only
+/// chrome://extensions knows, and `readExtensionAction` needs a page of the
+/// extension it reads: both open a hidden target for the one call and close it.
+const registry_url = "chrome-extension://" ++ framework_extension_id ++ "/registry.html";
+const registry_origin = "chrome-extension://" ++ framework_extension_id;
+
+/// The management API gives an icon as chrome://extension-icon, which only an
+/// extension holding `management` can load, so it is drawn into a data: URI
+/// here for an app that has no way to fetch it.
+const registry_listed_js =
+    \\  const listed = async () => {
+    \\    const icon = (e) => new Promise((resolve) => {
+    \\      const icons = (e.icons || []).slice().sort((a, b) => b.size - a.size);
+    \\      if (icons.length === 0) return resolve("");
+    \\      const img = new Image();
+    \\      img.onload = () => {
+    \\        const canvas = document.createElement("canvas");
+    \\        canvas.width = img.naturalWidth;
+    \\        canvas.height = img.naturalHeight;
+    \\        canvas.getContext("2d").drawImage(img, 0, 0);
+    \\        resolve(canvas.toDataURL("image/png"));
+    \\      };
+    \\      img.onerror = () => resolve("");
+    \\      img.src = icons[0].url.replace("?grayscale=true", "");
+    \\    });
+    \\    const all = (await chrome.management.getAll()).filter((e) => e.type === "extension" && e.id !== chrome.runtime.id);
+    \\    return JSON.stringify(await Promise.all(all.map(async (e) => ({
+    \\      id: e.id,
+    \\      name: e.name,
+    \\      version: e.version,
+    \\      enabled: e.enabled,
+    \\      iconUrl: await icon(e),
+    \\      optionsUrl: e.optionsUrl || "",
+    \\    }))));
+    \\  };
+    \\
+;
+
+const list_extensions_js = "(async () => {\n" ++ registry_listed_js ++ "  return await listed();\n})()";
+
+/// One function expression per call, because Runtime.evaluate leaves a
+/// top-level `const` in the page's global scope and the next call would
+/// redeclare it.
+const extension_mutation_prefix = "(async () => {\n" ++ registry_listed_js;
+
+const extension_mutation_suffix =
+    \\
+    \\  return await listed();
     \\})()
 ;
 
-/// The binding `watchExtensions` subscribes the registry's own events to. One
-/// name for the view, in the page's own world: chrome://extensions runs no user
-/// scripts and has no isolated world of this engine's to put it in.
+/// The binding the registry page reports changes through.
 const extensions_changed_binding = "__ndExtensionsChanged";
 
-/// Which of Chromium's registry events this build actually exposes to
-/// chrome://extensions is not something the host can know from a header, so
-/// nothing is assumed: every candidate is feature-detected in the page and the
-/// command answers with the ones it attached to. An answer with an empty list
-/// is a failure, not a silent no-op.
-///
-/// `developerPrivate.onItemStateChanged` is the event the real Extensions page
-/// listens to, so it carries the whole vocabulary (installed, uninstalled,
-/// loaded, unloaded, prefs changed); `chrome.management`'s four are the public
-/// spelling of the same thing and are attached beside it so a build that binds
-/// only one of the two still reports.
+/// `onInstalled` also fires for an update, so the four cover every change the
+/// list can show.
 const watch_extensions_js =
     \\(() => {
-    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
-    \\    throw new Error("watchExtensions needs a view showing chrome://extensions");
-    \\  }
     \\  if (globalThis.__ndExtensionsWatch) return JSON.stringify(globalThis.__ndExtensionsWatch);
     \\  const send = (reason, id) => {
     \\    try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason), id: id ? String(id) : "" })); } catch (e) {}
     \\  };
     \\  const sources = [];
-    \\  const item = chrome.developerPrivate.onItemStateChanged;
-    \\  if (item && typeof item.addListener === "function") {
-    \\    item.addListener((e) => send((e && e.event_type) || "itemStateChanged", e && e.item_id));
-    \\    sources.push("developerPrivate.onItemStateChanged");
-    \\  }
     \\  for (const name of ["onInstalled", "onUninstalled", "onEnabled", "onDisabled"]) {
-    \\    const ev = chrome.management && chrome.management[name];
-    \\    if (ev && typeof ev.addListener === "function") {
-    \\      ev.addListener((info) => send(name, typeof info === "string" ? info : info && info.id));
-    \\      sources.push("management." + name);
-    \\    }
+    \\    chrome.management[name].addListener((info) => send(name, typeof info === "string" ? info : info && info.id));
+    \\    sources.push("management." + name);
     \\  }
-    \\  if (sources.length === 0) throw new Error("watchExtensions: this page exposes no registry events");
     \\  globalThis.__ndExtensionsWatch = sources;
     \\  return JSON.stringify(sources);
     \\})()
 ;
 
-/// Subscribes the view to the registry's own change events. Without it an app
+/// One evaluation in a page the framework opened. GTK thread only: every pipe
+/// reply and event is marshaled here before it touches one.
+const PipeEval = struct {
+    view: *View,
+    sink: EvalSink,
+    code: []u8,
+    /// A hidden target opened for this call alone, or null for the registry
+    /// page.
+    url: ?[]u8 = null,
+    origin: []u8 = &.{},
+    target: ?[]u8 = null,
+    session: ?[]u8 = null,
+    deadline_us: i64,
+    /// Settled by its deadline; the engine's answer, if it ever comes, only
+    /// frees it.
+    expired: bool = false,
+    /// Whether a pipe reply still names this call.
+    in_pipe: bool = false,
+    /// The registry page was reopened once for it already.
+    retried: bool = false,
+
+    fn deinit(e: *PipeEval) void {
+        alloc.free(e.code);
+        if (e.url) |u| alloc.free(u);
+        alloc.free(e.origin);
+        if (e.target) |t| alloc.free(t);
+        if (e.session) |s| alloc.free(s);
+        alloc.destroy(e);
+    }
+};
+
+const RegistryPage = struct {
+    state: enum { closed, opening, ready } = .closed,
+    target: ?[]u8 = null,
+    session: ?[]u8 = null,
+    context_id: i64 = 0,
+    waiting: std.ArrayList(*PipeEval) = .empty,
+};
+
+var registry_page: RegistryPage = .{};
+/// Views that asked for registry changes, latest last. A change goes to the
+/// latest one still alive, so the app hears it once however many views asked.
+var registry_watchers: std.ArrayList(*View) = .empty;
+var registry_watch_wanted = false;
+var pipe_evals: std.ArrayList(*PipeEval) = .empty;
+var pipe_sweep_timer: c_uint = 0;
+
+/// Runs a pipe callback on the GTK thread with its own copy of the result.
+fn onGtk(comptime step: fn (*anyopaque, bool, std.json.Value) void) browser_pipe.Reply {
+    return struct {
+        const Hop = struct { ctx: *anyopaque, ok: bool, json: []u8 };
+        fn reply(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+            const json = std.json.Stringify.valueAlloc(alloc, result, .{}) catch return;
+            const hop = alloc.create(Hop) catch return alloc.free(json);
+            hop.* = .{ .ctx = ctx, .ok = ok, .json = json };
+            _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &run, hop, null);
+        }
+        fn run(data: ?*anyopaque) callconv(.c) c_int {
+            const hop: *Hop = @ptrCast(@alignCast(data.?));
+            defer {
+                alloc.free(hop.json);
+                alloc.destroy(hop);
+            }
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, hop.json, .{}) catch {
+                step(hop.ctx, false, .null);
+                return 0;
+            };
+            defer parsed.deinit();
+            step(hop.ctx, hop.ok, parsed.value);
+            return 0;
+        }
+    }.reply;
+}
+
+fn onGtkEvent(comptime step: fn (*anyopaque, []const u8, std.json.Value) void) browser_pipe.Event {
+    return struct {
+        const Hop = struct { ctx: *anyopaque, method: []u8, json: []u8 };
+        fn event(ctx: *anyopaque, method: []const u8, params: std.json.Value) void {
+            const json = std.json.Stringify.valueAlloc(alloc, params, .{}) catch return;
+            const name = alloc.dupe(u8, method) catch return alloc.free(json);
+            const hop = alloc.create(Hop) catch {
+                alloc.free(json);
+                return alloc.free(name);
+            };
+            hop.* = .{ .ctx = ctx, .method = name, .json = json };
+            _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &run, hop, null);
+        }
+        fn run(data: ?*anyopaque) callconv(.c) c_int {
+            const hop: *Hop = @ptrCast(@alignCast(data.?));
+            defer {
+                alloc.free(hop.method);
+                alloc.free(hop.json);
+                alloc.destroy(hop);
+            }
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, hop.json, .{}) catch return 0;
+            defer parsed.deinit();
+            step(hop.ctx, hop.method, parsed.value);
+            return 0;
+        }
+    }.event;
+}
+
+fn sinkBudget(sink: EvalSink) i64 {
+    return switch (sink) {
+        .json_result => |r| r.budget_us,
+        else => registry_call_timeout_us,
+    };
+}
+
+/// Takes `sink`, and `url` when given. With no pipe the call fails at once.
+fn pipeEval(view: *View, sink: EvalSink, code: []const u8, url: ?[]const u8) void {
+    if (!browser_pipe.available()) return finishEval(view, sink, false, "no browser protocol pipe in this process");
+    const e = alloc.create(PipeEval) catch return sinkFree(sink);
+    e.* = .{
+        .view = view,
+        .sink = sink,
+        .code = alloc.dupe(u8, code) catch {
+            alloc.destroy(e);
+            return sinkFree(sink);
+        },
+        .deadline_us = glib.getMonotonicTime() + sinkBudget(sink),
+    };
+    pipe_evals.append(alloc, e) catch return abandonEval(e, "out of memory");
+    armPipeSweep();
+    const where = url orelse {
+        registry_page.waiting.append(alloc, e) catch return abandonEval(e, "out of memory");
+        switch (registry_page.state) {
+            .closed => openRegistry(),
+            .opening => {},
+            .ready => flushRegistry(),
+        }
+        return;
+    };
+    e.url = alloc.dupe(u8, where) catch return abandonEval(e, "out of memory");
+    const scheme_end = (std.mem.indexOf(u8, where, "://") orelse return abandonEval(e, "not a URL")) + 3;
+    const host_end = std.mem.indexOfScalarPos(u8, where, scheme_end, '/') orelse where.len;
+    e.origin = alloc.dupe(u8, where[0..host_end]) catch return abandonEval(e, "out of memory");
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"url\":") catch return abandonEval(e, "out of memory");
+    cdp.quote(&params, where);
+    params.appendSlice(alloc, ",\"hidden\":true,\"background\":true}") catch return abandonEval(e, "out of memory");
+    e.in_pipe = browser_pipe.call("Target.createTarget", params.items, null, onGtk(onEvalTargetCreated), e);
+    if (!e.in_pipe) abandonEval(e, "Target.createTarget could not be sent");
+}
+
+/// Delivers `message` as the call's failure and forgets it. A call a pipe reply
+/// still names is only marked; the reply frees it.
+fn abandonEval(e: *PipeEval, message: []const u8) void {
+    if (!e.expired) {
+        e.expired = true;
+        if (live_views.contains(@intFromPtr(e.view))) finishEval(e.view, e.sink, false, message) else sinkFree(e.sink);
+    }
+    closeEvalTarget(e);
+    if (std.mem.indexOfScalar(*PipeEval, registry_page.waiting.items, e)) |i| _ = registry_page.waiting.orderedRemove(i);
+    if (!e.in_pipe) releaseEval(e);
+}
+
+fn releaseEval(e: *PipeEval) void {
+    if (std.mem.indexOfScalar(*PipeEval, pipe_evals.items, e)) |i| _ = pipe_evals.swapRemove(i);
+    e.deinit();
+}
+
+fn closeEvalTarget(e: *PipeEval) void {
+    if (e.session) |s| browser_pipe.listen(s, null);
+    const t = e.target orelse return;
+    e.target = null;
+    defer alloc.free(t);
+    const params = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\"}}", .{t}) catch return;
+    defer alloc.free(params);
+    _ = browser_pipe.call("Target.closeTarget", params, null, &ignoreReply, e);
+}
+
+/// A reply arrived for `e`: whether it still wants one.
+fn evalReplied(e: *PipeEval) bool {
+    e.in_pipe = false;
+    if (!e.expired) return true;
+    releaseEval(e);
+    return false;
+}
+
+fn onEvalTargetCreated(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const e: *PipeEval = @ptrCast(@alignCast(ctx));
+    if (!evalReplied(e)) return;
+    if (!ok) return abandonEval(e, cdpErrorText(result));
+    const t = stringField(result, "targetId") orelse return abandonEval(e, "the page was not opened");
+    e.target = alloc.dupe(u8, t) catch return abandonEval(e, "out of memory");
+    const params = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\",\"flatten\":true}}", .{t}) catch return abandonEval(e, "out of memory");
+    defer alloc.free(params);
+    e.in_pipe = browser_pipe.call("Target.attachToTarget", params, null, onGtk(onEvalAttached), e);
+    if (!e.in_pipe) abandonEval(e, "Target.attachToTarget could not be sent");
+}
+
+/// A new target starts on about:blank, so the call waits for the page's own
+/// context to announce itself.
+fn onEvalAttached(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const e: *PipeEval = @ptrCast(@alignCast(ctx));
+    if (!evalReplied(e)) return;
+    if (!ok) return abandonEval(e, cdpErrorText(result));
+    const session = stringField(result, "sessionId") orelse return abandonEval(e, "attach gave no session");
+    e.session = alloc.dupe(u8, session) catch return abandonEval(e, "out of memory");
+    browser_pipe.listen(session, browser_pipe.listener(onGtkEvent(onEvalEvent), e));
+    if (!browser_pipe.call("Runtime.enable", "{}", session, &ignoreReply, e)) abandonEval(e, "Runtime.enable could not be sent");
+}
+
+fn onEvalEvent(ctx: *anyopaque, method: []const u8, params: std.json.Value) void {
+    const e: *PipeEval = @ptrCast(@alignCast(ctx));
+    // Events queued before the call was abandoned still arrive.
+    if (std.mem.indexOfScalar(*PipeEval, pipe_evals.items, e) == null or e.expired) return;
+    const context_id = defaultContext(method, params, e.origin) orelse return;
+    browser_pipe.listen(e.session.?, null);
+    sendEval(e, e.session.?, context_id);
+}
+
+/// The id of the page's own context, from an executionContextCreated whose
+/// origin is `origin`.
+fn defaultContext(method: []const u8, params: std.json.Value, origin: []const u8) ?i64 {
+    if (!std.mem.eql(u8, method, "Runtime.executionContextCreated")) return null;
+    const context = switch (params) {
+        .object => |o| o.get("context") orelse return null,
+        else => return null,
+    };
+    if (!std.mem.eql(u8, stringField(context, "origin") orelse return null, origin)) return null;
+    const aux = switch (context) {
+        .object => |o| o.get("auxData") orelse return null,
+        else => return null,
+    };
+    if (aux == .object) {
+        if (aux.object.get("isDefault")) |d| if (d != .bool or !d.bool) return null;
+    }
+    return switch (context.object.get("id") orelse return null) {
+        .integer => |i| i,
+        else => null,
+    };
+}
+
+fn sendEval(e: *PipeEval, session: []const u8, context_id: i64) void {
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"expression\":") catch return abandonEval(e, "out of memory");
+    cdp.quote(&params, e.code);
+    const tail = std.fmt.allocPrint(alloc, ",\"contextId\":{d},\"awaitPromise\":true,\"returnByValue\":true}}", .{context_id}) catch return abandonEval(e, "out of memory");
+    defer alloc.free(tail);
+    params.appendSlice(alloc, tail) catch return abandonEval(e, "out of memory");
+    e.in_pipe = browser_pipe.call("Runtime.evaluate", params.items, session, onGtk(onEvalAnswered), e);
+    if (!e.in_pipe) abandonEval(e, "Runtime.evaluate could not be sent");
+}
+
+fn onEvalAnswered(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const e: *PipeEval = @ptrCast(@alignCast(ctx));
+    if (!evalReplied(e)) return;
+    if (!ok) {
+        const message = cdpErrorText(result);
+        // The registry page went away under the call (its session or context
+        // is gone): open it again and run the call there, once.
+        if (e.url == null and !e.retried) {
+            e.retried = true;
+            resetRegistry();
+            registry_page.waiting.append(alloc, e) catch return abandonEval(e, "out of memory");
+            openRegistry();
+            return;
+        }
+        return abandonEval(e, message);
+    }
+    if (result == .object) {
+        if (result.object.get("exceptionDetails")) |details| {
+            const thrown = switch (details) {
+                .object => |o| if (o.get("exception")) |x| stringField(x, "description") else null,
+                else => null,
+            };
+            return abandonEval(e, thrown orelse stringField(details, "text") orelse "the page threw");
+        }
+    }
+    const value: []const u8 = if (result == .object) blk: {
+        const inner = result.object.get("result") orelse break :blk "";
+        break :blk stringField(inner, "value") orelse "";
+    } else "";
+    e.expired = true;
+    closeEvalTarget(e);
+    if (live_views.contains(@intFromPtr(e.view))) finishEval(e.view, e.sink, true, value) else sinkFree(e.sink);
+    releaseEval(e);
+}
+
+fn armPipeSweep() void {
+    if (pipe_sweep_timer != 0) return;
+    pipe_sweep_timer = glib.timeoutAdd(250, &onPipeSweep, null);
+}
+
+fn onPipeSweep(_: ?*anyopaque) callconv(.c) c_int {
+    pipe_sweep_timer = 0;
+    const now = glib.getMonotonicTime();
+    var due: std.ArrayList(*PipeEval) = .empty;
+    defer due.deinit(alloc);
+    for (pipe_evals.items) |e| {
+        if (!e.expired and now > e.deadline_us) due.append(alloc, e) catch {};
+    }
+    for (due.items) |e| {
+        var buf: [256]u8 = undefined;
+        const what = switch (e.sink) {
+            .json_result => |r| r.what,
+            else => "the extension registry",
+        };
+        abandonEval(e, std.fmt.bufPrint(&buf, "{s}: the engine never answered", .{what}) catch "the engine never answered");
+    }
+    var live = false;
+    for (pipe_evals.items) |e| live = live or !e.expired;
+    if (live) armPipeSweep();
+    return 0;
+}
+
+fn openRegistry() void {
+    registry_page.state = .opening;
+    const params = "{\"url\":\"" ++ registry_url ++ "\",\"hidden\":true,\"background\":true}";
+    if (!browser_pipe.call("Target.createTarget", params, null, onGtk(onRegistryCreated), &registry_page)) failRegistry("Target.createTarget could not be sent");
+}
+
+/// Every call waiting on the page fails, and the next one opens it again.
+fn failRegistry(message: []const u8) void {
+    resetRegistry();
+    const waiting = registry_page.waiting.toOwnedSlice(alloc) catch &.{};
+    defer alloc.free(waiting);
+    for (waiting) |e| abandonEval(e, message);
+}
+
+fn resetRegistry() void {
+    if (registry_page.session) |s| {
+        browser_pipe.listen(s, null);
+        alloc.free(s);
+    }
+    if (registry_page.target) |t| alloc.free(t);
+    registry_page.session = null;
+    registry_page.target = null;
+    registry_page.context_id = 0;
+    registry_page.state = .closed;
+}
+
+fn onRegistryCreated(_: *anyopaque, ok: bool, result: std.json.Value) void {
+    if (!ok) return failRegistry(cdpErrorText(result));
+    const t = stringField(result, "targetId") orelse return failRegistry("the registry page was not opened");
+    registry_page.target = alloc.dupe(u8, t) catch return failRegistry("out of memory");
+    const params = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\",\"flatten\":true}}", .{t}) catch return failRegistry("out of memory");
+    defer alloc.free(params);
+    if (!browser_pipe.call("Target.attachToTarget", params, null, onGtk(onRegistryAttached), &registry_page)) failRegistry("Target.attachToTarget could not be sent");
+}
+
+fn onRegistryAttached(_: *anyopaque, ok: bool, result: std.json.Value) void {
+    if (!ok) return failRegistry(cdpErrorText(result));
+    const session = stringField(result, "sessionId") orelse return failRegistry("attach gave no session");
+    registry_page.session = alloc.dupe(u8, session) catch return failRegistry("out of memory");
+    browser_pipe.listen(session, browser_pipe.listener(onGtkEvent(onRegistryEvent), &registry_page));
+    _ = browser_pipe.call("Runtime.addBinding", "{\"name\":\"" ++ extensions_changed_binding ++ "\"}", session, &ignoreReply, &registry_page);
+    if (!browser_pipe.call("Runtime.enable", "{}", session, &ignoreReply, &registry_page)) failRegistry("Runtime.enable could not be sent");
+}
+
+fn onRegistryEvent(_: *anyopaque, method: []const u8, params: std.json.Value) void {
+    if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
+        if (!std.mem.eql(u8, stringField(params, "name") orelse "", extensions_changed_binding)) return;
+        var parsed = std.json.parseFromSlice(std.json.Value, alloc, stringField(params, "payload") orelse return, .{}) catch return;
+        defer parsed.deinit();
+        const reason = stringField(parsed.value, "reason") orelse "";
+        const id = stringField(parsed.value, "id") orelse "";
+        var i = registry_watchers.items.len;
+        while (i > 0) {
+            i -= 1;
+            const view = registry_watchers.items[i];
+            if (!live_views.contains(@intFromPtr(view))) {
+                _ = registry_watchers.orderedRemove(i);
+                continue;
+            }
+            return emitExtensionsChanged(view, reason, id);
+        }
+        return;
+    }
+    if (std.mem.eql(u8, method, "Runtime.executionContextsCleared")) {
+        registry_page.context_id = 0;
+        registry_page.state = .opening;
+        return;
+    }
+    const context_id = defaultContext(method, params, registry_origin) orelse return;
+    registry_page.context_id = context_id;
+    registry_page.state = .ready;
+    // A page opened again has lost its listeners.
+    if (registry_watch_wanted) {
+        if (registry_watchers.items.len > 0) {
+            const e = alloc.create(PipeEval) catch return flushRegistry();
+            e.* = .{
+                .view = registry_watchers.items[registry_watchers.items.len - 1],
+                .sink = .discard,
+                .code = alloc.dupe(u8, watch_extensions_js) catch {
+                    alloc.destroy(e);
+                    return flushRegistry();
+                },
+                .deadline_us = glib.getMonotonicTime() + registry_call_timeout_us,
+            };
+            pipe_evals.append(alloc, e) catch return e.deinit();
+            armPipeSweep();
+            registry_page.waiting.insert(alloc, 0, e) catch return releaseEval(e);
+        }
+    }
+    flushRegistry();
+}
+
+fn flushRegistry() void {
+    const session = registry_page.session orelse return;
+    const waiting = registry_page.waiting.toOwnedSlice(alloc) catch return;
+    defer alloc.free(waiting);
+    for (waiting) |e| sendEval(e, session, registry_page.context_id);
+}
+
+/// Subscribes the app to the registry's own change events. Without it an app
 /// has no way to learn that an extension was installed, removed, enabled,
 /// disabled or updated: a Web Store install happens entirely inside Chromium
 /// and reaches no <webview> callback, so the app is left polling.
 fn cmdWatchExtensions(view: *View, arg: ?std.json.Value) void {
     const id = extensionCommandId(arg, "watchExtensions") orelse return;
-    if (!view.extensions_watched) {
-        var params: std.ArrayList(u8) = .empty;
-        defer params.deinit(alloc);
-        params.appendSlice(alloc, "{\"name\":") catch return;
-        cdp.quote(&params, extensions_changed_binding);
-        params.appendSlice(alloc, "}") catch return;
-        // Re-adding a binding is a protocol error rather than a no-op, and the
-        // app is expected to call this again after the view reloads.
-        _ = cdpSend(view, "Runtime.addBinding", params.items, .ignore);
-        view.extensions_watched = true;
-    }
+    if (std.mem.indexOfScalar(*View, registry_watchers.items, view)) |i| _ = registry_watchers.orderedRemove(i);
+    registry_watchers.append(alloc, view) catch return;
+    registry_watch_wanted = true;
     const what = alloc.dupe(u8, "watchExtensions") catch return;
-    startJsonCommand(view, id, "extensionsChanged", "sources", what, registry_call_timeout_us, watch_extensions_js);
+    pipeEval(view, jsonSink(id, "extensionsChanged", "sources", what, registry_call_timeout_us) orelse return, watch_extensions_js, null);
 }
 
-/// A registry change reported by the page's own subscription. No correlation
-/// id: the app's listener is the whole audience.
+/// A registry change. No correlation id: the app's listener is the whole
+/// audience.
 fn emitExtensionsChanged(view: *View, reason: []const u8, extension_id: []const u8) void {
     const f = emit orelse return;
     var payload: std.json.ObjectMap = .empty;
@@ -8102,16 +8513,9 @@ fn emitExtensionsChanged(view: *View, reason: []const u8, extension_id: []const 
 }
 
 fn cmdListExtensions(view: *View, arg: ?std.json.Value) void {
-    const obj = argObject(arg) orelse {
-        std.debug.print("ND_WARN WebView listExtensions: malformed arg (expected {{id}})\n", .{});
-        return;
-    };
-    const id = objStr(obj, "id") orelse {
-        std.debug.print("ND_WARN WebView listExtensions: malformed arg (expected {{id}})\n", .{});
-        return;
-    };
+    const id = extensionCommandId(arg, "listExtensions") orelse return;
     const id_copy = alloc.dupe(u8, id) catch return;
-    if (!startEval(view, .{ .extensions = id_copy }, list_extensions_js, "")) alloc.free(id_copy);
+    pipeEval(view, .{ .extensions = id_copy }, list_extensions_js, null);
 }
 
 /// The registry rows an action is built from. The action itself is declared in
@@ -8123,9 +8527,6 @@ fn cmdListExtensions(view: *View, arg: ?std.json.Value) void {
 /// host reads the manifest off disk.
 const list_extension_actions_js =
     \\(async () => {
-    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
-    \\    throw new Error("listExtensionActions needs a view showing chrome://extensions");
-    \\  }
     \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
     \\    { includeDisabled: true, includeTerminated: true }, resolve));
     \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
@@ -8142,9 +8543,7 @@ const list_extension_actions_js =
 fn cmdListExtensionActions(view: *View, arg: ?std.json.Value) void {
     const id = extensionCommandId(arg, "listExtensionActions") orelse return;
     const id_copy = alloc.dupe(u8, id) catch return;
-    if (!startEval(view, .{ .extension_actions = id_copy }, list_extension_actions_js, "")) {
-        alloc.free(id_copy);
-    }
+    pipeEval(view, .{ .extension_actions = id_copy }, list_extension_actions_js, "chrome://extensions");
 }
 
 /// An action's state as Chromium holds it right now, which is not what the
@@ -8152,8 +8551,8 @@ fn cmdListExtensionActions(view: *View, arg: ?std.json.Value) void {
 /// `setTitle` are answered to the extension alone, and `chrome://extensions` is
 /// told none of it: `developerPrivate` has no action field and the WebUI has no
 /// `chrome.action` at all (both checked on 151). A page of the extension does
-/// have the API, so this command is sent to a view showing one, which for an
-/// app drawing its own toolbar is the popup it mounts for a click.
+/// have the API, so this runs in a hidden target on the extension's
+/// manifest.json, a document every extension has.
 ///
 /// An extension that clears its popup means it: 1Password sets it to "" while
 /// no account is configured so that a toolbar click opens its onboarding
@@ -8168,9 +8567,7 @@ fn cmdListExtensionActions(view: *View, arg: ?std.json.Value) void {
 /// itself uses, and it resolves to the page the app last had focus in.
 const read_action_js =
     \\(async () => {
-    \\  if (typeof chrome === "undefined" || !chrome.action) {
-    \\    throw new Error("readExtensionAction needs a view showing a page of the extension");
-    \\  }
+    \\  if (!chrome.action) throw new Error("readExtensionAction: this extension has no action");
     \\  const active = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     \\  const tab = active.length ? active[0] : null;
     \\  const where = tab ? { tabId: tab.id } : {};
@@ -8189,9 +8586,18 @@ const read_action_js =
 ;
 
 fn cmdReadExtensionAction(view: *View, arg: ?std.json.Value) void {
-    const id = extensionCommandId(arg, "readExtensionAction") orelse return;
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView readExtensionAction: malformed arg (expected {{id, extensionId}})\n", .{});
+        return;
+    };
     const what = alloc.dupe(u8, "readExtensionAction") catch return;
-    startJsonCommand(view, id, "extensionActions", "action", what, registry_call_timeout_us, read_action_js);
+    const sink = jsonSink(id, "extensionActions", "action", what, registry_call_timeout_us) orelse return;
+    const extension = objStr(obj, "extensionId") orelse "";
+    if (!isExtensionId(extension)) return finishEval(view, sink, false, "readExtensionAction: not an extension id");
+    const url = std.fmt.allocPrint(alloc, "chrome-extension://{s}/manifest.json", .{extension}) catch return sinkFree(sink);
+    defer alloc.free(url);
+    pipeEval(view, sink, read_action_js, url);
 }
 
 /// What Chrome does when its toolbar button is clicked: the popup when the
@@ -8520,52 +8926,6 @@ fn actionIcon(action: std.json.ObjectMap) ?[]const u8 {
     }
 }
 
-/// The three commands that change the registry share a body: they run against
-/// chrome://extensions, do their one thing, and answer with the list the
-/// registry became, which is the document `listExtensions` produces. One
-/// function expression, because Runtime.evaluate leaves a top-level `const` in
-/// the page's global scope and the second call would redeclare it.
-const extension_mutation_prefix =
-    \\(async () => {
-    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
-    \\    throw new Error("this command needs a view showing chrome://extensions");
-    \\  }
-    \\  const listed = async () => {
-    \\    const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
-    \\      { includeDisabled: true, includeTerminated: true }, resolve));
-    \\    return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
-    \\      id: e.id,
-    \\      name: e.name,
-    \\      version: e.version,
-    \\      enabled: e.state === "ENABLED",
-    \\      iconUrl: e.iconUrl || "",
-    \\      optionsUrl: (e.optionsPage && e.optionsPage.url) || "",
-    \\    })));
-    \\  };
-    \\
-;
-
-const extension_mutation_suffix =
-    \\
-    \\  return await listed();
-    \\})()
-;
-
-/// chrome://extensions has no way to load an unpacked extension from a path it
-/// was handed: `developerPrivate.loadUnpacked` opens a directory chooser and
-/// uses what comes back. The chooser is a CEF file dialog, so the path the app
-/// asked for is parked on the view and `on_file_dialog` answers with it.
-const install_extension_body =
-    \\  await new Promise((resolve) => chrome.developerPrivate.updateProfileConfiguration(
-    \\    { inDeveloperMode: true }, resolve));
-    \\  const loaded = await new Promise((resolve, reject) => chrome.developerPrivate.loadUnpacked(
-    \\    { failQuietly: true, populateError: true },
-    \\    (result) => chrome.runtime.lastError
-    \\      ? reject(new Error(chrome.runtime.lastError.message))
-    \\      : resolve(result)));
-    \\  if (loaded && loaded.error) throw new Error(loaded.error);
-;
-
 fn extensionCommandId(arg: ?std.json.Value, comptime name: []const u8) ?[]const u8 {
     const obj = argObject(arg) orelse {
         std.debug.print("ND_WARN WebView " ++ name ++ ": malformed arg (expected {{id}})\n", .{});
@@ -8577,29 +8937,25 @@ fn extensionCommandId(arg: ?std.json.Value, comptime name: []const u8) ?[]const 
     };
 }
 
-fn startJsonCommand(
-    view: *View,
-    id: []const u8,
-    event: []const u8,
-    key: []const u8,
-    what: []u8,
-    budget_us: i64,
-    code: []const u8,
-) void {
+/// Takes `what`.
+fn jsonSink(id: []const u8, event: []const u8, key: []const u8, what: []u8, budget_us: i64) ?EvalSink {
     const id_copy = alloc.dupe(u8, id) catch {
         alloc.free(what);
-        return;
+        return null;
     };
-    const sink: EvalSink = .{ .json_result = .{
-        .id = id_copy,
-        .event = event,
-        .key = key,
-        .what = what,
-        .budget_us = budget_us,
-    } };
-    if (!startEval(view, sink, code, "")) sinkFree(sink);
+    return .{ .json_result = .{ .id = id_copy, .event = event, .key = key, .what = what, .budget_us = budget_us } };
 }
 
+fn isExtensionId(value: []const u8) bool {
+    if (value.len != 32) return false;
+    for (value) |ch| if (ch < 'a' or ch > 'p') return false;
+    return true;
+}
+
+/// Loads an unpacked directory with the browser target's own
+/// `Extensions.loadUnpacked`, which takes the path as it is; the
+/// chrome://extensions route opens a directory chooser instead. The answer is
+/// the registry as it now stands.
 fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
     const obj = argObject(arg) orelse {
         std.debug.print("ND_WARN WebView installExtension: malformed arg (expected {{id, path}})\n", .{});
@@ -8613,20 +8969,41 @@ fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
         std.debug.print("ND_WARN WebView installExtension: malformed arg (expected {{id, path}})\n", .{});
         return;
     };
-    const parked = alloc.dupe(u8, path) catch return;
-    view.dialog_lock.lock();
-    if (view.pending_dialog_path) |old| alloc.free(old);
-    view.pending_dialog_path = parked;
-    view.install_in_flight = true;
-    view.dialog_lock.unlock();
-
-    var code: std.ArrayList(u8) = .empty;
-    defer code.deinit(alloc);
-    code.appendSlice(alloc, extension_mutation_prefix) catch return;
-    code.appendSlice(alloc, install_extension_body) catch return;
-    code.appendSlice(alloc, extension_mutation_suffix) catch return;
     const what = std.fmt.allocPrint(alloc, "installExtension {s}", .{path}) catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", what, install_call_timeout_us, code.items);
+    const sink = jsonSink(id, "extensionsList", "extensions", what, install_call_timeout_us) orelse return;
+    if (!browser_pipe.available()) return finishEval(view, sink, false, "installExtension: no browser protocol pipe in this process");
+    const install = alloc.create(Install) catch return sinkFree(sink);
+    install.* = .{ .view = view, .sink = sink };
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"path\":") catch return install.fail("out of memory");
+    cdp.quote(&params, path);
+    params.appendSlice(alloc, "}") catch return install.fail("out of memory");
+    if (!browser_pipe.call("Extensions.loadUnpacked", params.items, null, onGtk(onLoadedUnpacked), install)) install.fail("Extensions.loadUnpacked could not be sent");
+}
+
+const Install = struct {
+    view: *View,
+    sink: EvalSink,
+
+    fn fail(i: *Install, message: []const u8) void {
+        defer alloc.destroy(i);
+        const what = switch (i.sink) {
+            .json_result => |r| r.what,
+            else => "installExtension",
+        };
+        var buf: [1024]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "{s}: {s}", .{ what, message }) catch message;
+        if (live_views.contains(@intFromPtr(i.view))) finishEval(i.view, i.sink, false, text) else sinkFree(i.sink);
+    }
+};
+
+fn onLoadedUnpacked(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const install: *Install = @ptrCast(@alignCast(ctx));
+    if (!ok) return install.fail(cdpErrorText(result));
+    defer alloc.destroy(install);
+    if (!live_views.contains(@intFromPtr(install.view))) return sinkFree(install.sink);
+    pipeEval(install.view, install.sink, list_extensions_js, null);
 }
 
 /// `chrome.management.uninstall` from anything but the extension itself always
@@ -8783,7 +9160,7 @@ fn deliverRemoval(data: ?*anyopaque) callconv(.c) c_int {
     ) catch return 0;
     code.appendSlice(alloc, extension_mutation_suffix) catch return 0;
     const what = alloc.dupe(u8, "uninstallExtension") catch return 0;
-    startJsonCommand(r.view, r.id, "extensionsList", "extensions", what, registry_call_timeout_us, code.items);
+    pipeEval(r.view, jsonSink(r.id, "extensionsList", "extensions", what, registry_call_timeout_us) orelse return 0, code.items, null);
     return 0;
 }
 
@@ -8808,16 +9185,12 @@ fn cmdSetExtensionEnabled(view: *View, arg: ?std.json.Value) void {
     var code: std.ArrayList(u8) = .empty;
     defer code.deinit(alloc);
     code.appendSlice(alloc, extension_mutation_prefix) catch return;
-    code.appendSlice(alloc, "  await new Promise((resolve, reject) => chrome.management.setEnabled(") catch return;
+    code.appendSlice(alloc, "  await chrome.management.setEnabled(") catch return;
     appendJsString(&code, target) catch return;
-    code.appendSlice(alloc, if (enabled) ", true," else ", false,") catch return;
-    code.appendSlice(alloc,
-        \\
-        \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
-    ) catch return;
+    code.appendSlice(alloc, if (enabled) ", true);" else ", false);") catch return;
     code.appendSlice(alloc, extension_mutation_suffix) catch return;
     const what = alloc.dupe(u8, "setExtensionEnabled") catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", what, registry_call_timeout_us, code.items);
+    pipeEval(view, jsonSink(id, "extensionsList", "extensions", what, registry_call_timeout_us) orelse return, code.items, null);
 }
 
 fn appendJsString(out: *std.ArrayList(u8), value: []const u8) !void {
@@ -9624,11 +9997,10 @@ fn clientGetDialogHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_dialo
     return ClientObj.of(self).payload.dialog_handler.handOut();
 }
 
-/// The chooser `installExtension` armed is answered from the parked path.
-/// Every other one (a page's file input, Save Page As) is the host's own
-/// GtkFileDialog, transient for the window the view is in: Chrome style has no
-/// platform dialog of its own on Linux and cancels the request, and a dialog
-/// that is not the app window's child would be a free toplevel of its own.
+/// The host's own GtkFileDialog, transient for the window the view is in:
+/// Chrome style has no platform dialog of its own on Linux and cancels the
+/// request, and a dialog that is not the app window's child would be a free
+/// toplevel of its own.
 fn onFileDialog(
     self: [*c]c.cef_dialog_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -9642,33 +10014,7 @@ fn onFileDialog(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(callback);
-    const view = DialogHandlerObj.of(self).payload;
-    view.dialog_lock.lock();
-    const path = view.pending_dialog_path;
-    view.pending_dialog_path = null;
-    const installing = view.install_in_flight;
-    view.dialog_lock.unlock();
-    const answer = path orelse {
-        if (!installing) return pageFileDialog(view, mode, title, default_file_path, accept_filters, callback);
-        // Cancelled rather than left to CEF: `loadUnpacked` answers a cancelled
-        // chooser with an error the app's promise carries, and opens a real
-        // directory chooser over the app if this returns 0.
-        tr("installDialogUnarmed node={d}", .{view.node_id});
-        if (callback.*.cancel) |cancel| cancel(callback);
-        return 1;
-    };
-    defer alloc.free(answer);
-    tr("installDialogAnswered node={d} path={s}", .{ view.node_id, answer });
-
-    const api = loader.loaded() orelse return 0;
-    const list = api.string_list_alloc();
-    defer api.string_list_free(list);
-    var entry = std.mem.zeroes(c.cef_string_t);
-    defer clearStr(&entry);
-    if (!setStr(&entry, answer)) return 0;
-    api.string_list_append(list, &entry);
-    if (callback.*.cont) |cont| cont(callback, list);
-    return 1;
+    return pageFileDialog(DialogHandlerObj.of(self).payload, mode, title, default_file_path, accept_filters, callback);
 }
 
 const PageFileDialog = struct {

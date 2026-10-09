@@ -433,7 +433,7 @@ is acting on.
 
 A view smaller than 32 px on either side never takes the keyboard, whatever the
 page or the user does. An app that keeps a working but invisible browser, like
-a 2x2 view on `chrome://extensions` that reads the extension registry, relies on
+a 2x2 view on `chrome://extensions` for the macOS registry commands, relies on
 this: otherwise that view and the visible tab take focus from each other.
 
 Adding a new webview *event* needs one-line routing entries in `tools/codegen.ts`
@@ -844,64 +844,71 @@ Listing extensions, installing them, and their actions:
 ```tsx
 import {
   installExtension, listExtensionActions, listExtensions, onExtensionActions,
-  onExtensionsList, setExtensionEnabled, uninstallExtension,
+  onExtensionsChanged, onExtensionsList, setExtensionEnabled, uninstallExtension,
+  watchExtensions,
 } from "@nativedesktop/react";
 
-// Chromium exposes its extension registry to chrome://extensions and nowhere
-// else, so every one of these is sent to a view showing that page. A hidden
-// one does.
+// On Linux any mounted page view carries these: it only receives the answers.
+// On macOS the view has to show chrome://extensions.
 <webview
-  ref={(n) => (registry = n)}
+  ref={(n) => (page = n)}
   engine="chromium"
-  url="chrome://extensions"
+  url="https://example.com"
   onExtensionsList={onExtensionsList}
   onExtensionActions={onExtensionActions}
-  onChromeDialog={(e) => setDialog(e.data)}
+  onExtensionsChanged={onExtensionsChanged}
 />;
 
-const installed = await listExtensions(registry!);
+const installed = await listExtensions(page!);
 // [{ id, name, version, enabled, iconUrl: "data:image/png;…", optionsUrl }]
 
-await installExtension(registry!, "/path/to/unpacked");
-await setExtensionEnabled(registry!, id, false);
-await uninstallExtension(registry!, id);
+await installExtension(page!, "/path/to/unpacked");
+await setExtensionEnabled(page!, id, false);
+await uninstallExtension(page!, id);
 // each answers with the registry as it now stands, same shape as listExtensions
 
-const actions = await listExtensionActions(registry!);
+const actions = await listExtensionActions(page!);
 // [{ id, name, enabled, title, iconUrl, popupUrl, badgeText }]
 // What the MANIFEST declares. An extension can turn its popup off at runtime,
 // and an app must read readExtensionAction before opening one (see below).
 
-const sources = await watchExtensions(registry!, (change) => reload(change.reason));
-// ["developerPrivate.onItemStateChanged", "management.onInstalled", …]
+const sources = await watchExtensions(page!, (change) => reload(change.reason));
+// ["management.onInstalled", "management.onUninstalled", …]
 ```
 
-`watchExtensions` subscribes the registry view to Chromium's own change events,
-which is the only way an app learns about an install it did not make: a Web
-Store install happens entirely inside Chromium and reaches no other `<webview>`
-callback. Which events a build exposes to `chrome://extensions` is not something
-the host can know from a header, so nothing is assumed: the page feature-detects
-`chrome.developerPrivate.onItemStateChanged` and the four `chrome.management`
-events, attaches to the ones that are there, and the promise answers with that
-list. An empty list is a rejection, not a silent no-op. Later changes arrive on
-the `onExtensionsChanged` prop as `{ reason }`, carrying Chromium's own
-vocabulary (`INSTALLED`, `UNINSTALLED`, `LOADED`, `PREFS_CHANGED`, …) or the
-`management` event name; treat it as a hint and re-read the registry. The
-subscription belongs to the document, so call it again after the view reloads.
+On Linux none of this runs in the app's views. A view the app kept on
+`chrome://extensions` was a tab as far as Chrome is concerned, and Chrome's
+share picker offers every tab of the profile, so it was offered to any page
+that asked to share one. The host opens its own pages over the browser protocol
+pipe instead, with `Target.createTarget({ hidden: true })`, which puts them in
+no tab strip and no window: the framework extension's `registry.html`, kept for
+the run, where `chrome.management` answers the list, the switches and the
+change events; a `chrome://extensions` page for each `listExtensionActions`,
+closed once it has answered, because only `developerPrivate` says where an
+extension lives on disk; and a page on the extension's `manifest.json` for each
+`readExtensionAction`. The macOS host still runs them in the view, which has
+to show `chrome://extensions` there.
+
+`watchExtensions` subscribes to `chrome.management`'s `onInstalled` (which also
+fires for an update), `onUninstalled`, `onEnabled` and `onDisabled`, which is
+the only way an app learns about an install it did not make: a Web Store
+install happens entirely inside Chromium and reaches no other `<webview>`
+callback. Later changes arrive on the `onExtensionsChanged` prop as
+`{ reason, extensionId }`; treat `reason` as a hint and re-read the registry.
+Each change goes to the latest view that subscribed and is still mounted, so an
+app that subscribes from every page view hears each change once for as long as
+any of them is open.
 
 `installExtension` takes an unpacked directory and loads it into the live
-profile, with no relaunch and no `--load-extension`. There is no API that takes
-a path: `chrome.developerPrivate.loadUnpacked` opens a directory chooser, so the
-path is parked on the view and the engine's `cef_dialog_handler_t` answers the
-chooser with it. It is bounded: 90 seconds, after which the promise rejects with
-the path it was given rather than leaving the app waiting for the process's
-life. Two things could stall it before that. Chromium unpacks and validates the
+profile, with no relaunch and no `--load-extension`, through the browser
+target's `Extensions.loadUnpacked`, which takes the path as given (the host
+launches Chromium with `--enable-unsafe-extension-debugging`, without which
+that method refuses). It is bounded: 90 seconds, after which the promise
+rejects with the path it was given; Chromium unpacks and validates the
 directory itself, which a large extension makes slow (a 46 MB one took over a
-minute). And `loadUnpacked` can open the chooser a second time, with no path
-parked for it; that used to fall through to CEF's own directory chooser, a
-dialog nobody answers, so an unarmed chooser during an install is now cancelled
-and the failure reaches the app. `ND_CEF installDialogAnswered` and
-`ND_CEF installDialogUnarmed` tell the two apart in the host log. `uninstallExtension` asks nobody, so the app asks first.
+minute).
+
+`uninstallExtension` asks nobody, so the app asks first.
 `chrome.management.uninstall` from anyone but the extension itself always draws
 Chrome's "Remove <name>?" confirmation (`management_api.cc` forces it), and in an
 embedded browser that dialog hangs off a toolbar nobody sees. The host instead
@@ -1010,14 +1017,15 @@ So an action's live state is the thing to read, and `readExtensionAction` reads
 it. Where from is forced: `chrome://extensions` cannot answer, measured on 151
 by enumerating it (`developerPrivate` has no action field, `ExtensionInfo` has
 none of `popup`, `badgeText` or `title`, and the WebUI has no `chrome.action`
-and no `chrome.tabs`). A page of the extension has the whole API, so the
-command is sent to a view showing one, which for an app drawing its own toolbar
-is the popup view it mounts for a click:
+and no `chrome.tabs`). A page of the extension has the whole API: on Linux the
+host opens one itself, a hidden target on the extension's `manifest.json`, and
+on macOS the command is sent to a view showing one, such as the popup view the
+app mounts for a click:
 
 ```tsx
 import { readExtensionAction } from "@nativedesktop/react";
 
-const state = await readExtensionAction(popupView!);
+const state = await readExtensionAction(popupView!, extensionId);
 // { id, tabId, tabUrl, popupUrl, badgeText, badgeColor, title, enabled }
 if (state.popupUrl === "") {
   // The extension has no popup right now. Opening the manifest's one anyway is
