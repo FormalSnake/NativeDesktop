@@ -452,6 +452,25 @@ export function acceptExtensionInstall(node: NdNodeRef<"webview">): void {
 export interface PopupBlocked {
   url: string;
   disposition: NewWindowDisposition;
+  /// The window name window.open was given.
+  target?: string;
+  /// The position and size its features asked for, in CSS pixels.
+  features?: { x?: number; y?: number; width?: number; height?: number };
+}
+
+/// Opens a blocked pop-up after all, the way Chrome's blocked list does: the
+/// opener runs the same window.open again with a user gesture, so the window
+/// keeps its opener. With `adoptPopups` on the view it arrives as `newWindow`
+/// with a popup id like any other.
+export function openBlockedPopup(node: NdNodeRef<"webview">, blocked: PopupBlocked): Promise<string> {
+  const f = blocked.features ?? {};
+  const parts = blocked.disposition === "popup" ? ["popup"] : [];
+  if (f.x !== undefined) parts.push(`left=${f.x}`);
+  if (f.y !== undefined) parts.push(`top=${f.y}`);
+  if (f.width !== undefined) parts.push(`width=${f.width}`);
+  if (f.height !== undefined) parts.push(`height=${f.height}`);
+  const code = `void window.open(${JSON.stringify(blocked.url)}, ${JSON.stringify(blocked.target ?? "_blank")}, ${JSON.stringify(parts.join(","))})`;
+  return executeJavaScript(node, code, undefined, { userGesture: true });
 }
 
 /// Chrome's "Always allow pop-ups and redirects from" a site, written to the

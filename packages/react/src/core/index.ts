@@ -32,6 +32,7 @@ export {
   newWindowRequest,
   acceptExtensionInstall,
   allowPopups,
+  openBlockedPopup,
 } from "./webview.ts";
 export type {
   Cookie,

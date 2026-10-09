@@ -235,8 +235,11 @@ whose own blocker reports only to an omnibox this engine does not have. A popup
 opened without a user gesture is cancelled unless the opener's site is allowed
 pop-ups (the profile's popups content setting, the one
 chrome://settings/content/popups shows), and its view fires `popupBlocked` with
-`data: { url, disposition }`. `allowPopups(node, origin?)` is Chrome's "Always
-allow pop-ups and redirects from" the site. Pages of an extension or of the
+`data: { url, disposition, target?, features? }`. `openBlockedPopup(node,
+blocked)` opens one after all, as Chrome's blocked list does: the opener runs
+the same `window.open` again with a user gesture, so the window keeps its
+opener. `allowPopups(node, origin?)` is Chrome's "Always allow pop-ups and
+redirects from" the site. Pages of an extension or of the
 browser itself are never blocked.
 
 A popup window Chrome makes for itself (`chrome.windows.create({ type: "popup"

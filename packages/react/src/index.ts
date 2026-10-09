@@ -53,6 +53,7 @@ export {
   newWindowRequest,
   acceptExtensionInstall,
   allowPopups,
+  openBlockedPopup,
 } from "@nativedesktop/react/core";
 export type {
   Cookie,
