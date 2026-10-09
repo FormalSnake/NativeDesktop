@@ -308,6 +308,7 @@ var startup_prefs_handler: ?*StartupPrefsObj = null;
 fn startupPrefsHandler() [*c]c.cef_request_context_handler_t {
     if (startup_prefs_handler == null) {
         ensureAdblockBlock();
+        ensureOriginFix();
         const h = StartupPrefsObj.create({}) orelse return null;
         h.cef.on_request_context_initialized = &onRequestContextInitialized;
         h.cef.get_resource_request_handler = &onContextGetResourceRequestHandler;
@@ -2190,6 +2191,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const request_handler = RequestHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const permission_handler = PermissionObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     ensureAdblockBlock();
+    ensureOriginFix();
 
     view.* = .{
         .widget = widget,
@@ -4811,6 +4813,9 @@ fn onGetResourceRequestHandler(
         defer if (top) |t| alloc.free(t);
         return adblockServe(url, top orelse "");
     }
+    const initiator = dupeStr(request_initiator);
+    defer if (initiator) |i| alloc.free(i);
+    if (needsOriginFix(request, initiator)) return (origin_fix orelse return null).handOut();
     if (!adblock.nd_adblock_active()) return null;
     const get_type = request.*.get_resource_type orelse return null;
     const kind: c_int = @intCast(get_type(request));
@@ -4822,16 +4827,16 @@ fn onGetResourceRequestHandler(
         adblockReport(view);
         return null;
     }
-    const initiator = dupeStr(request_initiator);
-    defer if (initiator) |i| alloc.free(i);
+    if (extensionInitiated(initiator)) return null;
     const top = if (browser != null) mainFrameUrl(browser) else null;
     defer if (top) |t| alloc.free(t);
     return adblockNetwork(view, url, kind, initiator orelse "", top orelse "");
 }
 
-/// The profile contexts' `get_resource_request_handler`, which is where a
-/// request with no browser (a service worker's) is seen. A request that has
-/// one was already answered by its view's handler. IO thread.
+/// The contexts' `get_resource_request_handler`, which is where a request with
+/// no browser (a service worker's) is seen. A request that has one was already
+/// answered by its view's handler, or comes from a browser Chrome made for
+/// itself, and only gets the Origin fix. IO thread.
 fn onContextGetResourceRequestHandler(
     _: [*c]c.cef_request_context_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -4845,13 +4850,98 @@ fn onContextGetResourceRequestHandler(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     defer ref.releaseParam(request);
-    if (browser != null or request == null or !adblock.nd_adblock_active()) return null;
+    if (request == null) return null;
+    const initiator = dupeStr(request_initiator);
+    defer if (initiator) |i| alloc.free(i);
+    if (needsOriginFix(request, initiator)) return (origin_fix orelse return null).handOut();
+    if (browser != null or !adblock.nd_adblock_active() or extensionInitiated(initiator)) return null;
     const get_type = request.*.get_resource_type orelse return null;
     const url = requestUrl(request) orelse return null;
     defer alloc.free(url);
-    const initiator = dupeStr(request_initiator);
-    defer if (initiator) |i| alloc.free(i);
     return adblockNetwork(null, url, @intCast(get_type(request)), initiator orelse "", initiator orelse "");
+}
+
+/// Chromium gives no extension a view of another's requests, and the lists
+/// here are written against pages, so an extension's own traffic is left alone.
+fn extensionInitiated(initiator: ?[]const u8) bool {
+    const from = initiator orelse return false;
+    return std.mem.startsWith(u8, from, "chrome-extension://");
+}
+
+// CEF's URL loader proxy adds the Origin of a cross-origin CORS request the way
+// a navigation's is built (proxy_url_loader_factory.cc, InterceptedRequest::
+// Restart), and that sanitizer keeps only http(s) initiators, so an extension's
+// fetch leaves with `Origin: null`. Chromium's network service sets the
+// extension's own origin wherever Chrome sends one (any non-GET, and a GET the
+// extension has no host permission for) and sends none on a permitted GET, so
+// the header CEF added is dropped and the network service decides. 1Password's
+// servers answer `Origin: null` with 500 and 503, and its extension then cannot
+// add the account the desktop app hands it.
+const OriginFixObj = ref.Counted(c.cef_resource_request_handler_t, void);
+var origin_fix: ?*OriginFixObj = null;
+
+fn ensureOriginFix() void {
+    if (origin_fix != null) return;
+    const h = OriginFixObj.create({}) orelse return;
+    h.cef.on_before_resource_load = &onOriginFixLoad;
+    origin_fix = h;
+}
+
+fn needsOriginFix(request: [*c]c.cef_request_t, initiator: ?[]const u8) bool {
+    if (!extensionInitiated(initiator)) return false;
+    const get = request.*.get_header_by_name orelse return false;
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    if (!setStr(&name, "Origin")) return false;
+    const raw = get(request, &name);
+    if (raw == null) return false;
+    defer freeUserfree(raw);
+    const value = dupeStr(raw) orelse return false;
+    defer alloc.free(value);
+    return std.mem.eql(u8, value, "null");
+}
+
+fn onOriginFixLoad(
+    _: [*c]c.cef_resource_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    callback: [*c]c.cef_callback_t,
+) callconv(.c) c.cef_return_value_t {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    defer ref.releaseParam(callback);
+    if (request != null) dropHeader(request, "Origin");
+    return c.RV_CONTINUE;
+}
+
+/// cef_request_t has no remove; set_header_by_name with an empty value would
+/// still send the header.
+fn dropHeader(request: [*c]c.cef_request_t, name: []const u8) void {
+    const api = loader.loaded() orelse return;
+    const get_map = request.*.get_header_map orelse return;
+    const set_map = request.*.set_header_map orelse return;
+    const all = api.string_multimap_alloc();
+    if (all == null) return;
+    defer api.string_multimap_free(all);
+    const kept = api.string_multimap_alloc();
+    if (kept == null) return;
+    defer api.string_multimap_free(kept);
+    get_map(request, all);
+    for (0..api.string_multimap_size(all)) |i| {
+        var key = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&key);
+        var value = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&value);
+        if (api.string_multimap_key(all, i, &key) == 0) continue;
+        if (api.string_multimap_value(all, i, &value) == 0) continue;
+        const k = dupeStr(&key) orelse continue;
+        defer alloc.free(k);
+        if (std.ascii.eqlIgnoreCase(k, name)) continue;
+        _ = api.string_multimap_append(kept, &key, &value);
+    }
+    set_map(request, kept);
 }
 
 fn adblockNetwork(view: ?*View, url: []const u8, kind: c_int, initiator: []const u8, top: []const u8) [*c]c.cef_resource_request_handler_t {
@@ -9041,7 +9131,7 @@ fn freeUserfree(s: c.cef_string_userfree_t) void {
 // ============================================================================
 //
 // The `profile` prop means one cookie jar and one cache, so it maps onto a CEF
-// request context: "" is the global one, a named profile is a persistent
+// request context: "" shares the global one's storage, a named profile is a persistent
 // context under the shared root_cache_path, and "private…" is a context with no
 // cache path at all, which is CEF's spelling of in-memory.
 
@@ -9049,9 +9139,25 @@ fn freeUserfree(s: c.cef_string_userfree_t) void {
 /// same jar. Ephemeral ones are not, by construction.
 var profile_contexts: std.StringHashMapUnmanaged(*c.cef_request_context_t) = .empty;
 
+/// The default profile's views share the global context's storage through a
+/// context of their own, because the global one has no handler (cef_initialize
+/// takes none) and CEF 151 finds a handler for a service worker's request only
+/// through a frame in the worker's process whose context has one
+/// (CefRequestContextHandlerMap::GetHandler). With it, an extension's worker is
+/// seen through any page of the extension a view shows.
+var default_context: ?*c.cef_request_context_t = null;
+
 fn requestContext(profile: []const u8) ?*c.cef_request_context_t {
-    if (profile.len == 0) return null;
     const api = loader.loaded() orelse return null;
+    if (profile.len == 0) {
+        if (default_context) |ctx| return ctx;
+        const global = api.request_context_get_global_context();
+        if (global == null) return null;
+        const ctx = api.request_context_create_context_shared(global, startupPrefsHandler());
+        if (ctx == null) return null;
+        default_context = @ptrCast(ctx);
+        return default_context;
+    }
     if (!std.mem.startsWith(u8, profile, "private")) {
         if (profile_contexts.get(profile)) |ctx| return ctx;
     }
