@@ -2363,6 +2363,23 @@ fn onOutsidePress(gesture: *gtk.GestureClick, _: c_int, _: f64, _: f64, _: ?*any
     for (open.items) |popover| gtk.Popover.popdown(popover);
 }
 
+/// An extension page in an autohide popover: the app's take on Chrome's action
+/// popup. Chrome's popup is no tab, and extension APIs resolve the current
+/// window to the browser it hangs from. Under Chrome style every page here
+/// is a Chrome Browser of its own, so as soon as the popup took focus it became
+/// the last active window, and chrome.tabs.query with currentWindow or
+/// lastFocusedWindow, from the popup or from the extension's worker, answered
+/// with the popup itself. An Alloy-style browser has no Browser, so it is never
+/// in Chrome's activation order and the page under it stays the current
+/// window, while CEF still runs the extension in it (chrome_extension_util.cc
+/// GetAlloyTabById).
+fn isActionPopup(view: *View) bool {
+    if (!chromeStyle()) return false;
+    const url = view.pending_url orelse return false;
+    if (!std.mem.startsWith(u8, url, "chrome-extension://")) return false;
+    return autohidePopoverOf(view) != null;
+}
+
 /// The autohide popover a view is drawn in, if any.
 fn autohidePopoverOf(view: *View) ?*gtk.Popover {
     const native = gtk.Widget.getNative(view.widget) orelse return null;
@@ -2992,10 +3009,12 @@ fn createBrowser(view: *View) void {
     };
     // Explicit rather than inferred: the default depends on how the browser is
     // hosted, and this engine always hosts it the same way.
-    window_info.runtime_style = if (chromeStyle())
+    const action_popup = isActionPopup(view);
+    window_info.runtime_style = if (chromeStyle() and !action_popup)
         @intCast(c.CEF_RUNTIME_STYLE_CHROME)
     else
         @intCast(c.CEF_RUNTIME_STYLE_ALLOY);
+    tr("createBrowser node={d} action_popup={}", .{ view.node_id, action_popup });
 
     var browser_settings = std.mem.zeroes(c.cef_browser_settings_t);
     browser_settings.size = @sizeOf(c.cef_browser_settings_t);
@@ -3023,7 +3042,7 @@ fn createBrowser(view: *View) void {
         ref.addRefParam(ctx);
         break :blk ctx;
     } else null;
-    if (viewsHostedFor(start)) {
+    if (!action_popup and viewsHostedFor(start)) {
         view.views_hosted = true;
         if (!createViewsBrowser(view, start, start_w, start_h, context)) {
             view.created = false;
@@ -5733,6 +5752,10 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         // and Page.enable is idempotent.
         enableDomains(view);
         syncBounds(view);
+        // The popover handed this view the keyboard before its browser
+        // existed, and something else in the window may have taken GTK's focus
+        // since. An Alloy-style popup does not ask for it on its own.
+        if (view.in_popover.load(.acquire)) _ = gtk.Widget.grabFocus(view.widget);
         syncBrowserFocus(view);
         tr("settle node={d} pending={?s} created={s}", .{ view.node_id, view.pending_url, view.created_url });
         // Adoption: the address the app last asked for wins over the one the
