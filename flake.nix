@@ -36,6 +36,8 @@
             glib cairo pango
             libx11 libxcomposite libxdamage libxext libxfixes libxrandr
             libxcb libxrender libxi libxtst libxcursor
+            # dlopened by Chromium for Wayland screen capture (portal ScreenCast)
+            pipewire
           ]);
           # The published @nativedesktop/host-linux-x64 binary is built on
           # Ubuntu and links GTK by soname with /lib64/ld-linux-x86-64.so.2 as
