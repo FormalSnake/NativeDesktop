@@ -835,12 +835,12 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
     return @ptrCast(@alignCast(obj));
 }
 
-pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, context_menu_mode: []const u8) *gtk.Widget {
+pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, context_menu_mode: []const u8, popup: []const u8) *gtk.Widget {
     // The CEF backend answers null when it is compiled out, when no CEF
     // distribution resolves, or when this view did not ask for it; the view
     // then renders on WebKitGTK rather than on nothing.
     if (engineOf(engine) == .chromium) {
-        if (cef.create(url, profile, context_menu_mode)) |w| return w;
+        if (cef.create(url, profile, context_menu_mode, popup)) |w| return w;
         std.debug.print("ND_WARN WebView engine=\"chromium\": CEF unavailable, falling back to the system engine\n", .{});
     }
     const a = loadApi() orelse {
@@ -910,6 +910,12 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     }
     tr("setUrl node={?d} url={s}", .{ widgetNodeId(widget), url });
     a.web_view_load_uri(@ptrCast(widget), url.ptr);
+}
+
+/// createAndUpdate `adoptPopups` prop. The Chromium engine only: WebKitGTK's
+/// `create` signal is answered with no view, as before.
+pub fn setAdoptPopups(widget: *gtk.Widget, on: bool) void {
+    if (cef.isReal(widget)) cef.setAdoptPopups(widget, on);
 }
 
 /// createAndUpdate `contextMenuMode` prop (generated applyProps arm).

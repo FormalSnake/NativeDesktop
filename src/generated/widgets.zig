@@ -3673,7 +3673,9 @@ fn createWidget(
         const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
         const profile: []const u8 = propStr(props, "profile") orelse "";
         const engine: []const u8 = propStr(props, "engine") orelse "system";
-        return ndweb_gtk.create(url, profile, engine, propStr(props, "contextMenuMode") orelse "native");
+        const web = ndweb_gtk.create(url, profile, engine, propStr(props, "contextMenuMode") orelse "native", propStr(props, "popup") orelse "");
+        if (propBool(props, "adoptPopups")) |on| ndweb_gtk.setAdoptPopups(web, on);
+        return web;
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         const view_kind = propStr(props, "viewKind") orelse "";
         const props_json = propStr(props, "props") orelse "{}";
@@ -4358,6 +4360,7 @@ const nd_resets_ListView = [_]NdPropReset{
 const nd_resets_WebView = [_]NdPropReset{
     .{ .key = "url", .value = .{ .string = "" } },
     .{ .key = "contextMenuMode", .value = .{ .string = "native" } },
+    .{ .key = "adoptPopups", .value = .{ .bool = false } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -5204,6 +5207,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (propStr(props, "url")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));
         if (propStr(props, "contextMenuMode")) |m| ndweb_gtk.setContextMenuMode(widget, m);
+        if (propBool(props, "adoptPopups")) |on| ndweb_gtk.setAdoptPopups(widget, on);
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         if (propStr(props, "props")) |pj| {
             if (gobject.Object.getData(asObject(widget), "nd-view-kind")) |raw| {

@@ -1404,10 +1404,14 @@ async function minWidthLegs(): Promise<void> {
 
   // Four tabs, each with the fixture's favicon and a title too long for any
   // tab the compact row can afford.
-  await page.send("Runtime.evaluate", {
-    expression: `window.open(${JSON.stringify(`${fixture}?three`)}, "_blank"); window.open(${JSON.stringify(`${fixture}?four`)}, "_blank"); 1`,
-    userGesture: true,
-  });
+  // One evaluation each: a gesture opens one window, and Chrome's blocker
+  // stops a second window.open made on the same one.
+  for (const tab of ["three", "four"]) {
+    await page.send("Runtime.evaluate", {
+      expression: `window.open(${JSON.stringify(`${fixture}?${tab}`)}, "_blank"); 1`,
+      userGesture: true,
+    });
+  }
   await Bun.sleep(4000);
   for (const t of await targets(port)) {
     if (t.type !== "page" || !t.url.startsWith(fixture) || !t.webSocketDebuggerUrl) continue;

@@ -541,6 +541,8 @@ Automation role: `webview`. Text source: none. Children: none.
 | `profile` | string |  | create |
 | `engine` | system \| chromium | system | create |
 | `contextMenuMode` | native \| suppress | native | createAndUpdate |
+| `adoptPopups` | bool | false | createAndUpdate |
+| `popup` | string |  | create |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -588,6 +590,8 @@ Automation role: `webview`. Text source: none. Children: none.
 | `fullscreenChanged` | `onFullscreenChanged` | checked |
 | `contentBlocked` | `onContentBlocked` | data |
 | `externalProtocol` | `onExternalProtocol` | data |
+| `popupBlocked` | `onPopupBlocked` | data |
+| `windowClosed` | `onWindowClosed` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
@@ -595,7 +599,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 | `closeApproved` | `onCloseApproved` | none |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `exitFullscreen`, `requestClose`, `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `allowPopups`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `exitFullscreen`, `requestClose`, `focus`.
 
 ## NativeView (`<nativeview>`)
 

@@ -303,6 +303,7 @@ function App() {
           onBackAvailable={(e) => record("back", e.checked)}
           onForwardAvailable={(e) => record("forward", e.checked)}
           onNewWindow={(e) => record("newWindow", e.text)}
+          onPopupBlocked={(e) => record("popupBlocked", (e.data as { url: string }).url)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
           onChromeDialog={onChromeDialogSeen}
           onExtensionActions={onExtensionActions}
@@ -501,8 +502,10 @@ async function run(ctx: {
 
   await step("popup", async () => {
     ctx.setUrl(`${BASE}/popup`);
-    const opened = await waitFor<string>("newWindow", (u) => u.endsWith("/opened"), "window.open routes to newWindow");
-    return `ok (${opened})`;
+    // A timer's window.open has no user gesture, so Chrome's blocker stops
+    // it and the view reports it instead of opening anything.
+    const blocked = await waitFor<string>("popupBlocked", (u) => u.endsWith("/opened"), "a gesture-free window.open is blocked");
+    return `ok (${blocked})`;
   });
 
   await step("lateScheme", async () => {

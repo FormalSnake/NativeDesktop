@@ -1978,7 +1978,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "TabView": ["selectedIndex": 0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
     "Grid": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
     "ListView": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
-    "WebView": ["url": "", "contextMenuMode": "native", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
+    "WebView": ["url": "", "contextMenuMode": "native", "adoptPopups": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
     "NativeView": ["props": "{}", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
     "SplitView": ["collapsed": false, "edgeReveal": false, "contentStyle": "plain", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
     "HeaderBar": ["title": "", "subtitle": "", "canGoBack": false, "canGoForward": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "contextMenu": [Any]()],
@@ -2155,6 +2155,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "WebView" {
         if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }
         if let m = propStr(props, "contextMenuMode"), let wv = view as? NDWebView { wv.ndSetContextMenuMode(m) }
+        // ND_STUB(WebView): prop "adoptPopups" not applied yet: the AppKit CEF engine still cancels every popup.
     } else if kind == "NativeView" {
         if let pj = propStr(props, "props"), let vk = propStr(props, "viewKind") {
             nd_plugin_view_apply_props(vk, Unmanaged.passUnretained(view).toOpaque(), pj)

@@ -31,6 +31,7 @@ export {
   cancelDownload,
   newWindowRequest,
   acceptExtensionInstall,
+  allowPopups,
 } from "./webview.ts";
 export type {
   Cookie,
@@ -46,6 +47,7 @@ export type {
   InstalledExtension,
   NewWindowDisposition,
   NewWindowRequest,
+  PopupBlocked,
 } from "./webview.ts";
 export {
   showAlert,

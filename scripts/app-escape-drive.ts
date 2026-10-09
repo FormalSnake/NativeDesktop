@@ -817,10 +817,11 @@ const routes: Route[] = [
   chord("key.ctrlShiftQ", "ctrl+shift+q"),
 
   pageClick("page.windowOpenGesture", "open-gesture", TAB),
-  pageClick("page.windowOpenPopup", "open-popup", TAB),
-  // Denied by design: the app hears about:blank and the opener gets null
-  // (onBeforePopup in src/cef/engine.zig).
-  pageClick("page.windowOpenBlankThenNav", "open-blank-nav", { windows: 0 }),
+  // A sized popup is a window of the app's own, as Chrome gives it one; the
+  // blank one the opener then navigates is a tab it keeps a handle on
+  // (`adoptPopups`, onBeforePopup in src/cef/engine.zig).
+  pageClick("page.windowOpenPopup", "open-popup", { windows: 1 }),
+  pageClick("page.windowOpenBlankThenNav", "open-blank-nav", TAB),
   pageClick("page.windowOpenNoopener", "open-noopener", TAB),
   { name: "page.windowOpenNoGesture", expect: {}, run: async (page) => void (await pageEval(page, "void window.open('/page2.html')")) },
   pageClick("page.targetBlank", "blank", TAB),
