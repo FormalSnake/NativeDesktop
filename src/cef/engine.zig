@@ -10248,14 +10248,11 @@ fn onPageFileDialogDone(_: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?
 // to the app as `permissionRequest`, answered with `respondPermission`. An
 // unanswered id leaves the page waiting, as `schemeRequest` does.
 //
-// The app owns persistence, so Chromium must not also own it. ACCEPT and DENY
-// are both explicit user actions to Chromium and are written into the profile's
-// content settings, after which that origin never asks again and the app's own
-// store stops being consulted. CEF 151 has no one-time grant to answer with
-// (`cef_permission_request_result_t` is accept/deny/dismiss/ignore), so the
-// answer is put back to the profile default through
-// `cef_request_context_t::set_content_setting` as soon as CEF says it is done
-// with the prompt. `resetPermissions` is the same clearing on demand.
+// Chromium owns persistence, as it does in Chrome. ACCEPT and DENY are written
+// into the profile's content settings, which is what `Notification.permission`,
+// `permissions.query` and a notification shown after a reload all read, so the
+// origin is not asked again. The getUserMedia route writes nothing of its own,
+// so its answer is written here. `resetPermissions` takes a decision back out.
 
 const PermissionResult = enum { allow, deny, dismiss };
 
@@ -10282,19 +10279,19 @@ const PermissionRequest = struct {
     /// against the origin when the app answers, so `resetPermissions` clears
     /// only what Chromium has actually prompted for.
     request_mask: u32,
-    /// The media route has no dismissal callback to clear the answer from, so
-    /// it carries the context and the mask it has to clear itself. One owned
-    /// reference, released with the request.
+    /// The media route writes no content setting of its own, so it carries the
+    /// context its answer is written into. One owned reference, released with
+    /// the request.
     context: ?*c.cef_request_context_t,
 };
 
 var pending_permission_requests: std.StringHashMapUnmanaged(*PermissionRequest) = .empty;
 var permission_seq: u64 = 0;
 
-/// What each origin has been asked for, so `resetPermissions` has something to
-/// clear: CEF 151 can remove one origin's setting, but has no clear-all for a
-/// content type. Recording the bits rather than sweeping the whole table is
-/// also what keeps the sweep safe, see `clearPermissionSettings`.
+/// What each origin has been asked for, so `resetPermissions` without `types`
+/// has something to clear: CEF 151 can remove one origin's setting, but has no
+/// clear-all for a content type. Recording the bits rather than sweeping the
+/// whole table is also what keeps the sweep safe, see `applyPermissionSettings`.
 const PermissionMasks = struct { prompt: u32 = 0, media: u32 = 0 };
 var answered_permission_origins: std.StringHashMapUnmanaged(PermissionMasks) = .empty;
 
@@ -10443,13 +10440,13 @@ fn originForm(raw: []const u8) []const u8 {
     return std.fmt.allocPrint(alloc, "{s}://{s}", .{ scheme, authority }) catch &.{};
 }
 
-/// CEF UI thread: removes the settings an answer may have written, so the same
-/// origin asks again and the app's own store stays the only record of the
-/// decision.
+/// CEF UI thread: removes the settings an answer wrote, so the same origin asks
+/// again, or with `value` writes that answer for a route Chromium records
+/// nothing for.
 ///
-/// `set_website_setting` with a null value, not `set_content_setting` with
-/// CEF_CONTENT_SETTING_VALUE_DEFAULT: the latter reaches
-/// `HostContentSettingsMap::SetContentSettingDefaultScope`, which aborts the
+/// Clearing is `set_website_setting` with a null value, not
+/// `set_content_setting` with CEF_CONTENT_SETTING_VALUE_DEFAULT: the latter
+/// reaches `HostContentSettingsMap::SetContentSettingDefaultScope`, which aborts the
 /// browser process for a type Chromium keeps as a website setting rather than a
 /// content setting (geolocation's precise/approximate choice is one). The
 /// website-setting entry point serves both kinds and removes the rule either
@@ -10460,13 +10457,15 @@ fn originForm(raw: []const u8) []const u8 {
 /// pair from them, and a type scoped to the requesting origin alone ignores the
 /// second one.
 ///
-/// `mask` only ever carries bits Chromium itself raised a prompt for. That is
-/// the safety property this depends on: a type Chromium has not registered a
-/// pattern scope for aborts the browser process, and a type it just prompted
-/// for necessarily has one.
-fn clearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool) void {
+/// `mask` only ever carries bits Chromium itself raised a prompt for, now or in
+/// an earlier run. That is the safety property this depends on: a type Chromium
+/// has not registered a pattern scope for aborts the browser process, and a
+/// type it prompted for necessarily has one. Writing a value is done only for
+/// camera and microphone, which are plain content settings.
+fn applyPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool, value: ?c.cef_content_setting_values_t) void {
     if (origin.len == 0) return;
-    const set = ctx.set_website_setting orelse return;
+    const clear = ctx.set_website_setting orelse return;
+    const write = ctx.set_content_setting orelse return;
     var url = std.mem.zeroes(c.cef_string_t);
     defer clearStr(&url);
     if (!setStr(&url, origin)) return;
@@ -10474,36 +10473,26 @@ fn clearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, ma
     for (table) |entry| {
         if (mask & entry.bit == 0) continue;
         for (entry.settings) |setting| {
-            set(ctx, &url, &url, @intCast(setting), null);
+            if (value) |v| write(ctx, &url, &url, @intCast(setting), v) else clear(ctx, &url, &url, @intCast(setting), null);
         }
     }
-    tr("permissionSettingsCleared origin={s} mask={x} media={}", .{ origin, mask, media });
+    tr("permissionSettings{s} origin={s} mask={x} media={}", .{ if (value == null) "Cleared" else "Written", origin, mask, media });
 }
 
-/// What an outstanding prompt asked for. Read back in
-/// `on_dismiss_permission_prompt`. Touched on the CEF UI thread only, where
-/// both permission callbacks run.
-const PromptRecord = struct { origin: []const u8, mask: u32 };
-var prompt_records: std.AutoHashMapUnmanaged(u64, PromptRecord) = .empty;
+const PermissionSettingsCall = struct { ctx: *c.cef_request_context_t, origin: []u8, mask: u32, media: bool, value: ?c.cef_content_setting_values_t };
+const PermissionSettingsObj = ref.Counted(c.cef_task_t, PermissionSettingsCall);
 
-const ClearSettingsCall = struct { ctx: *c.cef_request_context_t, origin: []u8, mask: u32, media: bool };
-const ClearSettingsObj = ref.Counted(c.cef_task_t, ClearSettingsCall);
-
-/// Always a task, never an inline call, even when this is already the CEF UI
-/// thread: `on_dismiss_permission_prompt` runs while Chromium is still
-/// finishing the decision, and a clear made there is overwritten by the content
-/// setting the decision then writes. A task runs on the next UI turn, after
-/// that write. Measured on 151.3.23: clearing inline from the dismissal left
-/// the origin blocked and it never asked again.
-fn postClearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool) void {
+/// Always a task, so the settings are only touched on the CEF UI thread, after
+/// whatever Chromium itself is still writing for the same request.
+fn postPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool, value: ?c.cef_content_setting_values_t) void {
     if (mask == 0 or origin.len == 0) return;
     const api = loader.loaded() orelse return;
     const copy = alloc.dupe(u8, origin) catch return;
-    const task = ClearSettingsObj.create(.{ .ctx = ctx, .origin = copy, .mask = mask, .media = media }) orelse {
+    const task = PermissionSettingsObj.create(.{ .ctx = ctx, .origin = copy, .mask = mask, .media = media, .value = value }) orelse {
         alloc.free(copy);
         return;
     };
-    task.cef.execute = &runClearSettingsTask;
+    task.cef.execute = &runPermissionSettingsTask;
     ref.addRefParam(ctx);
     if (api.post_task(c.TID_UI, task.handOut()) == 0) {
         ref.releaseParam(ctx);
@@ -10513,9 +10502,9 @@ fn postClearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8
     task.drop();
 }
 
-fn runClearSettingsTask(self: [*c]c.cef_task_t) callconv(.c) void {
-    const call = ClearSettingsObj.of(self).payload;
-    clearPermissionSettings(call.ctx, call.origin, call.mask, call.media);
+fn runPermissionSettingsTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const call = PermissionSettingsObj.of(self).payload;
+    applyPermissionSettings(call.ctx, call.origin, call.mask, call.media, call.value);
     ref.releaseParam(call.ctx);
     alloc.free(call.origin);
 }
@@ -10558,7 +10547,6 @@ fn postPermissionRequest(
         .request_mask = mask,
         .context = if (media) browserContext(browser) else null,
     };
-    if (!media) rememberPrompt(prompt_id, req.origin, mask);
     post(.{ .view = view, .name = "permissionRequest", .permission = req });
 }
 
@@ -10575,11 +10563,6 @@ fn browserContext(browser: [*c]c.cef_browser_t) ?*c.cef_request_context_t {
     const ctx = get_ctx(host);
     if (ctx == null) return null;
     return @ptrCast(ctx);
-}
-
-fn rememberPrompt(prompt_id: u64, origin: []const u8, mask: u32) void {
-    const copy = alloc.dupe(u8, origin) catch return;
-    prompt_records.put(alloc, prompt_id, .{ .origin = copy, .mask = mask }) catch alloc.free(copy);
 }
 
 /// GTK thread: parks the request and raises the event the app answers with
@@ -10636,7 +10619,8 @@ fn answerPermissionRequest(req: *PermissionRequest, result: PermissionResult) vo
         }
         if (result != .dismiss) {
             if (req.context) |ctx| {
-                postClearPermissionSettings(ctx, req.origin, req.media_mask, true);
+                const value: c.cef_content_setting_values_t = if (result == .allow) c.CEF_CONTENT_SETTING_VALUE_ALLOW else c.CEF_CONTENT_SETTING_VALUE_BLOCK;
+                postPermissionSettings(ctx, req.origin, req.media_mask, true, value);
                 rememberAnsweredOrigin(req.origin, .{ .media = req.media_mask });
             }
         }
@@ -10703,27 +10687,16 @@ fn onRequestMediaAccessPermission(
 }
 
 /// CEF is done with the prompt: either the app answered it, or Chromium retired
-/// it on its own (a navigation, a closed browser). Chromium has written its
-/// content setting by now, so this is where it is written back out; the request
-/// still being parked means nobody answered, and the app is told the id is dead.
+/// it on its own (a navigation, a closed browser). The request still being
+/// parked means nobody answered, and the app is told the id is dead.
 fn onDismissPermissionPrompt(
     self: [*c]c.cef_permission_handler_t,
     browser: [*c]c.cef_browser_t,
     prompt_id: u64,
-    result: c.cef_permission_request_result_t,
+    _: c.cef_permission_request_result_t,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     const view = PermissionObj.of(self).payload;
-    if (prompt_records.fetchRemove(prompt_id)) |entry| {
-        defer alloc.free(entry.value.origin);
-        // A dismissal records no content setting, so there is nothing to undo.
-        if (result != c.CEF_PERMISSION_RESULT_DISMISS) {
-            if (browserContext(browser)) |ctx| {
-                defer ref.releaseParam(ctx);
-                postClearPermissionSettings(ctx, entry.value.origin, entry.value.mask, false);
-            }
-        }
-    }
     post(.{ .view = view, .name = "permissionDismissed", .permission_dismissed = prompt_id });
 }
 
@@ -10786,18 +10759,21 @@ fn cmdRespondPermission(arg: ?std.json.Value) void {
     answerPermissionRequest(entry.value, result);
 }
 
-/// `resetPermissions`: removes Chromium's stored decisions, so a site the app
-/// blocked earlier asks again. It clears what this process has recorded being
-/// asked, per origin, narrowed by `origin` and `types` when they are given.
+/// `resetPermissions`: removes Chromium's stored decisions, so a site asks
+/// again. With both `origin` and `types` it clears exactly those, which is how
+/// a decision from an earlier run is revoked: the app names types it was asked
+/// for, so they are types Chromium has registered. Otherwise it clears what this
+/// process has recorded being asked, narrowed by whichever of the two is given.
 /// Nothing wider is possible or safe: CEF 151 has no clear-all for a content
-/// type, and a type Chromium has not registered aborts the browser process, so
-/// only bits Chromium itself raised a prompt for are ever handed back to it.
+/// type, and a type Chromium has not registered aborts the browser process.
 fn cmdResetPermissions(view: *View, arg: ?std.json.Value) void {
     const obj_arg = argObject(arg);
     var filter: u32 = std.math.maxInt(u32);
     var media_filter: u32 = std.math.maxInt(u32);
+    var typed = false;
     if (obj_arg) |obj| {
         if (objStrList(obj, "types")) |list| {
+            typed = true;
             var names: std.ArrayList([]const u8) = .empty;
             defer names.deinit(alloc);
             for (list.items) |item| {
@@ -10818,6 +10794,15 @@ fn cmdResetPermissions(view: *View, arg: ?std.json.Value) void {
     const ctx: *c.cef_request_context_t = @ptrCast(raw);
     defer ref.releaseOwned(ctx);
 
+    if (form) |origin| {
+        if (typed) {
+            postPermissionSettings(ctx, origin, filter, false, null);
+            postPermissionSettings(ctx, origin, media_filter, true, null);
+            tr("resetPermissions node={d} origin={s} mask={x} media={x}", .{ view.node_id, origin, filter, media_filter });
+            return;
+        }
+    }
+
     var cleared: usize = 0;
     var it = answered_permission_origins.iterator();
     while (it.next()) |entry| {
@@ -10825,8 +10810,8 @@ fn cmdResetPermissions(view: *View, arg: ?std.json.Value) void {
         if (form) |f| {
             if (!std.mem.eql(u8, f, origin)) continue;
         }
-        postClearPermissionSettings(ctx, origin, entry.value_ptr.prompt & filter, false);
-        postClearPermissionSettings(ctx, origin, entry.value_ptr.media & media_filter, true);
+        postPermissionSettings(ctx, origin, entry.value_ptr.prompt & filter, false, null);
+        postPermissionSettings(ctx, origin, entry.value_ptr.media & media_filter, true, null);
         cleared += 1;
     }
     tr("resetPermissions node={d} origins={d} of={d}", .{ view.node_id, cleared, answered_permission_origins.count() });

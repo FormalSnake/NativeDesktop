@@ -1306,8 +1306,8 @@ final class NDCefHandlerBox {
             selfPointer, browser, frame, requestingOrigin, requestedPermissions, callback in
             let origin = ndCefString(requestingOrigin)
             let mainFrameURL = ndCefMainFrameURL(browser)
-            // The media route has no dismissal callback to clear its answer
-            // from, so it carries the context it has to clear itself.
+            // The media route writes no content setting of its own, so it
+            // carries the context its answer is written into.
             let context = UInt(bitPattern: ndCefBrowserContext(browser))
             nd_cef_ref_release(browser)
             var frameURL: String?
@@ -1331,17 +1331,11 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(callback)
             return 1
         }
-        permission.pointee.on_dismiss_permission_prompt = { selfPointer, browser, promptID, result in
-            let context = ndCefBrowserContext(browser)
+        permission.pointee.on_dismiss_permission_prompt = { selfPointer, browser, promptID, _ in
             nd_cef_ref_release(browser)
-            defer { nd_cef_ref_release(context) }
             guard Thread.isMainThread else { return }
-            let token = UInt(bitPattern: context)
             ndCefDeliver(selfPointer) { view in
-                NDCefPermissions.dismiss(
-                    view: view, promptID: promptID, result: result,
-                    context: UnsafeMutableRawPointer(bitPattern: token)?
-                        .assumingMemoryBound(to: cef_request_context_t.self))
+                NDCefPermissions.dismiss(view: view, promptID: promptID)
             }
         }
     }
