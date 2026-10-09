@@ -157,9 +157,21 @@ fn gtkAccel(spec: []const u8) ?[:0]u8 {
 
 fn cbPressed(gesture: *gtk.GestureClick, _: c_int, x: f64, y: f64, _: ?*anyopaque) callconv(.c) void {
     const widget = gtk.EventController.getWidget(gesture.as(gtk.EventController)) orelse return;
+    // The gesture runs in the capture phase, so an ancestor with a menu hears
+    // the press before a row inside it with its own. The innermost one wins.
+    if (innermostMenu(widget, x, y) != widget) return;
     if (open(widget, @intFromFloat(x), @intFromFloat(y))) {
         _ = gtk.Gesture.setState(gesture.as(gtk.Gesture), .claimed);
     }
+}
+
+fn innermostMenu(widget: *gtk.Widget, x: f64, y: f64) *gtk.Widget {
+    var at = gtk.Widget.pick(widget, x, y, .{}) orelse return widget;
+    while (at != widget) {
+        if (menuOf(at) != null) return at;
+        at = gtk.Widget.getParent(at) orelse return widget;
+    }
+    return widget;
 }
 
 fn onAnswer(ctx: ?*anyopaque, command_id: c_int) void {
