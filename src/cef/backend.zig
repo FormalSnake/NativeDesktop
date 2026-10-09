@@ -35,4 +35,6 @@ pub const pageText = impl.pageText;
 pub const registerScheme = impl.registerScheme;
 pub const setContextMenuMode = impl.setContextMenuMode;
 pub const refreshDialogOcclusion = impl.refreshDialogOcclusion;
+pub const holdWindowClose = impl.holdWindowClose;
+pub const approveWindowClose = impl.approveWindowClose;
 pub const EvalState = impl.EvalState;

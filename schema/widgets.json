@@ -724,7 +724,8 @@
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
         { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
-        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" },
+        { "name": "closeApproved", "ndpName": "onCloseApproved" }
       ],
       "commands": [
         "goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools",
@@ -738,6 +739,7 @@
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
         "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "triggerExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled", "acceptExtensionInstall",
+        "requestClose",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

@@ -2213,6 +2213,12 @@ fn mergeCustomItems(state: *ViewState, node_id: u32, menu: *anyopaque, hit: ctxm
 /// widgetCommand dispatch (generated widgets.zig WebView arm).
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
     if (cef.isReal(widget)) return cef.command(widget, cmd, arg);
+    if (std.mem.eql(u8, cmd, "requestClose")) {
+        // `cbScriptDialog` always confirms leaving, so there is nothing to ask.
+        const node_id: u32 = @intCast(@intFromPtr(gobject.Object.getData(widget.as(gobject.Object), NODE_ID_KEY)));
+        if (emit) |f| f(node_id, "closeApproved", .{});
+        return;
+    }
     const a = api orelse return;
     if (!isReal(widget)) return;
     const v: *anyopaque = @ptrCast(widget);

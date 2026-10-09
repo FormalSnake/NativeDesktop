@@ -67,3 +67,7 @@ pub fn registerScheme(_: []const u8, _: bool, _: bool) bool {
 pub fn setContextMenuMode(_: *gtk.Widget, _: []const u8) void {}
 
 pub fn refreshDialogOcclusion(_: *gtk.Widget) void {}
+pub fn holdWindowClose(_: *gtk.Window) bool {
+    return false;
+}
+pub fn approveWindowClose(_: *gtk.Window) void {}
