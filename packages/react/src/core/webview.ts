@@ -172,11 +172,12 @@ export interface InstalledExtension {
   optionsUrl: string;
 }
 
-/// Lists the Chrome extensions this profile has installed. Chromium exposes its
-/// extension registry to `chrome://extensions` and nowhere else, so `node` has
-/// to be a `<webview>` showing that page (a hidden one is the usual shape), on
-/// the Chromium engine with `webview.cef.style: "chrome"`. Requires the
-/// `onExtensionsList` prop. An extension's action popup and options page open
+/// Lists the Chrome extensions this profile has installed, on the Chromium
+/// engine with `webview.cef.style: "chrome"`. On Linux `node` is any mounted
+/// `<webview>`: it only receives the answer, and the work runs in a page the
+/// framework opens itself, which belongs to no tab and so is never offered by
+/// Chrome's share picker. On macOS `node` still has to show
+/// `chrome://extensions`. Requires the `onExtensionsList` prop. An extension's action popup and options page open
 /// by pointing another `<webview>` at the URL: create it with that `url`, since
 /// Chromium refuses a renderer-initiated navigation to a `chrome-extension://`
 /// page.
@@ -196,17 +197,17 @@ export function onExtensionsList(e: { data: unknown }): void {
 }
 
 /// Loads an unpacked extension from a local directory into the live profile,
-/// with no relaunch and no `--load-extension`. `node` is the same
-/// `chrome://extensions` view `listExtensions` uses; the answer is the registry
-/// as it now stands, so it settles through `onExtensionsList`.
+/// with no relaunch and no `--load-extension`. `node` is as for
+/// `listExtensions`; the answer is the registry as it now stands, so it settles
+/// through `onExtensionsList`.
 export function installExtension(node: NdNodeRef<"webview">, path: string): Promise<InstalledExtension[]> {
   return extensionMutation(node, "installExtension", { path });
 }
 
 /// Removes an extension without Chrome's "Remove ...?" confirmation, which has
 /// no toolbar to hang from in an embedded browser: ask the person first.
-/// Same view as `listExtensions`; settles with the registry once the extension
-/// has left it. Chromium engine under Chrome style.
+/// `node` is as for `listExtensions`; settles with the registry once the
+/// extension has left it. Chromium engine under Chrome style.
 export function uninstallExtension(node: NdNodeRef<"webview">, extensionId: string): Promise<InstalledExtension[]> {
   return extensionMutation(node, "uninstallExtension", { extensionId });
 }
@@ -227,11 +228,11 @@ function extensionMutation(
   return request(node, pendingExtensions, "ext", command, args);
 }
 
-/// Why the registry changed, as Chromium spelled it: `developerPrivate`'s own
-/// vocabulary (`INSTALLED`, `UNINSTALLED`, `LOADED`, `UNLOADED`,
-/// `PREFS_CHANGED`, …) or the `chrome.management` event name that fired. Treat
-/// it as a hint and re-read the registry; the set is Chromium's, not this
-/// framework's.
+/// Why the registry changed: the `chrome.management` event that fired
+/// (`onInstalled`, which also covers an update, `onUninstalled`, `onEnabled`,
+/// `onDisabled`), or on macOS `developerPrivate`'s own vocabulary (`INSTALLED`,
+/// `UNLOADED`, `PREFS_CHANGED`, …). Treat it as a hint and re-read the
+/// registry.
 export interface ExtensionsChange {
   reason: string;
   /** The extension the change is about, or "" when the event does not say. */
@@ -239,8 +240,7 @@ export interface ExtensionsChange {
 }
 
 /// One list, not one per view: an event carries the payload and nothing that
-/// names the view it came from, and Chromium exposes its registry to one page,
-/// so an app has one of these views.
+/// names the view it came from, and each change is delivered once.
 const extensionsWatchers: Array<(change: ExtensionsChange) => void> = [];
 
 /// Subscribes to the registry's own change events, so an app learns that an
@@ -248,11 +248,13 @@ const extensionsWatchers: Array<(change: ExtensionsChange) => void> = [];
 /// polling for it. A Web Store install happens entirely inside Chromium and
 /// reaches no other `<webview>` callback.
 ///
-/// `node` is the same `chrome://extensions` view `listExtensions` uses, and the
-/// subscription belongs to that document: call it again after the view
-/// reloads. Resolves with the event sources it attached to, which is what the
-/// page really exposes rather than what this framework hoped for. `listener`
-/// runs on every later change.
+/// `node` is as for `listExtensions` and needs the `onExtensionsChanged` prop.
+/// On Linux each change goes to the latest view that subscribed and is still
+/// mounted, so subscribing from every page view keeps the feed alive however
+/// tabs come and go. On macOS the subscription belongs to the
+/// `chrome://extensions` document: call it again after that view reloads.
+/// Resolves with the event sources it attached to. `listener` runs on every
+/// later change.
 export function watchExtensions(
   node: NdNodeRef<"webview">,
   listener: (change: ExtensionsChange) => void,
@@ -313,20 +315,20 @@ export interface ExtensionActionState {
   enabled: boolean;
 }
 
-/// Reads an action's live state. `node` is a `<webview>` showing any page of
-/// that extension, because that is the only context Chromium tells: the WebUI
-/// at `chrome://extensions` has no `chrome.action` and `developerPrivate`
-/// reports no action state at all. The popup page the app mounts for a click is
-/// one such page, so the shape this is meant for is: mount the popup view,
-/// read the state before showing it, and open nothing when `popupUrl` is `""`.
+/// Reads the live state of `extensionId`'s action. Only a page of that
+/// extension can: the WebUI at `chrome://extensions` has no `chrome.action` and
+/// `developerPrivate` reports no action state at all. On Linux the framework
+/// opens one itself, outside any tab, and `node` is any mounted `<webview>`. On
+/// macOS `node` has to show a page of the extension, such as the popup view an
+/// app mounts for a click. Open nothing when `popupUrl` is `""`.
 ///
 /// The state is per tab, and the tab is Chromium's own active one rather than
 /// anything this framework names: `cef_browser_t::get_identifier` claims in its
 /// header to be the extension tab id and under Chrome style it is not, so a
 /// `<webview>` has no tab id an app could pass. The answer carries the `tabId`
 /// and `tabUrl` it was read for.
-export function readExtensionAction(node: NdNodeRef<"webview">): Promise<ExtensionActionState> {
-  return request(node, pendingActionState, "ext", "readExtensionAction", {});
+export function readExtensionAction(node: NdNodeRef<"webview">, extensionId: string): Promise<ExtensionActionState> {
+  return request(node, pendingActionState, "ext", "readExtensionAction", { extensionId });
 }
 
 /// Clicks an extension's action the way Chrome's toolbar button does, on the

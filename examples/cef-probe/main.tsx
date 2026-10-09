@@ -818,7 +818,7 @@ async function run(ctx: {
     // Off, though the manifest says otherwise. This is the whole leg: an app
     // must not open a popup for an action in this state.
     const cleared = await pollValue(
-      () => readExtensionAction(page!),
+      () => readExtensionAction(page!, manifest.id),
       (state) => state.id === manifest.id,
       "the action page answers for its own extension",
     );
@@ -838,7 +838,7 @@ async function run(ctx: {
     })()`);
 
     const perTab = await pollValue(
-      () => readExtensionAction(page!),
+      () => readExtensionAction(page!, manifest.id),
       (state) => state.badgeText === "T1" && state.popupUrl.endsWith("/popup.html"),
       "the badge and popup set at runtime are read back for the active tab",
     );
