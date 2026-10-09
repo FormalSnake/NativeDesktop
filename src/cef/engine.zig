@@ -2020,6 +2020,15 @@ const View = struct {
     /// What the page showed as a dialog came up over it, drawn in its place
     /// under the dialog's scrim while the page itself stands aside.
     aside_still: ?*gdk.Texture = null,
+    /// "Page Unresponsive" while it is up (see `onHangWatch`).
+    hang_dialog: ?*adw.AlertDialog = null,
+    hang_ping_out: bool = false,
+    hang_ping_seq: u32 = 0,
+    /// Wait was answered: not asked again before this.
+    hang_quiet_until_us: i64 = 0,
+    /// The `--renderer-client-id` of the renderer showing the main frame, as
+    /// it reported it. CEF UI thread writes, GTK reads.
+    renderer_id: std.atomic.Value(c_int) = .init(0),
     motion_started_us: i64 = 0,
     motion_ended_us: i64 = 0,
     /// Each resize of the page during a slide asks the page to report back
@@ -2267,6 +2276,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_keyboard_handler = &clientGetKeyboardHandler;
     client.cef.get_request_handler = &clientGetRequestHandler;
     client.cef.get_permission_handler = &clientGetPermissionHandler;
+    client.cef.on_process_message_received = &clientOnProcessMessage;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
@@ -2304,12 +2314,14 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     request_handler.cef.on_before_browse = &onBeforeBrowse;
     request_handler.cef.get_auth_credentials = &onGetAuthCredentials;
     request_handler.cef.get_resource_request_handler = &onGetResourceRequestHandler;
+    request_handler.cef.on_render_process_terminated = &onRenderProcessTerminated;
     permission_handler.cef.on_show_permission_prompt = &onShowPermissionPrompt;
     permission_handler.cef.on_request_media_access_permission = &onRequestMediaAccessPermission;
     permission_handler.cef.on_dismiss_permission_prompt = &onDismissPermissionPrompt;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     startChromeWindowWatch();
+    startHangWatch();
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
     gobject.Object.setData(widget.as(gobject.Object), VIEW_KEY, view);
     gtk.Widget.setHexpand(widget, 1);
@@ -2629,9 +2641,10 @@ fn syncBrowserFocus(view: *View) void {
     const mine = if (gtk.Window.getFocus(window)) |focused| focused == view.widget else false;
     const active = gtk.Window.isActive(window) != 0;
     const cef_window = view.cef_window.load(.acquire);
+    const held = cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window));
     if (mine and active) {
         if (cef_window != 0) x11.focus(@intCast(cef_window));
-    } else if (active and (view.page_focused or (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))))) {
+    } else if (active and (view.page_focused or held)) {
         // Back to the app, and only from the view that is holding the
         // keyboard: the others share this toplevel and would take it off
         // whichever one has it. `page_focused` as well as the X comparison,
@@ -2647,6 +2660,10 @@ fn syncBrowserFocus(view: *View) void {
     }
     const host = hostOf(view) orelse return;
     const wants = active and mine;
+    // Focus the browser already holds is left alone: set_focus moves Views'
+    // focus back onto the page, off any bubble Chrome has up in the browser's
+    // window, and a device chooser closes when it loses focus.
+    if (wants and view.page_focused and held) return;
     if (wants) view.focus_set_us.store(glib.getMonotonicTime(), .release);
     if (host.set_focus) |set| set(host, @intFromBool(wants));
     if (wants != view.page_focused) {
@@ -2944,6 +2961,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     forgetParked(view);
     motionFinish(view, false);
     dropAsideStill(view);
+    closeHangDialog(view);
     if (view.park_source != 0) {
         _ = glib.Source.remove(view.park_source);
         view.park_source = 0;
@@ -5204,6 +5222,7 @@ fn onRendererContextCreated(
     // world included. The filters are the page's, and a scriptlet run in
     // 1Password's world rewrites that world's globals.
     if (!isMainWorld(frame, context)) return;
+    reportRendererId(frame);
     const script = v8Eval(context, adblock.renderer_bootstrap) orelse return;
     defer alloc.free(script);
     if (script.len == 0) return;
@@ -5388,6 +5407,298 @@ fn onLoadError(
         .text = dupeStr(failed_url),
         .extra = dupeStr(error_text),
     });
+}
+
+// ============================================================================
+// A page whose renderer died or stopped answering
+// ============================================================================
+//
+// Chrome draws "Aw, Snap!" into the tab and asks about a hung page in a
+// tab-modal "Page Unresponsive" dialog. Neither reaches this embedding. A dead
+// renderer is reported as `renderProcessGone` for the app to draw its own sad
+// tab. A hung one is never even noticed by Chromium: its hang monitor stands
+// down for any page with a devtools session attached
+// (WebContentsImpl::ShouldIgnoreUnresponsiveRenderer), and every view here
+// keeps one for its whole life, so on_render_process_unresponsive never runs.
+// The page on show is pinged instead (a Runtime.evaluate, which only the
+// page's main thread answers); one left unanswered for Chromium's own 15 s
+// gets Chrome's question as an in-window dialog, answered with Wait or Exit
+// page. Exit kills the renderer, which ends in `renderProcessGone` like any
+// other crash.
+
+fn onRenderProcessTerminated(
+    self: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    status: c.cef_termination_status_t,
+    error_code: c_int,
+    error_string: [*c]const c.cef_string_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const reason: []const u8 = switch (status) {
+        c.TS_PROCESS_WAS_KILLED => "killed",
+        c.TS_PROCESS_CRASHED => "crashed",
+        c.TS_PROCESS_OOM => "oom",
+        c.TS_LAUNCH_FAILED => "launchFailed",
+        c.TS_INTEGRITY_FAILURE => "integrityFailure",
+        else => "abnormal",
+    };
+    post(.{
+        .view = RequestHandlerObj.of(self).payload,
+        .name = "renderProcessGone",
+        .text = alloc.dupe(u8, reason) catch null,
+        .extra = dupeStr(error_string),
+        .number = @floatFromInt(error_code),
+    });
+}
+
+const hang_watch_ms: c_uint = 3000;
+/// How long Wait holds the question back, as Chrome restarts its hang timer.
+const hang_wait_us: i64 = 15 * std.time.us_per_s;
+var hang_watch_timer: c_uint = 0;
+
+fn startHangWatch() void {
+    if (hang_watch_timer == 0) hang_watch_timer = glib.timeoutAdd(hang_watch_ms, &onHangWatch, null);
+}
+
+/// The page is in front of someone and nothing else explains a silent main
+/// thread: a script dialog of the page's, or the inspector, holds it on
+/// purpose.
+fn hangWatched(view: *View) bool {
+    if (!viewOnShow(view) or !view.cdp_ready or view.browser_gone.load(.acquire)) return false;
+    if (view.devtools_container.load(.acquire) != 0) return false;
+    return view.hang_dialog != null or !dialogOverView(view);
+}
+
+fn onHangWatch(_: ?*anyopaque) callconv(.c) c_int {
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (!hangWatched(view)) {
+            forgetHangPing(view);
+            continue;
+        }
+        if (view.hang_ping_out) continue;
+        view.hang_ping_seq +%= 1;
+        // Unanswered, the call expires after `other_call_timeout_us` (15 s,
+        // the delay Chromium's own monitor waits), which is the verdict.
+        if (cdpSendRaw(view, "Runtime.evaluate", "{\"expression\":\"0\",\"returnByValue\":true}", .{ .hang_ping = view.hang_ping_seq })) view.hang_ping_out = true;
+    }
+    return 1;
+}
+
+/// Whatever ping is out says nothing about the page now showing: a navigation
+/// can drop it unanswered, and a hidden page is not asked about.
+fn forgetHangPing(view: *View) void {
+    view.hang_ping_seq +%= 1;
+    view.hang_ping_out = false;
+}
+
+fn hangPingAnswered(view: *View, seq: u32) void {
+    if (seq != view.hang_ping_seq) return;
+    view.hang_ping_out = false;
+    if (view.hang_dialog != null) {
+        tr("pageUnresponsive recovered node={d}", .{view.node_id});
+        closeHangDialog(view);
+    }
+}
+
+fn hangPingExpired(view: *View, seq: u32) void {
+    if (seq != view.hang_ping_seq) return;
+    view.hang_ping_out = false;
+    if (!live_views.contains(@intFromPtr(view)) or !hangWatched(view)) return;
+    if (glib.getMonotonicTime() < view.hang_quiet_until_us) return;
+    showHangDialog(view);
+}
+
+fn showHangDialog(view: *View) void {
+    if (view.hang_dialog != null) return;
+    var body_buf: [512]u8 = undefined;
+    const body = std.fmt.bufPrintZ(&body_buf, "{s}\n\nYou can wait for it to become responsive or exit the page.", .{
+        if (view.title) |t| (if (t.len > 0) t else "This page") else "This page",
+    }) catch "You can wait for it to become responsive or exit the page.";
+    const alert = adw.AlertDialog.new("Page Unresponsive", body.ptr);
+    adw.AlertDialog.addResponse(alert, "exit", "Exit page");
+    adw.AlertDialog.addResponse(alert, "wait", "Wait");
+    adw.AlertDialog.setResponseAppearance(alert, "exit", .destructive);
+    adw.AlertDialog.setDefaultResponse(alert, "wait");
+    adw.AlertDialog.setCloseResponse(alert, "wait");
+    view.hang_dialog = alert;
+    _ = gobject.signalConnectData(alert.as(gobject.Object), "response", @ptrCast(&onHangResponse), view, null, .{});
+    tr("pageUnresponsive shown node={d}", .{view.node_id});
+    @import("../gtk/dialogsurface.zig").present(alert.as(adw.Dialog), view.widget);
+}
+
+fn onHangResponse(alert: *adw.AlertDialog, response: [*:0]const u8, data: ?*anyopaque) callconv(.c) void {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    if (!live_views.contains(@intFromPtr(view)) or view.hang_dialog != alert) return;
+    view.hang_dialog = null;
+    const exit = std.mem.eql(u8, std.mem.span(response), "exit");
+    tr("pageUnresponsive answered node={d} exit={}", .{ view.node_id, exit });
+    view.hang_quiet_until_us = glib.getMonotonicTime() + hang_wait_us;
+    if (exit) killRenderer(view);
+}
+
+/// The page answered again, or its renderer is gone: the question is moot.
+fn closeHangDialog(view: *View) void {
+    const alert = view.hang_dialog orelse return;
+    view.hang_dialog = null;
+    adw.Dialog.forceClose(alert.as(adw.Dialog));
+}
+
+// CEF has no call that ends a renderer, and Page.crash is carried out by the
+// renderer itself, which a hung one never gets to. Each renderer reports the
+// `--renderer-client-id` it was started with as its page's main world comes
+// up, which picks it out among this process's descendants. Its own pid would
+// not: renderers sit in pid namespaces, and two of them share inner pids.
+const renderer_id_message = "nd.rendererId";
+
+fn reportRendererId(frame: [*c]c.cef_frame_t) void {
+    const api = loader.loaded() orelse return;
+    const is_main = frame.*.is_main orelse return;
+    if (is_main(frame) == 0) return;
+    const send = frame.*.send_process_message orelse return;
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    if (!setStr(&name, renderer_id_message)) return;
+    const message = api.process_message_create(&name);
+    if (message == null) return;
+    const get_args = message.*.get_argument_list orelse {
+        ref.releaseParam(message);
+        return;
+    };
+    const args = get_args(message);
+    if (args != null) {
+        if (args.*.set_int) |set_int| _ = set_int(args, 0, rendererClientId(api));
+        ref.releaseParam(args);
+    }
+    send(frame, c.PID_BROWSER, message);
+}
+
+fn rendererClientId(api: *const loader.Api) c_int {
+    const cl = api.command_line_get_global();
+    if (cl == null) return 0;
+    defer ref.releaseParam(cl);
+    const get = cl.*.get_switch_value orelse return 0;
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    if (!setStr(&name, "renderer-client-id")) return 0;
+    const raw = get(cl, &name);
+    if (raw == null) return 0;
+    defer freeUserfree(raw);
+    const value = dupeStr(raw) orelse return 0;
+    defer alloc.free(value);
+    return std.fmt.parseInt(c_int, value, 10) catch 0;
+}
+
+fn clientOnProcessMessage(
+    self: [*c]c.cef_client_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    _: c.cef_process_id_t,
+    message: [*c]c.cef_process_message_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(message);
+    if (message == null) return 0;
+    const get_name = message.*.get_name orelse return 0;
+    const raw = get_name(message);
+    if (raw == null) return 0;
+    defer freeUserfree(raw);
+    const name = dupeStr(raw) orelse return 0;
+    defer alloc.free(name);
+    if (!std.mem.eql(u8, name, renderer_id_message)) return 0;
+    const get_args = message.*.get_argument_list orelse return 1;
+    const args = get_args(message);
+    if (args == null) return 1;
+    defer ref.releaseParam(args);
+    const get_int = args.*.get_int orelse return 1;
+    ClientObj.of(self).payload.renderer_id.store(get_int(args, 0), .release);
+    return 1;
+}
+
+fn killRenderer(view: *View) void {
+    const id = view.renderer_id.load(.acquire);
+    const pid = rendererPid(id) orelse {
+        std.debug.print("ND_WARN WebView engine=chromium: no renderer found for node={d} (client id {d}); the hung page is left running\n", .{ view.node_id, id });
+        return;
+    };
+    tr("pageUnresponsive kill node={d} pid={d}", .{ view.node_id, pid });
+    _ = std.c.kill(pid, .KILL);
+}
+
+/// The renderer among this process's descendants started with
+/// `--renderer-client-id=<id>`. Another Chromium on the desktop numbers its
+/// renderers the same way, so the ancestry is part of the match.
+fn rendererPid(id: c_int) ?std.c.pid_t {
+    if (id <= 0) return null;
+    var want_buf: [48]u8 = undefined;
+    const want = std.fmt.bufPrint(&want_buf, "--renderer-client-id={d}", .{id}) catch return null;
+    const self = std.c.getpid();
+    const dir = std.c.opendir("/proc") orelse return null;
+    defer _ = std.c.closedir(dir);
+    while (std.c.readdir(dir)) |entry| {
+        const name = std.mem.sliceTo(&entry.name, 0);
+        const pid = std.fmt.parseInt(std.c.pid_t, name, 10) catch continue;
+        var cmd_buf: [65536]u8 = undefined;
+        const cmdline = procFile(pid, "cmdline", &cmd_buf) orelse continue;
+        if (std.mem.indexOf(u8, cmdline, "--type=renderer") == null) continue;
+        if (!hasSwitch(cmdline, want)) continue;
+        if (descendsFrom(pid, self)) return pid;
+    }
+    return null;
+}
+
+/// Zygote-forked renderers rewrite their title, so the switches are joined
+/// by spaces there rather than by NULs.
+fn hasSwitch(cmdline: []const u8, want: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, cmdline, from, want)) |at| {
+        const end = at + want.len;
+        if (end == cmdline.len or cmdline[end] == ' ' or cmdline[end] == 0) return true;
+        from = end;
+    }
+    return false;
+}
+
+fn descendsFrom(pid: std.c.pid_t, ancestor: std.c.pid_t) bool {
+    var at = pid;
+    var hops: u8 = 0;
+    while (hops < 16) : (hops += 1) {
+        var buf: [2048]u8 = undefined;
+        const status = procFile(at, "status", &buf) orelse return false;
+        const parent = lastField(statusLine(status, "PPid:") orelse return false) orelse return false;
+        if (parent == ancestor) return true;
+        if (parent <= 1) return false;
+        at = parent;
+    }
+    return false;
+}
+
+fn procFile(pid: std.c.pid_t, leaf: []const u8, buf: []u8) ?[]const u8 {
+    var path_buf: [64]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/{s}", .{ pid, leaf }) catch return null;
+    const fd = std.c.open(path, .{});
+    if (fd < 0) return null;
+    defer _ = std.c.close(fd);
+    const n = std.c.read(fd, buf.ptr, buf.len);
+    if (n <= 0) return null;
+    return buf[0..@intCast(n)];
+}
+
+fn statusLine(status: []const u8, key: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, status, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, key)) return line[key.len..];
+    }
+    return null;
+}
+
+fn lastField(line: []const u8) ?c_int {
+    var fields = std.mem.tokenizeAny(u8, line, " \t");
+    var last: ?[]const u8 = null;
+    while (fields.next()) |f| last = f;
+    return std.fmt.parseInt(c_int, last orelse return null, 10) catch null;
 }
 
 // ============================================================================
@@ -5857,6 +6168,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         // The page the menu was opened over is gone, and so are the commands
         // Chromium queued against it.
         closeNativeMenu(view);
+        forgetHangPing(view);
         remember(&view.url, text);
         // The menu handlers read this from the CEF UI thread.
         view.menu_lock.lock();
@@ -5897,6 +6209,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "loadProgress")) {
         f(view.node_id, "loadProgress", .{ .value = box.number });
     } else if (std.mem.eql(u8, box.name, "loadingChanged")) {
+        forgetHangPing(view);
         view.loading = box.flag;
         f(view.node_id, "loadingChanged", .{ .checked = box.flag });
     } else if (std.mem.eql(u8, box.name, "backAvailable")) {
@@ -6011,6 +6324,17 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         payload.put(alloc, "url", .{ .string = failed_url }) catch return 0;
         payload.put(alloc, "error", .{ .string = message }) catch return 0;
         f(view.node_id, "loadFailed", .{ .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "renderProcessGone")) {
+        closeHangDialog(view);
+        forgetHangPing(view);
+        const reason: []const u8 = if (box.text) |t| t else "abnormal";
+        tr("renderProcessGone node={d} reason={s} code={d}", .{ view.node_id, reason, box.number });
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "reason", .{ .string = reason }) catch return 0;
+        payload.put(alloc, "errorCode", .{ .integer = @intFromFloat(box.number) }) catch return 0;
+        payload.put(alloc, "error", .{ .string = if (box.extra) |t| t else "" }) catch return 0;
+        f(view.node_id, "renderProcessGone", .{ .data = .{ .object = payload } });
     }
     return 0; // G_SOURCE_REMOVE
 }
@@ -6323,6 +6647,8 @@ const Call = union(enum) {
     trigger: struct { id: []u8, extension: []u8 },
     /// `probePaint`'s answer: the page painted at the size it was probed for.
     painted: u32,
+    /// `onHangWatch`'s ping, by sequence number.
+    hang_ping: u32,
 };
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
@@ -6426,7 +6752,7 @@ fn callFree(call: Call) void {
         },
         .add_channel_script => |s| alloc.free(s.name),
         .cookies => |id| alloc.free(id),
-        .agent_ready, .frame_tree, .painted => {},
+        .agent_ready, .frame_tree, .painted, .hang_ping => {},
         .trigger => |t| {
             alloc.free(t.id);
             alloc.free(t.extension);
@@ -7021,6 +7347,8 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
     tr("cdp <- node={d} id={d} ok={} {s}", .{ view.node_id, message_id, ok, json });
     const entry = pending_calls.fetchRemove(message_id) orelse return;
     const call = entry.value.call;
+    // An error is an answer too: the main thread is running.
+    if (call == .hang_ping) return hangPingAnswered(view, call.hang_ping);
     if (call == .agent_ready) {
         // Failure is still an answer: the agent either attached or never will,
         // and parking the queue forever is worse than one loud call.
@@ -7061,7 +7389,7 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
     }
 
     switch (call) {
-        .ignore, .agent_ready => {},
+        .ignore, .agent_ready, .hang_ping => {},
         .painted => |gen| motionPainted(view, gen),
         .trigger => |t| {
             const target = switch (root) {
@@ -7199,6 +7527,7 @@ fn failCall(view: *View, call: Call, message: []const u8) void {
         },
         // A page that cannot answer is not waited on.
         .painted => |gen| motionPainted(view, gen),
+        .hang_ping => |seq| hangPingExpired(view, seq),
         else => callFree(call),
     }
 }

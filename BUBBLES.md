@@ -49,6 +49,9 @@ trailing icon and its popover anchor).
 | Bookmark star | Cmd/Ctrl+D (`IDC_BOOKMARK_THIS_TAB`), `IDC_BOOKMARK_ALL_TABS` | Suppressed | Commands refused, star hidden; Cmd/Ctrl+D reaches the app as `browserCommand` `bookmarkPage`. |
 | Tab search | Cmd/Ctrl+Shift+A (`IDC_TAB_SEARCH`) | Suppressed | Command refused; the app's command palette is the native tab search. |
 | Avatar / profile menu | `IDC_SHOW_AVATAR_MENU` | Suppressed | Command refused. |
+| Device chooser (WebUSB, Web Serial, WebHID) | `requestDevice`, `requestPort` | Stopgap (in the window) | Chromium's own chooser. With no location bar to hang from it opens at the page's top left, drawn inside the browser's window. The engine's focus sync used to set the browser's focus again every 500 ms, which took Views' focus off the bubble and closed it before it could be used (the promise rejected with "No device selected"); focus the browser already holds is now left alone. Under openbox a click into the chooser still closes it: the window manager focuses the toplevel on every click, which deactivates the browser's window. Hyprland does not, and a device can be picked there. |
+| Sad tab ("Aw, Snap!") | a renderer crash, out of memory, a kill | Native | `renderProcessGone {reason, errorCode, error}` (`on_render_process_terminated`); the app draws the sad tab and reloads the view. |
+| Page Unresponsive | a page that stops answering | Native (engine) | Chromium's hang monitor ignores any page with a devtools session attached, which every view here has, so neither CEF's unresponsive callback nor Chrome's dialog ever runs. The engine pings the page on show (`Runtime.evaluate`) every 3 s; one unanswered for 15 s puts up an AdwAlertDialog over the window with Wait and Exit page. Wait asks again 15 s later, an answer closes it, Exit page kills the renderer (found by its `--renderer-client-id`, which each renderer reports) and so ends in `renderProcessGone`. |
 
 ## Linux zoom bubble
 

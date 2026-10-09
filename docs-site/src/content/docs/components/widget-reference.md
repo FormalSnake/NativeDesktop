@@ -587,6 +587,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `forwardAvailable` | `onForwardAvailable` | checked |
 | `loadProgress` | `onLoadProgress` | value |
 | `loadFailed` | `onLoadFailed` | data |
+| `renderProcessGone` | `onRenderProcessGone` | data |
 | `newWindow` | `onNewWindow` | text |
 | `browserCommand` | `onBrowserCommand` | text |
 | `downloadRequested` | `onDownloadRequested` | data |
