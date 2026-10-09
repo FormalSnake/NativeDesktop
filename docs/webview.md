@@ -188,8 +188,9 @@ policy-interruption noise are filtered on both backends, and blocked-port loads
 (which WebKit silently turns into `about:blank`) are detected and reported.
 
 `newWindow` carries `{ text }` when the page requests a new window through
-`window.open` or `target=_blank`. The host always denies the native popup and
-lets the app decide what a new window means, usually a native tab.
+`window.open` or `target=_blank`. Unless the view adopts popups (below) the host
+denies the native popup and lets the app decide what a new window means,
+usually a native tab.
 
 On the Chromium engine it also carries `data: { disposition, userGesture,
 fromExtension? }`, read with `newWindowRequest(e)`. `disposition` is
@@ -216,15 +217,33 @@ app could only open on `about:blank` is the thing this exists to stop producing.
 hears it on: the focused one, or any live one when the window that held the
 focused view has since closed.
 
-`window.open("about:blank")` followed by `w.location = …` from the opener is
-still lost, and stays lost. Denying the popup makes `window.open` answer null
-and the opener's next statement throw, so the destination exists nowhere. Letting
-it through to the sink client instead was built and taken back out: Chrome
-builds a real top-level for a popup, `on_after_created` runs before that window
-has a handle so the engine has nothing to unmap, and `cef_window_info_t.bounds`
-is ignored for a Chrome-style popup, so the window sat on screen at 1050x880
-until the browser closed. Measured twice on 151.3.23, against the gate's own
-top-level census.
+A view with `adoptPopups` (Chromium engine, Chrome style, GTK host) keeps
+`window.opener`. Its popup's browser is created inside `on_before_popup`, into a
+parked container of a view with no widget yet, so `window.open` answers with a
+live handle: the popup can post to its opener, the opener can close it, and
+`window.open("about:blank")` followed by `w.location = …` works. `newWindow`
+then carries `popup` (an id) and, for a sized `window.open`, `features: { x?,
+y?, width?, height? }` in CSS pixels. The app mounts `<webview popup={id}>` in a
+tab, or in a window of that size for `disposition: "popup"` as Chrome does, and
+that view takes the waiting browser over; what the browser reported before then
+is replayed to it. A popup nobody mounts within 10 seconds is closed. A page
+that closes itself (`window.close()` in a window a script opened) fires
+`windowClosed` on its view, which the app answers by closing the tab or window.
+
+Chrome's popup blocker is applied in `on_before_popup` rather than by Chromium,
+whose own blocker reports only to an omnibox this engine does not have. A popup
+opened without a user gesture is cancelled unless the opener's site is allowed
+pop-ups (the profile's popups content setting, the one
+chrome://settings/content/popups shows), and its view fires `popupBlocked` with
+`data: { url, disposition }`. `allowPopups(node, origin?)` is Chrome's "Always
+allow pop-ups and redirects from" the site. Pages of an extension or of the
+browser itself are never blocked.
+
+A popup window Chrome makes for itself (`chrome.windows.create({ type: "popup"
+})`, `chrome.identity.launchWebAuthFlow`) is left on screen as Chrome's own
+window rather than reported as a tab: the extension waits on that browser, and
+closing it failed the auth flow at once. It is told apart by its frame's
+`WM_WINDOW_ROLE` ("pop-up").
 
 `downloadRequested` carries `{ data: { url, suggestedFilename?, id? } }` when the
 engine hits a response it cannot render, or an attachment.

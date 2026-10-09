@@ -273,7 +273,9 @@ reaches the host ahead of the create.
 (WKWebView / WebKitGTK) with a browser-grade surface — full docs in
 `docs/webview.md`. Prop `url`; events `navigate`, `titleChanged`,
 `loadingChanged`, `backAvailable`, `forwardAvailable`, `loadProgress`,
-`loadFailed`, `newWindow` (host denies the popup, app opens a native tab),
+`loadFailed`, `newWindow` (host denies the popup, app opens a native tab;
+under Chromium with `adoptPopups` the popup's browser waits for the app's
+`<webview popup={id}>`, see docs/webview.md), `popupBlocked`, `windowClosed`,
 `downloadRequested` (engine download cancelled, app downloads via Bun),
 `javaScriptResult`; commands `goBack`, `goForward`, `reload`, `stop`,
 `executeJavaScript` (promise helper in `@nativedesktop/react`), `setZoom`,

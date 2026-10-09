@@ -4505,7 +4505,9 @@ function genZigCreateBody(w: Widget): string {
     out += "        const url: ?[*:0]const u8 = if (propStr(props, \"url\")) |u| dupeZ(u).ptr else null;\n";
     out += "        const profile: []const u8 = propStr(props, \"profile\") orelse \"\";\n";
     out += `        const engine: []const u8 = propStr(props, "engine") orelse ${zigDefaultStr(w, "engine")};\n`;
-    out += "        return ndweb_gtk.create(url, profile, engine, propStr(props, \"contextMenuMode\") orelse \"native\");\n";
+    out += "        const web = ndweb_gtk.create(url, profile, engine, propStr(props, \"contextMenuMode\") orelse \"native\", propStr(props, \"popup\") orelse \"\");\n";
+    out += "        if (propBool(props, \"adoptPopups\")) |on| ndweb_gtk.setAdoptPopups(web, on);\n";
+    out += "        return web;\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
     out += "        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is\n";
@@ -5201,6 +5203,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"url\")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));\n";
     } else if (w.name === "WebView" && p.name === "contextMenuMode") {
       out += "        if (propStr(props, \"contextMenuMode\")) |m| ndweb_gtk.setContextMenuMode(widget, m);\n";
+    } else if (w.name === "WebView" && p.name === "adoptPopups") {
+      out += "        if (propBool(props, \"adoptPopups\")) |on| ndweb_gtk.setAdoptPopups(widget, on);\n";
     } else if (w.name === "NativeView" && p.name === "props") {
       out += "        if (propStr(props, \"props\")) |pj| {\n";
       out += "            if (gobject.Object.getData(asObject(widget), \"nd-view-kind\")) |raw| {\n";
@@ -5537,6 +5541,8 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.zoomChanged":         { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.pictureInPicture":    { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.contentBlocked":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.popupBlocked":        { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.windowClosed":        { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
   "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
@@ -9022,6 +9028,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }\n';
     } else if (w.name === "WebView" && p.name === "contextMenuMode") {
       out += '        if let m = propStr(props, "contextMenuMode"), let wv = view as? NDWebView { wv.ndSetContextMenuMode(m) }\n';
+    } else if (w.name === "WebView" && p.name === "adoptPopups") {
+      out += '        // ND_STUB(WebView): prop "adoptPopups" not applied yet: the AppKit CEF engine still cancels every popup.\n';
     } else if (w.name === "NativeView" && p.name === "props") {
       // GTK-first: on AppKit the view is an empty placeholder (a GTK-only
       // module registers nothing here), so this is a no-op unless a module
@@ -9293,6 +9301,8 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.zoomChanged":         { selector: "webview", payload: "data" },
   "WebView.pictureInPicture":    { selector: "webview", payload: "data" },
   "WebView.contentBlocked":      { selector: "webview", payload: "data" },
+  "WebView.popupBlocked":        { selector: "webview", payload: "data" },
+  "WebView.windowClosed":        { selector: "webview", payload: "none" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
   "Terminal.titleChanged":       { selector: "terminal", payload: "text" },

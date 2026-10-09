@@ -483,8 +483,43 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
     // window would otherwise be on screen for the length of the teardown.
     var window: usize = 0;
     if (host.*.get_window_handle) |get_window| {
-        window = x11.toplevelOf(@intCast(get_window(host)));
+        const own: usize = @intCast(get_window(host));
+        window = x11.toplevelOf(own);
+        // A popup Chrome made on its own (`chrome.windows.create` with type
+        // "popup", `chrome.identity.launchWebAuthFlow`) is a window in Chrome
+        // too, and the extension waits on that browser: closing it fails the
+        // auth flow at once.
+        if (window != 0 and x11.inPopupRole(own)) {
+            tr("sinkCreated popup window={x} left to Chrome", .{window});
+            return;
+        }
         if (window != 0) x11.hide(window);
+    }
+    // No window yet, so nothing says whether it is a popup: decided once Views
+    // has made one (`onSinkTimer`).
+    if (window == 0) {
+        var browser_id: c_int = 0;
+        if (browser.*.get_identifier) |get_id| browser_id = get_id(browser);
+        const early = mainFrameUrl(browser);
+        tr("sinkCreated id={d} no window yet url={?s}", .{ browser_id, early });
+        ref.addRefParam(host);
+        pending_sink.append(alloc, .{
+            .id = browser_id,
+            .host = host,
+            .window = 0,
+            .keep = false,
+            .url = if (early) |u| (if (u.len != 0) u else blk: {
+                alloc.free(u);
+                break :blk null;
+            }) else null,
+            .deadline_us = glib.getMonotonicTime() + sink_url_wait_us,
+        }) catch {
+            ref.releaseParam(host);
+            if (host.*.close_browser) |close| close(host, 1);
+            return;
+        };
+        armSinkTimer();
+        return;
     }
     const keep = kept_window == 0 and window != 0;
     if (keep) {
@@ -546,6 +581,8 @@ const PendingSink = struct {
     /// kept browser, so the window watcher unmaps it on every tick instead.
     window: usize,
     keep: bool,
+    /// Where it is going, when that was known before its window was.
+    url: ?[]u8 = null,
     deadline_us: i64,
 };
 
@@ -568,20 +605,53 @@ fn onSinkTimer(_: ?*anyopaque) callconv(.c) c_int {
     const now = glib.getMonotonicTime();
     var i: usize = 0;
     while (i < pending_sink.items.len) {
-        const entry = pending_sink.items[i];
+        const entry = &pending_sink.items[i];
+        if (entry.window == 0) {
+            if (sinkWindow(entry.host)) |found| {
+                const window = found.top;
+                if (found.popup) {
+                    tr("sinkPending id={d} popup window={x} left to Chrome", .{ entry.id, window });
+                    const gone = pending_sink.orderedRemove(i);
+                    if (gone.url) |u| alloc.free(u);
+                    ref.releaseParam(gone.host);
+                    continue;
+                }
+                x11.hide(window);
+                entry.window = window;
+                tr("sinkPending id={d} window={x} kept={x}", .{ entry.id, window, kept_window });
+                if (entry.url != null) {
+                    const done = pending_sink.orderedRemove(i);
+                    reportSinkUrl(done.url);
+                    if (done.host.*.close_browser) |close| close(done.host, 1);
+                    ref.releaseParam(done.host);
+                    continue;
+                }
+            }
+        }
         if (entry.deadline_us > now) {
             i += 1;
             continue;
         }
-        _ = pending_sink.orderedRemove(i);
-        if (!entry.keep) {
-            if (entry.host.*.close_browser) |close| close(entry.host, 1);
+        const done = pending_sink.orderedRemove(i);
+        if (done.url != null) reportSinkUrl(done.url);
+        if (!done.keep) {
+            if (done.host.*.close_browser) |close| close(done.host, 1);
         }
-        ref.releaseParam(entry.host);
+        ref.releaseParam(done.host);
     }
     if (pending_sink.items.len != 0) return 1;
     sink_timer = 0;
     return 0;
+}
+
+const SinkWindow = struct { top: usize, popup: bool };
+
+fn sinkWindow(host: [*c]c.cef_browser_host_t) ?SinkWindow {
+    const get_window = host.*.get_window_handle orelse return null;
+    const own: usize = @intCast(get_window(host));
+    const top = x11.toplevelOf(own);
+    if (top == 0) return null;
+    return .{ .top = top, .popup = x11.inPopupRole(own) };
 }
 
 fn takePendingSink(browser_id: c_int) ?PendingSink {
@@ -745,6 +815,15 @@ fn onSinkBeforeBrowse(
         return 0;
     };
     defer ref.releaseParam(entry.host);
+    if (entry.url) |u| alloc.free(u);
+    if (entry.window == 0) {
+        if (sinkWindow(entry.host)) |found| {
+            if (found.popup) {
+                tr("sinkBrowse id={d} popup window={x} left to Chrome", .{ browser_id, found.top });
+                return 0;
+            }
+        }
+    }
 
     var url: ?[]u8 = null;
     if (request != null) {
@@ -1103,6 +1182,12 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
             keepAbove(w);
             continue;
         }
+        // A popup window is placed where the page asked for it, as in Chrome,
+        // not centred on the view like a dialog.
+        if (x11.isPopupRole(w)) {
+            adopted_windows.put(alloc, w, {}) catch {};
+            continue;
+        }
         // A compositor that manages XWayland top-levels itself (Hyprland does)
         // places them by its own rules and discards the ConfigureRequest the
         // move below sends, so the hints go on before anything else: a dialog
@@ -1292,7 +1377,10 @@ fn adoptChromeWindow(window: usize) void {
 fn onSinkBrowserClosed(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
     const get_id = browser.*.get_identifier orelse return;
-    if (takePendingSink(get_id(browser))) |entry| ref.releaseParam(entry.host);
+    if (takePendingSink(get_id(browser))) |entry| {
+        if (entry.url) |u| alloc.free(u);
+        ref.releaseParam(entry.host);
+    }
     const host = kept_host orelse return;
     if (get_id(browser) != kept_browser_id) return;
     kept_host = null;
@@ -1335,11 +1423,9 @@ fn onBeforeCommandLine(
         appendFlag(command_line, append, "no-first-run");
         appendFlag(command_line, append, "no-default-browser-check");
         // Chromium's popup blocker drops a non-gesture window.open before
-        // on_before_popup ever runs, which would silently swallow a navigation
-        // the app is supposed to decide about. WebKitGTK's `create` signal
-        // fires for every window.open, and the <webview> contract is one
-        // `newWindow` event per attempt on both engines, so the decision
-        // belongs to the app, not to the engine.
+        // on_before_popup ever runs, and reports it only to an omnibox this
+        // engine does not have. The same decision is made in on_before_popup
+        // instead (`popupsAllowed`), where the app can be told.
         appendFlag(command_line, append, "disable-popup-blocking");
         // Read by StartupBrowserCreator, which CEF skips at startup and a
         // refused relaunch never reaches; this covers any other route into it.
@@ -2066,6 +2152,19 @@ const View = struct {
     browser_gone: std.atomic.Value(bool) = .init(false),
     /// Drawn in an autohide popover, for the CEF UI thread's Escape check.
     in_popover: std.atomic.Value(bool) = .init(false),
+    /// The `adoptPopups` prop: a window.open from this page gets a browser of
+    /// its own that the app mounts with `<webview popup=…>`. Written on the GTK
+    /// thread, read in on_before_popup.
+    adopt_popups: std.atomic.Value(bool) = .init(false),
+    /// A popup's view between on_before_popup and the app adopting it: no
+    /// widget, its events held in `popup_backlog`. Cleared on the GTK thread
+    /// when the app adopts it or gives up on it.
+    waiting_popup: std.atomic.Value(bool) = .init(false),
+    /// The app never adopted it, so its browser is closed as soon as it exists.
+    popup_abandoned: std.atomic.Value(bool) = .init(false),
+    popup_id: u32 = 0,
+    popup_timer: c_uint = 0,
+    popup_backlog: std.ArrayList(*Emission) = .empty,
     /// When this engine last handed the browser the focus itself, so the CEF
     /// UI thread can tell that `on_got_focus` from one a click caused.
     focus_set_us: std.atomic.Value(i64) = .init(0),
@@ -2137,7 +2236,7 @@ pub fn isReal(widget: *gtk.Widget) bool {
 /// Unwinds a half-built view when one of its handler allocations fails. Each
 /// handler starts at one reference, owned here, so releasing it is what frees
 /// it; no CEF object has seen any of them yet.
-fn abandon(view: *View, client: ?*ClientObj, display_handler: ?*DisplayObj, load_handler: ?*LoadObj) ?*gtk.Widget {
+fn abandonNew(view: *View, client: ?*ClientObj, display_handler: ?*DisplayObj, load_handler: ?*LoadObj) ?*View {
     if (load_handler) |h| h.drop();
     if (display_handler) |h| h.drop();
     if (client) |h| h.drop();
@@ -2160,12 +2259,18 @@ pub fn setContextMenuMode(widget: *gtk.Widget, mode: []const u8) void {
     view.suppress_menu.store(std.mem.eql(u8, mode, "suppress"), .release);
 }
 
-pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) ?*gtk.Widget {
+pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8, popup: []const u8) ?*gtk.Widget {
     if (!process_ready) {
         std.debug.print("ND_WARN WebView engine=\"chromium\": this process did not start under CEF (set webview.engine in nativedesktop.config.ts, or ND_WEBVIEW_ENGINE=chromium)\n", .{});
         return null;
     }
     if (!ensureInitialized()) return null;
+
+    const adopted = if (popup.len != 0) takePendingPopup(popup) else null;
+    if (popup.len != 0 and adopted == null) tr("popup {s} is no longer waiting; creating a fresh view", .{popup});
+    const view = adopted orelse (newView() orelse return null);
+    ensureAdblockBlock();
+    ensureOriginFix();
 
     // Reserves the rectangle the X11 child window is tracked against, and
     // draws nothing but a still of the page: the one a sliding sidebar
@@ -2174,27 +2279,61 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     gtk.Picture.setCanShrink(picture, 1);
     gtk.Picture.setContentFit(picture, .fill);
     const widget = picture.as(gtk.Widget);
+    view.widget = widget;
 
+    view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
+    if (adopted == null) view.context = requestContext(profile);
+    if (url) |u| {
+        if (u[0] != 0) view.pending_url = alloc.dupeZ(u8, std.mem.span(u)) catch null;
+    }
+
+    live_views.put(alloc, @intFromPtr(view), {}) catch {};
+    startChromeWindowWatch();
+    gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
+    gobject.Object.setData(widget.as(gobject.Object), VIEW_KEY, view);
+    gtk.Widget.setHexpand(widget, 1);
+    gtk.Widget.setVexpand(widget, 1);
+    // The `focus` command grabs GTK focus as well as CEF's, and a
+    // GtkPicture takes none by default.
+    gtk.Widget.setCanFocus(widget, 1);
+    gtk.Widget.setFocusable(widget, 1);
+
+    _ = gobject.signalConnectData(widget.as(gobject.Object), "map", @ptrCast(&onMap), view, null, .{});
+    _ = gobject.signalConnectData(widget.as(gobject.Object), "unmap", @ptrCast(&onUnmap), view, null, .{});
+    _ = gobject.signalConnectData(widget.as(gobject.Object), "destroy", @ptrCast(&onDestroy), view, null, .{});
+    if (adopted) |v| {
+        // What the browser did before the app took it is replayed once the
+        // view has its node id, which `connectEvents` sets after this returns.
+        _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &replayPopupBacklog, v, null);
+    } else {
+        armCreateTimer(view);
+    }
+    return widget;
+}
+
+/// A view and every CEF handler it answers through, with no widget yet. Safe
+/// off the GTK thread: it only allocates, which is what lets on_before_popup
+/// build the view a popup's browser belongs to before the app has asked for
+/// it.
+fn newView() ?*View {
     const view = alloc.create(View) catch return null;
-    const client = ClientObj.create(view) orelse return abandon(view, null, null, null);
-    const display_handler = DisplayObj.create(view) orelse return abandon(view, client, null, null);
-    const load_handler = LoadObj.create(view) orelse return abandon(view, client, display_handler, null);
-    const life_handler = LifeObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const find_handler = FindObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const dialog_handler = DialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const focus_handler = FocusObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const command_handler = CommandObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const keyboard_handler = KeyboardObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const request_handler = RequestHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    const permission_handler = PermissionObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
-    ensureAdblockBlock();
-    ensureOriginFix();
+    const client = ClientObj.create(view) orelse return abandonNew(view, null, null, null);
+    const display_handler = DisplayObj.create(view) orelse return abandonNew(view, client, null, null);
+    const load_handler = LoadObj.create(view) orelse return abandonNew(view, client, display_handler, null);
+    const life_handler = LifeObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const find_handler = FindObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const download_handler = DownloadObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const dialog_handler = DialogHandlerObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const context_menu_handler = ContextMenuObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const focus_handler = FocusObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const command_handler = CommandObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const keyboard_handler = KeyboardObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const request_handler = RequestHandlerObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
+    const permission_handler = PermissionObj.create(view) orelse return abandonNew(view, client, display_handler, load_handler);
 
     view.* = .{
-        .widget = widget,
+        .widget = undefined,
         .client = client,
         .display_handler = display_handler,
         .load_handler = load_handler,
@@ -2210,11 +2349,6 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .request_handler = request_handler,
         .permission_handler = permission_handler,
     };
-    view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
-    view.context = requestContext(profile);
-    if (url) |u| {
-        if (u[0] != 0) view.pending_url = alloc.dupeZ(u8, std.mem.span(u)) catch null;
-    }
 
     client.cef.get_display_handler = &clientGetDisplayHandler;
     client.cef.get_load_handler = &clientGetLoadHandler;
@@ -2269,23 +2403,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     permission_handler.cef.on_show_permission_prompt = &onShowPermissionPrompt;
     permission_handler.cef.on_request_media_access_permission = &onRequestMediaAccessPermission;
     permission_handler.cef.on_dismiss_permission_prompt = &onDismissPermissionPrompt;
-
-    live_views.put(alloc, @intFromPtr(view), {}) catch {};
-    startChromeWindowWatch();
-    gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
-    gobject.Object.setData(widget.as(gobject.Object), VIEW_KEY, view);
-    gtk.Widget.setHexpand(widget, 1);
-    gtk.Widget.setVexpand(widget, 1);
-    // The `focus` command grabs GTK focus as well as CEF's, and a
-    // GtkPicture takes none by default.
-    gtk.Widget.setCanFocus(widget, 1);
-    gtk.Widget.setFocusable(widget, 1);
-
-    _ = gobject.signalConnectData(widget.as(gobject.Object), "map", @ptrCast(&onMap), view, null, .{});
-    _ = gobject.signalConnectData(widget.as(gobject.Object), "unmap", @ptrCast(&onUnmap), view, null, .{});
-    _ = gobject.signalConnectData(widget.as(gobject.Object), "destroy", @ptrCast(&onDestroy), view, null, .{});
-    armCreateTimer(view);
-    return widget;
+    return view;
 }
 
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -3840,6 +3958,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondDownload")) return cmdRespondDownload(arg);
     if (std.mem.eql(u8, cmd, "acceptExtensionInstall")) return cmdAcceptExtensionInstall();
     if (std.mem.eql(u8, cmd, "resetPermissions")) return cmdResetPermissions(view, arg);
+    if (std.mem.eql(u8, cmd, "allowPopups")) return cmdAllowPopups(view, arg);
     if (std.mem.eql(u8, cmd, "pauseDownload") or std.mem.eql(u8, cmd, "resumeDownload") or std.mem.eql(u8, cmd, "cancelDownload")) return cmdControlDownload(cmd, arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
@@ -5356,9 +5475,13 @@ fn onLoadError(
 // cef_life_span_handler_t
 // ============================================================================
 
-/// The no-stray-window invariant. Returning 1 cancels the popup outright; the
-/// app opens a tab off the emitted URL, exactly as it does on WebKitGTK's
-/// `create` signal.
+/// Chrome's popup policy. A window the page opened without a user gesture is
+/// blocked unless the site is allowed pop-ups, and the app hears it as
+/// `popupBlocked`. With `adoptPopups` the popup's browser is created here and
+/// waits for the app to mount it (`openForAdoption`), which keeps
+/// `window.opener` and the opener's handle on the window. Otherwise it is
+/// cancelled and the app opens a tab off the emitted URL, exactly as it does on
+/// WebKitGTK's `create` signal.
 fn onBeforePopup(
     self: [*c]c.cef_life_span_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -5368,8 +5491,8 @@ fn onBeforePopup(
     _: [*c]const c.cef_string_t,
     disposition: c.cef_window_open_disposition_t,
     user_gesture: c_int,
-    _: [*c]const c.cef_popup_features_t,
-    _: [*c]c.cef_window_info_t,
+    features: [*c]const c.cef_popup_features_t,
+    window_info: [*c]c.cef_window_info_t,
     client: [*c][*c]c.cef_client_t,
     _: [*c]c.cef_browser_settings_t,
     _: [*c][*c]c.cef_dictionary_value_t,
@@ -5393,16 +5516,14 @@ fn onBeforePopup(
         pending_doc_pip_view.store(@intFromPtr(LifeObj.of(self).payload), .release);
         return 0;
     }
-    // `window.open("about:blank")` followed by `w.location = …` from the
-    // opener reaches the app as about:blank and the destination never exists:
-    // denying the popup makes window.open answer null and the opener's next
-    // statement throw. Letting it through to the sink client instead was tried
-    // and taken back out. Chrome builds a real top-level for it, this engine
-    // cannot unmap that one (a popup's window handle is not known yet when
-    // `on_after_created` runs, and `cef_window_info_t.bounds` is ignored for a
-    // Chrome-style popup, measured on 151.3.23), and the gate's census caught
-    // it both times. The Chrome-created-browser path below is a different
-    // mechanism and is not affected.
+    // A popup let through without a parent window of ours becomes Chrome's own
+    // tabbed top-level, at no size the page asked for (measured on 151.3.23,
+    // and `use_views_default_popup` gives a bare 800x600 window instead), so
+    // one that is allowed always gets a parked container (`openForAdoption`).
+    // Without `adoptPopups` it is denied, and window.open answers null:
+    // `window.open("about:blank")` followed by `w.location = …` then reaches
+    // the app as about:blank and the opener's next statement throws.
+    const view = LifeObj.of(self).payload;
     const url = dupeStr(target_url);
     if (url) |u| {
         if (externalScheme(u)) {
@@ -5410,8 +5531,208 @@ fn onBeforePopup(
             return 1;
         }
     }
-    postNewWindow(LifeObj.of(self).payload, url, dispositionName(disposition), user_gesture != 0);
+    if (user_gesture == 0 and !popupsAllowed(browser, frame)) {
+        tr("popupBlocked node={d} url={?s}", .{ view.node_id, url });
+        post(.{ .view = view, .name = "popupBlocked", .text = url, .extra = alloc.dupe(u8, dispositionName(disposition)) catch null });
+        return 1;
+    }
+    if (view.adopt_popups.load(.acquire) and chromeStyle()) {
+        if (openForAdoption(view, url, disposition, user_gesture != 0, features, window_info, client)) return 0;
+    }
+    postNewWindow(view, url, dispositionName(disposition), user_gesture != 0);
     return 1;
+}
+
+/// Chrome's own popup blocker is off (see `disable-popup-blocking`), so its
+/// decision is made here against the same content setting, which is what
+/// chrome://settings/content/popups and `allowPopups` write. Pages of an
+/// extension and of the browser itself are never blocked, as in Chrome, where
+/// the blocker only watches web pages in tabs.
+fn popupsAllowed(browser: [*c]c.cef_browser_t, frame: [*c]c.cef_frame_t) bool {
+    if (frame == null) return false;
+    const get_url = frame.*.get_url orelse return false;
+    const raw = get_url(frame);
+    if (raw == null) return false;
+    defer freeUserfree(raw);
+    const opener = dupeStr(raw) orelse return false;
+    defer alloc.free(opener);
+    for ([_][]const u8{ "chrome-extension:", "chrome:", "devtools:" }) |scheme| {
+        if (std.mem.startsWith(u8, opener, scheme)) return true;
+    }
+    const get_host = browser.*.get_host orelse return false;
+    const host = get_host(browser);
+    if (host == null) return false;
+    defer ref.releaseParam(host);
+    const get_ctx = host.*.get_request_context orelse return false;
+    const ctx = get_ctx(host);
+    if (ctx == null) return false;
+    defer ref.releaseParam(ctx);
+    const get_setting = ctx.*.get_content_setting orelse return false;
+    return get_setting(ctx, raw, raw, c.CEF_CONTENT_SETTING_TYPE_POPUPS) == c.CEF_CONTENT_SETTING_VALUE_ALLOW;
+}
+
+// ============================================================================
+// Popups the app adopts
+// ============================================================================
+//
+// A page's window.open answers with the new window's handle synchronously, so
+// a popup that is to keep `window.opener` must have its browser created inside
+// on_before_popup, long before the app can say where it goes. With
+// `adoptPopups` on the opener, the browser is created into a parked container
+// of a view that has no widget yet, the app hears `newWindow` with a popup id,
+// and the `<webview popup={id}>` it mounts takes that view over instead of
+// creating a browser. Events the browser produced meanwhile are held and
+// replayed to the adopting node.
+
+const PopupFeatures = struct { x: ?i64 = null, y: ?i64 = null, width: ?i64 = null, height: ?i64 = null };
+
+/// How long a popup's browser waits for the app before it is closed.
+const popup_adopt_wait_ms: c_uint = 10_000;
+
+var next_popup_id: std.atomic.Value(u32) = .init(1);
+
+/// GTK thread only. Filled through the event hop (`popup_register`), which
+/// runs before any event of the popup's own.
+var pending_popups: std.AutoHashMapUnmanaged(u32, *View) = .empty;
+
+fn popupFeatures(features: [*c]const c.cef_popup_features_t) ?PopupFeatures {
+    if (features == null) return null;
+    const f = features.*;
+    var out: PopupFeatures = .{};
+    if (f.xSet != 0) out.x = f.x;
+    if (f.ySet != 0) out.y = f.y;
+    if (f.widthSet != 0) out.width = f.width;
+    if (f.heightSet != 0) out.height = f.height;
+    if (out.x == null and out.y == null and out.width == null and out.height == null) return null;
+    return out;
+}
+
+/// CEF UI thread. Builds the popup's view and container and points CEF at
+/// them; false leaves the popup to the cancel-and-report path. `url` is
+/// adopted either way.
+fn openForAdoption(
+    opener: *View,
+    url: ?[]u8,
+    disposition: c.cef_window_open_disposition_t,
+    user_gesture: bool,
+    features: [*c]const c.cef_popup_features_t,
+    window_info: [*c]c.cef_window_info_t,
+    client: [*c][*c]c.cef_client_t,
+) bool {
+    if (window_info == null or client == null) return false;
+    // The opener's own GTK toplevel, not the root's child above its browser:
+    // under a reparenting window manager that is the manager's frame. Read off
+    // the GTK thread; it changes only when the opener moves windows, and a
+    // stale one is corrected by the adopting view's first layout.
+    const parent = opener.container_parent;
+    if (parent == 0) return false;
+    const view = newView() orelse return false;
+    const w = @max(opener.size_w.load(.acquire), 1);
+    const h = @max(opener.size_h.load(.acquire), 1);
+    const container = x11.createChild(parent, park_origin, park_origin, w, h);
+    if (container == 0) return false;
+    x11.show(container);
+
+    view.container = container;
+    view.container_parent = parent;
+    view.created = true;
+    view.created_url = dupeOwned(url orelse "about:blank");
+    view.size_w.store(w, .release);
+    view.size_h.store(h, .release);
+    view.adopt_popups.store(true, .release);
+    view.waiting_popup.store(true, .release);
+    view.suppress_menu.store(opener.suppress_menu.load(.acquire), .release);
+    if (opener.context) |ctx| {
+        ref.addRefParam(ctx);
+        view.context = ctx;
+    }
+    view.popup_id = next_popup_id.fetchAdd(1, .monotonic);
+
+    window_info.*.parent_window = container;
+    window_info.*.bounds = .{ .x = 0, .y = 0, .width = @intCast(w), .height = @intCast(h) };
+    window_info.*.runtime_style = @intCast(c.CEF_RUNTIME_STYLE_CHROME);
+    ref.releaseParam(client.*);
+    client.* = view.client.handOut();
+
+    tr("popupForAdoption node={d} popup={d} url={?s} container=0x{x}", .{ opener.node_id, view.popup_id, url, container });
+    post(.{ .view = view, .name = "", .popup_register = true });
+    post(.{
+        .view = opener,
+        .name = "newWindow",
+        .text = url,
+        .extra = alloc.dupe(u8, dispositionName(disposition)) catch null,
+        .flag = user_gesture,
+        .popup = view.popup_id,
+        .features = popupFeatures(features),
+    });
+    return true;
+}
+
+fn registerPendingPopup(view: *View) void {
+    if (!view.waiting_popup.load(.acquire)) return;
+    pending_popups.put(alloc, view.popup_id, view) catch return;
+    view.popup_timer = glib.timeoutAdd(popup_adopt_wait_ms, &onPopupTimeout, view);
+}
+
+/// An event of a popup's view that is still waiting is kept for the node that
+/// adopts it.
+fn holdForPopup(box: *Emission) bool {
+    const view = box.view;
+    if (!view.waiting_popup.load(.acquire)) {
+        // The app gave up on it: its container goes once the browser has.
+        if (box.browser_closed and view.popup_abandoned.load(.acquire) and view.container != 0) {
+            x11.destroy(view.container);
+            view.container = 0;
+        }
+        return false;
+    }
+    view.popup_backlog.append(alloc, box) catch return false;
+    return true;
+}
+
+fn takePendingPopup(id_text: []const u8) ?*View {
+    const id = std.fmt.parseInt(u32, id_text, 10) catch return null;
+    const entry = pending_popups.fetchRemove(id) orelse return null;
+    const view = entry.value;
+    if (view.popup_timer != 0) {
+        _ = glib.Source.remove(view.popup_timer);
+        view.popup_timer = 0;
+    }
+    view.waiting_popup.store(false, .release);
+    tr("popupAdopted popup={d}", .{id});
+    return view;
+}
+
+fn replayPopupBacklog(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    var backlog = view.popup_backlog;
+    view.popup_backlog = .empty;
+    defer backlog.deinit(alloc);
+    for (backlog.items) |box| _ = deliver(box);
+    return 0;
+}
+
+fn onPopupTimeout(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    view.popup_timer = 0;
+    _ = pending_popups.remove(view.popup_id);
+    view.popup_abandoned.store(true, .release);
+    view.waiting_popup.store(false, .release);
+    tr("popupAbandoned popup={d}", .{view.popup_id});
+    // Answered as they would be for a view that is gone.
+    var backlog = view.popup_backlog;
+    view.popup_backlog = .empty;
+    defer backlog.deinit(alloc);
+    for (backlog.items) |box| _ = deliver(box);
+    if (hostOf(view)) |host| {
+        if (host.close_browser) |close| close(host, 1);
+    }
+    return 0;
+}
+
+pub fn setAdoptPopups(widget: *gtk.Widget, on: bool) void {
+    const view = viewOf(widget) orelse return;
+    view.adopt_popups.store(on, .release);
 }
 
 /// Under Alloy, devtools opens as CEF's own top-level window and only when the
@@ -5499,7 +5820,7 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
         return;
     }
     view.browser.store(@intFromPtr(browser), .release);
-    if (focused_view == null) focused_view = view;
+    if (focused_view == null and !view.waiting_popup.load(.acquire)) focused_view = view;
     if (browser.*.get_identifier) |get_id| {
         post(.{ .view = view, .name = "", .settle = false, .cdp_result = false, .browser_id = get_id(browser) });
     }
@@ -5521,6 +5842,11 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
     }
     tr("created node={d} cefWindow=0x{x}", .{ view.node_id, view.cef_window.load(.acquire) });
     post(.{ .view = view, .name = "", .settle = true });
+    if (view.popup_abandoned.load(.acquire)) {
+        if (hostOf(view)) |host| {
+            if (host.close_browser) |close| close(host, 1);
+        }
+    }
 }
 
 /// A view's host reference, released on the GTK thread. That thread reads the
@@ -5616,6 +5942,12 @@ const Emission = struct {
     popdown: bool = false,
     relayout: bool = false,
     browser_closed: bool = false,
+    /// The hop that files a popup's view as waiting for the app to adopt it.
+    popup_register: bool = false,
+    /// `newWindow` for a popup whose browser waits for `<webview popup=…>`.
+    popup: u32 = 0,
+    /// What window.open asked for in its features, in CSS pixels.
+    features: ?PopupFeatures = null,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -5655,20 +5987,27 @@ fn post(e: Emission) void {
     _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliver, box, null);
 }
 
+fn freeEmission(box: *Emission) void {
+    if (box.text) |t| alloc.free(t);
+    if (box.extra) |t| alloc.free(t);
+    if (box.menu_hit) |h| {
+        h.deinit();
+        alloc.destroy(h);
+    }
+    if (box.menu_click) |click| {
+        click.deinit();
+        alloc.destroy(click);
+    }
+    alloc.destroy(box);
+}
+
 fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     const box: *Emission = @ptrCast(@alignCast(data.?));
-    defer {
-        if (box.text) |t| alloc.free(t);
-        if (box.extra) |t| alloc.free(t);
-        if (box.menu_hit) |h| {
-            h.deinit();
-            alloc.destroy(h);
-        }
-        if (box.menu_click) |click| {
-            click.deinit();
-            alloc.destroy(click);
-        }
-        alloc.destroy(box);
+    var kept_box = false;
+    defer if (!kept_box) freeEmission(box);
+    if (box.popup_register) {
+        registerPendingPopup(box.view);
+        return 0;
     }
     // A scheme request is keyed by browser id, not by view pointer: the
     // factory runs on the IO thread with no view in hand.
@@ -5691,6 +6030,10 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     // The tab this came from can have been closed while the event was in
     // flight; the widget, and with it the container window, is already gone.
     if (!live_views.contains(@intFromPtr(box.view))) {
+        if (holdForPopup(box)) {
+            kept_box = true;
+            return 0;
+        }
         if (box.menu_request) |req| cancelMenuRequest(req);
         if (box.permission) |req| answerPermissionRequest(req, .dismiss);
         if (box.download) |req| answerDownload(req, null);
@@ -5712,6 +6055,9 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         failAllCalls(view);
         x11.destroy(view.closing_container);
         view.closing_container = 0;
+        // Still in the tree, so the page closed itself (window.close() in a
+        // window a script opened) rather than the app removing the view.
+        if (emit) |f| f(view.node_id, "windowClosed", .{});
         return 0;
     }
 
@@ -5840,7 +6186,24 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         payload.put(alloc, "disposition", .{ .string = how }) catch return 0;
         payload.put(alloc, "userGesture", .{ .bool = box.flag }) catch return 0;
         if (box.unrelated) payload.put(alloc, "fromExtension", .{ .bool = true }) catch return 0;
+        var id_buf: [16]u8 = undefined;
+        if (box.popup != 0) payload.put(alloc, "popup", .{ .string = std.fmt.bufPrint(&id_buf, "{d}", .{box.popup}) catch return 0 }) catch return 0;
+        var bounds: std.json.ObjectMap = .empty;
+        defer bounds.deinit(alloc);
+        if (box.features) |want| {
+            if (want.x) |v| bounds.put(alloc, "x", .{ .integer = v }) catch {};
+            if (want.y) |v| bounds.put(alloc, "y", .{ .integer = v }) catch {};
+            if (want.width) |v| bounds.put(alloc, "width", .{ .integer = v }) catch {};
+            if (want.height) |v| bounds.put(alloc, "height", .{ .integer = v }) catch {};
+            payload.put(alloc, "features", .{ .object = bounds }) catch {};
+        }
         f(view.node_id, "newWindow", .{ .text = text, .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "popupBlocked")) {
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "url", .{ .string = box.text orelse "" }) catch return 0;
+        payload.put(alloc, "disposition", .{ .string = box.extra orelse "foregroundTab" }) catch return 0;
+        f(view.node_id, "popupBlocked", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;
         f(view.node_id, "browserCommand", .{ .text = text });
@@ -10097,6 +10460,57 @@ fn cmdResetPermissions(view: *View, arg: ?std.json.Value) void {
         cleared += 1;
     }
     tr("resetPermissions node={d} origins={d} of={d}", .{ view.node_id, cleared, answered_permission_origins.count() });
+}
+
+/// Chrome's "Always allow pop-ups and redirects from" this site: the popups
+/// content setting for `origin`, or for the page on show when none is named.
+fn cmdAllowPopups(view: *View, arg: ?std.json.Value) void {
+    const api = loader.loaded() orelse return;
+    const named: ?[]const u8 = if (argObject(arg)) |obj| objStr(obj, "origin") else null;
+    const site = named orelse view.url orelse return;
+    const origin = originForm(site);
+    if (origin.len == 0) return;
+    const host = hostOf(view) orelse {
+        alloc.free(origin);
+        return;
+    };
+    const get_ctx = host.get_request_context orelse {
+        alloc.free(origin);
+        return;
+    };
+    const raw = get_ctx(host);
+    if (raw == null) {
+        alloc.free(origin);
+        return;
+    }
+    const ctx: *c.cef_request_context_t = @ptrCast(raw);
+    const task = AllowPopupsObj.create(.{ .ctx = ctx, .origin = origin }) orelse {
+        ref.releaseOwned(ctx);
+        alloc.free(origin);
+        return;
+    };
+    task.cef.execute = &runAllowPopupsTask;
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) {
+        ref.releaseOwned(ctx);
+        alloc.free(origin);
+    }
+    task.drop();
+    tr("allowPopups node={d}", .{view.node_id});
+}
+
+const AllowPopupsCall = struct { ctx: *c.cef_request_context_t, origin: []const u8 };
+const AllowPopupsObj = ref.Counted(c.cef_task_t, AllowPopupsCall);
+
+fn runAllowPopupsTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const call = AllowPopupsObj.of(self).payload;
+    defer ref.releaseOwned(call.ctx);
+    defer alloc.free(call.origin);
+    const set = call.ctx.set_content_setting orelse return;
+    var url = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&url);
+    if (!setStr(&url, call.origin)) return;
+    set(call.ctx, &url, &url, c.CEF_CONTENT_SETTING_TYPE_POPUPS, c.CEF_CONTENT_SETTING_VALUE_ALLOW);
+    tr("popupsAllowed origin={s}", .{call.origin});
 }
 
 fn answerJsDialog(callback: [*c]c.cef_jsdialog_callback_t, accepted: bool, text: ?[]const u8) void {

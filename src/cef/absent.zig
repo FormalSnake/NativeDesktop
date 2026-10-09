@@ -26,7 +26,7 @@ pub fn setOnInitialized(_: *const fn () callconv(.c) void) void {}
 
 pub fn warmUp() void {}
 
-pub fn create(_: ?[*:0]const u8, _: []const u8, _: []const u8) ?*gtk.Widget {
+pub fn create(_: ?[*:0]const u8, _: []const u8, _: []const u8, _: []const u8) ?*gtk.Widget {
     return null;
 }
 
@@ -65,5 +65,7 @@ pub fn registerScheme(_: []const u8, _: bool, _: bool) bool {
 }
 
 pub fn setContextMenuMode(_: *gtk.Widget, _: []const u8) void {}
+
+pub fn setAdoptPopups(_: *gtk.Widget, _: bool) void {}
 
 pub fn refreshDialogOcclusion(_: *gtk.Widget) void {}

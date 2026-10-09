@@ -446,6 +446,21 @@ export function acceptExtensionInstall(node: NdNodeRef<"webview">): void {
   sendCommand(node, "acceptExtensionInstall", {});
 }
 
+/// `onPopupBlocked`: a window the page opened without a user gesture, which
+/// the Chromium engine blocked as Chrome's popup blocker does. `url` is where
+/// it would have gone.
+export interface PopupBlocked {
+  url: string;
+  disposition: NewWindowDisposition;
+}
+
+/// Chrome's "Always allow pop-ups and redirects from" a site, written to the
+/// profile's popups setting: `origin`, or the site of the page on show. Chromium
+/// engine only.
+export function allowPopups(node: NdNodeRef<"webview">, origin?: string): void {
+  sendCommand(node, "allowPopups", origin ? { origin } : {});
+}
+
 /// How a page asked for the window in `onNewWindow`. Chrome shows a
 /// foreground tab next to the page that opened it and puts a background one
 /// after that page's other new tabs; "window" and "popup" are what Chrome
@@ -461,13 +476,28 @@ export interface NewWindowRequest {
   /// page an extension opens on install) rather than one the page asked for:
   /// Chrome adds it at the end of the strip.
   fromExtension?: boolean;
+  /// Set when the opener has `adoptPopups`: the window's browser already
+  /// exists, with `window.opener` live, and waits for the app to mount
+  /// `<webview popup={popup}>` in a tab or window of its choosing. One that is
+  /// not mounted within 10 seconds is closed.
+  popup?: string;
+  /// The position and size `window.open` asked for, in CSS pixels. Chrome
+  /// gives a "popup" its own window at that size.
+  features?: { x?: number; y?: number; width?: number; height?: number };
 }
 
 /// Reads an `onNewWindow` event. The Chromium engine adds the disposition
 /// beside the URL in `data`.
 export function newWindowRequest(e: { text: string }): NewWindowRequest {
   const data = (e as { data?: Omit<NewWindowRequest, "url"> }).data;
-  return { url: e.text, disposition: data?.disposition, userGesture: data?.userGesture, fromExtension: data?.fromExtension };
+  return {
+    url: e.text,
+    disposition: data?.disposition,
+    userGesture: data?.userGesture,
+    fromExtension: data?.fromExtension,
+    popup: data?.popup,
+    features: data?.features,
+  };
 }
 
 /// `onDownloadRequested`. With an `id` (Chromium) the engine holds the

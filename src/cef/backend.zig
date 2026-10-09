@@ -34,5 +34,6 @@ pub const evalRelease = impl.evalRelease;
 pub const pageText = impl.pageText;
 pub const registerScheme = impl.registerScheme;
 pub const setContextMenuMode = impl.setContextMenuMode;
+pub const setAdoptPopups = impl.setAdoptPopups;
 pub const refreshDialogOcclusion = impl.refreshDialogOcclusion;
 pub const EvalState = impl.EvalState;

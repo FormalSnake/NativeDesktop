@@ -40,6 +40,7 @@ const ndbasecss = @import("basecss.zig");
 const nddecoration = @import("decoration.zig");
 const ndwebview = @import("webview.zig");
 const ndchrome = @import("chrome.zig");
+const x11 = @import("../cef/x11.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -183,8 +184,9 @@ pub fn createWindow(
         if (title) |t| gtk.Window.setTitle(win, dupeZ(t));
         gtk.Window.setDefaultSize(win, width, height);
         if (as_sheet) {
-            if (gtk.Application.getActiveWindow(app)) |parent| {
-                if (parent != win) gtk.Window.setTransientFor(win, parent);
+            if (sheetParent(app, win)) |parent| {
+                gtk.Window.setTransientFor(win, parent);
+                centreOver(win, parent, width, height);
             }
         }
         gtk.Window.present(win);
@@ -209,6 +211,37 @@ pub fn createWindow(
     if (title) |t| adw.TabPage.setTitle(page, dupeZ(t));
     adw.TabView.setSelectedPage(view, page);
     return bin_w;
+}
+
+/// The window a sheet belongs to: the active one, or with none active (focus
+/// in another app when the page asked for it) the app's most recently focused.
+fn sheetParent(app: *gtk.Application, win: *gtk.Window) ?*gtk.Window {
+    if (gtk.Application.getActiveWindow(app)) |active| {
+        if (active != win) return active;
+    }
+    var node: ?*glib.List = gtk.Application.getWindows(app);
+    while (node) |n| : (node = n.f_next) {
+        const other: *gtk.Window = @ptrCast(@alignCast(n.f_data orelse continue));
+        if (other != win) return other;
+    }
+    return null;
+}
+
+/// Places a sheet over the middle of its parent before it maps. An XWayland
+/// compositor that manages top-levels itself (Hyprland) takes a new window's
+/// position from where it was created, which GTK leaves at the screen's
+/// corner, and discards a move sent once it is up. Nothing under Wayland, where
+/// the compositor places transients itself.
+fn centreOver(win: *gtk.Window, parent: *gtk.Window, width: c_int, height: c_int) void {
+    gtk.Widget.realize(win.as(gtk.Widget));
+    const own = x11.toplevelXid(win.as(gtk.Widget));
+    const over = x11.toplevelXid(parent.as(gtk.Widget));
+    if (own == 0 or over == 0) return;
+    const geo = x11.geometry(over) orelse return;
+    const origin = x11.originOnRoot(over);
+    const x = origin.x + @divTrunc(@as(c_int, @intCast(geo.w)) - width, 2);
+    const y = origin.y + @divTrunc(@as(c_int, @intCast(geo.h)) - height, 2);
+    x11.moveWindow(own, @max(x, 0), @max(y, 0));
 }
 
 fn ensureGroup(name: []const u8) !*Group {

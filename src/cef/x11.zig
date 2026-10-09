@@ -1452,6 +1452,51 @@ pub fn windowName(window: Window, out: []u8) []u8 {
     return out[0..n];
 }
 
+/// Whether `window` or one of its ancestors is a popup's frame. The role sits
+/// on Chrome's own top-level, which a reparenting window manager has put
+/// inside a frame of its own by the time anyone looks.
+pub fn inPopupRole(window: Window) bool {
+    if (window == 0) return false;
+    const c = conn() orelse return false;
+    const root = c.api.default_root_window(c.x);
+    var current = window;
+    for (0..16) |_| {
+        if (isPopupRole(current)) return true;
+        var parent: Window = 0;
+        var got_root: Window = 0;
+        var kids: [*]Window = undefined;
+        var count: c_uint = 0;
+        c.push();
+        const ok = c.api.query_tree(c.x, current, &got_root, &parent, &kids, &count);
+        c.pop();
+        if (ok == 0) return false;
+        _ = c.api.free(@ptrCast(kids));
+        if (parent == root or parent == 0) return false;
+        current = parent;
+    }
+    return false;
+}
+
+/// Whether Chrome made `window` for a popup browser: its frame names that
+/// role (`WM_WINDOW_ROLE` "pop-up", as against "browser" for a tabbed one).
+pub fn isPopupRole(window: Window) bool {
+    const c = conn() orelse return false;
+    const prop = c.api.intern_atom(c.x, "WM_WINDOW_ROLE", 1);
+    if (prop == 0) return false;
+    const XA_STRING: c_ulong = 31;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, window, prop, 0, 4, 0, XA_STRING, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or actual_format != 8) return false;
+    defer _ = c.api.free(@ptrCast(data));
+    return std.mem.eql(u8, data[0..@intCast(nitems)], "pop-up");
+}
+
 /// Asks the window manager to activate `window` (`_NET_ACTIVE_WINDOW`, as a
 /// pager would, which is the source a WM honours from another client) and
 /// sets X input focus on it for a session with no WM. Views takes keys only

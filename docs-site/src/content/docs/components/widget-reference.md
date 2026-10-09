@@ -569,6 +569,8 @@ Automation role: `webview`. Text source: none. Children: none.
 | `profile` | string |  | create |
 | `engine` | system \| chromium | system | create |
 | `contextMenuMode` | native \| suppress | native | createAndUpdate |
+| `adoptPopups` | bool | false | createAndUpdate |
+| `popup` | string |  | create |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -613,13 +615,15 @@ Automation role: `webview`. Text source: none. Children: none.
 | `zoomChanged` | `onZoomChanged` | data |
 | `pictureInPicture` | `onPictureInPicture` | data |
 | `contentBlocked` | `onContentBlocked` | data |
+| `popupBlocked` | `onPopupBlocked` | data |
+| `windowClosed` | `onWindowClosed` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 | `contextMenuSelected` | `onContextMenuSelected` | text |
 
-Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `focus`.
+Imperative commands (via `sendCommand(ref, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `allowPopups`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `acceptExtensionInstall`, `focus`.
 
 The browser-grade surface around these commands is documented in [WebView](/components/webview/).
 

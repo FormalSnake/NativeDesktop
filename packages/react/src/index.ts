@@ -52,6 +52,7 @@ export {
   cancelDownload,
   newWindowRequest,
   acceptExtensionInstall,
+  allowPopups,
 } from "@nativedesktop/react/core";
 export type {
   Cookie,
@@ -67,6 +68,7 @@ export type {
   InstalledExtension,
   NewWindowDisposition,
   NewWindowRequest,
+  PopupBlocked,
 } from "@nativedesktop/react/core";
 export {
   showAlert,

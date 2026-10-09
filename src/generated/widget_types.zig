@@ -210,6 +210,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.respondScheme",
     "webview.respondPermission",
     "webview.resetPermissions",
+    "webview.allowPopups",
     "webview.respondDownload",
     "webview.startDownload",
     "webview.pauseDownload",
