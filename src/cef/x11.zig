@@ -929,6 +929,13 @@ const XcbCreateNotify = extern struct {
     sequence: u16,
     parent: u32,
     window: u32,
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
+    border_width: u16,
+    override_redirect: u8,
+    pad1: u8,
 };
 const XcbScreenIterator = extern struct { data: ?*const extern struct { root: u32 }, rem: c_int, index: c_int };
 const XcbSetupHead = extern struct {
@@ -952,9 +959,13 @@ const Xcb = struct {
     change_property: *const fn (*XcbConn, u8, u32, u32, u32, u8, u32, [*]const u8) callconv(.c) XcbVoidCookie,
     wait_for_event: *const fn (*XcbConn) callconv(.c) ?*XcbGenericEvent,
     flush: *const fn (*XcbConn) callconv(.c) c_int,
+    configure: *const fn (*XcbConn, u32, u16, [*]const u32) callconv(.c) XcbVoidCookie,
 };
 
 const XCB_CW_EVENT_MASK: u32 = 1 << 11;
+const XCB_CW_OVERRIDE_REDIRECT: u32 = 1 << 9;
+const XCB_CONFIG_WINDOW_X: u16 = 1 << 0;
+const XCB_CONFIG_WINDOW_Y: u16 = 1 << 1;
 const XCB_CREATE_NOTIFY: u8 = 16;
 const XCB_ATOM_WM_CLASS: u32 = 67;
 const XCB_ATOM_STRING: u32 = 31;
@@ -1001,6 +1012,37 @@ pub fn publishClass(toplevel: Window) void {
     namer_class_len.store(n, .release);
 }
 
+/// Until this time (GLib's monotonic clock), the next top-level of Chromium's
+/// is marked override-redirect and moved the moment it is created. 0 when
+/// nothing is armed.
+var unmanage_until_us: std.atomic.Value(i64) = .init(0);
+var unmanage_x: i32 = 0;
+var unmanage_y: i32 = 0;
+var unmanaged_window: std.atomic.Value(u32) = .init(0);
+
+/// Keeps the next top-level Chromium creates before `until_us` away from the
+/// window manager, at root position `x`, `y`. Marked and moved as it is
+/// created, it maps without a MapRequest, so the manager never lays it out,
+/// and off screen, where XWayland draws it whatever its shape says. Done after
+/// the map instead, a tiling manager has already made room for it and moved
+/// focus to it, and its first frames are on screen. A window Chromium maps
+/// before the mark lands is left to `unmanage`.
+pub fn unmanageNextDialog(until_us: i64, x: i32, y: i32) void {
+    unmanage_x = x;
+    unmanage_y = y;
+    unmanaged_window.store(0, .release);
+    unmanage_until_us.store(until_us, .release);
+}
+
+/// The window `unmanageNextDialog` marked, or 0.
+pub fn unmanagedDialog() Window {
+    return unmanaged_window.load(.acquire);
+}
+
+pub fn cancelUnmanage() void {
+    unmanage_until_us.store(0, .release);
+}
+
 fn namerLoop() void {
     var lib = std.DynLib.open("libxcb.so.1") catch return;
     const x: Xcb = .{
@@ -1012,6 +1054,7 @@ fn namerLoop() void {
         .change_property = lib.lookup(@FieldType(Xcb, "change_property"), "xcb_change_property") orelse return,
         .wait_for_event = lib.lookup(@FieldType(Xcb, "wait_for_event"), "xcb_wait_for_event") orelse return,
         .flush = lib.lookup(@FieldType(Xcb, "flush"), "xcb_flush") orelse return,
+        .configure = lib.lookup(@FieldType(Xcb, "configure"), "xcb_configure_window") orelse return,
     };
     const c = x.connect(null, null) orelse return;
     if (x.has_error(c) != 0) return;
@@ -1031,6 +1074,16 @@ fn namerLoop() void {
         const len = namer_class_len.load(.acquire);
         if (len == 0) continue;
         _ = x.change_property(c, 0, created.window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 8, @intCast(len), &namer_class);
+        if (created.parent == screen.root and created.override_redirect == 0 and
+            glib.getMonotonicTime() < unmanage_until_us.load(.acquire))
+        {
+            unmanage_until_us.store(0, .release);
+            const on = [_]u32{1};
+            _ = x.change_attributes(c, created.window, XCB_CW_OVERRIDE_REDIRECT, &on);
+            const at = [_]u32{ @bitCast(unmanage_x), @bitCast(unmanage_y) };
+            _ = x.configure(c, created.window, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, &at);
+            unmanaged_window.store(created.window, .release);
+        }
         _ = x.flush(c);
     }
 }
@@ -1289,6 +1342,33 @@ pub fn moveWindow(window: Window, x: c_int, y: c_int) void {
     c.pop();
 }
 
+const FnChangeWindowAttributes = *const fn (*Display, Window, c_ulong, *SetWindowAttributes) callconv(.c) c_int;
+const CW_OVERRIDE_REDIRECT: c_ulong = 1 << 9;
+var change_attributes_attempted = false;
+var change_window_attributes: ?FnChangeWindowAttributes = null;
+
+/// Takes `window` away from the window manager and leaves it unmapped at root
+/// position `x`, `y`: the unmap makes the manager let go of it, and marked
+/// override-redirect it is not laid out by the manager the next time it maps.
+/// A manager that tiles windows ignores a move it is asked for and keeps a
+/// client on screen whatever its shape.
+pub fn unmanage(window: Window, x: c_int, y: c_int) void {
+    if (window == 0) return;
+    if (!change_attributes_attempted) {
+        change_attributes_attempted = true;
+        if (loadApi() != null) change_window_attributes = xlib.lookup(FnChangeWindowAttributes, "XChangeWindowAttributes");
+    }
+    const change = change_window_attributes orelse return;
+    const c = conn() orelse return;
+    c.push();
+    defer c.pop();
+    _ = c.api.unmap_window(c.x, window);
+    var attrs: SetWindowAttributes = .{ .override_redirect = 1 };
+    _ = change(c.x, window, CW_OVERRIDE_REDIRECT, &attrs);
+    _ = c.api.move_window(c.x, window, x, y);
+    _ = c.api.flush(c.x);
+}
+
 pub const Area = struct { x: c_int, y: c_int, w: c_int, h: c_int };
 
 /// The window manager's work area (`_NET_WORKAREA` for the current desktop):
@@ -1486,10 +1566,59 @@ pub fn activate(window: Window) void {
     _ = c.api.flush(c.x);
 }
 
-const FnFakeKey = *const fn (*Display, c_uint, c_int, c_ulong) callconv(.c) c_int;
+// ---- XTEST, spoken over libxcb ---------------------------------------------
+// libXtst is not something a desktop is sure to have: NixOS's nix-ld set, which
+// the packaged app resolves its libraries through, has no libXtst, so the
+// install prompt was never answered there. libxcb comes with every X11 GTK,
+// and XTEST's FakeInput is one fixed-size request, so it is sent as raw bytes
+// on a connection of its own.
+
+const XcbProtocolRequest = extern struct {
+    count: usize,
+    ext: ?*anyopaque,
+    opcode: u8,
+    isvoid: u8,
+};
+const XcbCookie = extern struct { sequence: c_uint };
+const XcbQueryExtensionReply = extern struct {
+    response_type: u8,
+    pad0: u8,
+    sequence: u16,
+    length: u32,
+    present: u8,
+    major_opcode: u8,
+    first_event: u8,
+    first_error: u8,
+};
+const XTestFakeInput = extern struct {
+    major: u8,
+    minor: u8 = 2, // X_XTestFakeInput
+    length: u16 = 0,
+    type: u8,
+    detail: u8,
+    pad0: [2]u8 = .{ 0, 0 },
+    time: u32 = 0,
+    root: u32 = 0,
+    pad1: [8]u8 = @splat(0),
+    root_x: i16 = 0,
+    root_y: i16 = 0,
+    pad2: [7]u8 = @splat(0),
+    deviceid: u8 = 0,
+};
+comptime {
+    std.debug.assert(@sizeOf(XTestFakeInput) == 36);
+}
+
+const XTest = struct {
+    c: *XcbConn,
+    major: u8,
+    send_request: *const fn (*XcbConn, c_int, [*]std.posix.iovec_const, *const XcbProtocolRequest) callconv(.c) c_uint,
+    flush: *const fn (*XcbConn) callconv(.c) c_int,
+};
+
 const FnKeysymToKeycode = *const fn (*Display, c_ulong) callconv(.c) u8;
 var xtest_attempted = false;
-var fake_key: ?FnFakeKey = null;
+var xtest: ?XTest = null;
 var keysym_to_keycode: ?FnKeysymToKeycode = null;
 
 pub const keysym_tab: c_ulong = 0xff09;
@@ -1499,15 +1628,38 @@ pub const keysym_shift: c_ulong = 0xffe1;
 fn loadXTest() bool {
     if (!xtest_attempted) {
         xtest_attempted = true;
-        if (loadApi() == null) return false;
-        var ext = std.DynLib.open("libXtst.so.6") catch std.DynLib.open("libXtst.so") catch {
-            std.debug.print("ND_WARN CEF: libXtst not found; Chrome's install prompt is left for the user to answer\n", .{});
-            return false;
-        };
-        fake_key = ext.lookup(FnFakeKey, "XTestFakeKeyEvent");
-        keysym_to_keycode = xlib.lookup(FnKeysymToKeycode, "XKeysymToKeycode");
+        xtest = openXTest();
+        if (xtest == null) std.debug.print("ND_WARN CEF: the X server has no XTEST; Chrome's install prompt is left for the user to answer\n", .{});
+        if (loadApi() != null) keysym_to_keycode = xlib.lookup(FnKeysymToKeycode, "XKeysymToKeycode");
     }
-    return fake_key != null and keysym_to_keycode != null;
+    return xtest != null and keysym_to_keycode != null;
+}
+
+fn openXTest() ?XTest {
+    var lib = std.DynLib.open("libxcb.so.1") catch return null;
+    const connect = lib.lookup(@FieldType(Xcb, "connect"), "xcb_connect") orelse return null;
+    const has_error = lib.lookup(@FieldType(Xcb, "has_error"), "xcb_connection_has_error") orelse return null;
+    const query = lib.lookup(*const fn (*XcbConn, u16, [*]const u8) callconv(.c) XcbCookie, "xcb_query_extension") orelse return null;
+    const query_reply = lib.lookup(*const fn (*XcbConn, XcbCookie, ?*?*anyopaque) callconv(.c) ?*XcbQueryExtensionReply, "xcb_query_extension_reply") orelse return null;
+    const send_request = lib.lookup(@FieldType(XTest, "send_request"), "xcb_send_request") orelse return null;
+    const flush = lib.lookup(@FieldType(XTest, "flush"), "xcb_flush") orelse return null;
+    const c = connect(null, null) orelse return null;
+    if (has_error(c) != 0) return null;
+    const name = "XTEST";
+    const reply = query_reply(c, query(c, name.len, name), null) orelse return null;
+    defer std.c.free(reply);
+    if (reply.present == 0) return null;
+    return .{ .c = c, .major = reply.major_opcode, .send_request = send_request, .flush = flush };
+}
+
+fn fakeKey(t: XTest, code: u8, press: bool) void {
+    var req: XTestFakeInput = .{ .major = t.major, .type = if (press) 2 else 3, .detail = code };
+    // xcb_send_request writes its own header into the two slots before the
+    // vector it is given.
+    var iov: [3]std.posix.iovec_const = undefined;
+    iov[2] = .{ .base = @ptrCast(&req), .len = @sizeOf(XTestFakeInput) };
+    const info: XcbProtocolRequest = .{ .count = 1, .ext = null, .opcode = t.major, .isvoid = 1 };
+    _ = t.send_request(t.c, 0, iov[2..].ptr, &info);
 }
 
 /// Presses and releases `keysym` through XTest, which the X server delivers
@@ -1515,14 +1667,15 @@ fn loadXTest() bool {
 /// XSendEvent is marked synthetic, and Chromium drops it.
 pub fn pressKey(keysym: c_ulong) bool {
     if (!loadXTest()) return false;
+    const t = xtest.?;
     const c = conn() orelse return false;
     c.push();
-    defer c.pop();
     const code = keysym_to_keycode.?(c.x, keysym);
+    c.pop();
     if (code == 0) return false;
-    _ = fake_key.?(c.x, code, 1, CURRENT_TIME);
-    _ = fake_key.?(c.x, code, 0, CURRENT_TIME);
-    _ = c.api.flush(c.x);
+    fakeKey(t, code, true);
+    fakeKey(t, code, false);
+    _ = t.flush(t.c);
     return true;
 }
 
