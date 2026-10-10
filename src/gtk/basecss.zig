@@ -67,9 +67,6 @@ const nd_base_css =
     \\button.nd-button-large { min-height: 40px; padding: 0 18px; }
     \\.nd-compact button { min-height: 26px; }
     \\.nd-compact entry { min-height: 26px; }
-    \\box.view { background-color: alpha(currentColor, 0.07); border-radius: 9px; }
-    \\box.activatable { border-radius: 9px; }
-    \\box.activatable:hover { background-image: image(alpha(currentColor, 0.04)); }
     \\box.navigation-sidebar > button { min-height: 36px; padding: 0 8px; margin: 0 6px 2px; border-radius: 9px; font-weight: normal; background: transparent; }
     \\box.navigation-sidebar > button:hover { background-color: color-mix(in srgb, currentColor 7%, transparent); }
     \\box.navigation-sidebar > button:active { background-color: color-mix(in srgb, currentColor 16%, transparent); }
@@ -106,6 +103,17 @@ const nd_palette_sheet_css =
     \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
 ;
 
+/// The `view` tile and the `activatable` hover, above USER (800) too. They
+/// are the fills apps mark the selected item with, and a user's gtk.css theme
+/// (elementary's: `.view { background: @base_color }`, and transparent inside
+/// `.sidebar-pane`) otherwise repaints the tile with the surface under it, so
+/// the selection vanishes. Derived from currentColor, they hold on any palette.
+const nd_owned_fill_css =
+    \\box.view { background-color: alpha(currentColor, 0.07); border-radius: 9px; }
+    \\box.activatable { border-radius: 9px; }
+    \\box.activatable:hover { background-image: image(alpha(currentColor, 0.04)); }
+;
+
 /// Called from tabs.zig's createWindow (a live display is guaranteed there);
 /// a no-op after the first successful install.
 pub fn ensureBaseCss() void {
@@ -115,7 +123,7 @@ pub fn ensureBaseCss() void {
     gtk.CssProvider.loadFromString(p, nd_base_css);
     gtk.StyleContext.addProviderForDisplay(display, p.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
     const sheet = gtk.CssProvider.new();
-    gtk.CssProvider.loadFromString(sheet, nd_palette_sheet_css);
+    gtk.CssProvider.loadFromString(sheet, nd_palette_sheet_css ++ nd_owned_fill_css);
     gtk.StyleContext.addProviderForDisplay(display, sheet.as(gtk.StyleProvider), 801);
     base_installed = true;
 }
