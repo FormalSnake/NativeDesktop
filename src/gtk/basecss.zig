@@ -78,8 +78,6 @@ const nd_base_css =
     \\overlay-split-view.nd-content-card > dimming, overlay-split-view.nd-content-card > shadow, overlay-split-view.nd-content-card > border, overlay-split-view.nd-content-card > outline { background: none; box-shadow: none; }
     \\.nd-floating-sidebar { background-color: var(--sidebar-bg-color); margin: 8px; border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 8px 28px 4px rgba(0, 0, 0, 0.22); }
     \\toolbarview.nd-card-bars, toolbarview.nd-card-bars > .top-bar, toolbarview.nd-card-bars > .bottom-bar { background: none; box-shadow: none; }
-    \\progressbar.osd.dimmed { opacity: 1; }
-    \\progressbar.osd.dimmed > trough > progress { background-color: alpha(currentColor, 0.3); }
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
@@ -103,15 +101,24 @@ const nd_palette_sheet_css =
     \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
 ;
 
-/// The `view` tile and the `activatable` hover, above USER (800) too. They
-/// are the fills apps mark the selected item with, and a user's gtk.css theme
-/// (elementary's: `.view { background: @base_color }`, and transparent inside
-/// `.sidebar-pane`) otherwise repaints the tile with the surface under it, so
-/// the selection vanishes. Derived from currentColor, they hold on any palette.
+/// The `view` tile, the `activatable` hover and the osd load bar, above USER
+/// (800) too. A user's gtk.css theme otherwise restyles them: elementary's
+/// `.view { background: @base_color }` (transparent inside `.sidebar-pane`)
+/// repaints the tile apps mark the selected item with in the surface under
+/// it, and its `.osd` and `progressbar` rules turn the 2 px load bar into a
+/// padded, bordered, inset 24 px slab. The bar rules restate Adwaita's own
+/// `progressbar.osd`, and every fill derives from currentColor or the accent,
+/// so they hold on any palette.
 const nd_owned_fill_css =
     \\box.view { background-color: alpha(currentColor, 0.07); border-radius: 9px; }
     \\box.activatable { border-radius: 9px; }
     \\box.activatable:hover { background-image: image(alpha(currentColor, 0.04)); }
+    \\progressbar.osd { padding: 0; margin: 0; border: none; border-radius: 0; background: none; box-shadow: none; color: inherit; }
+    \\progressbar.osd > trough { padding: 0; margin: 0; border: none; border-radius: 0; background: none; box-shadow: none; }
+    \\progressbar.osd > trough > progress { margin: 0; border: none; border-radius: 0; box-shadow: none; background-image: none; animation: none; background-color: @accent_bg_color; }
+    \\progressbar.osd.horizontal > trough, progressbar.osd.horizontal > trough > progress { min-height: 2px; }
+    \\progressbar.osd.dimmed { opacity: 1; }
+    \\progressbar.osd.dimmed > trough > progress { background-color: alpha(currentColor, 0.3); }
 ;
 
 /// Called from tabs.zig's createWindow (a live display is guaranteed there);
