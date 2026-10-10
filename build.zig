@@ -153,6 +153,15 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(shape_tests).step);
 
+    const nav_gate_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cef/nav_gate.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(nav_gate_tests).step);
+
     const app_dir_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cef/app_dir.zig"),

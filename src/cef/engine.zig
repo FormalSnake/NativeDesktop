@@ -32,6 +32,7 @@ const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const shape = @import("shape.zig");
+const NavGate = @import("nav_gate.zig").NavGate;
 const app_dir = @import("app_dir.zig");
 const cdp = @import("cdp.zig");
 const browser_pipe = @import("browser_pipe.zig");
@@ -2154,6 +2155,10 @@ const View = struct {
     hang_dialog: ?*adw.AlertDialog = null,
     hang_ping_out: bool = false,
     hang_ping_seq: u32 = 0,
+    /// `nav.mark()` when the ping went out.
+    hang_ping_nav: u32 = 0,
+    /// Main-frame navigations, which the page's silence is not held against.
+    nav: NavGate = .{},
     /// Wait was answered: not asked again before this.
     hang_quiet_until_us: i64 = 0,
     /// The `--renderer-client-id` of the renderer showing the main frame, as
@@ -4938,6 +4943,18 @@ fn onBeforeBrowse(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     defer ref.releaseParam(request);
+    const cancel = beforeBrowse(self, request, user_gesture);
+    if (cancel == 0 and isMainFrame(frame)) RequestHandlerObj.of(self).payload.nav.started();
+    return cancel;
+}
+
+fn isMainFrame(frame: [*c]c.cef_frame_t) bool {
+    if (frame == null) return false;
+    const is_main = frame.*.is_main orelse return false;
+    return is_main(frame) != 0;
+}
+
+fn beforeBrowse(self: [*c]c.cef_request_handler_t, request: [*c]c.cef_request_t, user_gesture: c_int) c_int {
     if (request == null) return 0;
     const get_url = request.*.get_url orelse return 0;
     const raw = get_url(request);
@@ -5683,6 +5700,7 @@ fn onLoadStart(
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    if (isMainFrame(frame)) LoadObj.of(self).payload.nav.finished();
     dockFrontend(LoadObj.of(self).payload, frame);
 }
 
@@ -5697,6 +5715,7 @@ fn onLoadingStateChange(
     const view = LoadObj.of(self).payload;
     // Chromium restores a host's saved zoom level when a page of it commits.
     if (is_loading == 0) {
+        view.nav.finished();
         reportZoom(view, "navigation");
         reportSecurity(view);
     }
@@ -5715,6 +5734,8 @@ fn onLoadError(
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    // A navigation replacing this one starts after the abort is reported.
+    if (isMainFrame(frame)) LoadObj.of(self).payload.nav.finished();
     if (error_code == ERR_ABORTED) return;
     // A Chrome style browser answers a certificate error with Chrome's own
     // interstitial, whose Advanced section is the only way on to the site. An
@@ -5837,12 +5858,13 @@ fn startHangWatch() void {
 
 /// The page is in front of someone and nothing else explains a silent main
 /// thread: a script dialog of the page's, or the inspector, holds it on
-/// purpose.
+/// purpose, and no navigation has its devtools messages held back.
 fn hangWatched(view: *View) bool {
     if (!viewOnShow(view) or !view.cdp_ready or view.browser_gone.load(.acquire)) return false;
     if (view.devtools_container.load(.acquire) != 0) return false;
     // A tab-modal page dialog is a card over the page, not a window dialog.
     if (view.page_dialogs.items.len != 0) return false;
+    if (view.nav.navigating()) return false;
     return view.hang_dialog != null or !dialogOverView(view);
 }
 
@@ -5856,6 +5878,7 @@ fn onHangWatch(_: ?*anyopaque) callconv(.c) c_int {
         }
         if (view.hang_ping_out) continue;
         view.hang_ping_seq +%= 1;
+        view.hang_ping_nav = view.nav.mark();
         // Unanswered, the call expires after `other_call_timeout_us` (15 s,
         // the delay Chromium's own monitor waits), which is the verdict.
         if (cdpSendRaw(view, "Runtime.evaluate", "{\"expression\":\"0\",\"returnByValue\":true}", .{ .hang_ping = view.hang_ping_seq })) view.hang_ping_out = true;
@@ -5883,6 +5906,7 @@ fn hangPingExpired(view: *View, seq: u32) void {
     if (seq != view.hang_ping_seq) return;
     view.hang_ping_out = false;
     if (!live_views.contains(@intFromPtr(view)) or !hangWatched(view)) return;
+    if (!view.nav.silenceCounts(view.hang_ping_nav)) return;
     if (glib.getMonotonicTime() < view.hang_quiet_until_us) return;
     showHangDialog(view);
 }
