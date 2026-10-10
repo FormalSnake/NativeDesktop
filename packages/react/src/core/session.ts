@@ -51,10 +51,9 @@ export async function connect(): Promise<Session> {
   if (existing) return existing;
   const ndp = await Ndp.connect();
   // Registered BEFORE the handshake: the host replays the standing
-  // app-activation state in a systemEvent written right after HelloAck, and
-  // both frames can land in one socket chunk. A callback registered after the
-  // awaited handshake would miss it (the dispatch loop runs synchronously; the
-  // await's continuation is a microtask behind it).
+  // app-activation and webview-engine state in systemEvents written just
+  // ahead of the HelloAck, so they are dispatched before the handshake
+  // resolves and the first render reads them.
   ndp.onSystemEvent((channel, data) => dispatchSystemEvent(channel, data));
   await ndp.handshake({ name: "bun", version: Bun.version });
   setBackend(ndp.backend);

@@ -158,12 +158,12 @@ pub const Runtime = struct {
     var singleton: ?*Runtime = null;
     /// Last app.activate/app.deactivate transition, recorded even before the
     /// child connects (backends emit the initial one at launch). Replayed
-    /// right after HelloAck so app.isActive() is correct from the first
+    /// just ahead of the HelloAck so app.isActive() is correct from the first
     /// render — including HMR/crash respawns.
     var last_app_active: ?bool = null;
     /// Last `webview.engine` payload. Both backends announce which engine they
-    /// actually started before the child connects, so this is replayed after
-    /// HelloAck alongside the activation state. A fixed buffer rather than an
+    /// actually started before the child connects, so this is replayed ahead
+    /// of the HelloAck alongside the activation state. A fixed buffer rather than an
     /// allocation: there is no runtime to own one at the time it is recorded,
     /// and the payload is two short names.
     var last_webview_engine: [96]u8 = undefined;
@@ -508,6 +508,15 @@ pub const Runtime = struct {
                 return;
             }
         }
+        // Replay the standing activation state: the launch transition fired
+        // before this child connected (or before a respawn), so without the
+        // replay the child would never learn it. Written BEFORE the HelloAck:
+        // the child renders as soon as its handshake resolves, and a replay
+        // behind the ack can land in a later socket read, after the first
+        // render has already read `webviewEngine.active()` as "system". The
+        // child registers its systemEvent handler before it says hello.
+        if (last_app_active) |a| sendSystemEvent(if (a) "app.activate" else "app.deactivate", "{}");
+        if (last_webview_engine_len > 0) sendSystemEvent("webview.engine", last_webview_engine[0..last_webview_engine_len]);
         self.writeFrame(protocol.HelloAck{
             .ndpVersion = protocol.ndp_version,
             .encodings = &.{ "binary", "json" },
@@ -516,11 +525,6 @@ pub const Runtime = struct {
             .hostCommands = widget_types.host_commands,
         });
         marker.print("ND_HELLO_OK\n", .{});
-        // Replay the standing activation state: the launch transition fired
-        // before this child connected (or before a respawn), so without the
-        // replay the child would never learn it.
-        if (last_app_active) |a| sendSystemEvent(if (a) "app.activate" else "app.deactivate", "{}");
-        if (last_webview_engine_len > 0) sendSystemEvent("webview.engine", last_webview_engine[0..last_webview_engine_len]);
 
         // Frame loop.
         while (true) {
