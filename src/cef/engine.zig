@@ -11308,8 +11308,12 @@ fn onRequestMediaAccessPermission(
     // Chrome answers screen capture with its own tab/window/screen picker, which
     // is the consent; an Allow/Block prompt in front of it would hand CEF a bare
     // mask, and CEF then shares the whole primary screen without asking which.
+    // An empty mask is a capture CEF 151 has no bit for, measured as
+    // getDisplayMedia({preferCurrentTab: true}) (Chromium's this-tab stream
+    // type); Chrome answers it with its "see this tab?" dialog, and an app
+    // prompt for it could only ask for nothing by name.
     const desktop: u32 = @intCast(c.CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE | c.CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE);
-    if (chromeStyle() and requested_permissions & desktop != 0) {
+    if (chromeStyle() and (requested_permissions == 0 or requested_permissions & desktop != 0)) {
         ref.releaseParam(callback);
         return 0;
     }
