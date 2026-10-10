@@ -367,7 +367,6 @@ export const {
   createComponent,
   createElement,
   createTextNode,
-  insert,
   spread,
   setProp,
   mergeProps,
@@ -375,6 +374,23 @@ export const {
   ref,
 } = renderer;
 export { insertNode };
+
+/// The universal compiler hands every expression in a run of adjacent ones the
+/// same marker (the next static sibling, or null at the end), and an insert
+/// that empties drops its nodes without leaving a placeholder. Refilled, it
+/// lands before that shared marker, after whatever its later neighbours hold.
+/// An empty text node of its own keeps each expression's slot; text nodes
+/// never reach the host.
+export function insert(parent: SolidNode, accessor: unknown, marker?: SolidNode | null, initial?: unknown): void {
+  if (marker === undefined) {
+    renderer.insert(parent, accessor, marker, initial as never);
+    return;
+  }
+  const slot = makeNode("#text");
+  slot.text = "";
+  insertNode(parent, slot, marker ?? undefined);
+  renderer.insert(parent, accessor, slot, initial as never);
+}
 
 /// An off-window container whose children become detached native widgets:
 /// created and kept alive, but shown in no window until `moveNode` attaches
