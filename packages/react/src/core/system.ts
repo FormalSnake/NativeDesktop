@@ -57,7 +57,7 @@ export function dispatchSystemEvent(channel: string, data: unknown): void {
   // handshake, so this is correct from the first render.
   if (channel === "app.activate") globalThis.__nd_app_active = true;
   else if (channel === "app.deactivate") globalThis.__nd_app_active = false;
-  // Which engine the host actually started, same replay-after-handshake
+  // Which engine the host actually started, same replay contract
   // contract as the activation state above. A host that asked for chromium
   // and could not load it announces "system" here rather than only warning
   // on stderr, which is the difference between an app knowing and an app
@@ -317,8 +317,8 @@ export const webviewEngine = {
    * distribution falls back to the system engine, and before this the only
    * way to tell was to read `navigator.userAgent` out of a live view.
    *
-   * Backed by the host's `webview.engine` stream, replayed right after the
-   * handshake like `app.isActive()`, so it is correct from the first render.
+   * Backed by the host's `webview.engine` stream, replayed ahead of the
+   * HelloAck like `app.isActive()`, so it is correct from the first render.
    * "system" against a host that predates the stream.
    */
   active(): WebviewEngineName {
