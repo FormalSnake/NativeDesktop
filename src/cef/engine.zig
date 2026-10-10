@@ -5798,6 +5798,8 @@ fn startHangWatch() void {
 fn hangWatched(view: *View) bool {
     if (!viewOnShow(view) or !view.cdp_ready or view.browser_gone.load(.acquire)) return false;
     if (view.devtools_container.load(.acquire) != 0) return false;
+    // A tab-modal page dialog is a card over the page, not a window dialog.
+    if (view.page_dialogs.items.len != 0) return false;
     return view.hang_dialog != null or !dialogOverView(view);
 }
 
