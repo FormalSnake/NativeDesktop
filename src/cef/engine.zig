@@ -5696,7 +5696,10 @@ fn onLoadingStateChange(
     defer ref.releaseParam(browser);
     const view = LoadObj.of(self).payload;
     // Chromium restores a host's saved zoom level when a page of it commits.
-    if (is_loading == 0) reportZoom(view, "navigation");
+    if (is_loading == 0) {
+        reportZoom(view, "navigation");
+        reportSecurity(view);
+    }
     post(.{ .view = view, .name = "loadingChanged", .flag = is_loading != 0 });
     post(.{ .view = view, .name = "backAvailable", .flag = can_go_back != 0 });
     post(.{ .view = view, .name = "forwardAvailable", .flag = can_go_forward != 0 });
@@ -5724,6 +5727,46 @@ fn onLoadError(
         .extra = dupeStr(error_text),
     });
 }
+
+/// Read off the visible navigation entry at load end, the same place the
+/// AppKit host reads it: that entry is the page that committed, so a subframe
+/// on another origin or scheme (an iframe of a secure page) never speaks for
+/// it, and its content status already counts the mixed content the page went
+/// on to load. CEF UI thread only.
+fn reportSecurity(view: *View) void {
+    const host = hostOf(view) orelse return;
+    const get_entry = host.get_visible_navigation_entry orelse return;
+    const entry = get_entry(host) orelse return;
+    defer ref.releaseOwned(entry);
+    var secure = false;
+    var mixed = false;
+    var cert_errors: c_uint = 0;
+    if (entry.*.get_sslstatus) |get_ssl| {
+        if (get_ssl(entry)) |ssl| {
+            defer ref.releaseOwned(ssl);
+            // A certificate is all is_secure_connection checks: a page let
+            // through past a certificate error has one too.
+            const tls = if (ssl.*.is_secure_connection) |f| f(ssl) != 0 else false;
+            if (tls) {
+                if (ssl.*.get_cert_status) |f| cert_errors = @as(c_uint, @bitCast(f(ssl))) & cert_error_bits;
+                if (ssl.*.get_content_status) |f| mixed = @as(c_uint, @bitCast(f(ssl))) != 0;
+                secure = cert_errors == 0;
+            }
+        }
+    }
+    tr("securityChanged node={d} secure={} mixed={} cert_errors=0x{x}", .{ view.node_id, secure, mixed, cert_errors });
+    post(.{
+        .view = view,
+        .name = "securityChanged",
+        .flag = secure,
+        .insecure_content = secure and mixed,
+        .extra = if (cert_errors != 0) std.fmt.allocPrint(alloc, "TLS certificate errors (flags 0x{x})", .{cert_errors}) catch null else null,
+    });
+}
+
+/// net::IsCertStatusError, less IsCertStatusMinorError: bits 0 to 15 are
+/// errors, and the two revocation-check bits are not ones Chrome warns about.
+const cert_error_bits: c_uint = 0xffff & ~@as(c_uint, c.CERT_STATUS_NO_REVOCATION_MECHANISM | c.CERT_STATUS_UNABLE_TO_CHECK_REVOCATION);
 
 /// net::IsCertificateError: ERR_CERT_COMMON_NAME_INVALID down to, not
 /// including, ERR_CERT_END.
@@ -6558,6 +6601,8 @@ const Emission = struct {
     reset_dialogs: bool = false,
     /// The page let a `requestClose` dry run through.
     close_probe: bool = false,
+    /// `securityChanged`: the page loaded parts of itself without TLS.
+    insecure_content: bool = false,
 };
 
 fn post(e: Emission) void {
@@ -6849,6 +6894,13 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         forgetHangPing(view);
         view.loading = box.flag;
         f(view.node_id, "loadingChanged", .{ .checked = box.flag });
+    } else if (std.mem.eql(u8, box.name, "securityChanged")) {
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "secure", .{ .bool = box.flag }) catch return 0;
+        payload.put(alloc, "insecureContent", .{ .bool = box.insecure_content }) catch return 0;
+        if (box.extra) |msg| payload.put(alloc, "error", .{ .string = msg }) catch return 0;
+        f(view.node_id, "securityChanged", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "backAvailable")) {
         view.can_go_back = box.flag;
         f(view.node_id, "backAvailable", .{ .checked = box.flag });
@@ -7009,7 +7061,7 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
         dockEvent(view, method, json);
         return;
     }
-    // Only the three events this engine acts on are worth a hop; the Page and
+    // Only the events this engine acts on are worth a hop; the Page and
     // Runtime domains are chatty enough that forwarding everything would put a
     // GTK idle source behind every DOM mutation.
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
@@ -7017,13 +7069,8 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
         !std.mem.eql(u8, method, "Runtime.executionContextDestroyed") and
         !std.mem.eql(u8, method, "Page.frameNavigated") and
         !std.mem.eql(u8, method, "Runtime.bindingCalled") and
-        !std.mem.eql(u8, method, "Network.responseReceived") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
         !std.mem.eql(u8, method, cdp.agent_detached)) return;
-    // Every subresource's response arrives here too, and only the document's
-    // is read (onCdpEvent).
-    if (std.mem.eql(u8, method, "Network.responseReceived") and
-        std.mem.indexOf(u8, json, "\"type\":\"Document\"") == null) return;
     post(.{
         .view = view,
         .name = "",
@@ -7507,10 +7554,7 @@ fn enableDomains(view: *View) void {
 fn agentReady(view: *View) void {
     if (view.cdp_ready) return;
     _ = cdpSendRaw(view, "Runtime.enable", "", .ignore);
-    // Network carries both the cookie surface and, on the main document's
-    // response, the TLS state securityChanged reports. The Security domain
-    // would say the same thing in one event, but CEF's protocol subset does
-    // not answer Security.enable at all.
+    // Network carries the cookie surface.
     // No buffers: by default the renderer keeps up to 100 MB of every page's
     // response bodies for Network.getResponseBody, which nothing here asks for.
     _ = cdpSendRaw(view, "Network.enable", "{\"maxTotalBufferSize\":0,\"maxResourceBufferSize\":0,\"maxPostDataSize\":0}", .ignore);
@@ -8286,34 +8330,6 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
     }
     if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
         onBindingCalled(view, root);
-        return;
-    }
-    if (std.mem.eql(u8, method, "Network.responseReceived")) {
-        // Only the main document's response describes the page's own TLS
-        // state; a subresource's would report the last image loaded.
-        const kind = stringField(root, "type") orelse return;
-        if (!std.mem.eql(u8, kind, "Document")) return;
-        const response = switch (root) {
-            .object => |o| o.get("response") orelse return,
-            else => return,
-        };
-        const state = stringField(response, "securityState") orelse return;
-        // Not Chromium's notion of a trustworthy origin: http://127.0.0.1 is
-        // "secure" to Chromium and is not TLS, and `secure` on this event has
-        // always meant "came over TLS with no certificate errors" because that
-        // is what WebKitGTK's get_tls_info answers.
-        const url = stringField(response, "url") orelse "";
-        const secure = std.mem.startsWith(u8, url, "https://") and
-            !std.mem.eql(u8, state, "insecure") and
-            !std.mem.eql(u8, state, "insecure-broken");
-        const f = emit orelse return;
-        var payload: std.json.ObjectMap = .empty;
-        defer payload.deinit(alloc);
-        payload.put(alloc, "secure", .{ .bool = secure }) catch return;
-        // "insecure-broken" is mixed content or a failed certificate; the
-        // WebKit backend spells the first of those as insecureContent.
-        payload.put(alloc, "insecureContent", .{ .bool = std.mem.eql(u8, state, "insecure-broken") }) catch return;
-        f(view.node_id, "securityChanged", .{ .data = .{ .object = payload } });
         return;
     }
 }

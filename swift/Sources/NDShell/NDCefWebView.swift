@@ -88,7 +88,7 @@ final class NDCefWebView: NSView {
     private var lastCanGoBack = false
     private var lastCanGoForward = false
     private var lastProgress: Double = -1
-    private var lastSecure: Bool?
+    private var lastSecurity: String?
 
     // Script state (NDCefScripts.swift).
     var userScripts: [NDCefUserScript] = []
@@ -822,15 +822,26 @@ final class NDCefWebView: NSView {
         defer { nd_cef_ref_release(entry) }
         var secure = false
         var insecureContent = false
+        var certErrors: UInt32 = 0
         if let ssl = entry.pointee.get_sslstatus?(entry) {
-            secure = ssl.pointee.is_secure_connection?(ssl) != 0
-            // DISPLAYED_INSECURE_CONTENT | RAN_INSECURE_CONTENT
-            insecureContent = secure && (ssl.pointee.get_content_status?(ssl).rawValue ?? 0) != 0
+            // A certificate is all is_secure_connection checks: a page let
+            // through past a certificate error has one too.
+            if ssl.pointee.is_secure_connection?(ssl) != 0 {
+                // net::IsCertStatusError less the two minor revocation bits.
+                let minor = CERT_STATUS_NO_REVOCATION_MECHANISM.rawValue | CERT_STATUS_UNABLE_TO_CHECK_REVOCATION.rawValue
+                certErrors = UInt32(ssl.pointee.get_cert_status?(ssl).rawValue ?? 0) & 0xffff & ~UInt32(minor)
+                secure = certErrors == 0
+                // DISPLAYED_INSECURE_CONTENT | RAN_INSECURE_CONTENT
+                insecureContent = secure && (ssl.pointee.get_content_status?(ssl).rawValue ?? 0) != 0
+            }
             nd_cef_ref_release(ssl)
         }
-        guard lastSecure != secure else { return }
-        lastSecure = secure
-        emitData("securityChanged", ["secure": secure, "insecureContent": insecureContent])
+        let state = "\(secure) \(insecureContent) \(certErrors)"
+        guard lastSecurity != state else { return }
+        lastSecurity = state
+        var payload: [String: Any] = ["secure": secure, "insecureContent": insecureContent]
+        if certErrors != 0 { payload["error"] = "TLS certificate errors (flags 0x\(String(certErrors, radix: 16)))" }
+        emitData("securityChanged", payload)
     }
 
     fileprivate func emitFavicon(_ urls: [String]) {
