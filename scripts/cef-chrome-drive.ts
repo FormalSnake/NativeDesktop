@@ -581,7 +581,7 @@ if (pass === "dialogs") {
   /// Fires one surface and reports where its UI landed. `settles` names the
   /// `window.ndState` key whose promise has to stop being "pending"; a surface
   /// with no promise of its own passes it as an empty string.
-  async function surface(name: string, call: string, settles: string, waitMs = 9000, abort = false): Promise<void> {
+  async function surface(name: string, call: string, settles: string, waitMs = 9000, abort = false, dismiss = false): Promise<void> {
     let fired = "";
     try {
       fired = String(await page.eval<string>(call, true));
@@ -598,6 +598,12 @@ if (pass === "dialogs") {
       // own that synthetic input never reaches.
       await page.eval("window.ndAbortPasskey()").catch(() => "");
       await Bun.sleep(2500);
+    }
+    if (dismiss) {
+      // A page dialog is tab-modal and holds the page until it is answered,
+      // so the next surface could not even be fired from under it.
+      sh("xdotool", "key", "--clearmodifiers", "Escape");
+      await Bun.sleep(1500);
     }
     if (settles) {
       const value = (await state())[settles] ?? "absent";
@@ -626,10 +632,10 @@ if (pass === "dialogs") {
     ["geolocation", "notifications", "camera"].every((t) => traced.some((l) => l.includes(`types=${t}`))),
     traced.map((l) => l.slice(l.indexOf("permissionRequest"))).join(" | ") || "no permissionRequest reported",
   );
-  await surface("jsAlert", "window.ndAlert()", "", 4000);
-  await surface("jsConfirm", "window.ndConfirm()", "", 4000);
-  await surface("jsPrompt", "window.ndPrompt()", "", 4000);
-  await surface("httpAuth", "window.ndHttpAuth()", "", 6000);
+  await surface("jsAlert", "window.ndAlert()", "", 4000, false, true);
+  await surface("jsConfirm", "window.ndConfirm()", "", 4000, false, true);
+  await surface("jsPrompt", "window.ndPrompt()", "", 4000, false, true);
+  await surface("httpAuth", "window.ndHttpAuth()", "", 6000, false, true);
   await surface("download", "window.ndDownload()", "", 6000);
   await surface("passwordSubmit", "window.ndPasswordSubmit()", "", 8000);
 
@@ -670,19 +676,33 @@ if (pass === "dialogs") {
     return value[`geo${slot}`] ?? "absent";
   }
 
+  /// Clears what Chromium has stored for the page's origin without asking
+  /// anything: an answer sticks per origin, so a leg that needs the origin to
+  /// ask again starts from here.
+  async function resetOrigin(slot: string): Promise<void> {
+    await page.send("Page.navigate", { url: `${base}?nd=reset&slot=${slot}` });
+    await Bun.sleep(2500);
+  }
+
+  // The surfaces above denied geolocation, and that answer is on record.
+  await resetOrigin("r1");
   const beforeDismiss = (await permissionsSeen()).length;
   const dismissed = await askGeolocation("dismiss", "1");
   check("permissionDismissSettles", dismissed !== "pending" && dismissed !== "absent", `window.ndState.geo1 = ${dismissed}`);
   check("permissionDismissReachedTheApp", (await permissionsSeen()).length > beforeDismiss, `${(await permissionsSeen()).length - beforeDismiss} request(s)`);
 
-  // Two denials of the same type on the same origin in one session. Chromium
-  // records an explicit DENY as a content setting, so without the answer being
-  // put back to the default the second ask never reaches the app.
-  const beforeTwice = (await permissionsSeen()).length;
+  // A deny is recorded per origin, as in Chrome: the first ask reaches the
+  // app, the next one is answered from the record and never does.
+  const beforeFirstDeny = (await permissionsSeen()).length;
   await askGeolocation("deny", "2");
-  await askGeolocation("deny", "3");
-  const twice = (await permissionsSeen()).length - beforeTwice;
-  check("permissionAsksEveryTime", twice >= 2, `${twice} geolocation request(s) after a deny`);
+  const firstDeny = (await permissionsSeen()).length - beforeFirstDeny;
+  const secondDenied = await askGeolocation("deny", "3");
+  const afterSecond = (await permissionsSeen()).length - beforeFirstDeny - firstDeny;
+  check(
+    "permissionDenySticks",
+    firstDeny === 1 && afterSecond === 0 && secondDenied.startsWith("rejected"),
+    `${firstDeny} request(s) for the first ask, ${afterSecond} for the second, window.ndState.geo3 = ${secondDenied}`,
+  );
 
   // Reset, then a third ask: the app's own "Reset Permissions" has to make the
   // site ask again whatever Chromium still has stored for it.
@@ -698,6 +718,7 @@ if (pass === "dialogs") {
 
   // A prompt nobody answers, retired by Chromium on the next navigation: the
   // app has to hear it, and its late answer to the dead id must say nothing.
+  await resetOrigin("r5");
   await page.send("Page.navigate", { url: `${base}?nd=none&slot=5` });
   await Bun.sleep(2500);
   await page.eval("window.ndGeo('5')", true).catch(() => "");

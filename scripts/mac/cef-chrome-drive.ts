@@ -514,19 +514,33 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
     return value[`geo${slot}`] ?? "absent";
   }
 
+  /// Clears what Chromium has stored for the page's origin without asking
+  /// anything: an answer sticks per origin, so a leg that needs the origin to
+  /// ask again starts from here.
+  async function resetOrigin(slot: string): Promise<void> {
+    await page.send("Page.navigate", { url: `${base}?nd=reset&slot=${slot}` });
+    await Bun.sleep(2500);
+  }
+
+  // The surfaces above denied geolocation, and that answer is on record.
+  await resetOrigin("r1");
   const beforeDismiss = (await permissionsSeen()).length;
   const dismissed = await askGeolocation("dismiss", "1");
   check("permissionDismissSettles", dismissed !== "pending" && dismissed !== "absent", `window.ndState.geo1 = ${dismissed}`);
   check("permissionDismissReachedTheApp", (await permissionsSeen()).length > beforeDismiss, `${(await permissionsSeen()).length - beforeDismiss} request(s)`);
 
-  // Two denials of the same type on the same origin in one session. Chromium
-  // records an explicit DENY as a content setting, so without the answer being
-  // put back to the default the second ask never reaches the app.
-  const beforeTwice = (await permissionsSeen()).length;
+  // A deny is recorded per origin, as in Chrome: the first ask reaches the
+  // app, the next one is answered from the record and never does.
+  const beforeFirstDeny = (await permissionsSeen()).length;
   await askGeolocation("deny", "2");
-  await askGeolocation("deny", "3");
-  const twice = (await permissionsSeen()).length - beforeTwice;
-  check("permissionAsksEveryTime", twice >= 2, `${twice} geolocation request(s) after a deny`);
+  const firstDeny = (await permissionsSeen()).length - beforeFirstDeny;
+  const secondDenied = await askGeolocation("deny", "3");
+  const afterSecond = (await permissionsSeen()).length - beforeFirstDeny - firstDeny;
+  check(
+    "permissionDenySticks",
+    firstDeny === 1 && afterSecond === 0 && secondDenied.startsWith("rejected"),
+    `${firstDeny} request(s) for the first ask, ${afterSecond} for the second, window.ndState.geo3 = ${secondDenied}`,
+  );
 
   // Reset, then a third ask: the app's own "Reset Permissions" has to make the
   // site ask again whatever Chromium still has stored for it.
@@ -542,6 +556,7 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
 
   // A prompt nobody answers, retired by Chromium on the next navigation: the
   // app has to hear it, and its late answer to the dead id must say nothing.
+  await resetOrigin("r5");
   await page.send("Page.navigate", { url: `${base}?nd=none&slot=5` });
   await Bun.sleep(2500);
   await page.eval("window.ndGeo('5')", true).catch(() => "");
