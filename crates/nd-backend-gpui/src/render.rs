@@ -264,7 +264,7 @@ impl Build<'_> {
                     // macOS follows AppleActionOnDoubleClick; elsewhere a double click maximizes.
                     if cfg!(target_os = "macos") { window.titlebar_double_click() } else { window.zoom_window() }
                 } else {
-                    window.start_window_move();
+                    start_window_move(window);
                 }
             })
             .children(children)
@@ -367,3 +367,12 @@ pub fn drawn_controls(cx: &ChromeContext, window: &gpui::Window) -> AnyElement {
 
 pub const CONTROL_WIDTH: f32 = 46.;
 pub const CONTROL_HEIGHT: f32 = 32.;
+
+/// The OS move a drag region starts. `ND_DIAG_WINDOW=1` prints `nd: window move` once the request
+/// is out, so a tier 3 test moves the pointer only after the compositor can follow it.
+pub(crate) fn start_window_move(window: &mut gpui::Window) {
+    window.start_window_move();
+    if std::env::var_os("ND_DIAG_WINDOW").is_some_and(|v| v == "1") {
+        eprintln!("nd: window move");
+    }
+}

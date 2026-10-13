@@ -44,6 +44,9 @@ nd-backend-gpui = { workspace = true, optional = true }
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 nd-backend-gpui = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nd-os-linux = { workspace = true }
+
 # Tier 2 gate: a matugen `theme.json` write recolours a running app within 100 ms. AppKit owns
 # the main thread, so libtest's harness is off.
 [[test]]

@@ -868,9 +868,11 @@ target/action (about 1.7 ms per click in the old repo).
 macOS: input posted as `NSEvent`s into the app's queue (no TCC, window may be in the background);
 `--real` uses the `ndshell` HID helper; gestures synthesised at the WindowServer layout fields;
 `ndshell grant` writes TCC rows with SIP off keyed to the signing identifier and real path;
-`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one
-`HYPRLAND_HEADLESS_ONLY=1` Hyprland per test with virtual pointer and keyboard,
-`ext-image-copy-capture`, `wp_presentation`; gestures injected at the platform event layer.
+`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one headless Hyprland
+per test in a private runtime dir, nested on a headless labwc that lends it a render node (Hyprland
+0.56 ignores `HYPRLAND_HEADLESS_ONLY` and its headless backend has no allocator without a seat),
+with virtual pointer and keyboard, `ext-image-copy-capture`, `wp_presentation`; a headless Weston
+for the client-decorated path; gestures injected at the platform event layer.
 Windows: processes started by OpenSSH run outside the interactive desktop, so a resident
 `ndshell agent` starts at logon in the user's session (Task Scheduler, interactive) and `nd test`
 reaches it over ssh or a named pipe; it runs `SendInput` and Windows.Graphics.Capture jobs, refuses
