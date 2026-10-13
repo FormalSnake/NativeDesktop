@@ -14,13 +14,15 @@ use nd_components::{PaneCollapsed, PaneProps, PaneRole};
 use nd_core::Size;
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::NSLayoutConstraint;
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSResponder, NSSplitViewController, NSSplitViewItem, NSView, NSViewController,
+    NSAutoresizingMaskOptions, NSResponder, NSSplitViewController, NSSplitViewItem, NSView, NSViewController, NSWindow,
+    NSWindowOrderingMode,
 };
-use objc2_foundation::{MainThreadMarker, NSRect, NSSize};
+use objc2_foundation::{MainThreadMarker, NSArray, NSRect, NSSize};
 
 use crate::look::ViewLook;
-use crate::views::NdLayerView;
+use crate::views::{NdLayerView, NdRootView};
 
 pub(crate) type Hook = Rc<dyn Fn()>;
 
@@ -73,6 +75,9 @@ impl NdPaneView {
     fn new(mtm: MainThreadMarker, child: &NSView) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(PaneIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
+        // Placed by `layout` alone; an autoresizing mask's constraints would pin the pane to the
+        // content's last size and stop the split view from resizing it.
+        child.setTranslatesAutoresizingMaskIntoConstraints(false);
         this.addSubview(child);
         *this.ivars().child.borrow_mut() = Some(child.retain());
         this
@@ -197,11 +202,6 @@ impl ScaffoldNative {
     pub fn new(mtm: MainThreadMarker) -> Self {
         let host = NdLayerView::new(mtm, &ViewLook::default());
         let controller = NSSplitViewController::new(mtm);
-        let split = controller.view();
-        split.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        host.addSubview(&split);
         Self { host, controller, panes: Vec::new() }
     }
 
@@ -238,13 +238,38 @@ impl ScaffoldNative {
     pub fn has_sidebar(&self) -> bool {
         self.panes.iter().any(|(_, r)| *r == PaneRole::Sidebar)
     }
+}
 
-    /// Lays the split view out now, so the panes have their sizes before nd measures them.
-    pub fn settle(&self) {
-        let split = self.controller.view();
-        if split.frame() != self.host.bounds() {
-            split.setFrame(self.host.bounds());
-        }
-        split.layoutSubtreeIfNeeded();
-    }
+/// Makes the split view controller the window's content view controller, the one hosting
+/// path AppKit gives the floating Liquid Glass sidebar on macOS 26 and later. nd's root view
+/// stays in the window, on top of the split view and transparent to clicks outside nd's
+/// own views, so overlays still draw above the panes and layout still runs from it.
+pub(crate) fn install(controller: &NSSplitViewController, host: &NSView, window: &NSWindow, root: &NdRootView) {
+    let frame = window.frame();
+    window.setContentViewController(Some(controller));
+    // Taking a content view controller resizes the window to the controller's fitting size.
+    window.setFrame_display(frame, true);
+    let view = controller.view();
+    // Pinned by constraints, not an autoresizing mask: the mask's constraints would hold the
+    // root's current size and keep the split view from shrinking with the window.
+    root.setTranslatesAutoresizingMaskIntoConstraints(false);
+    view.addSubview_positioned_relativeTo(root, NSWindowOrderingMode::Above, None);
+    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+        root.leadingAnchor().constraintEqualToAnchor(&view.leadingAnchor()),
+        root.trailingAnchor().constraintEqualToAnchor(&view.trailingAnchor()),
+        root.topAnchor().constraintEqualToAnchor(&view.topAnchor()),
+        root.bottomAnchor().constraintEqualToAnchor(&view.bottomAnchor()),
+    ]));
+    root.set_passes_through(Some(host));
+}
+
+/// Gives the window its plain content view back.
+pub(crate) fn uninstall(window: &NSWindow, root: &NdRootView) {
+    let frame = window.frame();
+    root.set_passes_through(None);
+    root.removeFromSuperview();
+    root.setTranslatesAutoresizingMaskIntoConstraints(true);
+    window.setContentViewController(None);
+    window.setContentView(Some(root));
+    window.setFrame_display(frame, true);
 }

@@ -223,8 +223,10 @@ impl ToolbarNative {
 
     fn apply_display(&self) {
         self.toolbar.setDisplayMode(match self.props.display {
-            nd_components::ToolbarDisplay::Automatic => NSToolbarDisplayMode::Default,
-            nd_components::ToolbarDisplay::IconOnly => NSToolbarDisplayMode::IconOnly,
+            // The unified toolbar shows icons; labels are for the overflow menu.
+            nd_components::ToolbarDisplay::Automatic | nd_components::ToolbarDisplay::IconOnly => {
+                NSToolbarDisplayMode::IconOnly
+            }
             nd_components::ToolbarDisplay::IconAndLabel => NSToolbarDisplayMode::IconAndLabel,
         });
     }
@@ -248,7 +250,11 @@ impl ToolbarNative {
         self.dirty.set(false);
         let mut items = Vec::new();
         let mut identifiers: Vec<Retained<NSString>> = Vec::new();
-        let leading = entries.iter().take_while(|e| matches!(e, Entry::Item(_, true))).count();
+        // The sidebar's own section: leading items and the sidebar toggle, as in Apple's apps.
+        let leading = entries
+            .iter()
+            .take_while(|e| matches!(e, Entry::Item(_, true) | Entry::System(SystemItem::ToggleSidebar)))
+            .count();
         for (i, entry) in entries.into_iter().enumerate() {
             if i == leading
                 && let Some(split) = split

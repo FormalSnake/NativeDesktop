@@ -28,6 +28,11 @@ pub struct RootIvars {
     /// Content covers the whole window, title bar included: a scaffold (whose split view
     /// insets its panes itself) or a custom title bar.
     full_size: Cell<bool>,
+    /// Lies over a scaffold's split view: a click that lands on no nd view of its own falls
+    /// through to the panes below.
+    passes_through: Cell<bool>,
+    /// Containers that pass clicks through with it (the scaffold's host view).
+    pass_views: RefCell<Vec<Retained<NSView>>>,
 }
 
 define_class!(
@@ -42,6 +47,12 @@ define_class!(
         #[unsafe(method(isFlipped))]
         fn is_flipped(&self) -> bool {
             true
+        }
+
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, point: NSPoint) -> Option<Retained<NSView>> {
+            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
+            if self.ivars().passes_through.get() && hit.as_ref().is_some_and(|h| self.passes(h)) { None } else { hit }
         }
 
         #[unsafe(method(setFrameSize:))]
@@ -84,6 +95,22 @@ impl NdRootView {
     /// app content never sits under the OS title bar.
     pub(crate) fn content(&self) -> &NdLayerView {
         self.ivars().content.get().expect("content view")
+    }
+
+    /// Lets clicks that hit only the root, its content view or `via` reach the views below.
+    /// `None` makes the root take its clicks again.
+    pub(crate) fn set_passes_through(&self, via: Option<&NSView>) {
+        self.ivars().passes_through.set(via.is_some());
+        *self.ivars().pass_views.borrow_mut() = via.map(|v| v.retain()).into_iter().collect();
+    }
+
+    /// `view` is the root, its content view, or a pass-through container.
+    fn passes(&self, view: &NSView) -> bool {
+        let ptr: *const NSView = view;
+        let content = self.ivars().content.get().map(|c| Retained::as_ptr(c).cast::<NSView>());
+        std::ptr::eq(ptr, (self as *const Self).cast())
+            || content.is_some_and(|c| std::ptr::eq(ptr, c))
+            || self.ivars().pass_views.borrow().iter().any(|v| std::ptr::eq(ptr, Retained::as_ptr(v)))
     }
 
     pub(crate) fn set_full_size(&self, full: bool) {

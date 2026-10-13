@@ -343,12 +343,15 @@ impl State {
     fn pane_hook(&self) -> crate::scaffold::Hook {
         let root = objc2::rc::Weak::from_retained(&self.window().root);
         let weak = self.weak.clone();
+        // The split view resizes panes inside the window's own layout pass, which would drop a
+        // needs-layout set now; the next turn lays the panes' content out at their new size.
         Rc::new(move || {
-            if let Some(root) = root.load() {
-                root.setNeedsLayout(true);
-            }
+            let root = root.clone();
             let weak = weak.clone();
             crate::events::defer(move || {
+                if let Some(root) = root.load() {
+                    root.setNeedsLayout(true);
+                }
                 if let Some(state) = weak.upgrade() {
                     AppKitBackend(state).check_collapses();
                 }
@@ -627,8 +630,15 @@ impl Backend for AppKitBackend {
             }
             NodeKind::Widget(w) if is::<Scaffold>(w) => {
                 let _: &ScaffoldProps = props(p, "Scaffold");
-                state.window().root.set_full_size(true);
-                Native::Scaffold(ScaffoldNative::new(mtm))
+                let record = state.window();
+                record.root.set_full_size(true);
+                let scaffold = ScaffoldNative::new(mtm);
+                // Swapping the window's content view inside its own layout pass leaves the new
+                // one at a stale size; the next turn is outside it.
+                let (window, root, controller, host) =
+                    (record.window.clone(), record.root.clone(), scaffold.controller.clone(), scaffold.host.clone());
+                crate::events::defer(move || crate::scaffold::install(&controller, &host, &window, &root));
+                Native::Scaffold(scaffold)
             }
             NodeKind::Widget(w) if is::<Pane>(w) => Native::Pane(PaneNative::new(mtm, props::<PaneProps>(p, "Pane"))),
             NodeKind::Widget(w) if is::<Toolbar>(w) => {
@@ -792,9 +802,6 @@ impl Backend for AppKitBackend {
         if view.frame() != rect {
             view.setFrame(rect);
         }
-        if let Some(Native::Scaffold(s)) = state.nodes.get(&node) {
-            s.settle();
-        }
     }
 
     fn surface(&mut self, _node: NodeId, _op: &SurfaceOp) {}
@@ -819,9 +826,10 @@ impl Backend for AppKitBackend {
         state.node_window.remove(&node);
         state.scopes.remove(&node);
         state.system_items.remove(&node);
-        if let Some(Native::Scaffold(_)) = native
+        if let Some(Native::Scaffold(scaffold)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {
+            crate::scaffold::uninstall(&record.window, &record.root);
             record.root.set_full_size(false);
         }
         drop(state);

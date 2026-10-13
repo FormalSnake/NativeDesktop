@@ -7,12 +7,21 @@ dir = "target/nextest"
 [test-groups.real-window]
 max-threads = 1
 
+# Tier 2 tests whose checks need their window key in the active app (posted key events,
+# active-state goldens) take focus from each other, so they run one at a time.
+[test-groups.key-window]
+max-threads = 1
+
 # Tier 1 (logic, TestBackend) and tier 2 (in-process backends) run in parallel; every test is its
 # own process. Default profile for local runs: everything except tier 3.
 [profile.default]
 default-filter = "not test(/(^|::)(real::|real_)/) and not test(/^gate_m1::nd_new_builds/)"
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+[[profile.default.overrides]]
+filter = "test(/^gate_(m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents))$/)"
+test-group = "key-window"
 
 [[profile.default.overrides]]
 filter = "test(/(^|::)(real::|real_)/)"
@@ -60,6 +69,10 @@ filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike)"
 test-group = "real-window"
 
 # `nd new` compiles a whole app from cold, so its gate gets room and stays out of the default run.
+[[profile.gate.overrides]]
+filter = "test(/^gate_(m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents))$/)"
+test-group = "key-window"
+
 [[profile.gate.overrides]]
 filter = "test(/^gate_m1::nd_new_builds/)"
 slow-timeout = { period = "300s", terminate-after = 4 }
