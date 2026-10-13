@@ -91,6 +91,9 @@ pub(crate) struct Tree {
     /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
     /// so a view that moved to a parent reconciled later is adopted there, not rebuilt.
     orphans: Vec<EntityId>,
+    /// Views rendered in this frame, mounted or re-rendered. One that notifies itself while
+    /// rendering stays dirty for the next frame instead of rendering again in this one.
+    rendered: HashSet<EntityId>,
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
     pub(crate) dispatch: DispatchTree<App>,
@@ -228,6 +231,7 @@ impl Tree {
             insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
+            rendered: HashSet::new(),
             dispatch,
         }
     }
@@ -318,6 +322,7 @@ impl Tree {
     fn render_view(&mut self, view: &AnyView, window: &mut Window, app: &mut App) -> AnyElement {
         let id = view.entity_id();
         app.dirty.remove(&id);
+        self.rendered.insert(id);
         *app.render_counts.entry(id).or_default() += 1;
         view.render(window, app)
     }
@@ -742,6 +747,7 @@ impl App {
         };
         let outer = self.current_window.replace(id);
         tree.placed.clear();
+        tree.rendered.clear();
         let root_view = tree.root_view.clone();
         tree.placed.insert(root_view.entity_id());
         if !tree.views.contains_key(&root_view.entity_id()) {
@@ -759,12 +765,11 @@ impl App {
         }
         // Each view renders at most once per frame; one that notifies itself while rendering
         // stays dirty for the next frame instead of spinning here.
-        let mut rendered = HashSet::new();
         loop {
             let mut dirty: Vec<(u32, EntityId)> = self
                 .dirty
                 .iter()
-                .filter(|e| !rendered.contains(*e) && !tree.orphans.contains(e))
+                .filter(|e| !tree.rendered.contains(*e) && !tree.orphans.contains(e))
                 .filter_map(|e| tree.views.get(e).map(|v| (v.depth, *e)))
                 .collect();
             if dirty.is_empty() {
@@ -774,7 +779,7 @@ impl App {
             for (_, e) in dirty {
                 // A parent rendered earlier in this pass may have unmounted it or mounted it fresh.
                 let live = tree.views.contains_key(&e) && !tree.orphans.contains(&e);
-                if self.dirty.contains(&e) && live && rendered.insert(e) {
+                if self.dirty.contains(&e) && live && !tree.rendered.contains(&e) {
                     tree.rerender_view(e, &mut window, self);
                 }
             }
