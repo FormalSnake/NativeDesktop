@@ -1013,11 +1013,11 @@ thumbnails in `nd-system`, volumes and favourites as a source list, a path bread
 | External drive latency, APFS unreadable on Linux | Measured in M0; mount guard; g815 local NVMe |
 | Rust reload slower than Solid HMR | Fast relaunch with state restore, live theme/settings; `subsecond` evaluated in M10 |
 
-### Open questions for the user
-1. Update feed host: Cloudflare R2 under `updates.canarycoders.es`, or GitHub Releases?
-2. Signing: Azure Artifact Signing (about $10/month through CanaryCoders as an EU organization)
-   for Windows, and is an Apple Developer ID available?
-3. macOS floor: 14 (display links per view, vibrancy below 26) or 26 (glass only)?
-4. Publishing: crates.io in lockstep under MIT like the apps, or git-only for now?
-5. The `zig` branch: keep cutting patch releases for Lynk (nativebrowser on 0.4.56) until M15, or
-   freeze it now?
+### Decisions on the former open questions (2026-10-13)
+1. Update feed: Cloudflare R2 under `updates.canarycoders.es`, feed signed with ed25519.
+2. Signing: still open; decided at M10 (Azure Artifact Signing through CanaryCoders, Apple Developer ID).
+3. macOS floor: 14. Sonoma and Sequoia still hold a meaningful share, and the cost is small because
+   structural elements use system components that exist on 14; the forks are `glass()` falling back to
+   NSVisualEffectView below 26 and Swift `#available` branches for 26-only APIs. CI covers 14 and current.
+4. Publishing: git-only for now; crates.io once the API settles.
+5. The `zig` branch is frozen at v0.5.10. No users depend on it, so nativebrowser waits for M15.
