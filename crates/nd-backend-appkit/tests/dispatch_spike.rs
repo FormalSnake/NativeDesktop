@@ -3,12 +3,13 @@
 //! exactly like hardware input. Prints `ND_DISPATCH_SPIKE_OK` and exits 0 when every check
 //! passes. `ND_SPIKE_SHOT=<path>` also captures the window with `screencapture`.
 
-#[cfg(not(target_os = "macos"))]
-fn main() {}
+mod harness;
 
-#[cfg(target_os = "macos")]
 fn main() {
-    spike::run();
+    #[cfg(target_os = "macos")]
+    harness::main("gate_m0::dispatch_spike", || spike::run());
+    #[cfg(not(target_os = "macos"))]
+    harness::main("gate_m0::dispatch_spike", || {});
 }
 
 #[cfg(target_os = "macos")]

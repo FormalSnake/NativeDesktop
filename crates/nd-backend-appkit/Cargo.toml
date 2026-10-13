@@ -28,9 +28,11 @@ harness = false
 name = "backend_seam"
 harness = false
 
-# Moves the real cursor, so it is an example (never run by `cargo test`); see its header.
-[[example]]
-name = "m0_resize_gate"
+# Tier 3: moves the real cursor. Named `real_*`, so only nextest's `real` and `gate` profiles
+# run it; plain `cargo test` skips it unless ND_REAL=1.
+[[test]]
+name = "real_resize_gate"
+harness = false
 
 [dev-dependencies]
 nd-gpui.workspace = true

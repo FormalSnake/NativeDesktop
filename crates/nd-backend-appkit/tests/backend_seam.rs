@@ -2,12 +2,13 @@
 //! exactly as the reconciler sends them, and every check reads AppKit's own state back.
 //! Prints `ND_BACKEND_SEAM_OK`.
 
-#[cfg(not(target_os = "macos"))]
-fn main() {}
+mod harness;
 
-#[cfg(target_os = "macos")]
 fn main() {
-    seam::run();
+    #[cfg(target_os = "macos")]
+    harness::main("gate_m0::appkit_seam", || seam::run());
+    #[cfg(not(target_os = "macos"))]
+    harness::main("gate_m0::appkit_seam", || {});
 }
 
 #[cfg(target_os = "macos")]

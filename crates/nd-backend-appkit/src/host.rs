@@ -5,6 +5,8 @@
 //! the window's frame in global top-left coordinates and the traffic light origin.
 //! `ND_DEBUG_EXPOSE=1` paints the window's own background magenta, so any area content fails to
 //! cover (a frame laid out late during a resize) shows up in captures.
+//! `ND_DEBUG_DEFER_LIVE_LAYOUT=1` skips layout until a live resize ends: the bug the resize gate
+//! exists to catch, kept so the gate can prove it catches it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -39,6 +41,7 @@ struct Inner {
     lights: TrafficLights,
     clock: FrameClock,
     diag: bool,
+    defer_live_layout: bool,
     live_layouts: Cell<Option<u32>>,
     last_lights: Cell<Option<Point>>,
     delegate: RefCell<Option<Retained<NdWindowDelegate>>>,
@@ -83,6 +86,10 @@ impl Inner {
     }
 }
 
+fn env_flag(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| v == "1")
+}
+
 pub struct DelegateIvars {
     host: Weak<Inner>,
 }
@@ -110,6 +117,7 @@ define_class!(
             self.with(|h| {
                 let layouts = h.live_layouts.take().unwrap_or(0);
                 h.diag(&format!("live resize end layouts={layouts}"));
+                h.root.setNeedsLayout(true);
                 h.place_lights();
                 h.diag_frame();
             });
@@ -186,10 +194,10 @@ impl WindowHost {
     ) -> Self {
         use objc2::Message;
         let mtm = MainThreadMarker::from(window);
-        let diag = std::env::var_os("ND_DIAG_WINDOW").is_some_and(|v| v == "1");
+        let diag = env_flag("ND_DIAG_WINDOW");
         let root = NdRootView::new(mtm);
         window.setContentView(Some(&root));
-        if std::env::var_os("ND_DEBUG_EXPOSE").is_some_and(|v| v == "1") {
+        if env_flag("ND_DEBUG_EXPOSE") {
             window.setBackgroundColor(Some(&NSColor::magentaColor()));
         }
         let clock = FrameClock::new(mtm, &root, diag);
@@ -202,6 +210,7 @@ impl WindowHost {
             lights: TrafficLights::new(options.traffic_lights),
             clock,
             diag,
+            defer_live_layout: env_flag("ND_DEBUG_DEFER_LIVE_LAYOUT"),
             live_layouts: Cell::new(None),
             last_lights: Cell::new(None),
             delegate: RefCell::new(None),
@@ -252,13 +261,15 @@ impl WindowHost {
     pub fn on_layout(&self, layout: impl Fn(Size) + 'static) {
         let host = Rc::downgrade(&self.inner);
         self.inner.root.set_layout_hook(Some(Rc::new(move |size| {
-            layout(size);
-            if let Some(host) = host.upgrade() {
-                if let Some(n) = host.live_layouts.get() {
-                    host.live_layouts.set(Some(n + 1));
-                }
-                host.place_lights();
+            let Some(host) = host.upgrade() else { return };
+            let live = host.live_layouts.get();
+            if let Some(n) = live {
+                host.live_layouts.set(Some(n + 1));
             }
+            if live.is_none() || !host.defer_live_layout {
+                layout(size);
+            }
+            host.place_lights();
         })));
     }
 
