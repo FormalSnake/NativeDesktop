@@ -34,5 +34,6 @@ pub use nd_backend_appkit as appkit;
 pub mod test {
     pub use nd_ui::test_app::TestApp;
     pub use nd_ui::test_backend::TestBackend;
-    pub use nd_ui::{ButtonProps, NodeId, Size, TextProps};
+    pub use nd_ui::semantics::{ActionError, SemanticAction};
+    pub use nd_ui::{ButtonProps, NodeId, Role, SemanticNode, Size, TextProps};
 }

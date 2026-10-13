@@ -1,0 +1,4 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "dev.formalsnake.gallery"
+display_name = "Gallery"
