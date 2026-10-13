@@ -31,7 +31,11 @@ fn build() -> Result<(), String> {
     let manifest_dir = PathBuf::from(var("CARGO_MANIFEST_DIR")?);
     let out_dir = PathBuf::from(var("OUT_DIR")?);
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed=nativedesktop.toml");
+    // A missing path counts as changed on every build, which would rerun the Swift build after
+    // each edit; an app that adds the file later has to touch build.rs once.
+    if manifest_dir.join("nativedesktop.toml").exists() {
+        println!("cargo::rerun-if-changed=nativedesktop.toml");
+    }
 
     let sdk = check_toolchain()?;
     let packages = collect_packages(&manifest_dir)?;
