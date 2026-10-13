@@ -17,6 +17,8 @@ build = ["dep:toml"]
 # milestone feature.
 settings-ui = []
 test = ["runtime", "nd-ui/test-support"]
+# `nd::audit`, the tier 2 appearance audit: both backend kinds, the GPUI one headless.
+audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
 # Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
 gpui = ["dep:nd-backend-gpui"]
@@ -35,6 +37,9 @@ nd-theme = { workspace = true, optional = true }
 nd-components = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 
+[dev-dependencies]
+nd = { path = ".", features = ["audit"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
 nd-backend-gpui = { workspace = true, optional = true }
@@ -51,4 +56,13 @@ harness = false
 # Tier 2: every macOS chrome intent mapped to its system component, read back off AppKit.
 [[test]]
 name = "chrome"
+harness = false
+
+# Tier 2: every chrome intent through `nd::audit`, and the audit catching a view that breaks it.
+[[test]]
+name = "appearance"
+harness = false
+
+[[test]]
+name = "appearance_catches"
 harness = false

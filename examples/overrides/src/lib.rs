@@ -100,6 +100,11 @@ pub fn app() -> Application {
         .patterns(Patterns { tooltips: Pattern::Drawn, ..Patterns::default() })
 }
 
+/// The colours `theme.rs` names on purpose, which the appearance audit accepts as tokens.
+pub fn theme_colors() -> [Hsla; 2] {
+    [theme::forest(), theme::warm_glass_tint()]
+}
+
 /// The app-level theme override, for hosts that build the app themselves (tests).
 pub fn app_theme() -> ThemeOverride {
     theme::app()

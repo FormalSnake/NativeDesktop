@@ -1,6 +1,6 @@
 //! Colour helpers the token derivation uses: sRGB mixing, alpha and hex parsing.
 
-use nd_gpui::gpui::{Hsla, Rgba};
+use nd_gpui::gpui::{Hsla, Rgba, black, white};
 
 /// `#rrggbb` or `#rrggbbaa`, with or without the `#`. `None` for anything else.
 pub fn parse_hex(text: &str) -> Option<Hsla> {
@@ -52,6 +52,34 @@ pub fn luminance(color: Hsla) -> f32 {
     let c = color.to_rgb();
     let lin = |v: f32| if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
     0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// WCAG contrast ratio of two colours, each composited over itself as opaque.
+pub fn contrast(a: Hsla, b: Hsla) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// `color` made just strong enough to reach `ratio` against every opaque colour in `under`:
+/// a translucent colour gains alpha, an opaque one moves towards black or white. Colours that
+/// already pass come back unchanged.
+pub fn legible(color: Hsla, under: &[Hsla], ratio: f32) -> Hsla {
+    let passes = |c: Hsla| under.iter().all(|b| contrast(over(c, *b), *b) >= ratio);
+    if passes(color) {
+        return color;
+    }
+    let towards = with_alpha(color, 1.);
+    let ink = if under.iter().all(|b| is_dark(*b)) { white() } else { black() };
+    for step in 1..=100 {
+        let t = step as f32 / 100.;
+        let candidate =
+            if color.a < 1. { with_alpha(color, color.a + (1. - color.a) * t) } else { mix(towards, ink, t) };
+        if passes(candidate) {
+            return candidate;
+        }
+    }
+    with_alpha(ink, 1.)
 }
 
 /// True for colours that read as dark (text on them should be light).

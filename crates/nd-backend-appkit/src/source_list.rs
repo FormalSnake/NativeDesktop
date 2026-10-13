@@ -163,7 +163,7 @@ define_class!(
 );
 
 /// A source list cell: the system's text field and image view in an `NSTableCellView`, the
-/// badge a secondary label at the trailing edge. Spacing is AppKit's system spacing and sizes
+/// badge a label at the trailing edge. Spacing is AppKit's system spacing and sizes
 /// are the controls' own, so the row matches Finder's and Mail's.
 fn cell(mtm: MainThreadMarker, row: &Row) -> Retained<NSView> {
     let cell = NSTableCellView::new(mtm);
@@ -191,7 +191,8 @@ fn cell(mtm: MainThreadMarker, row: &Row) -> Retained<NSView> {
     match row.badge.as_ref().filter(|_| !row.group) {
         Some(badge) => {
             let label = NSTextField::labelWithString(&NSString::from_str(badge), mtm);
-            label.setTextColor(Some(&NSColor::secondaryLabelColor()));
+            // secondaryLabelColor is 3.95:1 on a light sidebar, under WCAG AA for text this size.
+            label.setTextColor(Some(&NSColor::labelColor()));
             label.setTranslatesAutoresizingMaskIntoConstraints(false);
             cell.addSubview(&label);
             constraints.push(label.trailingAnchor().constraintEqualToAnchor(&cell.trailingAnchor()));

@@ -215,8 +215,10 @@ impl Build<'_> {
                     let key = item.id.clone();
                     let fill = selected.then_some(look.control_active);
                     let color = self.text_run(id, &item.title, Run::BODY, None, fill);
+                    // A selected row's fill leaves secondary text short of contrast.
+                    let quiet = if selected { theme.text.primary } else { theme.text.secondary };
                     let badge = item.badge.as_ref().map(|b| {
-                        let color = self.text_run(id, b, Run::BODY, Some(theme.text.secondary), fill);
+                        let color = self.text_run(id, b, Run::BODY, Some(quiet), fill);
                         div().text_color(color).child(b.clone())
                     });
                     list = list.child(

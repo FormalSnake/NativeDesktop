@@ -76,8 +76,8 @@ pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
 
 pub struct Application {
     manifest: Manifest,
-    theme: Option<crate::theme::ThemeOverride>,
-    patterns: crate::chrome::Patterns,
+    pub(crate) theme: Option<crate::theme::ThemeOverride>,
+    pub(crate) patterns: crate::chrome::Patterns,
 }
 
 impl Application {

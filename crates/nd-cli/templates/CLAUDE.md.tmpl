@@ -6,7 +6,8 @@ macOS) through the `nd` crate. It starts as a click counter in `src/app.rs`.
 ## Commands
 
 - `cargo run`: open the app. `{{env}}_DEMO=1` starts it in demo mode (fixed state).
-- `nd check`: fmt, clippy with the framework lint table, framework lints. Run before every commit.
+- `nd check`: fmt, clippy with the framework lint table, framework lints and the appearance
+  audit (`tests/appearance.rs`). Run before every commit.
 - `nd test`: tiers 1 and 2. `nd test --tier real` runs tier 3 (needs a window server).
 - `nd check --release` also fails while the README still has its `nd:` HTML-comment placeholders.
 
@@ -16,6 +17,8 @@ macOS) through the `nd` crate. It starts as a click counter in `src/app.rs`.
   view code. `cfg(target_os)` belongs in native widget modules, with a reason comment elsewhere.
 - Colours, radii, spacing and fonts come from tokens (`cx.theme()`), never literals. Colour
   constructors live in the theme file only.
+- Every window you add gets a `.window(..)` in `tests/appearance.rs`: the audit fails any
+  colour that is not a theme token and any text under WCAG contrast, in light, dark and matugen.
 - Any list that can pass 50 rows uses `list()`. No scroll container fed by `.children(..)`.
 - Floating things (menus, popovers, tooltips) go through `cx.overlay` or a built-in.
 - Timers run on the executor. No `Instant::now`, `thread::sleep` or `smol::Timer` in UI code.

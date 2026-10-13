@@ -4,6 +4,8 @@
 //! (elsewhere, and on macOS with the `gpui` feature and `ND_BACKEND=gpui`); the theme is
 //! `nd-theme`'s; the chrome intents, `glass()`, menus and dialogs are `nd-components`'.
 
+#[cfg(feature = "audit")]
+pub mod audit;
 #[cfg(feature = "build")]
 pub mod build;
 #[cfg(feature = "runtime")]

@@ -17,9 +17,15 @@ name = "overrides"
 path = "src/main.rs"
 
 [dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
 png = "0.17"
 
 # Tier 2 goldens of the macOS look. AppKit owns the main thread, so libtest's harness is off.
 [[test]]
 name = "goldens"
+harness = false
+
+# Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
+[[test]]
+name = "appearance"
 harness = false

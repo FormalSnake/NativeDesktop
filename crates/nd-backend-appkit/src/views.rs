@@ -17,7 +17,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
-use crate::look::{TextLook, ViewLook};
+use crate::look::{Color, TextLook, ViewLook};
 
 pub(crate) type LayoutHook = Rc<dyn Fn(Size)>;
 
@@ -147,6 +147,9 @@ pub struct LayerIvars {
     drag: Cell<bool>,
     /// Right clicks report a context menu request to the node.
     menu: RefCell<Option<(nd_ui::events::Emit, crate::events::Wake)>>,
+    /// Painted when the style sets no background: the window background, under a subtree
+    /// scope that flips the appearance, so text inside reads on it.
+    surface: Cell<Option<Color>>,
 }
 
 impl Default for LayerIvars {
@@ -157,6 +160,7 @@ impl Default for LayerIvars {
             radius_scale: Cell::new(1.),
             drag: Cell::new(false),
             menu: RefCell::new(None),
+            surface: Cell::new(None),
         }
     }
 }
@@ -220,7 +224,7 @@ define_class!(
         fn update_layer(&self) {
             let Some(layer) = self.layer() else { return };
             let props = self.ivars().props.borrow();
-            let background = props.background.map(|c| c.ns_color().CGColor());
+            let background = props.background.or(self.ivars().surface.get()).map(|c| c.ns_color().CGColor());
             layer.setBackgroundColor(background.as_deref());
             let radius = props.corner_radius * self.ivars().radius_scale.get();
             layer.setCornerRadius(radius.into());
@@ -243,6 +247,19 @@ impl NdLayerView {
         this.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::OnSetNeedsDisplay);
         this.set_props(props);
         this
+    }
+
+    /// What the view paints, the scope surface included.
+    pub(crate) fn look(&self) -> ViewLook {
+        let mut look = self.ivars().props.borrow().clone();
+        look.background = look.background.or(self.ivars().surface.get());
+        look
+    }
+
+    pub(crate) fn set_surface(&self, surface: Option<Color>) {
+        if self.ivars().surface.replace(surface) != surface {
+            self.setNeedsDisplay(true);
+        }
     }
 
     pub(crate) fn set_focusable(&self) {
@@ -332,6 +349,10 @@ impl NdTextView {
         this.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::OnSetNeedsDisplay);
         this.set_props(props);
         this
+    }
+
+    pub(crate) fn look(&self) -> Option<TextLook> {
+        self.ivars().props.borrow().clone()
     }
 
     pub(crate) fn set_props(&self, props: &TextLook) {
