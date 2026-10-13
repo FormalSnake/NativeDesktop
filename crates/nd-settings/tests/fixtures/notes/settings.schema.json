@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "NewNoteFolder": {
+      "oneOf": [
+        {
+          "const": "current",
+          "description": "The folder shown in the sidebar.",
+          "type": "string"
+        },
+        {
+          "const": "pinned",
+          "description": "Always pinned.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Mirrors `examples/notes/src/settings.rs`, which cannot build until M6.",
+  "properties": {
+    "compact_rows": {
+      "default": false,
+      "description": "One-line rows without a preview.",
+      "type": "boolean",
+      "x-nd-order": 0
+    },
+    "editor_font_size": {
+      "default": 15.0,
+      "description": "Editor text size in points, before pinch zoom.",
+      "format": "float",
+      "maximum": 24,
+      "minimum": 11,
+      "type": "number",
+      "x-nd-order": 1,
+      "x-nd-step": 1.0
+    },
+    "new_note_folder": {
+      "$ref": "#/$defs/NewNoteFolder",
+      "default": "current",
+      "description": "Where new notes start.",
+      "x-nd-order": 3
+    },
+    "spellcheck": {
+      "default": true,
+      "description": "Underline misspelled words.",
+      "type": "boolean",
+      "x-nd-order": 2
+    }
+  },
+  "title": "NotesSettings",
+  "type": "object"
+}
