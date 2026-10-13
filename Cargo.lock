@@ -1355,6 +1355,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "discord-rpc"
+version = "0.1.0"
+dependencies = [
+ "nd-ipc",
+ "nd-plugin",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6449,6 +6463,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
