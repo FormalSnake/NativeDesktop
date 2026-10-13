@@ -21,3 +21,15 @@ toml = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
+
+# The design-target examples type-check against this crate until they move to `examples/`
+# (M1): `cargo check -p nd --examples --features build`.
+[[example]]
+name = "hello"
+path = "../../docs/plan/examples/hello/src/main.rs"
+required-features = ["runtime"]
+
+[[example]]
+name = "hello-build"
+path = "../../docs/plan/examples/hello/build.rs"
+required-features = ["build"]

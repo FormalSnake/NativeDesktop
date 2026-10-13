@@ -7,7 +7,13 @@ use std::collections::HashMap;
 use nd_core::{NodeId, Rect, Size, WindowId};
 
 use crate::backend::{Backend, Constraint, NodeKind, Phase, Props, PropsPatch, SurfaceOp};
+use crate::events::EventQueue;
 use crate::transaction::Op;
+
+type MeasureFn = Box<dyn FnMut(NodeId, &Props, Constraint) -> Size>;
+/// Simulates a native widget's side effects on create and update, such as a delegate the
+/// setter fires synchronously. Gets the event queue a real widget would emit through.
+type WidgetHook = Box<dyn FnMut(NodeId, NodeKind, &Props, &EventQueue)>;
 
 /// One recorded backend call.
 #[derive(Clone, Debug)]
@@ -31,8 +37,10 @@ pub struct TestBackend {
     nodes: HashMap<NodeId, Node>,
     open: Option<(WindowId, Phase)>,
     focused: Option<NodeId>,
-    measure: Box<dyn FnMut(NodeId, Constraint) -> Size>,
+    measure: MeasureFn,
     retains_frames: bool,
+    events: EventQueue,
+    on_apply: Option<WidgetHook>,
 }
 
 impl Default for TestBackend {
@@ -48,8 +56,10 @@ impl TestBackend {
             nodes: HashMap::new(),
             open: None,
             focused: None,
-            measure: Box::new(|_, _| Size::default()),
+            measure: Box::new(|_, _, _| Size::default()),
             retains_frames: true,
+            events: EventQueue::default(),
+            on_apply: None,
         }
     }
 
@@ -59,8 +69,54 @@ impl TestBackend {
         self
     }
 
-    pub fn on_measure(&mut self, f: impl FnMut(NodeId, Constraint) -> Size + 'static) {
+    pub fn on_measure(&mut self, f: impl FnMut(NodeId, &Props, Constraint) -> Size + 'static) {
         self.measure = Box::new(f);
+    }
+
+    /// Runs `f` after every create and update, with the node's new props, inside the
+    /// transaction, the way a native setter runs.
+    pub fn on_apply(&mut self, f: impl FnMut(NodeId, NodeKind, &Props, &EventQueue) + 'static) {
+        self.on_apply = Some(Box::new(f));
+    }
+
+    pub fn events(&self) -> &EventQueue {
+        &self.events
+    }
+
+    /// Live nodes matching `f`, in id order.
+    pub fn find(&self, mut f: impl FnMut(NodeKind, &Props) -> bool) -> Vec<NodeId> {
+        let mut found: Vec<NodeId> =
+            self.nodes.iter().filter(|(_, n)| f(n.kind, &n.props)).map(|(id, _)| *id).collect();
+        found.sort();
+        found
+    }
+
+    /// Nodes created since the log was last taken.
+    pub fn created(&self) -> Vec<NodeId> {
+        self.ops()
+            .filter_map(|op| match op {
+                Op::Create { node, .. } => Some(*node),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Transactions committed since the log was last taken.
+    pub fn commits(&self) -> usize {
+        self.log.iter().filter(|r| matches!(r, Recorded::Commit(_))).count()
+    }
+
+    /// True while a transaction is open, for tests asserting what runs outside one.
+    pub fn in_transaction(&self) -> bool {
+        self.open.is_some()
+    }
+
+    fn applied(&mut self, node: NodeId) {
+        if let Some(mut hook) = self.on_apply.take() {
+            let n = &self.nodes[&node];
+            hook(node, n.kind, &n.props.clone(), &self.events);
+            self.on_apply = Some(hook);
+        }
     }
 
     pub fn log(&self) -> &[Recorded] {
@@ -167,6 +223,10 @@ impl TestBackend {
 }
 
 impl Backend for TestBackend {
+    fn set_event_queue(&mut self, events: EventQueue) {
+        self.events = events;
+    }
+
     fn begin(&mut self, window: WindowId) {
         assert!(self.open.is_none(), "TestBackend: begin inside an open transaction");
         self.open = Some((window, Phase::Create));
@@ -178,6 +238,7 @@ impl Backend for TestBackend {
         assert!(!self.nodes.contains_key(&node), "TestBackend: create of live {node:?}");
         self.nodes.insert(node, Node { kind, props: props.clone(), parent: None, children: Vec::new(), frame: None });
         self.log.push(Recorded::Op(Op::Create { node, kind, props: props.clone() }));
+        self.applied(node);
     }
 
     fn insert(&mut self, parent: NodeId, node: NodeId, before: Option<NodeId>) {
@@ -217,6 +278,7 @@ impl Backend for TestBackend {
         assert!(!patch.old.props_eq(&*patch.new), "TestBackend: update of {node:?} with equal props");
         n.props = patch.new.clone();
         self.log.push(Recorded::Op(Op::Update { node, patch: patch.clone() }));
+        self.applied(node);
     }
 
     fn set_frame(&mut self, node: NodeId, frame: Rect) {
@@ -275,9 +337,9 @@ impl Backend for TestBackend {
     }
 
     fn measure(&mut self, node: NodeId, constraint: Constraint) -> Size {
-        self.node(node, "measure");
+        let props = self.node(node, "measure").props.clone();
         self.log.push(Recorded::Measure(node, constraint));
-        (self.measure)(node, constraint)
+        (self.measure)(node, &props, constraint)
     }
 
     fn boundary_size(&self, _node: NodeId) -> Option<Size> {

@@ -1504,6 +1504,7 @@ dependencies = [
  "nd-core",
  "nd-gpui",
  "nd-ui",
+ "taffy",
 ]
 
 [[package]]

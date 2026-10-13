@@ -117,7 +117,7 @@ fn frames_are_dropped_for_a_backend_that_lays_out_itself() {
 #[test]
 fn measure_is_cached_by_constraint_until_props_change() {
     let (mut backend, mut cache) = mounted();
-    backend.on_measure(|_, c| match c.width {
+    backend.on_measure(|_, _, c| match c.width {
         AvailableSpace::Definite(w) => Size { width: w, height: 20. },
         _ => Size { width: 80., height: 20. },
     });
