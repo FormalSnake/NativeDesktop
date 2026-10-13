@@ -16,6 +16,7 @@
 mod choice;
 mod date;
 mod display;
+mod text;
 mod toggle;
 mod value;
 
@@ -113,6 +114,12 @@ pub(crate) fn create(kind: WidgetKind, p: &Props, cx: Ctx) -> Option<Box<dyn For
         Box::new(display::LabelControl::new(cx, props(p)))
     } else if is::<LinkKind>(kind) {
         Box::new(display::LinkControl::new(cx, props(p)))
+    } else if is::<TextFieldKind>(kind) {
+        Box::new(text::TextFieldControl::new(cx, props(p)))
+    } else if is::<TextAreaKind>(kind) {
+        Box::new(text::TextAreaControl::new(cx, props(p)))
+    } else if is::<ComboBoxKind>(kind) {
+        Box::new(text::ComboBoxControl::new(cx, props(p)))
     } else {
         return None;
     };
