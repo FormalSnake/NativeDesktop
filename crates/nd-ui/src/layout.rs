@@ -2,9 +2,13 @@
 //! the same on retained backends as inside GPUI. Rounding to the pixel grid is the backend's.
 
 use nd_gpui::gpui::{self, AbsoluteLength, DefiniteLength, Edges, Length, Refineable, StyleRefinement, px};
+use nd_gpui::layout::MinMax;
+use nd_gpui::taffy::{
+    self,
+    style::{Dimension, LengthPercentage, LengthPercentageAuto},
+};
 
 use crate::window::TitlebarInsets;
-use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 const REM: f32 = 16.;
 
@@ -35,6 +39,14 @@ fn dim(l: Length) -> Dimension {
     }
 }
 
+fn min_max(l: Length) -> MinMax {
+    match l {
+        Length::Definite(DefiniteLength::Absolute(a)) => MinMax::length(abs(a)),
+        Length::Definite(DefiniteLength::Fraction(f)) => MinMax::percent(f),
+        Length::Auto => MinMax::auto(),
+    }
+}
+
 fn rect<T: Clone + std::fmt::Debug + Default + PartialEq, U>(e: &Edges<T>, f: impl Fn(T) -> U) -> taffy::Rect<U> {
     taffy::Rect {
         top: f(e.top.clone()),
@@ -57,8 +69,8 @@ pub(crate) fn to_taffy(refinement: &StyleRefinement) -> taffy::Style {
         position: s.position.into(),
         inset: rect(&s.inset, lpa),
         size: size(&s.size, dim),
-        min_size: size(&s.min_size, dim),
-        max_size: size(&s.max_size, dim),
+        min_size: size(&s.min_size, min_max),
+        max_size: size(&s.max_size, min_max),
         aspect_ratio: s.aspect_ratio,
         margin: rect(&s.margin, lpa),
         padding: rect(&s.padding, lp),

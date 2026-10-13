@@ -13,8 +13,7 @@ use std::rc::Rc;
 
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_gpui::gpui::{KeyBinding, StyleRefinement};
-use taffy::TaffyTree;
-use taffy::prelude::TaffyMaxContent;
+use nd_gpui::taffy::{self, TaffyTree, prelude::TaffyMaxContent};
 
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch};
@@ -623,8 +622,11 @@ impl Tree {
             taffy::AvailableSpace::MinContent => AvailableSpace::MinContent,
             taffy::AvailableSpace::MaxContent => AvailableSpace::MaxContent,
         };
-        self.taffy
-            .compute_layout_with_measure(root, taffy::Size::MAX_CONTENT, |known, available, _, node, _| {
+        nd_gpui::layout::compute_with_measure(
+            &mut self.taffy,
+            root,
+            taffy::Size::MAX_CONTENT,
+            |known, available, node| {
                 let Some(node) = node else { return taffy::Size::ZERO };
                 let constraint = Constraint {
                     width: known.width.map_or(space(available.width), AvailableSpace::Definite),
@@ -632,8 +634,9 @@ impl Tree {
                 };
                 let size = cache.measure(backend, *node, constraint);
                 taffy::Size { width: known.width.unwrap_or(size.width), height: known.height.unwrap_or(size.height) }
-            })
-            .expect("taffy layout");
+            },
+        )
+        .expect("taffy layout");
         let mut ops = Vec::new();
         let mut stack = self.nodes[&self.root].native.clone();
         while let Some(n) = stack.pop() {

@@ -10,12 +10,18 @@ publish.workspace = true
 # GPUI's own platform layer (`gpui_platform`: the macOS, Linux and Windows hosts). Only GPUI
 # backends and the raw baseline need it; the AppKit backend never links `gpui_macos`.
 platform = ["dep:gpui_platform"]
-# gpui-fast in place of gpui-pre, for the raw baseline. nd-ui does not build on it yet: gpui-fast
-# pins taffy 0.14 and nd-ui converts GPUI styles into taffy 0.13 (decided at the M2 gate).
-fast = ["dep:gpui_fast", "dep:gpui_fast_platform"]
+# gpui-fast in place of gpui-pre everywhere `nd_gpui::gpui` is named, with the taffy it pins, so
+# nd-ui and the GPUI backend build on it unchanged. Whether it is the default on Linux and Windows
+# is decided from e1504g numbers measured both ways (docs/plan/baselines.md).
+fast = ["dep:gpui_fast", "dep:gpui_fast_platform", "dep:taffy_fast"]
 # GPUI's test surface: `TestAppContext`, `HeadlessAppContext`, headless renderers and
 # `Window::render_to_image`. Tier 2 tests and `nd-backend-gpui/capture` use it.
-test-support = ["gpui/test-support", "gpui_platform?/test-support"]
+test-support = [
+    "gpui/test-support",
+    "gpui_platform?/test-support",
+    "gpui_fast?/test-support",
+    "gpui_fast_platform?/test-support",
+]
 
 # `runtime_shaders` compiles the Metal shaders when the app starts instead of with Xcode's Metal
 # toolchain, which Xcode 27 no longer installs by default.
@@ -24,6 +30,8 @@ gpui.workspace = true
 gpui_platform = { workspace = true, optional = true, features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 gpui_fast = { workspace = true, optional = true }
 gpui_fast_platform = { workspace = true, optional = true, features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+taffy.workspace = true
+taffy_fast = { workspace = true, optional = true }
 
 # A bare GPUI window with no nd code: the e1504g baseline (docs/plan/baselines.md).
 [[example]]

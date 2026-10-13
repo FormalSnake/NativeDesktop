@@ -248,7 +248,8 @@ mod gate_m2 {
     }
 
     pub fn capture_renders_the_window() {
-        let Opened { host, window, .. } = open_counter();
+        // The headless app has to outlive the capture.
+        let Opened { cx: _cx, host, window, .. } = open_counter();
         let capture = host.job(|app| app.capture(window)).expect("capture");
         assert!(capture.width >= 320 && capture.height >= 240, "{}x{}", capture.width, capture.height);
         let image = image::load_from_memory(&capture.png).expect("png").to_rgba8();
