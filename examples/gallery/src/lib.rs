@@ -56,7 +56,15 @@ pub fn app() -> Application {
 }
 
 pub fn open(cx: &mut App) -> WindowHandle<Gallery> {
-    cx.open_window(WindowOptions::main("main").title("Gallery").size(size(px(960.), px(720.))), |_, cx| {
+    open_in(cx, None)
+}
+
+/// Opens the gallery, forced to `appearance` when given (goldens), else following the system.
+pub fn open_in(cx: &mut App, appearance: Option<Appearance>) -> WindowHandle<Gallery> {
+    cx.open_window(WindowOptions::main("main").title("Gallery").size(size(px(960.), px(720.))), move |window, cx| {
+        if let Some(appearance) = appearance {
+            window.set_theme(ThemeOverride::new().appearance(appearance), cx);
+        }
         cx.new(|cx| Gallery::new(cx))
     })
 }

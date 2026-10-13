@@ -14,6 +14,16 @@ nd = { path = "../../crates/nd", default-features = false, features = ["build"] 
 
 [dev-dependencies]
 nd = { path = "../../crates/nd", features = ["test"] }
+png = "0.17"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell = { path = "../../crates/ndshell" }
+
+# Tier 2 goldens of the forms page on macOS. AppKit owns the main thread, so libtest's harness
+# is off.
+[[test]]
+name = "goldens"
+harness = false
 
 [[bin]]
 name = "gallery"
