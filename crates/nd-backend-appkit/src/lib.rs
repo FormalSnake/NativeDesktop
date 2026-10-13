@@ -12,6 +12,7 @@ mod controls;
 mod diag;
 mod dispatch;
 mod events;
+mod form;
 mod frame_clock;
 mod glass;
 mod host;

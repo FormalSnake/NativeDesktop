@@ -16,10 +16,11 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold, ScaffoldProps, SelectKind,
-    SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SourceListKind, SourceListProps, SubtreeScope,
-    SystemItemProps, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem,
-    ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
+    Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane,
+    PaneProps, PaneRole, Scaffold, ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind,
+    SliderProps, SourceListKind, SourceListProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset,
+    TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
+    ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_theme::{NativeTheme, Scheme, ThemeRefinement};
@@ -36,12 +37,13 @@ use crate::NdWindow;
 use crate::button::NativeButtonView;
 use crate::controls::{SelectNative, SliderNative};
 use crate::events::Wake;
+use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{TextLook, ViewLook};
 use crate::scaffold::{PaneNative, ScaffoldNative};
 use crate::source_list::SourceListNative;
 use crate::system_colors::appearance_for;
-use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative};
+use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative, ToolbarTabNative};
 use crate::traffic_lights::TrafficLights;
 use crate::views::{NdLayerView, NdRootView, NdTextView, ns_rect};
 
@@ -70,12 +72,17 @@ enum Native {
     Toolbar(ToolbarNative),
     ToolbarItem(ToolbarItemNative),
     SystemItem,
+    ToolbarTab(ToolbarTabNative),
     Titlebar(Retained<NdLayerView>),
     Inset(WindowId, TitlebarInsetProps),
     Select(SelectNative),
     Slider(SliderNative),
     Separator(Retained<NSBox>, bool),
     SourceList(SourceListNative),
+    Form(FormNative),
+    /// Logical: the form draws sections and rows; these hold what goes in them.
+    FormSection(FormSectionProps, Vec<NodeId>),
+    FormRow(FormRowProps, Option<NodeId>),
 }
 
 impl Native {
@@ -96,7 +103,9 @@ impl Native {
             Native::Slider(s) => Some(s.view()),
             Native::Separator(b, _) => Some(b),
             Native::SourceList(s) => Some(s.view()),
-            Native::Toolbar(_) | Native::SystemItem | Native::Inset(..) => None,
+            Native::Form(f) => Some(&f.outer),
+            Native::FormSection(..) | Native::FormRow(..) => None,
+            Native::Toolbar(_) | Native::SystemItem | Native::ToolbarTab(_) | Native::Inset(..) => None,
         }
     }
 
@@ -137,6 +146,10 @@ struct State {
     system_scheme: Scheme,
     theme_dirty: HashSet<WindowId>,
     system_items: HashMap<NodeId, SystemItemProps>,
+    /// Forms whose sections, rows or row controls changed in this transaction.
+    forms_dirty: HashSet<NodeId>,
+    /// The size each form row's control was laid out at, which the form shows it at.
+    form_sizes: HashMap<NodeId, (f64, f64)>,
     weak: Weak<RefCell<State>>,
 }
 
@@ -164,6 +177,12 @@ fn scope_of(p: &Props) -> Option<SubtreeScope> {
     p.downcast_ref::<ScaffoldProps>().map(|s| s.scope.clone())
 }
 
+fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
+    list.retain(|n| *n != node);
+    let at = before.and_then(|b| list.iter().position(|n| *n == b)).unwrap_or(list.len());
+    list.insert(at, node);
+}
+
 impl AppKitBackend {
     pub fn new(mtm: MainThreadMarker) -> Self {
         let state = Rc::new_cyclic(|weak| {
@@ -183,6 +202,8 @@ impl AppKitBackend {
                 system_scheme: Scheme::Light,
                 theme_dirty: HashSet::new(),
                 system_items: HashMap::new(),
+                forms_dirty: HashSet::new(),
+                form_sizes: HashMap::new(),
                 weak: weak.clone(),
             })
         });
@@ -378,16 +399,35 @@ impl State {
                 scaffold.insert(node, pane, hook.expect("pane hook"));
                 return;
             }
-            [Some(Native::Scaffold(_)), Some(Native::Toolbar(toolbar))] => {
+            // A toolbar anywhere in the tree is the window's toolbar.
+            [Some(_), Some(Native::Toolbar(toolbar))] => {
                 toolbar.attach_to(&self.windows[&self.open.expect("in a transaction")].window);
                 toolbar.dirty.set(true);
                 return;
             }
-            [Some(Native::Toolbar(toolbar)), Some(_)] => {
+            [Some(Native::Toolbar(toolbar)), Some(child)] => {
+                if let Native::ToolbarTab(tab) = child {
+                    tab.report_to(self.events.emitter(parent), self.wake.clone());
+                }
                 toolbar.children.retain(|n| *n != node);
                 let at = before.and_then(|b| toolbar.children.iter().position(|n| *n == b));
                 toolbar.children.insert(at.unwrap_or(toolbar.children.len()), node);
                 toolbar.dirty.set(true);
+                return;
+            }
+            [Some(Native::Form(form)), Some(Native::FormSection(..))] => {
+                insert_before(&mut form.sections, node, before);
+                self.forms_dirty.insert(parent);
+                return;
+            }
+            [Some(Native::FormSection(_, rows)), Some(Native::FormRow(..))] => {
+                insert_before(rows, node, before);
+                self.mark_form(parent);
+                return;
+            }
+            [Some(Native::FormRow(_, child)), Some(_)] => {
+                *child = Some(node);
+                self.mark_form(parent);
                 return;
             }
             [Some(Native::ToolbarItem(item)), Some(child)] => {
@@ -442,7 +482,7 @@ impl State {
         let parent = self.parents.remove(&node);
         match parent.map(|p| self.nodes.get_disjoint_mut([&p, &node])) {
             Some([Some(Native::Scaffold(scaffold)), Some(Native::Pane(pane))]) => scaffold.remove(node, pane),
-            Some([Some(Native::Scaffold(_)), Some(Native::Toolbar(_))]) => {
+            Some([Some(_), Some(Native::Toolbar(_))]) => {
                 if let Some(record) = self.node_window.get(&node).and_then(|w| self.windows.get(w)) {
                     record.window.setToolbar(None);
                 }
@@ -451,10 +491,72 @@ impl State {
                 toolbar.children.retain(|n| *n != node);
                 toolbar.dirty.set(true);
             }
+            Some([Some(Native::Form(form)), Some(_)]) => {
+                form.sections.retain(|n| *n != node);
+                self.forms_dirty.insert(parent.expect("parent"));
+            }
+            Some([Some(Native::FormSection(_, rows)), Some(_)]) => {
+                rows.retain(|n| *n != node);
+                self.mark_form(parent.expect("parent"));
+            }
+            Some([Some(Native::FormRow(_, child)), Some(_)]) => {
+                *child = None;
+                self.mark_form(parent.expect("parent"));
+                if let Some(view) = self.nodes.get(&node).and_then(Native::view) {
+                    view.removeFromSuperview();
+                }
+            }
             _ => {
                 if let Some(view) = self.nodes.get(&node).and_then(Native::view) {
                     view.removeFromSuperview();
                 }
+            }
+        }
+    }
+
+    /// Marks the form `node` belongs to (a section or row of it, or the form) for a rebuild.
+    fn mark_form(&mut self, node: NodeId) {
+        let mut at = Some(node);
+        while let Some(n) = at {
+            if matches!(self.nodes.get(&n), Some(Native::Form(_))) {
+                self.forms_dirty.insert(n);
+                return;
+            }
+            at = self.parents.get(&n).copied();
+        }
+    }
+
+    /// Hands every changed form its sections, rows and controls.
+    fn rebuild_forms(&mut self) {
+        let mtm = self.mtm;
+        let dirty: Vec<NodeId> = self.forms_dirty.drain().collect();
+        for form in dirty {
+            let Some(Native::Form(f)) = self.nodes.get(&form) else { continue };
+            let sections: Vec<SectionSpec> = f
+                .sections
+                .iter()
+                .filter_map(|s| match self.nodes.get(s)? {
+                    Native::FormSection(props, rows) => Some(SectionSpec {
+                        node: *s,
+                        props: props.clone(),
+                        rows: rows
+                            .iter()
+                            .filter_map(|r| match self.nodes.get(r)? {
+                                Native::FormRow(props, child) => Some(RowSpec {
+                                    node: *r,
+                                    props: props.clone(),
+                                    view: child.and_then(|c| self.nodes.get(&c)?.view().map(|v| v.retain())),
+                                    size: child.and_then(|c| self.form_sizes.get(&c).copied()).unwrap_or_default(),
+                                }),
+                                _ => None,
+                            })
+                            .collect(),
+                    }),
+                    _ => None,
+                })
+                .collect();
+            if let Some(Native::Form(f)) = self.nodes.get_mut(&form) {
+                f.apply(mtm, &sections);
             }
         }
     }
@@ -502,6 +604,7 @@ impl State {
                     }
                     Native::ToolbarItem(_) => None,
                     Native::SystemItem => self.system_items.get(child).map(|p| Entry::System(p.item)),
+                    Native::ToolbarTab(tab) => Some(Entry::Tab(tab.item.clone())),
                     _ => None,
                 })
                 .collect();
@@ -656,6 +759,9 @@ impl Backend for AppKitBackend {
                 state.system_items.insert(node, *props::<SystemItemProps>(p, "ToolbarSystemItem"));
                 Native::SystemItem
             }
+            NodeKind::Widget(w) if is::<ToolbarTab>(w) => {
+                Native::ToolbarTab(ToolbarTabNative::new(mtm, props::<ToolbarTabProps>(p, "ToolbarTab")))
+            }
             NodeKind::Widget(w) if is::<Titlebar>(w) => {
                 let look = ViewLook::from_style(&props::<TitlebarProps>(p, "Titlebar").style, false);
                 let view = NdLayerView::new(mtm, &look);
@@ -681,6 +787,13 @@ impl Backend for AppKitBackend {
                 state.wake.clone(),
                 props::<SourceListProps>(p, "SourceList"),
             )),
+            NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
+            NodeKind::Widget(w) if is::<FormSection>(w) => {
+                Native::FormSection(props::<FormSectionProps>(p, "FormSection").clone(), Vec::new())
+            }
+            NodeKind::Widget(w) if is::<FormRow>(w) => {
+                Native::FormRow(props::<FormRowProps>(p, "FormRow").clone(), None)
+            }
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 panic!("the AppKit backend has no {kind:?} yet")
             }
@@ -723,6 +836,7 @@ impl Backend for AppKitBackend {
         let window = state.node_window.get(&node).copied();
         let mut place: Option<(WindowId, WindowControlsProps)> = None;
         let mut recreate_select = None;
+        let mut form_changed = false;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Layer(v) => {
                 v.set_props(&ViewLook::from_style(&props::<DivProps>(&patch.new, "View").style, expose))
@@ -749,6 +863,7 @@ impl Backend for AppKitBackend {
                 i.props = p.clone();
             }
             Native::SystemItem => {}
+            Native::ToolbarTab(tab) => tab.apply(props(&patch.new, "ToolbarTab")),
             Native::Inset(_, inset) => *inset = *props(&patch.new, "TitlebarInset"),
             Native::Select(s) => {
                 let p: &SelectProps = props(&patch.new, "Select");
@@ -764,12 +879,24 @@ impl Backend for AppKitBackend {
             }
             Native::Separator(_, vertical) => *vertical = props::<SeparatorProps>(&patch.new, "Separator").vertical,
             Native::SourceList(s) => s.update(props(&patch.new, "SourceList")),
+            Native::FormSection(p, _) => {
+                *p = props::<FormSectionProps>(&patch.new, "FormSection").clone();
+                form_changed = true;
+            }
+            Native::FormRow(p, _) => {
+                *p = props::<FormRowProps>(&patch.new, "FormRow").clone();
+                form_changed = true;
+            }
+            Native::Form(_) => {}
             Native::Root(_) | Native::External(_) | Native::Scaffold(_) => {}
         });
         if let Some(Native::ToolbarItem(_)) = state.nodes.get(&node)
             && let Some(Native::Toolbar(t)) = state.parents.get(&node).and_then(|p| state.nodes.get(p))
         {
             t.dirty.set(true);
+        }
+        if form_changed {
+            state.mark_form(node);
         }
         if let Some((w, wc)) = place {
             state.place_lights(w, &wc);
@@ -792,6 +919,19 @@ impl Backend for AppKitBackend {
     }
 
     fn set_frame(&mut self, node: NodeId, frame: Rect) {
+        // The form places its rows' controls, at the size nd laid them out at.
+        {
+            let mut state = self.0.borrow_mut();
+            let in_form =
+                state.parents.get(&node).is_some_and(|p| matches!(state.nodes.get(p), Some(Native::FormRow(..))));
+            if in_form {
+                let size = (f64::from(frame.size.width), f64::from(frame.size.height));
+                if state.form_sizes.insert(node, size) != Some(size) {
+                    state.mark_form(node);
+                }
+                return;
+            }
+        }
         let state = self.0.borrow();
         match state.nodes.get(&node) {
             // The split view places panes; an overlay fills the scaffold by its autoresizing.
@@ -836,6 +976,7 @@ impl Backend for AppKitBackend {
         state.node_window.remove(&node);
         state.scopes.remove(&node);
         state.system_items.remove(&node);
+        state.form_sizes.remove(&node);
         if let Some(Native::Scaffold(_)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {
@@ -850,6 +991,7 @@ impl Backend for AppKitBackend {
         let mut state = self.0.borrow_mut();
         assert_eq!(state.open, Some(window), "commit closes the open transaction");
         state.rebuild_toolbars();
+        state.rebuild_forms();
         state.place_embedded_lights(window);
         state.apply_dirty_themes();
         CATransaction::commit();

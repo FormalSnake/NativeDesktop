@@ -8,7 +8,8 @@ dir = "target/nextest"
 max-threads = 1
 
 # Tier 2 tests whose checks need their window key in the active app (posted key events,
-# active-state goldens) take focus from each other, so they run one at a time.
+# active-state goldens) take focus from each other, so they run one at a time; so does the
+# matugen recolour timing, which a loaded machine would push past its 100 ms budget.
 [test-groups.key-window]
 max-threads = 1
 
@@ -20,7 +21,7 @@ fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [[profile.default.overrides]]
-filter = "test(/^gate_(m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents))$/)"
+filter = "test(/^gate_(m0::dispatch_spike|m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour))$/)"
 test-group = "key-window"
 
 [[profile.default.overrides]]
@@ -70,7 +71,7 @@ test-group = "real-window"
 
 # `nd new` compiles a whole app from cold, so its gate gets room and stays out of the default run.
 [[profile.gate.overrides]]
-filter = "test(/^gate_(m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents))$/)"
+filter = "test(/^gate_(m0::dispatch_spike|m1::appkit_key_dispatch|m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour))$/)"
 test-group = "key-window"
 
 [[profile.gate.overrides]]

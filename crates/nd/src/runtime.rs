@@ -22,6 +22,7 @@ pub mod prelude {
         Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, Mapping, Menu, MenuItem,
         MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select, SelectChanged,
         Separator, Slider, SliderChanged, SourceItem, SourceList, SourceSelected, SubtreeOverrides, SystemItem,
+        TabSelected, form, form_row, form_section,
         Titlebar as TitlebarElement, WindowChromeExt, glass, glass_group, icon_button, inspector, open_settings,
         select, separator, set_menus, sidebar, slider, source_item, source_list, system_item, titlebar,
         toolbar_sidebar_toggle,

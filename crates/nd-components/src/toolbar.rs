@@ -20,6 +20,25 @@ pub enum ToolbarDisplay {
 pub struct ToolbarProps {
     pub title: Option<SharedString>,
     pub display: ToolbarDisplay,
+    /// The selected tab, for a toolbar of [`Toolbar::tab`]s (a settings window).
+    pub selected_tab: Option<SharedString>,
+}
+
+/// A selectable toolbar tab: a settings window's panes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolbarTabProps {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub icon: Option<crate::icon::Icon>,
+}
+
+/// Widget kind of a toolbar tab.
+pub struct ToolbarTab;
+
+/// The user picked a toolbar tab.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabSelected {
+    pub id: SharedString,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -132,6 +151,27 @@ impl Toolbar {
     #[track_caller]
     pub fn sidebar_toggle(mut self) -> Self {
         self.root = self.root.child(system_item(SystemItem::ToggleSidebar));
+        self
+    }
+
+    /// A selectable tab with an icon and a label, as settings windows show. Controlled: the
+    /// app sets [`Toolbar::selected_tab`] from [`TabSelected`].
+    #[track_caller]
+    pub fn tab(mut self, id: impl Into<SharedString>, label: impl Into<SharedString>, icon: crate::icon::Icon) -> Self {
+        let id = id.into();
+        let props = ToolbarTabProps { id: id.clone(), label: label.into(), icon: Some(icon) };
+        let tab = NativeElement::new::<ToolbarTab>(Key::Id(format!("nd-tab-{id}").into()), props).absolute();
+        self.root = self.root.child(tab);
+        self
+    }
+
+    pub fn selected_tab(mut self, id: impl Into<SharedString>) -> Self {
+        self.root.props_mut().selected_tab = Some(id.into());
+        self
+    }
+
+    pub fn on_tab(mut self, handler: impl Fn(&TabSelected, &mut Window, &mut App) + 'static) -> Self {
+        self.root = self.root.on(handler);
         self
     }
 

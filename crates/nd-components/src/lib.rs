@@ -5,6 +5,7 @@
 
 pub mod controls;
 pub mod dialogs;
+pub mod form;
 pub mod glass;
 pub mod icon;
 pub mod menu;
@@ -20,6 +21,7 @@ pub use controls::{
     Slider, SliderChanged, SliderKind, SliderProps, icon_button, select, separator, slider,
 };
 pub use dialogs::{Alert, AlertButton, AlertResponse, AlertStyle, ButtonRole, OpenDialog, SaveDialog};
+pub use form::{Form, FormProps, FormRow, FormRowProps, FormSection, FormSectionProps, form, form_row, form_section};
 pub use glass::{Glass, GlassGroup, GlassGroupProps, GlassProps, glass, glass_group};
 pub use icon::Icon;
 pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, MenuRole};
@@ -31,6 +33,6 @@ pub use source_list::{
 };
 pub use titlebar::{InsetEdge, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, titlebar};
 pub use toolbar::{
-    SystemItem, SystemItemProps, Toolbar, ToolbarDisplay, ToolbarItem, ToolbarItemProps, ToolbarProps,
-    ToolbarSystemItem, system_item, toolbar, toolbar_sidebar_toggle,
+    SystemItem, SystemItemProps, TabSelected, Toolbar, ToolbarDisplay, ToolbarItem, ToolbarItemProps, ToolbarProps,
+    ToolbarSystemItem, ToolbarTab, ToolbarTabProps, system_item, toolbar, toolbar_sidebar_toggle,
 };

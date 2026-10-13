@@ -23,6 +23,7 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectP
 pub struct ToolbarIvars {
     items: RefCell<Vec<Retained<NSToolbarItem>>>,
     identifiers: RefCell<Vec<Retained<NSString>>>,
+    selectable: RefCell<Vec<Retained<NSString>>>,
 }
 
 define_class!(
@@ -54,6 +55,11 @@ define_class!(
         fn allowed_identifiers(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSToolbarItemIdentifier>> {
             NSArray::from_retained_slice(&self.ivars().identifiers.borrow())
         }
+
+        #[unsafe(method_id(toolbarSelectableItemIdentifiers:))]
+        fn selectable_identifiers(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSToolbarItemIdentifier>> {
+            NSArray::from_retained_slice(&self.ivars().selectable.borrow())
+        }
     }
 );
 
@@ -66,6 +72,10 @@ impl NdToolbarDelegate {
     fn set(&self, items: Vec<Retained<NSToolbarItem>>, identifiers: Vec<Retained<NSString>>) {
         *self.ivars().items.borrow_mut() = items;
         *self.ivars().identifiers.borrow_mut() = identifiers;
+    }
+
+    fn set_selectable(&self, identifiers: Vec<Retained<NSString>>) {
+        *self.ivars().selectable.borrow_mut() = identifiers;
     }
 }
 
@@ -199,6 +209,64 @@ fn tracking_separator(
 pub(crate) enum Entry {
     Item(Retained<NSToolbarItem>, bool),
     System(SystemItem),
+    Tab(Retained<NSToolbarItem>),
+}
+
+pub struct TabIvars {
+    id: nd_ui::prelude::SharedString,
+    emit: RefCell<Option<(nd_ui::events::Emit, crate::events::Wake)>>,
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements and this type does not implement Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = TabIvars]
+    pub struct NdTabTarget;
+
+    unsafe impl NSObjectProtocol for NdTabTarget {}
+
+    impl NdTabTarget {
+        #[unsafe(method(pick:))]
+        fn pick(&self, _sender: &NSObject) {
+            if let Some((emit, wake)) = self.ivars().emit.borrow().as_ref() {
+                emit.emit(nd_components::TabSelected { id: self.ivars().id.clone() });
+                wake.wake();
+            }
+        }
+    }
+);
+
+/// A settings-style tab: the toolbar's own selectable image item.
+pub(crate) struct ToolbarTabNative {
+    pub item: Retained<NSToolbarItem>,
+    target: Retained<NdTabTarget>,
+}
+
+impl ToolbarTabNative {
+    pub fn new(mtm: MainThreadMarker, props: &nd_components::ToolbarTabProps) -> Self {
+        let id = NSString::from_str(&format!("nd.tab.{}", props.id));
+        let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(mtm), &id);
+        let target = NdTabTarget::alloc(mtm).set_ivars(TabIvars { id: props.id.clone(), emit: RefCell::new(None) });
+        let target: Retained<NdTabTarget> = unsafe { msg_send![super(target), init] };
+        unsafe {
+            item.setTarget(Some(&target));
+            item.setAction(Some(objc2::sel!(pick:)));
+        }
+        let this = Self { item, target };
+        this.apply(props);
+        this
+    }
+
+    pub fn apply(&self, props: &nd_components::ToolbarTabProps) {
+        self.item.setLabel(&NSString::from_str(&props.label));
+        self.item.setImage(props.icon.and_then(|i| crate::icons::symbol(i.lucide())).as_deref());
+    }
+
+    /// Clicks report [`nd_components::TabSelected`] on the toolbar node.
+    pub fn report_to(&self, emit: nd_ui::events::Emit, wake: crate::events::Wake) {
+        *self.target.ivars().emit.borrow_mut() = Some((emit, wake));
+    }
 }
 
 /// The `toolbar()` intent: the window's `NSToolbar` and its delegate.
@@ -222,7 +290,10 @@ impl ToolbarNative {
     }
 
     fn apply_display(&self) {
+        // A settings window's tabs show their labels, as System Settings' do.
+        let tabs = self.props.selected_tab.is_some();
         self.toolbar.setDisplayMode(match self.props.display {
+            nd_components::ToolbarDisplay::Automatic if tabs => NSToolbarDisplayMode::IconAndLabel,
             // The unified toolbar shows icons; labels are for the overflow menu.
             nd_components::ToolbarDisplay::Automatic | nd_components::ToolbarDisplay::IconOnly => {
                 NSToolbarDisplayMode::IconOnly
@@ -237,7 +308,10 @@ impl ToolbarNative {
     }
 
     pub fn attach_to(&self, window: &NSWindow) {
-        window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+        // A settings window keeps its preference style.
+        if window.toolbarStyle() != NSWindowToolbarStyle::Preference {
+            window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+        }
         window.setToolbar(Some(&self.toolbar));
         if let Some(title) = &self.props.title {
             window.setTitle(&NSString::from_str(title));
@@ -250,6 +324,7 @@ impl ToolbarNative {
         self.dirty.set(false);
         let mut items = Vec::new();
         let mut identifiers: Vec<Retained<NSString>> = Vec::new();
+        let mut tabs: Vec<Retained<NSString>> = Vec::new();
         // The sidebar's own section: leading items and the sidebar toggle, as in Apple's apps.
         let leading = entries
             .iter()
@@ -267,6 +342,11 @@ impl ToolbarNative {
                     items.push(item);
                 }
                 Entry::System(system) => identifiers.push(system_identifier(system).copy()),
+                Entry::Tab(item) => {
+                    tabs.push(item.itemIdentifier());
+                    identifiers.push(item.itemIdentifier());
+                    items.push(item);
+                }
             }
         }
         if leading == identifiers.len()
@@ -276,14 +356,21 @@ impl ToolbarNative {
         }
         let current: Vec<Retained<NSString>> = self.toolbar.items().iter().map(|i| i.itemIdentifier()).collect();
         self.delegate.set(items, identifiers.clone());
-        if current == identifiers {
-            return;
+        self.delegate.set_selectable(tabs);
+        if current != identifiers {
+            while self.toolbar.items().count() > 0 {
+                self.toolbar.removeItemAtIndex(0);
+            }
+            for (i, id) in identifiers.iter().enumerate() {
+                self.toolbar.insertItemWithItemIdentifier_atIndex(id, i as isize);
+            }
         }
-        while self.toolbar.items().count() > 0 {
-            self.toolbar.removeItemAtIndex(0);
-        }
-        for (i, id) in identifiers.iter().enumerate() {
-            self.toolbar.insertItemWithItemIdentifier_atIndex(id, i as isize);
-        }
+        self.select_tab();
+    }
+
+    /// Shows the app's selected tab as the toolbar's selection.
+    pub fn select_tab(&self) {
+        let id = self.props.selected_tab.as_ref().map(|t| NSString::from_str(&format!("nd.tab.{t}")));
+        self.toolbar.setSelectedItemIdentifier(id.as_deref());
     }
 }
