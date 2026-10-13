@@ -54,6 +54,10 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// Gesture recognition and scroll physics per window.
+    pub(crate) gestures: crate::gestures::Gestures,
+    /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
+    pub(crate) drawn: crate::nav::DrawnMap,
 }
 
 impl Default for GpuiBackend {
@@ -88,6 +92,8 @@ impl GpuiBackend {
                 pending: Vec::new(),
             })),
             bounds: Rc::default(),
+            gestures: crate::gestures::Gestures::default(),
+            drawn: Rc::default(),
         }
     }
 
@@ -108,6 +114,7 @@ impl GpuiBackend {
     }
 
     pub(crate) fn forget_window(&self, window: WindowId) {
+        self.gestures.forget_window(window);
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
@@ -153,7 +160,7 @@ impl GpuiBackend {
         self.state.borrow().nodes.get(&node).map_or_else(Vec::new, |n| n.children.clone())
     }
 
-    fn window_of(&self, node: NodeId) -> Option<WindowId> {
+    pub(crate) fn window_of(&self, node: NodeId) -> Option<WindowId> {
         let state = self.state.borrow();
         let mut at = node;
         loop {
@@ -244,6 +251,7 @@ impl Backend for GpuiBackend {
     fn focus(&mut self, _node: Option<NodeId>) {}
 
     fn release(&mut self, node: NodeId) {
+        self.gestures.forget(node);
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {
@@ -257,6 +265,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.drawn.borrow_mut().remove(&node);
     }
 
     fn commit(&mut self, window: WindowId) {
@@ -288,6 +297,7 @@ impl Backend for GpuiBackend {
             probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
             probe.enabled = Some(true);
         }
+        self.probe_nav(node, &mut probe);
         probe
     }
 

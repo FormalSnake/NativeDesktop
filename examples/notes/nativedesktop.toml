@@ -13,7 +13,7 @@ role = "editor"
 [updates]
 feed = "https://updates.formalsnake.dev/notes"
 channels = ["stable", "beta"]
-public_key = "RWQf6LRCGA9i5zm4Yq0l3z7u0n3f2Xk3t8jW6dYp6Z2b0x8c4Kq1e9s"
+public_key = "vAws645lwj7GviGmZGx3cgXFAtwJZLtG+qcAg1Vgg1c="
 
 [updates.publish]
 kind = "s3"                       # s3 (R2, S3, MinIO), github, rsync, dir
@@ -28,6 +28,7 @@ sentry_dsn_env = "NOTES_SENTRY_DSN"   # optional upload; bundles are always writ
 minimum_system_version = "14.0"
 signing_identity = "Developer ID Application: CanaryCoders"
 notarize = true
+notary_profile = "formalsnake-notary"
 
 [windows]
 publisher = "FormalSnake"

@@ -16,10 +16,11 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane,
-    PaneProps, PaneRole, Scaffold, ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind,
-    SliderProps, SourceListKind, SourceListProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset,
-    TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
+    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
+    FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
+    ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SourceTreeKind,
+    SourceTreeProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps,
+    ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
     ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
@@ -40,14 +41,19 @@ use crate::events::Wake;
 use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{TextLook, ViewLook};
+use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
-use crate::source_list::SourceListNative;
+use crate::source_list::SourceTreeNative;
 use crate::system_colors::appearance_for;
+use crate::toast::{BannerNative, ToastNative};
 use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative, ToolbarTabNative};
 use crate::traffic_lights::TrafficLights;
 use crate::views::{NdLayerView, NdRootView, NdTextView, ns_rect};
 
 mod automation;
+mod nav;
+
+pub use nav::{PaletteLayout, PaletteRowLayout};
 
 #[allow(clippy::large_enum_variant)]
 enum Native {
@@ -78,7 +84,10 @@ enum Native {
     Select(SelectNative),
     Slider(SliderNative),
     Separator(Retained<NSBox>, bool),
-    SourceList(SourceListNative),
+    SourceTree(SourceTreeNative),
+    Palette(PaletteNative),
+    Toasts(ToastNative),
+    Banner(BannerNative),
     Form(FormNative),
     /// Logical: the form draws sections and rows; these hold what goes in them.
     FormSection(FormSectionProps, Vec<NodeId>),
@@ -102,7 +111,10 @@ impl Native {
             Native::Select(s) => Some(s.view()),
             Native::Slider(s) => Some(s.view()),
             Native::Separator(b, _) => Some(b),
-            Native::SourceList(s) => Some(s.view()),
+            Native::SourceTree(s) => Some(s.view()),
+            Native::Palette(p) => Some(p.view()),
+            Native::Toasts(t) => Some(t.view()),
+            Native::Banner(b) => Some(b.view()),
             Native::Form(f) => Some(&f.outer),
             Native::FormSection(..) | Native::FormRow(..) => None,
             Native::Toolbar(_) | Native::SystemItem | Native::ToolbarTab(_) | Native::Inset(..) => None,
@@ -175,6 +187,10 @@ fn scope_of(p: &Props) -> Option<SubtreeScope> {
         return Some(g.scope.clone());
     }
     p.downcast_ref::<ScaffoldProps>().map(|s| s.scope.clone())
+}
+
+fn gesture_host(div: &DivProps, emit: nd_ui::events::Emit, wake: &Wake) -> Option<crate::gestures::GestureHost> {
+    (!div.gestures.is_empty()).then(|| crate::gestures::GestureHost { set: div.gestures, emit, wake: wake.clone() })
 }
 
 fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
@@ -717,10 +733,12 @@ impl Backend for AppKitBackend {
                 let _: &RootProps = props(p, "Root");
                 Native::Root(state.window().root.content().retain())
             }
-            NodeKind::View => Native::Layer(NdLayerView::new(
-                mtm,
-                &ViewLook::from_style(&props::<DivProps>(p, "View").style, state.expose),
-            )),
+            NodeKind::View => {
+                let div = props::<DivProps>(p, "View");
+                let view = NdLayerView::new(mtm, &ViewLook::from_style(&div.style, state.expose));
+                view.set_gestures(gesture_host(div, emit(), &state.wake));
+                Native::Layer(view)
+            }
             NodeKind::Text => Native::Text(NdTextView::new(mtm, &TextLook::from_props(props(p, "Text")))),
             NodeKind::Widget(w) if is::<Button>(w) => {
                 Native::Button(NativeButtonView::new(mtm, emit(), state.wake.clone(), props(p, "Button")))
@@ -783,12 +801,27 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<SeparatorKind>(w) => {
                 Native::Separator(crate::controls::separator(mtm), props::<SeparatorProps>(p, "Separator").vertical)
             }
-            NodeKind::Widget(w) if is::<SourceListKind>(w) => Native::SourceList(SourceListNative::new(
+            NodeKind::Widget(w) if is::<SourceTreeKind>(w) => Native::SourceTree(SourceTreeNative::new(
                 mtm,
                 emit(),
                 state.wake.clone(),
-                props::<SourceListProps>(p, "SourceList"),
+                props::<SourceTreeProps>(p, "SourceTree"),
             )),
+            NodeKind::Widget(w) if is::<CommandPaletteKind>(w) => Native::Palette(PaletteNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<CommandPaletteProps>(p, "CommandPalette"),
+            )),
+            NodeKind::Widget(w) if is::<ToastOverlayKind>(w) => Native::Toasts(ToastNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<ToastOverlayProps>(p, "ToastOverlay"),
+            )),
+            NodeKind::Widget(w) if is::<BannerKind>(w) => {
+                Native::Banner(BannerNative::new(mtm, emit(), state.wake.clone(), props::<BannerProps>(p, "Banner")))
+            }
             NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
             NodeKind::Widget(w) if is::<FormSection>(w) => {
                 Native::FormSection(props::<FormSectionProps>(p, "FormSection").clone(), Vec::new())
@@ -829,6 +862,7 @@ impl Backend for AppKitBackend {
     fn update(&mut self, node: NodeId, patch: &PropsPatch) {
         let mut state = self.0.borrow_mut();
         let events = state.events.clone();
+        let wake = state.wake.clone();
         let expose = state.expose;
         if let Some(scope) = scope_of(&patch.new) {
             state.set_scope(node, Some(scope));
@@ -841,7 +875,11 @@ impl Backend for AppKitBackend {
         let mut form_changed = false;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Layer(v) => {
-                v.set_props(&ViewLook::from_style(&props::<DivProps>(&patch.new, "View").style, expose))
+                let div = props::<DivProps>(&patch.new, "View");
+                v.set_props(&ViewLook::from_style(&div.style, expose));
+                if props::<DivProps>(&patch.old, "View").gestures != div.gestures {
+                    v.set_gestures(gesture_host(div, events.emitter(node), &wake));
+                }
             }
             Native::Titlebar(v) => {
                 v.set_props(&ViewLook::from_style(&props::<TitlebarProps>(&patch.new, "Titlebar").style, false))
@@ -880,7 +918,10 @@ impl Backend for AppKitBackend {
                 s.apply(p);
             }
             Native::Separator(_, vertical) => *vertical = props::<SeparatorProps>(&patch.new, "Separator").vertical,
-            Native::SourceList(s) => s.update(props(&patch.new, "SourceList")),
+            Native::SourceTree(s) => s.update(props(&patch.new, "SourceTree")),
+            Native::Palette(p) => p.update(props(&patch.new, "CommandPalette")),
+            Native::Toasts(t) => t.update(props(&patch.new, "ToastOverlay")),
+            Native::Banner(b) => b.update(props(&patch.new, "Banner")),
             Native::FormSection(p, _) => {
                 *p = props::<FormSectionProps>(&patch.new, "FormSection").clone();
                 form_changed = true;
@@ -1020,6 +1061,7 @@ impl Backend for AppKitBackend {
             Native::Button(b) => b.measure(),
             Native::Select(s) => s.measure(),
             Native::Slider(s) => s.measure(),
+            Native::Banner(b) => b.measure(),
             Native::Separator(b, vertical) => {
                 let s = b.fittingSize();
                 if *vertical {
@@ -1081,6 +1123,10 @@ impl Backend for AppKitBackend {
         input: &nd_ui::semantics::SyntheticInput,
     ) -> Result<(), nd_ui::semantics::ActionError> {
         self.post(window, input)
+    }
+
+    fn haptic(&mut self, haptic: nd_gesture::Haptic) {
+        crate::gestures::play(haptic);
     }
 
     fn capture(&mut self, window: WindowId) -> Result<nd_ui::semantics::Capture, nd_ui::semantics::ActionError> {

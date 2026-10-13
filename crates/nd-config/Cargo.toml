@@ -15,6 +15,7 @@ name = "nd-config"
 path = "src/bin/nd-config.rs"
 
 [dependencies]
+base64 = "0.22"
 schemars = "1.2.3"
 serde.workspace = true
 # preserve_order pinned here: gpui enables it workspace-wide, and generated schema files must not

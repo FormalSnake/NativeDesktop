@@ -954,6 +954,14 @@ publisher chosen in `[updates.publish]` (`s3` with endpoint/bucket for R2/S3/Min
 `nd release serve` serves the directory locally for update tests. The ed25519 public key ships in the
 app, so swapping hosts never weakens verification. Default domain: none baked in; each app sets `feed`.
 
+As built (M10): `releases.<os>-<channel>.json.sig` is base64 ed25519 over `nd-feed-v1\0<channel>\0<feed bytes>`,
+so a host cannot swap channels; Velopack channels are `mac-stable`, `linux-beta`, `win-stable`, so every OS
+shares one feed directory (`target/nd/releases`). `nd::build::app()` bakes `feed` and `public_key` into the
+binary unless `ND_NO_UPDATES=1` (set by `mkApp`); a binary under `/nix/store` refuses to update anyway.
+`vpk` is pinned to the `velopack` crate version and fetched into the user cache with `dotnet tool install`.
+On macOS the first update after a `.pkg` install is a full download (its postinstall clears Velopack's
+package cache, so there is no base for a delta); later updates are deltas.
+
 Settings layers: defaults < Nix-managed file < user `config.toml` < `config.local.toml` (writable
 overlay when the main file is a `/nix/store` symlink) < env `<APP>_*` < CLI flags. `toml` reads,
 `toml_edit` writes so comments survive; drop-in files in `config.d/*.toml` merge in name

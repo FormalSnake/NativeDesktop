@@ -273,6 +273,153 @@ mod gate_m2 {
     }
 }
 
+mod gate_m4 {
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    use nd_gpui::gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point};
+
+    use super::*;
+
+    struct Feed {
+        log: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for Feed {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let (pinch, drag) = (self.log.clone(), self.log.clone());
+            v_flex()
+                .size_full()
+                .on_pinch(move |e: &PinchEvent, _, _| {
+                    pinch.borrow_mut().push(format!("pinch {:?} {:.2}", e.phase, e.scale))
+                })
+                .child(
+                    div()
+                        .id("handle")
+                        .h(px(20.))
+                        .w(px(100.))
+                        .on_drag(move |e: &DragEvent, _, _| drag.borrow_mut().push(format!("drag {:?}", e.phase))),
+                )
+                .child(v_flex().id("list").h(px(200.)).overflow_y_scroll().children(
+                    (0..40).map(|i| div().id(format!("row-{i}")).h(px(30.)).flex_none().child(format!("Row {i}"))),
+                ))
+        }
+    }
+
+    fn open_feed() -> (HeadlessAppContext, GpuiHost, WindowId, Rc<RefCell<Vec<String>>>) {
+        let mut cx = headless();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let l = log.clone();
+        let mut window = None;
+        let host = cx.update(|cx| {
+            GpuiHost::builder().quit_when_empty(false).start(cx, |app| {
+                let options = WindowOptions::main("feed").title("Feed").size(size(px(320.), px(260.)));
+                window = Some(app.open_window(options, |_, cx| cx.new(|_| Feed { log: l })).id());
+            })
+        });
+        settle(&mut cx, &host);
+        (cx, host, window.expect("window"), log)
+    }
+
+    fn send(cx: &mut HeadlessAppContext, host: &GpuiHost, window: WindowId, input: PlatformInput) {
+        let handle = host.window_handle(window).expect("gpui window");
+        cx.update(|cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                window.dispatch_event(input, cx);
+            });
+        });
+    }
+
+    fn scroll(cx: &mut HeadlessAppContext, host: &GpuiHost, window: WindowId, dy: f32, phase: TouchPhase) {
+        let event = ScrollWheelEvent {
+            position: point(px(100.), px(100.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+            modifiers: Default::default(),
+            touch_phase: phase,
+        };
+        send(cx, host, window, PlatformInput::ScrollWheel(event));
+        std::thread::sleep(Duration::from_millis(8));
+    }
+
+    /// Draws frames in real time for `ms`, as the display link would while something animates.
+    fn frames(cx: &mut HeadlessAppContext, host: &GpuiHost, ms: u64) {
+        for _ in 0..ms / 16 {
+            std::thread::sleep(Duration::from_millis(16));
+            cx.update(|cx| {
+                host.pump(cx);
+                host.draw(cx);
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    fn row_top(host: &GpuiHost, window: WindowId) -> f32 {
+        by_test_id(host, window, "row-0").bounds.expect("row bounds").origin.y
+    }
+
+    pub fn a_fling_carries_on_and_a_pull_springs_back() {
+        let (mut cx, host, window, _) = open_feed();
+        let top = by_test_id(&host, window, "list").bounds.expect("list").origin.y;
+        assert_eq!(row_top(&host, window), top);
+
+        // Fingers up 200 points quickly, then lift: momentum carries the list further.
+        scroll(&mut cx, &host, window, 0., TouchPhase::Started);
+        for _ in 0..10 {
+            scroll(&mut cx, &host, window, -20., TouchPhase::Moved);
+        }
+        // Lifted straight away: a pause first would read as a stop, with no fling.
+        scroll(&mut cx, &host, window, 0., TouchPhase::Ended);
+        let at_lift = top - 200.;
+        frames(&mut cx, &host, 2500);
+        let rested = row_top(&host, window);
+        assert!(rested < at_lift - 100., "the fling travelled on ({at_lift} -> {rested})");
+        assert!(rested >= top - (40. * 30. - 200.) - 0.5, "and stopped at the end at most ({rested}, top {top})");
+
+        // Back to the top and past it: the list stretches, then springs back to the edge.
+        scroll(&mut cx, &host, window, 0., TouchPhase::Started);
+        for _ in 0..80 {
+            scroll(&mut cx, &host, window, 25., TouchPhase::Moved);
+        }
+        frames(&mut cx, &host, 16);
+        let stretched = row_top(&host, window);
+        assert!(stretched > top, "pulled past the top ({stretched} > {top})");
+        assert!(stretched < top + 200., "but resisted ({stretched})");
+        std::thread::sleep(Duration::from_millis(80));
+        scroll(&mut cx, &host, window, 0., TouchPhase::Ended);
+        frames(&mut cx, &host, 1200);
+        assert!((row_top(&host, window) - top).abs() < 0.5, "sprang back to the top");
+    }
+
+    pub fn pinch_and_drag_reach_their_handlers() {
+        let (mut cx, host, window, log) = open_feed();
+        for (phase, delta) in [(TouchPhase::Started, 0.), (TouchPhase::Moved, 0.1), (TouchPhase::Ended, 0.)] {
+            let event =
+                gpui::PinchEvent { position: point(px(150.), px(150.)), delta, modifiers: Default::default(), phase };
+            send(&mut cx, &host, window, PlatformInput::Pinch(event));
+        }
+        let handle = by_test_id(&host, window, "handle").bounds.expect("handle");
+        let from = nd_ui::Point { x: handle.origin.x + 10., y: handle.origin.y + 10. };
+        let to = nd_ui::Point { x: from.x + 60., y: from.y };
+        cx.update(|cx| host.update(cx, |app| app.synthesize(window, &SyntheticInput::Drag { from, to, steps: 6 })))
+            .expect("posted");
+        settle(&mut cx, &host);
+        let log = log.borrow().clone();
+        assert_eq!(&log[..3], ["pinch Began 1.00", "pinch Changed 1.10", "pinch Ended 1.00"], "{log:?}");
+        assert_eq!(log.first_drag(), Some("drag Began"), "{log:?}");
+        assert_eq!(log.last().map(String::as_str), Some("drag Ended"), "{log:?}");
+    }
+
+    trait FirstDrag {
+        fn first_drag(&self) -> Option<&str>;
+    }
+
+    impl FirstDrag for Vec<String> {
+        fn first_drag(&self) -> Option<&str> {
+            self.iter().find(|l| l.starts_with("drag")).map(String::as_str)
+        }
+    }
+}
+
 fn main() {
     // libtest-style listing and filtering for nextest, one test per process.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -291,6 +438,8 @@ fn main() {
             "gate_m2::the_backend_releases_what_the_reconciler_drops",
             gate_m2::the_backend_releases_what_the_reconciler_drops,
         ),
+        ("gate_m4::a_fling_carries_on_and_a_pull_springs_back", gate_m4::a_fling_carries_on_and_a_pull_springs_back),
+        ("gate_m4::pinch_and_drag_reach_their_handlers", gate_m4::pinch_and_drag_reach_their_handlers),
     ];
     harness(&args, &tests);
 }

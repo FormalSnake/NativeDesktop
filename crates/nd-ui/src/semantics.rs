@@ -6,6 +6,9 @@
 //! [`App::semantic_tree`](crate::App::semantic_tree); actions go through
 //! [`App::perform`](crate::App::perform) and [`App::synthesize`](crate::App::synthesize).
 
+use std::any::TypeId;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 
 use nd_core::semantic::Role;
@@ -160,7 +163,27 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
         NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
             (Role::WindowControls, "WindowControls".to_owned(), String::new())
         }
-        NodeKind::Widget(w) => (Role::Generic, short_name(w.name).to_owned(), String::new()),
+        NodeKind::Widget(w) => {
+            let (role, name) = WIDGETS
+                .with(|m| m.borrow().get(&w.type_id).map(|d| d(props)))
+                .unwrap_or((Role::Generic, String::new()));
+            (role, short_name(w.name).to_owned(), name)
+        }
     };
     Described { role, kind: kind_name, name }
+}
+
+/// A widget kind's role and accessible name, read from its props.
+pub type DescribeWidget = fn(&Props) -> (Role, String);
+
+thread_local! {
+    static WIDGETS: RefCell<HashMap<TypeId, DescribeWidget>> = RefCell::new(HashMap::new());
+}
+
+/// Gives widget kind `W` a role and name in the semantic tree. Widgets defined outside `nd-ui`
+/// call it from their constructor; a kind nobody describes is `Role::Generic`.
+pub fn describe_widget<W: 'static>(describe: DescribeWidget) {
+    WIDGETS.with(|m| {
+        m.borrow_mut().entry(TypeId::of::<W>()).or_insert(describe);
+    });
 }
