@@ -24,7 +24,9 @@ use nd_gpui::gpui::{
 };
 use nd_ui::events::Emit;
 use nd_virtual::physics::{Direct, ScrollPhysics, WheelPhase};
-use nd_virtual::{ListKind, ListProps, RowDisclosed, RowId, RowTag, RowsSelected, Selection, ViewportChanged};
+use nd_virtual::{
+    ListHandle, ListKind, ListProps, RowDisclosed, RowId, RowMeta, RowTag, RowsSelected, Selection, ViewportChanged,
+};
 
 use crate::backend::Wake;
 
@@ -77,6 +79,17 @@ pub(crate) struct Row {
     pub element: AnyElement,
 }
 
+/// A tree row's hierarchy, from the model (the row's own tag can be a render behind).
+fn meta(handle: &ListHandle, row: RowId) -> RowMeta {
+    let core = handle.0.borrow();
+    core.index_of(row).map(|i| core.meta(i)).unwrap_or_default()
+}
+
+/// Points a tree row is indented by: its depth plus the disclosure column.
+fn tree_indent(kind: &ListKind, handle: &ListHandle, row: RowId) -> f32 {
+    if *kind == ListKind::Tree { (f32::from(meta(handle, row).depth) + 1.) * INDENT } else { 0. }
+}
+
 pub(crate) struct VirtualList {
     pub node: NodeId,
     pub props: ListProps,
@@ -111,10 +124,6 @@ fn rect(b: Bounds<Pixels>) -> Rect {
 }
 
 impl VirtualList {
-    fn indent(&self, tag: &RowTag) -> f32 {
-        if self.props.kind == ListKind::Tree { (f32::from(tag.depth) + 1.) * INDENT } else { 0. }
-    }
-
     /// Asks the app for the rows the model wants when they are not the ones rendered.
     fn ask_for_rows(&self, render: Range<usize>, edges: (bool, bool), cx: &mut App) {
         let rendered: HashSet<RowId> = self.rows.iter().map(|r| r.tag.row).collect();
@@ -194,32 +203,46 @@ impl gpui::Element for VirtualList {
             core.set_viewport(f64::from(width), f64::from(view.size.height.as_f32()));
             core.set_time(now());
         }
-        let mut heights = Vec::with_capacity(self.rows.len());
-        for row in &mut self.rows {
-            let indent = if self.props.kind == ListKind::Tree { (f32::from(row.tag.depth) + 1.) * INDENT } else { 0. };
-            let available = match grid {
-                Some(g) => size(
-                    AvailableSpace::Definite(px(g.item_width as f32)),
-                    AvailableSpace::Definite(px(g.item_height as f32)),
-                ),
-                None => size(AvailableSpace::Definite(px((width - indent).max(0.))), AvailableSpace::MinContent),
+        // Rows are laid out only where it matters: in the viewport, or with a height the model
+        // has not measured at this width. Overscan rows already measured are only kept ready.
+        let kind = self.props.kind.clone();
+        let by_row: HashMap<RowId, usize> = self.rows.iter().enumerate().map(|(i, r)| (r.tag.row, i)).collect();
+        let mut laid: HashSet<usize> = HashSet::new();
+        for _ in 0..4 {
+            let need: Vec<usize> = {
+                let core = handle.0.borrow();
+                let visible: HashSet<RowId> = core.visible().iter().map(|p| p.row).collect();
+                self.rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, r)| !laid.contains(i) && (visible.contains(&r.tag.row) || !core.is_fresh(r.tag.row)))
+                    .map(|(i, _)| i)
+                    .collect()
             };
-            let measured = row.element.layout_as_root(available, window, cx);
-            heights.push((row.tag.row, f64::from(measured.height.as_f32())));
-        }
-        let layout = {
-            let mut core = handle.0.borrow_mut();
-            for (row, h) in &heights {
-                core.report_height(*row, *h);
+            if need.is_empty() {
+                break;
             }
-            core.layout()
-        };
+            for i in need {
+                let row = &mut self.rows[i];
+                let indent = tree_indent(&kind, &handle, row.tag.row);
+                let available = match grid {
+                    Some(g) => size(
+                        AvailableSpace::Definite(px(g.item_width as f32)),
+                        AvailableSpace::Definite(px(g.item_height as f32)),
+                    ),
+                    None => size(AvailableSpace::Definite(px((width - indent).max(0.))), AvailableSpace::MinContent),
+                };
+                let measured = row.element.layout_as_root(available, window, cx);
+                handle.0.borrow_mut().report_height(row.tag.row, f64::from(measured.height.as_f32()));
+                laid.insert(i);
+            }
+        }
+        let layout = handle.0.borrow_mut().layout();
         self.ask_for_rows(layout.render.clone(), (layout.at_start, layout.at_end), cx);
         if handle.0.borrow().animating() || layout.unmeasured {
             window.request_animation_frame();
         }
 
-        let by_row: HashMap<RowId, usize> = self.rows.iter().enumerate().map(|(i, r)| (r.tag.row, i)).collect();
         let selected: HashSet<RowId> = self.props.selected.iter().copied().collect();
         let mut placed = Vec::new();
         let mut painted = Vec::new();
@@ -228,8 +251,13 @@ impl gpui::Element for VirtualList {
         window.with_content_mask(Some(ContentMask { bounds: view }), |window| {
             for p in &layout.visible {
                 let Some(&i) = by_row.get(&p.row) else { continue };
-                let tag = self.rows[i].tag.clone();
-                let indent = self.indent(&tag);
+                let tag = meta(&handle, p.row);
+                let indent = tree_indent(&kind, &handle, p.row);
+                if !laid.contains(&i) {
+                    let available =
+                        size(AvailableSpace::Definite(px((width - indent).max(0.))), AvailableSpace::MinContent);
+                    self.rows[i].element.layout_as_root(available, window, cx);
+                }
                 let x = match grid {
                     Some(g) => p.lane as f32 * (g.item_width + g.gap) as f32,
                     None => indent,
@@ -321,8 +349,9 @@ impl gpui::Element for VirtualList {
         let disclosures: Vec<(RowId, Bounds<Pixels>, bool)> = prepainted
             .placed
             .iter()
-            .filter(|(i, _)| self.rows[*i].tag.expandable)
-            .map(|(i, b)| (self.rows[*i].tag.row, *b, self.rows[*i].tag.expanded))
+            .map(|(i, b)| (self.rows[*i].tag.row, *b, meta(&self.props.handle, self.rows[*i].tag.row)))
+            .filter(|(_, _, m)| m.expandable)
+            .map(|(r, b, m)| (r, b, m.expanded))
             .collect();
         let selection = self.props.selection;
         let selected = self.props.selected.clone();

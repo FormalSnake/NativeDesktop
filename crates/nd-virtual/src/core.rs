@@ -679,6 +679,17 @@ impl Core {
         layout
     }
 
+    /// The rows in the viewport now, without settling anything: what a presenter must lay out
+    /// before [`Self::layout`].
+    pub fn visible(&self) -> Vec<Placed> {
+        self.place(self.scroll_top(), self.viewport)
+    }
+
+    /// The row's height is a measurement at the current width.
+    pub fn is_fresh(&self, row: RowId) -> bool {
+        self.index.get(&row).is_some_and(|&i| self.is_measured(i))
+    }
+
     fn place(&self, scroll_top: f64, viewport: f64) -> Vec<Placed> {
         let mut out = Vec::new();
         if self.ids.is_empty() || viewport <= 0. {
