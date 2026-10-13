@@ -44,10 +44,12 @@ impl Build<'_> {
         kind: WidgetKind,
         node: &Node,
         window: &mut gpui::Window,
+        cx: &mut gpui::App,
     ) -> Option<AnyElement> {
-        let children =
-            |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
-        if let Some(control) = self.form_control(id, kind, node, window) {
+        let children = |w: &mut gpui::Window, cx: &mut gpui::App| -> Vec<AnyElement> {
+            node.children.iter().map(|c| self.node(*c, w, cx)).collect()
+        };
+        if let Some(control) = self.form_control(id, kind, node, window, cx) {
             return Some(control);
         }
         let look = self.look;
@@ -59,14 +61,14 @@ impl Build<'_> {
                 .size_full()
                 .flex()
                 .flex_col()
-                .children(bars.iter().map(|c| self.node(*c, window)).collect::<Vec<_>>())
+                .children(bars.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>())
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .flex_1()
                         .min_h_0()
-                        .children(panes.iter().map(|c| self.node(*c, window)).collect::<Vec<_>>()),
+                        .children(panes.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>()),
                 )
                 .into_any_element()
         } else if is::<Pane>(kind) {
@@ -80,7 +82,7 @@ impl Build<'_> {
                 PaneRole::Inspector => pane.border_l_1().border_color(look.border).bg(look.control),
                 PaneRole::Content | PaneRole::Overlay => pane,
             };
-            pane.children(children(window)).into_any_element()
+            pane.children(children(window, cx)).into_any_element()
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
             // The window's title row: it moves the window and keeps clear of the OS controls.
             let base = props::<TitlebarProps>(node).map(|p| p.style.clone()).unwrap_or_default();
@@ -105,10 +107,10 @@ impl Build<'_> {
                         window.start_window_move();
                     }
                 })
-                .children(children(window))
+                .children(children(window, cx))
                 .into_any_element()
         } else if is::<ToolbarItem>(kind) {
-            div().flex().occlude().children(children(window)).into_any_element()
+            div().flex().occlude().children(children(window, cx)).into_any_element()
         } else if is::<ToolbarSystemItem>(kind) {
             match props::<SystemItemProps>(node)?.item {
                 SystemItem::FlexibleSpace => div().flex_1().into_any_element(),
@@ -140,9 +142,9 @@ impl Build<'_> {
             let p = props::<GlassProps>(node)?;
             let mut glass = styled(&p.style).border_1().border_color(look.border);
             glass = glass.bg(p.tint.unwrap_or(look.control));
-            glass.children(children(window)).into_any_element()
+            glass.children(children(window, cx)).into_any_element()
         } else if is::<GlassGroup>(kind) {
-            div().flex().children(children(window)).into_any_element()
+            div().flex().children(children(window, cx)).into_any_element()
         } else if is::<SeparatorKind>(kind) {
             let p = props::<SeparatorProps>(node)?;
             let line = div().bg(look.border);
@@ -182,7 +184,7 @@ impl Build<'_> {
             }
             list.into_any_element()
         } else if is::<Form>(kind) {
-            div().size_full().flex().flex_col().gap_4().p_4().children(children(window)).into_any_element()
+            div().size_full().flex().flex_col().gap_4().p_4().children(children(window, cx)).into_any_element()
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
             div()
@@ -198,7 +200,7 @@ impl Build<'_> {
                         .border_1()
                         .border_color(look.border)
                         .bg(look.control)
-                        .children(children(window)),
+                        .children(children(window, cx)),
                 )
                 .children(p.footer.clone().map(|t| div().text_sm().child(t)))
                 .into_any_element()
@@ -219,7 +221,7 @@ impl Build<'_> {
                         .child(p.label.clone())
                         .children(p.help.clone().map(|h| div().text_sm().child(h))),
                 )
-                .children(children(window))
+                .children(children(window, cx))
                 .into_any_element()
         } else {
             return None;

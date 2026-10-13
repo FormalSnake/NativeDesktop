@@ -139,13 +139,16 @@ pub(crate) struct Build<'a> {
     pub wake: Wake,
     pub hooks: &'a Rc<dyn OsHooks>,
     pub window_id: nd_core::WindowId,
+    /// The frame's display time in seconds, which drawn animations sample.
+    pub time: f64,
 }
 
 impl Build<'_> {
-    pub fn node(&self, id: NodeId, window: &mut gpui::Window) -> AnyElement {
+    pub fn node(&self, id: NodeId, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
         let node = &self.nodes[&id];
-        let children =
-            |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
+        let children = |w: &mut gpui::Window, cx: &mut App| -> Vec<AnyElement> {
+            node.children.iter().map(|c| self.node(*c, w, cx)).collect()
+        };
         let element = match node.kind {
             NodeKind::Root => div()
                 .size_full()
@@ -153,11 +156,11 @@ impl Build<'_> {
                 .flex_col()
                 .bg(self.look.background)
                 .text_color(self.look.text)
-                .children(children(window))
+                .children(children(window, cx))
                 .into_any_element(),
             NodeKind::View => {
                 let props = node.props.downcast_ref::<DivProps>().expect("View node needs DivProps");
-                self.view(id, props, children(window), window)
+                self.view(id, props, children(window, cx), window)
             }
             NodeKind::Text => {
                 let props = node.props.downcast_ref::<TextProps>().expect("Text node needs TextProps");
@@ -173,7 +176,7 @@ impl Build<'_> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
-            NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
+            NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window, cx) => intent,
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
                 div().into_any_element()

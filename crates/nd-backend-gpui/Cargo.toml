@@ -18,6 +18,7 @@ nd-diag.workspace = true
 nd-components.workspace = true
 nd-gpui = { workspace = true, features = ["platform"] }
 futures = "0.3.34"
+unicode-segmentation = "1.13.3"
 image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
 
 [dev-dependencies]
@@ -27,4 +28,8 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [[test]]
 name = "headless"
+harness = false
+
+[[test]]
+name = "forms"
 harness = false
