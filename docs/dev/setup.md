@@ -59,4 +59,7 @@ The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libra
 - Unattended runs: the hosts power off unless g815 is in FormalShell overnight mode
   (`formalshell ipc --any-display call overnight enable`, with `XDG_RUNTIME_DIR=/run/user/1000`).
   Leave power profile, brightness and overnight state alone while it is on, and keep the fans quiet:
-  `nice -n 19 ionice -c3`, `CARGO_BUILD_JOBS=4`, nextest `--test-threads 4`, one heavy job at a time.
+  `nice -n 19 ionice -c3`, `CARGO_BUILD_JOBS=2`, nextest `--test-threads 2`, one heavy job at a time.
+  For a silent night also close the session apps, turn Hyprland animations, blur and shadows off
+  (`hyprctl eval` with `hl.config`) and power the displays off with
+  `hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })'`; render only in headless Hyprland.
