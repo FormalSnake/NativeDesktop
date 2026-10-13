@@ -75,4 +75,4 @@ proceed
 - 2026-10-13: docs examples are full apps in `examples/`, compiled in CI; web target is a real GPUI backend on wasm with the plain GPUI look; docs embeds show a live web tab plus harness-captured macOS, Linux and Windows screenshots and recordings.
 - 2026-10-13: big structural elements use the highest-level system component (sidebar split item, NSToolbar, system caption buttons, system materials), never replicas, so new OS releases restyle apps automatically; an OS-release diff job enforces it.
 - 2026-10-13: first-class `glass()` element on system materials; the zig branch's macOS command palette is ported exactly.
-- 2026-10-13: update feed is static and self-hostable on any host (ecosystem uses R2 on a non-canarycoders domain); macOS floor 14 with glass fallback below 26; git-only publishing; `zig` branch frozen at v0.5.10; signing decided at M10.
+- 2026-10-13: update feed is static and self-hostable on any host (ecosystem uses R2 at updates.formalsnake.dev, bundle ids dev.formalsnake.*); macOS floor 14 with glass fallback below 26; git-only publishing; `zig` branch frozen at v0.5.10; signing decided at M10.

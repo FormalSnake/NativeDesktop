@@ -1024,7 +1024,7 @@ thumbnails in `nd-system`, volumes and favourites as a source list, a path bread
 
 ### Decisions on the former open questions (2026-10-13)
 1. Update feed: static, self-hostable files (11.3) on any host; the ecosystem's own apps use Cloudflare R2
-   under a domain other than canarycoders.es (domain to be chosen by the user).
+   at `updates.formalsnake.dev`; bundle ids use `dev.formalsnake.*`.
 2. Signing: still open; decided at M10 (Azure Artifact Signing through CanaryCoders, Apple Developer ID).
 3. macOS floor: 14. Sonoma and Sequoia still hold a meaningful share, and the cost is small because
    structural elements use system components that exist on 14; the forks are `glass()` falling back to

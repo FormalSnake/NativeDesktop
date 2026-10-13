@@ -1,6 +1,6 @@
 #:schema ../../target/nd/nativedesktop.schema.json
 [app]
-id = "es.canarycoders.overrides"
+id = "dev.formalsnake.overrides"
 display_name = "Overrides"
 icon = "assets/icon.icon"
 

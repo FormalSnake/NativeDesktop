@@ -1,5 +1,5 @@
 #:schema ../../target/nd/nativedesktop.schema.json
 [app]
-id = "es.canarycoders.hello"
+id = "dev.formalsnake.hello"
 display_name = "Hello"
 icon = "assets/icon.icon"

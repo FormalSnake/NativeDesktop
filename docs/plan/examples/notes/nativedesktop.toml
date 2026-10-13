@@ -1,6 +1,6 @@
 #:schema ../../target/nd/nativedesktop.schema.json
 [app]
-id = "es.canarycoders.notes"
+id = "dev.formalsnake.notes"
 display_name = "Notes"
 icon = "assets/icon.icon"
 categories = ["Office", "Utility"]
@@ -11,7 +11,7 @@ ext = ["md"]
 role = "editor"
 
 [updates]
-feed = "https://updates.example.org/notes"
+feed = "https://updates.formalsnake.dev/notes"
 channels = ["stable", "beta"]
 public_key = "RWQf6LRCGA9i5zm4Yq0l3z7u0n3f2Xk3t8jW6dYp6Z2b0x8c4Kq1e9s"
 
@@ -30,7 +30,7 @@ signing_identity = "Developer ID Application: CanaryCoders"
 notarize = true
 
 [windows]
-publisher = "CanaryCoders"
+publisher = "FormalSnake"
 installer = { splash = "assets/splash.png", shortcuts = ["start", "desktop"] }
 signing = "azure"
 

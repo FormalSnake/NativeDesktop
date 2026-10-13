@@ -1,6 +1,6 @@
 #:schema ../../target/nd/nativedesktop.schema.json
 [app]
-id = "es.canarycoders.places"
+id = "dev.formalsnake.places"
 display_name = "Places"
 icon = "assets/icon.icon"
 

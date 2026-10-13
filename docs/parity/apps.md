@@ -124,8 +124,8 @@ Evidence: 2 paths max, then a count of repos with the pattern (of the 9 surveyed
 | Config files: JSON today, TOML wanted | `messages/crates/core/src/config.rs` (JSON, keeps unknown keys), `meshtop/src/config.rs` (TOML), layered `kopuz/crates/config/src/store.rs` | 6 |
 | Env override per app (`MESSAGES_FONT`, `FORMALMUSIC_SOCKET`, `KOPUZ_CONFIG_*`) | `messages/crates/desktop/src/theme.rs:16`, `youtubemusic/README.md` Configuration | 4 |
 | Nix flake + package.nix + hm-module.nix | `messages/nix/hm-module.nix`, `youtubemusic/nix/hm-module.nix` (identical shape, `programs.<app>.enable/theme`) | 5 flakes with HM modules |
-| Packaging: desktop entry, icon, .ico, PowerShell installer | `youtubemusic/packaging/windows/install.ps1`, `messages/packaging/linux/es.canarycoders.messages.desktop` | 6 |
-| App id convention `es.canarycoders.<app>` | `messages/packaging/linux/es.canarycoders.messages.desktop`, `youtubemusic/PLAN.md` | 3 |
+| Packaging: desktop entry, icon, .ico, PowerShell installer | `youtubemusic/packaging/windows/install.ps1`, `messages/packaging/linux/dev.formalsnake.messages.desktop` | 6 |
+| App id convention `dev.formalsnake.<app>` | `messages/packaging/linux/dev.formalsnake.messages.desktop`, `youtubemusic/PLAN.md` | 3 |
 | Auto-update: absent in every GPUI app | only distro/Nix; `youtubemusic` replaces it with a weekly Claude maintenance run (`youtubemusic/maintenance/weekly.md`) | 0 real |
 | Single-instance lock + raise existing window | `messages/crates/desktop/src/single_instance.rs` (85), `youtubemusic/crates/desktop/src/single_instance.rs` (identical) | 3 |
 | IPC: JSON lines over unix socket / named pipe | `youtubemusic/crates/api/src/local.rs`, `kopuz/crates/proto/src/pipe.rs`; FormalShell `formalshell-ipc` | 4 |
