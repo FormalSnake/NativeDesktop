@@ -56,6 +56,8 @@ pub struct GpuiBackend {
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
     /// Presenter state of each `nd-virtual` list, by its node.
     pub(crate) lists: crate::virtual_list::Presenters,
+    /// Gesture recognition and scroll physics per window.
+    pub(crate) gestures: crate::gestures::Gestures,
 }
 
 impl Default for GpuiBackend {
@@ -91,6 +93,7 @@ impl GpuiBackend {
             })),
             bounds: Rc::default(),
             lists: Rc::default(),
+            gestures: crate::gestures::Gestures::default(),
         }
     }
 
@@ -111,6 +114,7 @@ impl GpuiBackend {
     }
 
     pub(crate) fn forget_window(&self, window: WindowId) {
+        self.gestures.forget_window(window);
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
@@ -270,6 +274,7 @@ impl Backend for GpuiBackend {
     fn focus(&mut self, _node: Option<NodeId>) {}
 
     fn release(&mut self, node: NodeId) {
+        self.gestures.forget(node);
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {

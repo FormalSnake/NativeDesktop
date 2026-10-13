@@ -9,6 +9,7 @@ links = "nd-swift-appkit"
 
 [dependencies]
 nd-core.workspace = true
+nd-gesture.workspace = true
 nd-ui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
@@ -46,6 +47,11 @@ harness = false
 
 [[test]]
 name = "virtual_list"
+harness = false
+
+# Tier 3: a pinch and a page swipe through ndshell. `gate_m4::real_pinch_and_page_swipe`.
+[[test]]
+name = "real_gestures_gate"
 harness = false
 
 [dev-dependencies]

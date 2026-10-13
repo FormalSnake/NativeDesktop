@@ -3985,6 +3985,7 @@ dependencies = [
  "nd-components",
  "nd-core",
  "nd-diag",
+ "nd-gesture",
  "nd-gpui",
  "nd-theme",
  "nd-ui",
@@ -4012,6 +4013,7 @@ dependencies = [
  "nd-components",
  "nd-core",
  "nd-diag",
+ "nd-gesture",
  "nd-gpui",
  "nd-ui",
  "nd-virtual",
@@ -4095,6 +4097,13 @@ name = "nd-example-swift-leaf"
 version = "0.1.0"
 dependencies = [
  "nd",
+]
+
+[[package]]
+name = "nd-gesture"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
 ]
 
 [[package]]
@@ -4221,6 +4230,7 @@ name = "nd-ui"
 version = "0.1.0"
 dependencies = [
  "nd-core",
+ "nd-gesture",
  "nd-gpui",
  "nd-ui",
 ]
