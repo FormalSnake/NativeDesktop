@@ -1,0 +1,27 @@
+[package]
+name = "places"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Needs the M6 native widget trait and list components.
+m6 = []
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-map-kit = { version = "0.3", features = ["MKMapView", "MKPointAnnotation", "MKGeometry", "MKAnnotation"] }
+objc2-core-location = { version = "0.3", features = ["CLLocation"] }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[[bin]]
+name = "places"
+path = "src/main.rs"
+required-features = ["m6"]

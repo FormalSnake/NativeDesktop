@@ -1,0 +1,61 @@
+<p align="center">
+  <!-- nd: icon (160 px, from assets/icon.icon via `nd docs shots`) -->
+</p>
+
+# {{title}}
+
+A counter with a button. It is the smallest app that still has a toolbar, a native control and a test, so it is where you start breaking things.
+
+It is a [NativeDesktop](https://github.com/FormalSnake/nativedesktop) app. One Rust view tree renders through the platform backend: AppKit draws the toolbar and the button on macOS, and the framework draws them elsewhere once those backends ship.
+
+```
+┌──────────────┐  ops   ┌──────────────┐
+│  src/app.rs  │ ─────> │   backend    │
+│  Counter     │ <───── │  NSButton    │
+└──────────────┘ events └──────────────┘
+```
+
+<!-- nd: one measured number, e.g. idle CPU or cold start, from `nd diag` -->
+
+<!-- nd: hero screenshot from `nd docs shots` -->
+
+## Features
+
+- Counts clicks, 42 of them if you start it with `{{env}}_DEMO=1`.
+- One test per tier it can use today: `tests/app.rs` runs the view without a window.
+- `nd check` and `nd test` work out of the box, so an agent has something to run on the first try.
+
+Status: first scaffold. The Linux and Windows backends are not shipped, so `cargo run` on those targets returns `no platform backend is linked for this target`.
+
+## Install
+
+<!-- nd: Nix with Home Manager snippet, other Linux, macOS and Windows install steps -->
+
+## Configuration
+
+<!-- nd: settings file path and a sample, once the app has settings -->
+
+Set `{{env}}_DEMO=1` to start with a fixed count. Tests and screenshots use it.
+
+## Keyboard
+
+| Action | Shortcut |
+| --- | --- |
+| Add one | click the button, there is no shortcut yet |
+
+`Cmd` on macOS.
+
+## Development
+
+```sh
+cargo run       # open the window
+nd check        # fmt, clippy, framework lints
+nd test         # tiers 1 and 2, parallel
+nd test --tier real   # tier 3, needs a window server
+```
+
+`src/app.rs` is the view, `src/demo.rs` is the fixed state for tests and screenshots, `build.rs` links the Swift side on macOS. `CLAUDE.md` has the rules for agents working here.
+
+## License
+
+<!-- nd: license line, e.g. [MIT](LICENSE). -->

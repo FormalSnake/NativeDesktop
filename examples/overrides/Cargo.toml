@@ -1,0 +1,22 @@
+[package]
+name = "overrides"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Needs the M3 theme tokens, `titlebar()` and the per-platform override layers.
+m3 = []
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[[bin]]
+name = "overrides"
+path = "src/main.rs"
+required-features = ["m3"]

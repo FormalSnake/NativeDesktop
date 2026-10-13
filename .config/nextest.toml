@@ -10,7 +10,7 @@ max-threads = 1
 # Tier 1 (logic, TestBackend) and tier 2 (in-process backends) run in parallel; every test is its
 # own process. Default profile for local runs: everything except tier 3.
 [profile.default]
-default-filter = "not test(/(^|::)(real::|real_)/)"
+default-filter = "not test(/(^|::)(real::|real_)/) and not test(/^gate_m1::nd_new_builds/)"
 fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 
@@ -58,3 +58,8 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [[profile.gate.overrides]]
 filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike)"
 test-group = "real-window"
+
+# `nd new` compiles a whole app from cold, so its gate gets room and stays out of the default run.
+[[profile.gate.overrides]]
+filter = "test(/^gate_m1::nd_new_builds/)"
+slow-timeout = { period = "300s", terminate-after = 4 }
