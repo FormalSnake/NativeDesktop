@@ -5,9 +5,10 @@ use nd_backend_appkit::objc2::rc::Retained;
 use nd_backend_appkit::objc2::runtime::AnyObject;
 use nd_backend_appkit::objc2::{msg_send, sel};
 use nd_backend_appkit::objc2_app_kit::{
-    NSAccessibility, NSButton, NSComboBox, NSScrollView, NSSearchField, NSText, NSTextField, NSTextView, NSView,
+    NSAccessibility, NSButton, NSComboBox, NSScrollView, NSSearchField, NSSecureTextField, NSText, NSTextField,
+    NSTextView, NSView,
 };
-use nd_backend_appkit::objc2_foundation::{NSRange, NSString};
+use nd_backend_appkit::objc2_foundation::{NSRange, NSSize, NSString};
 use nd_components::Icon;
 use nd_components::forms::{
     IconEdge, SelectChanged, TextChanged, TextEvent, TextFieldState, TextSubmitted, combo_box, search_field,
@@ -152,7 +153,7 @@ pub fn run(rig: &Rig, c: &mut Checks) {
     let name = field(rig, id, "name");
     c.check(class(&name) == "NSTextField", "text_field mounts as NSTextField");
     let pass = field(rig, id, "pass");
-    c.check(class(&pass) == "NSSecureTextField", "secure_field mounts as NSSecureTextField");
+    c.check(pass.downcast_ref::<NSSecureTextField>().is_some(), "secure_field mounts as NSSecureTextField");
     c.check(rig.view(id, "search").downcast::<NSSearchField>().is_ok(), "search_field mounts as NSSearchField");
     let combo = rig.view(id, "fruit").downcast::<NSComboBox>().expect("combo");
     c.check(class(&combo) == "NSComboBox", "combo_box mounts as NSComboBox");
@@ -182,6 +183,19 @@ pub fn run(rig: &Rig, c: &mut Checks) {
         let clear =
             text_rect.is_some_and(|r| r.origin.x + r.size.width <= icon.frame().origin.x + 0.5 && pass_width > 0.);
         c.check(clear, "secure field's text rect stops before its icon");
+        // A host that resizes the field after mount (a SwiftUI form row) keeps the icon centred.
+        let mounted = pass.frame().size;
+        for size in [NSSize::new(mounted.width + 80., mounted.height + 14.), mounted] {
+            pass.setFrameSize(size);
+            pass.layoutSubtreeIfNeeded();
+            let (b, f) = (pass.bounds(), icon.frame());
+            let off = (f.origin.y + f.size.height / 2.) - (b.origin.y + b.size.height / 2.);
+            let edge = b.size.width - (f.origin.x + f.size.width);
+            c.check(
+                off.abs() <= 0.5 && edge > 0. && edge < b.size.width / 4.,
+                &format!("icon stays centred and trailing at {}x{} (off {off}, edge {edge})", size.width, size.height),
+            );
+        }
         let _ = unsafe { icon.sendAction_to(icon.action(), icon.target().as_deref()) };
         rig.pump();
         c.check(rig.read(&w, |v| v.icons == [IconEdge::Trailing]), "icon click arrives as FieldIconClicked");

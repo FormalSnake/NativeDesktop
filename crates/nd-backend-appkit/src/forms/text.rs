@@ -26,16 +26,16 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSActionCell, NSAttributedStringNSStringDrawing, NSAutoresizingMaskOptions, NSBorderType,
-    NSButton, NSCell, NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
-    NSControlTextEditingDelegate, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSScrollView,
-    NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField, NSSecureTextFieldCell,
-    NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle, NSTextFieldCell, NSTextFieldDelegate, NSTextView,
-    NSTextViewDelegate, NSView,
+    NSAccessibility, NSActionCell, NSAttributedStringNSStringDrawing, NSBorderType, NSButton, NSCell,
+    NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
+    NSControlTextEditingDelegate, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSResponder,
+    NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField,
+    NSSecureTextFieldCell, NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle, NSTextFieldCell,
+    NSTextFieldDelegate, NSTextView, NSTextViewDelegate, NSView,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSRect,
-    NSSize, NSString,
+    MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSPoint,
+    NSRect, NSSize, NSString,
 };
 
 use super::{Ctx, FormControl, NdControlTarget, apply_common, props, set_accessibility_label};
@@ -88,6 +88,70 @@ macro_rules! inset_cell {
 
 inset_cell!(NdFieldCell, NSTextFieldCell, NSActionCell, NSCell, NSObject);
 inset_cell!(NdSecureFieldCell, NSSecureTextFieldCell, NSTextFieldCell, NSActionCell, NSCell, NSObject);
+
+#[derive(Default)]
+pub struct FieldIcons {
+    buttons: RefCell<[Option<Retained<NSButton>>; 2]>,
+}
+
+/// Keeps the icon buttons on their edges and vertically centred: they are placed again
+/// whenever the field's size changes or it lays out, so a host that resizes the field after
+/// mount (a SwiftUI form row) cannot leave them stale.
+fn place_icons(field: &NSTextField, icons: &FieldIcons) {
+    let buttons = icons.buttons.borrow();
+    let bounds = field.bounds();
+    let leading = buttons[0].as_ref().map_or(0., |b| b.frame().size.width);
+    // The cell's text rect starts after the leading icon; what is left is the bezel's own inset.
+    let margin = field.cell().map_or(0., |c| c.drawingRectForBounds(bounds).origin.x - bounds.origin.x - leading);
+    for (slot, button) in buttons.iter().enumerate() {
+        let Some(button) = button else { continue };
+        let size = button.frame().size;
+        let x = if slot == 0 {
+            bounds.origin.x + margin
+        } else {
+            bounds.origin.x + bounds.size.width - margin - size.width
+        };
+        let y = bounds.origin.y + ((bounds.size.height - size.height) / 2.).round();
+        button.setFrameOrigin(NSPoint::new(x, y));
+    }
+}
+
+macro_rules! icon_field {
+    ($name:ident, $($super:ident),+) => {
+        define_class!(
+            // SAFETY: the subclass only overrides `resizeSubviewsWithOldSize:` and `layout`,
+            // calling super first, and does not implement Drop.
+            #[unsafe(super($($super),+))]
+            #[thread_kind = MainThreadOnly]
+            #[ivars = FieldIcons]
+            struct $name;
+
+            impl $name {
+                #[unsafe(method(resizeSubviewsWithOldSize:))]
+                fn resize_subviews(&self, old: NSSize) {
+                    let _: () = unsafe { msg_send![super(self), resizeSubviewsWithOldSize: old] };
+                    place_icons(self, self.ivars());
+                }
+
+                #[unsafe(method(layout))]
+                fn layout(&self) {
+                    let _: () = unsafe { msg_send![super(self), layout] };
+                    place_icons(self, self.ivars());
+                }
+            }
+        );
+
+        impl $name {
+            fn new(mtm: MainThreadMarker) -> Retained<Self> {
+                let this = Self::alloc(mtm).set_ivars(FieldIcons::default());
+                unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+            }
+        }
+    };
+}
+
+icon_field!(NdIconField, NSTextField, NSControl, NSView, NSResponder, NSObject);
+icon_field!(NdSecureIconField, NSSecureTextField, NSTextField, NSControl, NSView, NSResponder, NSObject);
 
 enum Source {
     Field(Retained<NSTextField>),
@@ -371,6 +435,20 @@ impl IconButton {
     }
 }
 
+enum IconField {
+    Plain(Retained<NdIconField>),
+    Secure(Retained<NdSecureIconField>),
+}
+
+impl IconField {
+    fn ivars(&self) -> &FieldIcons {
+        match self {
+            Self::Plain(f) => f.ivars(),
+            Self::Secure(f) => f.ivars(),
+        }
+    }
+}
+
 enum Insets {
     Plain(Retained<NdFieldCell>),
     Secure(Retained<NdSecureFieldCell>),
@@ -390,6 +468,7 @@ pub(crate) struct TextFieldControl {
     core: Rc<Core>,
     delegate: Retained<NdTextDelegate>,
     icons: [Option<IconButton>; 2],
+    icon_field: Option<IconField>,
     insets: Option<Insets>,
     search_target: Option<Retained<NdControlTarget>>,
     icon_targets: Vec<Retained<NdControlTarget>>,
@@ -403,10 +482,19 @@ fn has_icons(p: &TextFieldProps) -> bool {
 impl TextFieldControl {
     pub fn new(cx: Ctx, props: &TextFieldProps) -> Self {
         let mtm = cx.mtm;
-        let field: Retained<NSTextField> = match props.field {
-            FieldStyle::Plain => NSTextField::new(mtm),
-            FieldStyle::Secure => Retained::into_super(NSSecureTextField::new(mtm)),
-            FieldStyle::Search => Retained::into_super(NSSearchField::new(mtm)),
+        let icons = props.field != FieldStyle::Search && has_icons(props);
+        let (field, icon_field): (Retained<NSTextField>, _) = match props.field {
+            FieldStyle::Plain if icons => {
+                let f = NdIconField::new(mtm);
+                (Retained::into_super(f.clone()), Some(IconField::Plain(f)))
+            }
+            FieldStyle::Secure if icons => {
+                let f = NdSecureIconField::new(mtm);
+                (Retained::into_super(Retained::into_super(f.clone())), Some(IconField::Secure(f)))
+            }
+            FieldStyle::Plain => (NSTextField::new(mtm), None),
+            FieldStyle::Secure => (Retained::into_super(NSSecureTextField::new(mtm)), None),
+            FieldStyle::Search => (Retained::into_super(NSSearchField::new(mtm)), None),
         };
         let core = Core::new(cx.clone(), Source::Field(field.clone()), props.field == FieldStyle::Search);
         let delegate = NdTextDelegate::new(mtm, core.clone());
@@ -415,12 +503,13 @@ impl TextFieldControl {
             core,
             delegate,
             icons: [None, None],
+            icon_field,
             insets: None,
             search_target: None,
             icon_targets: Vec::new(),
             props: props.clone(),
         };
-        if props.field != FieldStyle::Search && has_icons(props) {
+        if icons {
             this.adopt_inset_cell(mtm, props.field == FieldStyle::Secure);
         }
         let field = &this.field;
@@ -525,37 +614,10 @@ impl TextFieldControl {
         self.place_icons();
     }
 
-    /// Lays the icons out against the field's current frame, then lets autoresizing keep them
-    /// pinned to their edges and centred as the field's frame changes.
     fn place_icons(&self) {
-        let Some(insets) = &self.insets else { return };
-        let field = &self.field;
-        let cell_height = field.cell().map_or(0., |c| c.cellSize().height);
-        let mut bounds = field.bounds();
-        if bounds.size.width <= 0. || bounds.size.height <= 0. {
-            let width = self.icons.iter().flatten().map(IconButton::width).sum::<f64>() * 4.;
-            field.setFrameSize(NSSize::new(width, cell_height));
-            bounds = field.bounds();
-        }
-        let (l, t) = (insets.ivars().leading.replace(0.), insets.ivars().trailing.replace(0.));
-        let margin = field.cell().map_or(0., |c| c.drawingRectForBounds(bounds).origin.x - bounds.origin.x);
-        insets.ivars().leading.set(l);
-        insets.ivars().trailing.set(t);
-        for (slot, b) in self.icons.iter().enumerate() {
-            let Some(b) = b else { continue };
-            let size = b.button.frame().size;
-            let x = if slot == 0 { margin } else { bounds.size.width - margin - size.width };
-            let y = ((bounds.size.height - size.height) / 2.).round();
-            b.button.setFrame(NSRect::new(objc2_foundation::NSPoint::new(x, y), size));
-            let pin = if slot == 0 {
-                NSAutoresizingMaskOptions::ViewMaxXMargin
-            } else {
-                NSAutoresizingMaskOptions::ViewMinXMargin
-            };
-            b.button.setAutoresizingMask(
-                pin | NSAutoresizingMaskOptions::ViewMinYMargin | NSAutoresizingMaskOptions::ViewMaxYMargin,
-            );
-        }
+        let Some(icon_field) = &self.icon_field else { return };
+        *icon_field.ivars().buttons.borrow_mut() = self.icons.each_ref().map(|b| b.as_ref().map(|b| b.button.clone()));
+        place_icons(&self.field, icon_field.ivars());
     }
 }
 
