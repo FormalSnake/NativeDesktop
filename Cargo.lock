@@ -4095,6 +4095,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-gesture"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
+]
+
+[[package]]
 name = "nd-gpui"
 version = "0.1.0"
 dependencies = [
