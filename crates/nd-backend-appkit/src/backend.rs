@@ -23,6 +23,8 @@ use crate::look::{TextLook, ViewLook};
 use crate::traffic_lights::TrafficLights;
 use crate::views::{NdLayerView, NdRootView, NdTextView, ns_rect};
 
+mod automation;
+
 enum Native {
     Root(Retained<NdLayerView>),
     Layer(Retained<NdLayerView>),
@@ -270,5 +272,33 @@ impl Backend for AppKitBackend {
 
     fn retains_frames(&self) -> bool {
         true
+    }
+
+    fn probe(&self, node: NodeId) -> nd_ui::semantics::Probe {
+        self.probe_node(node)
+    }
+
+    fn window_state(&self, window: WindowId) -> Option<nd_ui::semantics::WindowState> {
+        self.window_state_of(window)
+    }
+
+    fn perform(
+        &mut self,
+        node: NodeId,
+        action: &nd_ui::semantics::SemanticAction,
+    ) -> Result<(), nd_ui::semantics::ActionError> {
+        self.perform_action(node, action)
+    }
+
+    fn synthesize(
+        &mut self,
+        window: WindowId,
+        input: &nd_ui::semantics::SyntheticInput,
+    ) -> Result<(), nd_ui::semantics::ActionError> {
+        self.post(window, input)
+    }
+
+    fn capture(&mut self, window: WindowId) -> Result<nd_ui::semantics::Capture, nd_ui::semantics::ActionError> {
+        self.capture_window(window)
     }
 }

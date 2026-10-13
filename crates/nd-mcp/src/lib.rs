@@ -1,13 +1,10 @@
 //! MCP bridge for driving a NativeDesktop app (ARCHITECTURE.md 10.7).
 //!
-//! Three tools: `execute({code})` runs JavaScript in QuickJS with `app` bound, `snapshot` returns
-//! the compact tree with `[ref=eN]`, `reset` relaunches or reconnects. The app sits behind the
-//! [`driver::Driver`] trait; see that module for what is stubbed until `nd-automation` lands.
+//! Three tools: `execute({code})` runs JavaScript in QuickJS with `app` bound to the `nd-test`
+//! locator API, `snapshot` returns the compact semantic tree with `[ref=eN]`, `reset` relaunches
+//! the app or reconnects to the socket.
 
-pub mod driver;
 pub mod js;
-pub mod render;
+pub mod ops;
 pub mod server;
 pub mod session;
-#[cfg(feature = "stub")]
-pub mod stub;

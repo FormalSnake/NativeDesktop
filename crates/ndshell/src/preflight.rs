@@ -44,3 +44,11 @@ pub fn real_input() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// [`real_input`] under the machine-wide lock: waits for any other real-input run, here or in
+/// another worktree, then checks. Hold the returned lock for as long as the test posts input.
+pub fn real_input_locked(purpose: &str) -> Result<crate::lock::MachineLock, String> {
+    let lock = crate::lock::acquire(purpose).map_err(|e| format!("real-input lock: {e}"))?;
+    real_input()?;
+    Ok(lock)
+}

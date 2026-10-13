@@ -1,7 +1,6 @@
 //! `execute`: agent-written JavaScript in QuickJS with `app`, `state` and `console` bound.
 //!
-//! The JS API is a thin layer over [`Session`]. When `nd-test` lands its locators replace
-//! `app.find` and `app.click`; the tool contract (`code` in, JSON value and logs out) stays.
+//! The JS API mirrors `nd-test`: `app.getByRole(..).click()`, `app.locator(selector)`, `app.snapshot()`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -11,8 +10,8 @@ use std::time::{Duration, Instant};
 use rquickjs::{CatchResultExt, Context, Function, Runtime};
 use serde_json::{Value, json};
 
-use crate::render::{RenderOptions, render_snapshot};
-use crate::session::Session;
+use crate::ops;
+use crate::session::Bridge;
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -57,7 +56,7 @@ struct Vm {
 }
 
 impl JsEngine {
-    pub fn spawn(session: Session) -> Self {
+    pub fn spawn(session: Bridge) -> Self {
         let (tx, rx) = mpsc::channel::<(Command, Reply)>();
         thread::Builder::new()
             .name("nd-mcp-js".into())
@@ -110,7 +109,7 @@ fn envelope<T: serde::Serialize, E: std::fmt::Display>(result: Result<T, E>) -> 
     }
 }
 
-fn build(session: &Session) -> Result<Vm, String> {
+fn build(session: &Bridge) -> Result<Vm, String> {
     let runtime = Runtime::new().map_err(|e| e.to_string())?;
     runtime.set_memory_limit(128 * 1024 * 1024);
     let deadline: Arc<Mutex<Option<Instant>>> = Arc::default();
@@ -140,21 +139,14 @@ fn build(session: &Session) -> Result<Vm, String> {
                     }
                 })?,
             )?;
-            let s = session.clone();
-            globals.set("__nd_tree", Function::new(ctx.clone(), move || envelope(s.tree()))?)?;
-            let s = session.clone();
+            let bridge = session.clone();
             globals.set(
-                "__nd_snapshot",
-                Function::new(ctx.clone(), move |options: String| {
-                    let interactive_only = serde_json::from_str::<Value>(&options)
-                        .ok()
-                        .and_then(|v| v.get("interactiveOnly").and_then(Value::as_bool))
-                        .unwrap_or(false);
-                    envelope(s.tree().map(|tree| render_snapshot(&tree, RenderOptions { interactive_only })))
+                "__nd",
+                Function::new(ctx.clone(), move |op: String| match serde_json::from_str::<Value>(&op) {
+                    Ok(op) => envelope(bridge.run(move |session| ops::dispatch(session, &op))),
+                    Err(error) => envelope::<Value, _>(Err(error)),
                 })?,
             )?;
-            let s = session.clone();
-            globals.set("__nd_click", Function::new(ctx.clone(), move |node: u32| envelope(s.click(node)))?)?;
             ctx.eval::<(), _>(PRELUDE)?;
             Ok(())
         })

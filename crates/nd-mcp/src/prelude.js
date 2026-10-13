@@ -1,8 +1,8 @@
-// Runs inside QuickJS before any agent code. Natives (`__nd_*`) answer with a JSON envelope,
+// Runs inside QuickJS before any agent code. `__nd(op)` answers with a JSON envelope,
 // `{"ok": ..}` or `{"error": ".."}`, so every failure surfaces as a JS exception with the message.
 (() => {
-  const call = (name, ...args) => {
-    const reply = JSON.parse(globalThis[name](...args));
+  const call = (op) => {
+    const reply = JSON.parse(__nd(JSON.stringify(op)));
     if (reply.error !== undefined) throw new Error(reply.error);
     return reply.ok;
   };
@@ -14,16 +14,44 @@
       return String(v);
     }
   };
-  const flatten = (node, out = []) => {
-    out.push(node);
-    node.children.forEach((c) => flatten(c, out));
-    return out;
-  };
-  const refOf = (target) => {
-    if (typeof target === "number") return target;
-    if (typeof target === "string" && /^e\d+$/.test(target)) return Number(target.slice(1));
-    if (target && typeof target.id === "number") return target.id;
-    throw new Error("click takes a ref number, an \"eN\" string, or a node from app.find()");
+  const quote = (s) => JSON.stringify(String(s));
+
+  const locator = (selector) => {
+    const act = (action, arg) => call({ op: "locator", selector, action, arg });
+    const chain = (part) => locator(selector ? `${selector} >> ${part}` : part);
+    return {
+      selector,
+      locator: (sub) => chain(sub),
+      getByRole: (role, o = {}) =>
+        chain(`role=${role}${o.name !== undefined ? `[name=${quote(o.name)}]` : ""}${o.exact ? "[exact]" : ""}`),
+      getByTestId: (id) => chain(`testid=${id}`),
+      getByText: (t) => chain(`text=${quote(t)}`),
+      getByLabel: (t) => chain(`label=${quote(t)}`),
+      getByPlaceholder: (t) => chain(`placeholder=${quote(t)}`),
+      first: () => chain("first"),
+      last: () => chain("last"),
+      nth: (i) => chain(`nth=${i}`),
+      count: () => act("count"),
+      all: () => act("all"),
+      node: () => act("node"),
+      text: () => act("text"),
+      value: () => act("value"),
+      isVisible: () => act("is_visible"),
+      isEnabled: () => act("is_enabled"),
+      isChecked: () => act("is_checked"),
+      isFocused: () => act("is_focused"),
+      click: () => act("click"),
+      dblclick: () => act("dblclick"),
+      rightClick: () => act("right_click"),
+      hover: () => act("hover"),
+      focus: () => act("focus"),
+      fill: (value) => act("fill", value),
+      type: (text) => act("type", text),
+      press: (keys) => act("press", keys),
+      scrollIntoView: () => act("scroll_into_view"),
+      /** state: "attached" | "detached" | "visible" | "hidden" */
+      waitFor: (state = "visible") => act("wait_for", state),
+    };
   };
 
   globalThis.state = {};
@@ -33,23 +61,25 @@
   }
 
   globalThis.app = {
-    /** The semantic tree as nested objects: { id, role, name, value, test_id, enabled, focused, children }. */
-    tree: () => call("__nd_tree"),
-    /** The compact text tree, one line per node with its [ref=eN]. */
-    snapshot: (options = {}) => call("__nd_snapshot", JSON.stringify(options)),
-    /** Nodes matching every given field: role, name, testId (exact) and text (substring of name or value). */
-    find: (query = {}) =>
-      flatten(app.tree()).filter(
-        (n) =>
-          (query.role === undefined || n.role === query.role) &&
-          (query.name === undefined || n.name === query.name) &&
-          (query.testId === undefined || n.test_id === query.testId) &&
-          (query.text === undefined ||
-            (n.name ?? "").includes(query.text) ||
-            (n.value ?? "").includes(query.text)),
-      ),
-    /** Semantic click on a ref (number or "eN") or a node from find(). */
-    click: (target) => call("__nd_click", refOf(target)),
+    /** Compact tree, one line per node with its [ref=eN]. */
+    snapshot: (window) => call({ op: "snapshot", window }),
+    /** The semantic tree of every window as nested objects. */
+    tree: (window) => call({ op: "tree", window }),
+    windows: () => call({ op: "rpc", method: "windows", params: {} }),
+    locator: (selector) => locator(selector),
+    getByRole: (role, o) => locator("").getByRole(role, o),
+    getByTestId: (id) => locator("").getByTestId(id),
+    getByText: (t) => locator("").getByText(t),
+    getByLabel: (t) => locator("").getByLabel(t),
+    getByPlaceholder: (t) => locator("").getByPlaceholder(t),
+    keyboard: {
+      /** GPUI key syntax: "cmd-a", "shift-tab", "enter". */
+      press: (keys) => call({ op: "key", keys }),
+      type: (text) => call({ op: "type", text }),
+    },
+    screenshot: (path, window) => call({ op: "rpc", method: "screenshot", params: { path, window } }),
+    /** Raw automation RPC, for methods not wrapped above. */
+    rpc: (method, params = {}) => call({ op: "rpc", method, params }),
   };
 
   // Indirect eval: the completion value of the last expression statement is the result.

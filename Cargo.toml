@@ -15,6 +15,10 @@ nd-gpui = { path = "crates/nd-gpui" }
 nd-ui = { path = "crates/nd-ui" }
 nd-backend-appkit = { path = "crates/nd-backend-appkit" }
 ndshell = { path = "crates/ndshell" }
+nd-automation = { path = "crates/nd-automation" }
+nd-test = { path = "crates/nd-test" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 # Same version and features as gpui-pre, so its style enums convert into these types.
 taffy = { version = "0.13.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "content_size"] }

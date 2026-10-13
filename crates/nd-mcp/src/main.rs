@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use anyhow::{Result, bail};
 use clap::Parser;
-use nd_mcp::driver::{Launcher, SocketLauncher};
 use nd_mcp::server::NdMcp;
-use nd_mcp::session::Session;
+use nd_mcp::session::{Bridge, Target};
+use nd_test::{LaunchOptions, example_bin};
 use rmcp::ServiceExt;
 
 #[derive(Parser)]
@@ -10,29 +12,36 @@ use rmcp::ServiceExt;
 struct Args {
     /// Attach to a host somebody else launched.
     #[arg(long, env = "ND_AUTOMATION_SOCKET")]
-    socket: Option<String>,
-    /// Drive the in-process stand-in tree of examples/hello instead of a real app.
-    #[cfg(feature = "stub")]
-    #[arg(long)]
-    stub: bool,
+    socket: Option<PathBuf>,
+    /// Launch this binary with NATIVE_AUTOMATION=1.
+    #[arg(long, env = "ND_MCP_BIN", conflicts_with_all = ["socket", "example"])]
+    bin: Option<PathBuf>,
+    /// Launch a workspace binary by package name (`hello`), from `target/debug` or `$ND_<NAME>_BIN`.
+    #[arg(long, conflicts_with = "socket")]
+    example: Option<String>,
+    /// Arguments passed to the launched binary.
+    #[arg(last = true)]
+    app_args: Vec<String>,
 }
 
-fn launcher(args: &Args) -> Result<Box<dyn Launcher>> {
-    if let Some(socket) = &args.socket {
-        return Ok(Box::new(SocketLauncher { socket: socket.clone() }));
+fn target(args: Args) -> Result<Target> {
+    if let Some(socket) = args.socket {
+        return Ok(Target::Socket(socket));
     }
-    #[cfg(feature = "stub")]
-    if args.stub {
-        return Ok(Box::new(nd_mcp::stub::HelloStub));
-    }
-    bail!("no app to drive: set ND_AUTOMATION_SOCKET, or pass --stub for the examples/hello stand-in")
+    let bin = match (args.bin, args.example) {
+        (Some(bin), _) => bin,
+        (None, Some(name)) => example_bin(&name),
+        (None, None) => bail!("no app to drive: set ND_AUTOMATION_SOCKET, or pass --bin <path> or --example <name>"),
+    };
+    let mut options = LaunchOptions::new(bin);
+    options.args = args.app_args;
+    Ok(Target::Launch(options))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
-    let session = Session::spawn(launcher(&args)?);
-    let service = NdMcp::new(session).serve(rmcp::transport::stdio()).await?;
+    let bridge = Bridge::spawn(target(Args::parse())?);
+    let service = NdMcp::new(bridge).serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
 }

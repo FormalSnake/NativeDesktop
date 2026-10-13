@@ -1,0 +1,16 @@
+[package]
+name = "nd-automation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+nd-ui = { workspace = true, features = ["test-support"] }

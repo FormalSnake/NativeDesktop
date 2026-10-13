@@ -10,18 +10,18 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::js::{DEFAULT_TIMEOUT, JsEngine};
-use crate::render::{RenderOptions, render_snapshot};
-use crate::session::Session;
+use crate::ops;
+use crate::session::Bridge;
 
 #[derive(Clone)]
 pub struct NdMcp {
-    session: Session,
+    session: Bridge,
     js: JsEngine,
     tool_router: ToolRouter<Self>,
 }
 
 impl NdMcp {
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: Bridge) -> Self {
         let js = JsEngine::spawn(session.clone());
         Self { session, js, tool_router: Self::tool_router() }
     }
@@ -36,9 +36,10 @@ impl NdMcp {
         }
     }
 
-    pub fn snapshot_blocking(&self, interactive_only: bool) -> Result<String, String> {
-        let tree = self.session.tree().map_err(|e| e.to_string())?;
-        Ok(render_snapshot(&tree, RenderOptions { interactive_only }))
+    pub fn snapshot_blocking(&self, window: Option<u64>) -> Result<String, String> {
+        let op = json!({ "op": "snapshot", "window": window });
+        let tree = self.session.run(move |session| ops::dispatch(session, &op))?;
+        Ok(tree.as_str().unwrap_or_default().to_string())
     }
 
     pub fn reset_blocking(&self) -> serde_json::Value {
@@ -60,8 +61,9 @@ fn text(value: &serde_json::Value) -> CallToolResult {
 pub struct ExecuteParams {
     /// JavaScript with `app`, `state` and `console` in scope. Prefer one line, `;` between statements,
     /// and call execute again instead of writing a long script. The value of the last expression is
-    /// returned as JSON. `app.snapshot()`, `app.tree()`, `app.find({role, name, testId, text})` and
-    /// `app.click(ref)` are synchronous; `state` survives between calls.
+    /// returned as JSON. `app.snapshot()`, `app.tree()`, `app.getByRole(role, {name})`, `app.getByTestId(id)`,
+    /// `app.locator(selector)` (then `.click()`, `.fill(v)`, `.text()`, `.count()`, `.waitFor()`) and
+    /// `app.keyboard.press("cmd-a")` are synchronous; `state` survives between calls.
     code: String,
     /// Milliseconds before the snippet is abandoned. Defaults to 30000.
     timeout: Option<u64>,
@@ -69,15 +71,14 @@ pub struct ExecuteParams {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 pub struct SnapshotParams {
-    /// Keep only widgets an action can reach.
-    #[serde(rename = "interactiveOnly")]
-    interactive_only: Option<bool>,
+    /// Window id from `app.windows()`; absent means every window.
+    window: Option<u64>,
 }
 
 #[tool_router]
 impl NdMcp {
     #[tool(
-        description = "Control the user's NativeDesktop app with JavaScript snippets. Read the tree first (app.snapshot()), act with app.click(ref), then read it again to check the change."
+        description = "Control the user's NativeDesktop app with JavaScript snippets. Read the tree first (app.snapshot()), act with a locator such as app.getByTestId('add').click(), then read it again to check the change."
     )]
     async fn execute(&self, Parameters(params): Parameters<ExecuteParams>) -> CallToolResult {
         let this = self.clone();
@@ -92,8 +93,7 @@ impl NdMcp {
     )]
     async fn snapshot(&self, Parameters(params): Parameters<SnapshotParams>) -> CallToolResult {
         let this = self.clone();
-        let interactive_only = params.interactive_only.unwrap_or(false);
-        let result = tokio::task::spawn_blocking(move || this.snapshot_blocking(interactive_only))
+        let result = tokio::task::spawn_blocking(move || this.snapshot_blocking(params.window))
             .await
             .unwrap_or_else(|e| Err(format!("snapshot panicked: {e}")));
         match result {

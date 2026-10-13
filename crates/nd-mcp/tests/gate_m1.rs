@@ -1,5 +1,5 @@
-//! M1 gate, MCP leg: `snapshot` returns a tree over stdio. Runs against the in-process
-//! `examples/hello` stand-in (`--stub`), not a real window, until `nd-automation` is merged.
+//! M1 gate, MCP leg: `snapshot` returns the semantic tree of a running `hello` over stdio.
+//! The `real_` tests launch the app (a real window; build it first: `cargo build --workspace --bins`).
 
 mod gate_m1 {
     use std::io::{BufRead, BufReader, Write};
@@ -17,7 +17,7 @@ mod gate_m1 {
     impl Client {
         fn start() -> Self {
             let mut child = Command::new(env!("CARGO_BIN_EXE_nd-mcp"))
-                .arg("--stub")
+                .args(["--example", "hello"])
                 .env_remove("ND_AUTOMATION_SOCKET")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -78,35 +78,41 @@ mod gate_m1 {
     }
 
     #[test]
-    fn mcp_snapshot_returns_the_tree_from_hello() {
+    fn real_mcp_snapshot_returns_the_tree_from_hello() {
         let mut client = Client::start();
         let tree = client.tool("snapshot", json!({}));
-        assert!(tree.contains("- window \"Hello\" [ref=e"), "{tree}");
-        assert!(tree.contains("button \"Add one\""), "{tree}");
+        assert!(tree.contains("window \"Hello\""), "{tree}");
+        assert!(tree.contains("button \"Add one\"") && tree.contains("[testid=add]"), "{tree}");
         assert!(tree.contains("text \"0\""), "{tree}");
     }
 
     #[test]
-    fn mcp_execute_clicks_and_reset_clears_state() {
+    fn real_mcp_execute_clicks_and_reset_clears_state() {
         let mut client = Client::start();
-        let out = client.tool("execute", json!({ "code": "state.n = 7; app.click(app.find({ role: 'button' })[0]); app.find({ role: 'text' }).map(n => n.name)" }));
+        let out = client.tool(
+            "execute",
+            json!({ "code": "state.n = 7; app.getByTestId('add').click(); app.getByText('1').waitFor('visible'); app.getByText('1').count()" }),
+        );
         let out: Value = serde_json::from_str(&out).expect("json");
-        assert_eq!(out["result"], json!(["1", "clicks"]), "{out}");
+        assert_eq!(out["result"], json!(1), "{out}");
 
         let out = client.tool("execute", json!({ "code": "state.n" }));
         assert_eq!(serde_json::from_str::<Value>(&out).expect("json")["result"], json!(7));
 
         let reset = client.tool("reset", json!({}));
-        assert!(reset.contains("stub"), "{reset}");
-        let out = client.tool("execute", json!({ "code": "[state.n ?? null, app.find({ role: 'text' })[0].name]" }));
-        assert_eq!(serde_json::from_str::<Value>(&out).expect("json")["result"], json!([null, "0"]));
+        assert!(reset.contains("launched"), "{reset}");
+        let out = client.tool(
+            "execute",
+            json!({ "code": "app.getByText('0').waitFor('visible'); [state.n ?? null, app.getByText('0').count()]" }),
+        );
+        assert_eq!(serde_json::from_str::<Value>(&out).expect("json")["result"], json!([null, 1]));
     }
 
     #[test]
-    fn mcp_execute_reports_errors_and_timeouts() {
+    fn real_mcp_execute_reports_errors_and_timeouts() {
         let mut client = Client::start();
-        let out = client.tool("execute", json!({ "code": "app.click(9999)" }));
-        assert!(out.contains("no node e9999"), "{out}");
+        let out = client.tool("execute", json!({ "code": "app.getByTestId('nope').click()" }));
+        assert!(out.contains("\"error\""), "{out}");
         let out = client.tool("execute", json!({ "code": "while (true) {}", "timeout": 200 }));
         assert!(out.contains("timed out after 200ms"), "{out}");
     }
