@@ -32,6 +32,11 @@ nd-virtual = { workspace = true, features = ["conformance"] }
 name = "headless"
 harness = false
 
+# Tables, trees and grids on the GPUI presenter.
+[[test]]
+name = "list_kinds"
+harness = false
+
 # Row swipe actions on the GPUI presenter.
 [[test]]
 name = "row_actions"

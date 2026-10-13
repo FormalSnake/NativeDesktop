@@ -57,6 +57,10 @@ harness = false
 name = "row_actions"
 harness = false
 
+[[test]]
+name = "list_kinds"
+harness = false
+
 # Tier 3: a pinch and a page swipe through ndshell. `gate_m4::real_pinch_and_page_swipe`.
 [[test]]
 name = "real_gestures_gate"
