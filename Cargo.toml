@@ -18,6 +18,7 @@ nd-gpui = { path = "crates/nd-gpui" }
 nd-macros = { path = "crates/nd-macros" }
 nd-ui = { path = "crates/nd-ui" }
 nd-backend-appkit = { path = "crates/nd-backend-appkit" }
+nd-backend-gpui = { path = "crates/nd-backend-gpui" }
 ndshell = { path = "crates/ndshell" }
 nd-automation = { path = "crates/nd-automation" }
 nd-test = { path = "crates/nd-test" }

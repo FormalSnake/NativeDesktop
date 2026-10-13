@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The GPUI backend on macOS, picked with `ND_BACKEND=gpui`.
+gpui = ["nd/gpui"]
+
 [dependencies]
 nd = { path = "../../crates/nd" }
 

@@ -13,6 +13,9 @@ platform = ["dep:gpui_platform"]
 # gpui-fast in place of gpui-pre, for the raw baseline. nd-ui does not build on it yet: gpui-fast
 # pins taffy 0.14 and nd-ui converts GPUI styles into taffy 0.13 (decided at the M2 gate).
 fast = ["dep:gpui_fast", "dep:gpui_fast_platform"]
+# GPUI's test surface: `TestAppContext`, `HeadlessAppContext`, headless renderers and
+# `Window::render_to_image`. Tier 2 tests and `nd-backend-gpui/capture` use it.
+test-support = ["gpui/test-support", "gpui_platform?/test-support"]
 
 # `runtime_shaders` compiles the Metal shaders when the app starts instead of with Xcode's Metal
 # toolchain, which Xcode 27 no longer installs by default.
