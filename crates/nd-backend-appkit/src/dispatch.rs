@@ -110,37 +110,37 @@ impl<C: 'static> AppKitDispatch<C> {
         tx.push(Op::Focus { node: change }); // A focus-only transaction invalidates no measurement.
         tx.commit(&mut self.backend.clone(), &mut MeasureCache::default());
     }
+}
 
-    /// The nd node behind AppKit's first responder: `Some(None)` when the window itself holds
-    /// it, `None` when it is a view nd does not know (nd focus then stays where it was).
-    fn node_for_responder(&self, responder: Option<&NSResponder>) -> Option<Option<NodeId>> {
-        let Some(responder) = responder else { return Some(None) };
-        let find = |object: *const AnyObject| self.backend.node_for_view(object.cast());
-        let any: &AnyObject = responder;
-        // A focused NSTextField hands first responder to the window's shared field editor,
-        // whose delegate is the field.
-        if let Some(text) = any.downcast_ref::<NSTextView>()
-            && text.isFieldEditor()
-            && let Some(delegate) = text.delegate()
-        {
-            let delegate: *const AnyObject = Retained::as_ptr(&delegate).cast();
-            if let Some(node) = find(delegate) {
-                return Some(Some(node));
-            }
+/// The nd node behind AppKit's first responder: `Some(None)` when the window itself holds it,
+/// `None` when it is a view nd does not know (nd focus then stays where it was).
+pub(crate) fn node_for_responder(backend: &AppKitBackend, responder: Option<&NSResponder>) -> Option<Option<NodeId>> {
+    let Some(responder) = responder else { return Some(None) };
+    let find = |object: *const AnyObject| backend.node_for_view(object.cast());
+    let any: &AnyObject = responder;
+    // A focused NSTextField hands first responder to the window's shared field editor, whose
+    // delegate is the field.
+    if let Some(text) = any.downcast_ref::<NSTextView>()
+        && text.isFieldEditor()
+        && let Some(delegate) = text.delegate()
+    {
+        let delegate: *const AnyObject = Retained::as_ptr(&delegate).cast();
+        if let Some(node) = find(delegate) {
+            return Some(Some(node));
         }
-        let mut view = any.downcast_ref::<NSView>().map(|v| v.retain());
-        while let Some(v) = view {
-            if let Some(node) = find(Retained::as_ptr(&v).cast()) {
-                return Some(Some(node));
-            }
-            // SAFETY: reads the view hierarchy on the main thread; no view is mutated here.
-            view = unsafe { v.superview() };
-        }
-        if any.downcast_ref::<NdWindow>().is_some() {
-            return Some(None);
-        }
-        None
     }
+    let mut view = any.downcast_ref::<NSView>().map(|v| v.retain());
+    while let Some(v) = view {
+        if let Some(node) = find(Retained::as_ptr(&v).cast()) {
+            return Some(Some(node));
+        }
+        // SAFETY: reads the view hierarchy on the main thread; no view is mutated here.
+        view = unsafe { v.superview() };
+    }
+    if any.downcast_ref::<NdWindow>().is_some() {
+        return Some(None);
+    }
+    None
 }
 
 impl<C: 'static> KeyRouter for AppKitDispatch<C> {
@@ -155,7 +155,7 @@ impl<C: 'static> KeyRouter for AppKitDispatch<C> {
     }
 
     fn responder_changed(&self, window: &NdWindow) {
-        let Some(node) = self.node_for_responder(window.firstResponder().as_deref()) else { return };
+        let Some(node) = node_for_responder(&self.backend, window.firstResponder().as_deref()) else { return };
         // A listener that moved AppKit focus directly is still inside dispatch; nd learns of it
         // from its own focus request instead.
         if let Ok(mut tree) = self.tree.try_borrow_mut() {

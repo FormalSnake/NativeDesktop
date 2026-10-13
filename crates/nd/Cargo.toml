@@ -11,7 +11,7 @@ links = "nd-swift"
 default = ["runtime"]
 # The app vocabulary. An app's build script depends on `nd` with `default-features = false,
 # features = ["build"]`, which keeps gpui out of the host build.
-runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-backend-appkit", "dep:nd-automation"]
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation"]
 build = ["dep:toml"]
 # Placeholders for APIs later milestones ship; the examples that need them gate on their own
 # milestone feature.
@@ -22,6 +22,8 @@ test = ["runtime", "nd-ui/test-support"]
 nd-core = { workspace = true, optional = true }
 nd-ui = { workspace = true, optional = true }
 nd-diag = { workspace = true, optional = true }
+nd-gpui = { workspace = true, optional = true }
+nd-macros = { workspace = true, optional = true }
 nd-automation = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 

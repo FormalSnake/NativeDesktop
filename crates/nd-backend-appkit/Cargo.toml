@@ -31,6 +31,10 @@ harness = false
 name = "backend_seam"
 harness = false
 
+[[test]]
+name = "app_dispatch"
+harness = false
+
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]

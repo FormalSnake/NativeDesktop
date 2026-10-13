@@ -2,7 +2,7 @@
 //! [`NdLayerView`] (`div`) and [`NdTextView`] (`text`). All are flipped, so frames from `nd-ui`
 //! (top-left origin) apply unchanged.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 use nd_core::Size;
@@ -99,6 +99,8 @@ impl NdRootView {
 #[derive(Default)]
 pub struct LayerIvars {
     props: RefCell<ViewLook>,
+    /// Set once nd focuses the node; a plain `div` refuses first responder.
+    focusable: Cell<bool>,
 }
 
 define_class!(
@@ -117,6 +119,11 @@ define_class!(
         #[unsafe(method(wantsUpdateLayer))]
         fn wants_update_layer(&self) -> bool {
             true
+        }
+
+        #[unsafe(method(acceptsFirstResponder))]
+        fn accepts_first_responder(&self) -> bool {
+            self.ivars().focusable.get()
         }
 
         // Runs under the view's effective appearance, so system colours resolve for it here and
@@ -147,6 +154,10 @@ impl NdLayerView {
         this.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::OnSetNeedsDisplay);
         this.set_props(props);
         this
+    }
+
+    pub(crate) fn set_focusable(&self) {
+        self.ivars().focusable.set(true);
     }
 
     pub(crate) fn set_props(&self, props: &ViewLook) {

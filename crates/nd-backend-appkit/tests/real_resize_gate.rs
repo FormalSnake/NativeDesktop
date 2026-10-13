@@ -478,10 +478,14 @@ mod gate {
         if let Some(out) = &out {
             let _ = std::fs::create_dir_all(out);
         }
-        if let Err(why) = ndshell::preflight::real_input() {
-            println!("ND_M0_RESIZE_GATE_FAILED preflight: {why}");
-            std::process::exit(1);
-        }
+        // Held until the process exits: other real-input runs queue behind this one.
+        let _lock = match ndshell::preflight::real_input_locked("gate_m0::real_resize_drag") {
+            Ok(lock) => lock,
+            Err(why) => {
+                println!("ND_M0_RESIZE_GATE_FAILED preflight: {why}");
+                std::process::exit(1);
+            }
+        };
         let mut r = Report { failures: Vec::new() };
 
         let hello = Hello::launch(false);

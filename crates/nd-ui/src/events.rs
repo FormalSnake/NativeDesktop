@@ -85,9 +85,15 @@ impl Emit {
 /// A controlled prop's native side, kept in the widget's backend state. It tracks the value the
 /// native control holds as far as nd knows: the last value applied or reported. An app that
 /// feeds a reported or normalised value back therefore causes no second set.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Synced<T> {
     native: Option<T>,
+}
+
+impl<T> Default for Synced<T> {
+    fn default() -> Self {
+        Self { native: None }
+    }
 }
 
 impl<T: Clone + PartialEq> Synced<T> {

@@ -119,7 +119,9 @@ impl App {
         self.windows.iter().find(|(_, slot)| slot.tree.as_ref().is_some_and(|t| t.contains(node))).map(|(id, _)| *id)
     }
 
-    /// Carries out a semantic action on `node` through the backend. `Focus` also moves nd focus.
+    /// Carries out a semantic action on `node` through the backend. `Focus` on a `focusable`
+    /// element moves nd focus, which reaches the backend as the next frame's focus op; other
+    /// nodes fall back to the backend's own focus (a native view nd does not track).
     /// Events the action causes are queued; hosts drain them on the next turn, tests with
     /// `run_until_idle`.
     pub fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
@@ -127,17 +129,14 @@ impl App {
             return Err(ActionError::NotActionable(format!("{node:?} is not in any window")));
         };
         if *action == SemanticAction::Focus {
-            let nd = self
-                .windows
-                .get_mut(&window)
-                .and_then(|w| w.tree.as_mut())
-                .is_some_and(|tree| tree.dispatch.focus(node));
-            return match (nd, self.backend.perform(node, action)) {
-                (_, Ok(())) | (true, Err(ActionError::Unsupported(_))) => Ok(()),
-                (false, Err(ActionError::Unsupported(_))) => {
+            if self.focus(window, node) {
+                return Ok(());
+            }
+            return match self.backend.perform(node, action) {
+                Err(ActionError::Unsupported(_)) => {
                     Err(ActionError::NotActionable(format!("{node:?} is not focusable")))
                 }
-                (_, Err(e)) => Err(e),
+                result => result,
             };
         }
         self.backend.perform(node, action)

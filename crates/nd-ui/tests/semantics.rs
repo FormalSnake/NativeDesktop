@@ -91,8 +91,8 @@ fn probes_override_and_disabled_controls_refuse() {
 
 #[test]
 fn focus_refuses_a_node_nd_cannot_focus() {
-    // Elements have no focusable property yet, so no node takes nd focus and the test backend
-    // has no native first responder to fall back to.
+    // The button is not `focusable`, and the test backend has no native first responder to fall
+    // back to.
     let mut cx = counter();
     let add = cx.semantic_tree().nodes().find(|(_, n)| n.role == Role::Button).unwrap().1.id;
     assert!(matches!(cx.perform(add, &SemanticAction::Focus), Err(ActionError::NotActionable(_))));
@@ -106,4 +106,22 @@ fn snapshot_is_one_line_per_node() {
     assert!(snapshot.starts_with("window \"\" [id=1] [key]\n"), "{snapshot}");
     assert!(snapshot.contains("- button \"Add one\" [ref=e"), "{snapshot}");
     assert!(snapshot.contains("[testid=add]"), "{snapshot}");
+}
+
+#[test]
+fn focus_on_a_focusable_element_moves_nd_focus_and_the_tree_reports_it() {
+    struct Form;
+    impl Render for Form {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex().child(button("save", "Save").focusable()).child(div().id("field").focusable())
+        }
+    }
+    let mut cx = TestApp::with_backend(measuring_backend());
+    cx.open_window(WINDOW, |_, cx| cx.new(|_| Form));
+    let field = cx.semantic_tree().nodes().find(|(_, n)| n.test_id.as_deref() == Some("field")).unwrap().1.id;
+    cx.perform(field, &SemanticAction::Focus).unwrap();
+    cx.run_until_idle();
+    assert!(cx.semantic_tree().find(field).unwrap().1.focused);
+    assert_eq!(cx.backend().focused(), Some(field), "the focus op reached the backend");
+    assert!(cx.backend().performed().is_empty(), "nd focus needs no backend action");
 }

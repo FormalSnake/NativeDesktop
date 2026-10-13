@@ -237,7 +237,12 @@ impl Backend for AppKitBackend {
     fn focus(&mut self, node: Option<NodeId>) {
         let state = self.0.borrow();
         let window = state.window().window.clone();
-        let view = node.and_then(|n| state.nodes.get(&n)).and_then(Native::view).map(|v| v.retain());
+        let native = node.and_then(|n| state.nodes.get(&n));
+        // nd only focuses focusable nodes, so a div it names takes first responder from now on.
+        if let Some(Native::Layer(v)) = native {
+            v.set_focusable();
+        }
+        let view = native.and_then(Native::view).map(|v| v.retain());
         drop(state);
         window.make_first_responder_from_nd(view.as_deref());
     }
