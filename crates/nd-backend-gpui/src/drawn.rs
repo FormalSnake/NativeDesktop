@@ -102,7 +102,7 @@ impl Build<'_> {
                     if event.click_count >= 2 {
                         window.zoom_window();
                     } else {
-                        window.start_window_move();
+                        crate::render::start_window_move(window);
                     }
                 })
                 .children(children(window))

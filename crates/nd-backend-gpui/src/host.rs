@@ -14,7 +14,8 @@
 //! The resize gate's switches, as on AppKit: `ND_DEBUG_EXPOSE=1` paints magenta behind the app's
 //! tree, so area no node covers shows; `ND_DEBUG_DEFER_LIVE_LAYOUT=1` lays a resized window out
 //! at most every 300 ms, the late layout the gate must catch; `ND_DIAG_WINDOW=1` prints
-//! `nd: viewport WxH` per layout size and `nd: key <keystroke>` per key on stderr.
+//! `nd: viewport WxH` per layout size, `nd: key <keystroke>` per key and `nd: window move` per
+//! drag-region move on stderr.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;

@@ -378,7 +378,24 @@ mod gate_m2 {
         let mut input = VirtualInput::connect(&hyprland).unwrap();
         let (x, y) = (f64::from(before.at.0), f64::from(before.at.1));
         // hello's toolbar row is the title row; press in its middle, clear of the "Add one" button.
-        input.drag((x + f64::from(before.size.0) / 2., y + 12.), 150., 90., 30, Duration::from_millis(16)).unwrap();
+        // The compositor follows motion only once hello's `xdg_toplevel.move` reached it, so the
+        // pointer waits for hello to report the request (it lags the press under load).
+        input.move_to(x + f64::from(before.size.0) / 2., y + 12.);
+        input.sync().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        input.button(true);
+        input.sync().unwrap();
+        assert!(probe.wait_for("nd: window move", Duration::from_secs(3)), "no move from the press:\n{}", probe.log());
+        std::thread::sleep(Duration::from_millis(30));
+        let (px, py) = input.position();
+        for i in 1..=30 {
+            let t = f64::from(i) / 30.;
+            input.move_to(px + 150. * t, py + 90. * t);
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        input.sync().unwrap();
+        input.button(false);
+        input.sync().unwrap();
         std::thread::sleep(Duration::from_millis(100));
         let after = hyprland.wait_for_client(probe.child.id(), Duration::from_secs(1)).unwrap();
         let moved = (after.at.0 - before.at.0, after.at.1 - before.at.1);
