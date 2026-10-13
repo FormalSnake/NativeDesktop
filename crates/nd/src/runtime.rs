@@ -42,6 +42,8 @@ pub mod prelude {
         ActiveTheme, Appearance, GlassVariant, Material, Theme, ThemeOverride, ThemeRefinement, WindowThemeExt,
     };
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
+    #[cfg(feature = "settings-ui")]
+    pub use nd_components::forms::settings::settings_form;
 }
 
 #[derive(Debug)]

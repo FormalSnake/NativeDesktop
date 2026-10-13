@@ -13,9 +13,8 @@ default = ["runtime"]
 # features = ["build"]`, which keeps gpui out of the host build.
 runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components"]
 build = ["dep:toml"]
-# Placeholders for APIs later milestones ship; the examples that need them gate on their own
-# milestone feature.
-settings-ui = []
+# `settings_form::<T>()` over nd-settings' schema.
+settings-ui = ["runtime", "nd-components/settings"]
 test = ["runtime", "nd-ui/test-support"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
 # Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
