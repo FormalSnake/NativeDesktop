@@ -1,5 +1,6 @@
-//! `select` as `NSPopUpButton`, or `NSSegmentedControl` for `Mapping::Segmented` and
-//! `Mapping::Radio`. Changing the mapping or the options recreates the control.
+//! `select` as `NSPopUpButton`, `NSSegmentedControl` for `Mapping::Segmented`, or a group of
+//! radio `NSButton`s in an `NSStackView` for `Mapping::Radio`. Changing the mapping or the
+//! options recreates the control.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,7 +13,11 @@ use nd_ui::prelude::Hsla;
 use nd_ui::semantics::{ActionError, Probe, SemanticAction};
 use objc2::MainThreadOnly;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSControl, NSPopUpButton, NSSegmentedControl, NSView};
+use objc2_app_kit::{
+    NSAccessibility, NSAccessibilityRadioGroupRole, NSButton, NSButtonType, NSControl, NSControlStateValueOff,
+    NSControlStateValueOn, NSLayoutAttribute, NSPopUpButton, NSSegmentedControl, NSStackView,
+    NSUserInterfaceLayoutOrientation, NSView,
+};
 use objc2_foundation::{NSArray, NSRect, NSString};
 
 use super::{Ctx, FormControl, NdControlTarget, apply_common, fitting, props, send_action, set_accessibility_label};
@@ -21,6 +26,18 @@ use crate::look::Color;
 enum View {
     PopUp(Retained<NSPopUpButton>),
     Segmented(Retained<NSSegmentedControl>),
+    /// One radio button per option; AppKit makes buttons sharing a superview and an action one group.
+    Radio {
+        stack: Retained<NSStackView>,
+        buttons: Vec<Retained<NSButton>>,
+    },
+}
+
+#[derive(PartialEq)]
+enum Style {
+    PopUp,
+    Segmented,
+    Radio,
 }
 
 pub(crate) struct SelectControl {
@@ -30,8 +47,22 @@ pub(crate) struct SelectControl {
     selected: Rc<RefCell<Synced<usize>>>,
 }
 
-fn segmented(mapping: Mapping) -> bool {
-    matches!(mapping, Mapping::Segmented | Mapping::Radio)
+fn style(mapping: Mapping) -> Style {
+    match mapping {
+        Mapping::Automatic | Mapping::PopUp => Style::PopUp,
+        Mapping::Segmented => Style::Segmented,
+        Mapping::Radio => Style::Radio,
+    }
+}
+
+fn orient(stack: &NSStackView, horizontal: bool) {
+    if horizontal {
+        stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        stack.setAlignment(NSLayoutAttribute::CenterY);
+    } else {
+        stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        stack.setAlignment(NSLayoutAttribute::Leading);
+    }
 }
 
 impl SelectControl {
@@ -44,6 +75,13 @@ impl SelectControl {
                 s.selectedSegment()
             } else if let Some(p) = sender.downcast_ref::<NSPopUpButton>() {
                 p.indexOfSelectedItem()
+            } else if let Some(b) = sender.downcast_ref::<NSButton>() {
+                let index = b.tag();
+                // Clicking the chosen radio again changes nothing.
+                if reported.borrow().value() == Some(&(index as usize)) {
+                    return;
+                }
+                index
             } else {
                 return;
             };
@@ -53,7 +91,25 @@ impl SelectControl {
             }
         });
         let titles: Vec<Retained<NSString>> = props.options.iter().map(|o| NSString::from_str(o)).collect();
-        let view = if segmented(props.mapping) {
+        let view = if style(props.mapping) == Style::Radio {
+            let stack = NSStackView::new(mtm);
+            orient(&stack, props.horizontal);
+            stack.setAccessibilityRole(Some(unsafe { NSAccessibilityRadioGroupRole }));
+            let buttons: Vec<_> = titles
+                .iter()
+                .enumerate()
+                .map(|(i, title)| {
+                    let button = NSButton::new(mtm);
+                    button.setButtonType(NSButtonType::Radio);
+                    button.setTitle(title);
+                    button.setTag(i as isize);
+                    target.wire(&button);
+                    stack.addArrangedSubview(&button);
+                    button
+                })
+                .collect();
+            View::Radio { stack, buttons }
+        } else if style(props.mapping) == Style::Segmented {
             let control = NSSegmentedControl::new(mtm);
             control.setSegmentCount(titles.len() as isize);
             for (i, title) in titles.iter().enumerate() {
@@ -73,21 +129,25 @@ impl SelectControl {
         this
     }
 
-    fn control(&self) -> &NSControl {
+    /// The single native control, absent for a radio group, which is a view of several.
+    fn control(&self) -> Option<&NSControl> {
         match &self.view {
-            View::PopUp(v) => v,
-            View::Segmented(v) => v,
+            View::PopUp(v) => Some(v),
+            View::Segmented(v) => Some(v),
+            View::Radio { .. } => None,
         }
     }
 
     fn apply_common(&self, old: Option<&SelectProps>, new: &SelectProps) {
-        apply_common(
-            Some(self.control()),
-            self.view(),
-            old.map(|o| (o.enabled, &o.tooltip)),
-            new.enabled,
-            &new.tooltip,
-        );
+        let old_common = old.map(|o| (o.enabled, &o.tooltip));
+        apply_common(self.control(), self.view(), old_common, new.enabled, &new.tooltip);
+        if let View::Radio { buttons, .. } = &self.view
+            && old.is_none_or(|o| o.enabled != new.enabled)
+        {
+            for button in buttons {
+                button.setEnabled(new.enabled);
+            }
+        }
         if old.is_none_or(|o| o.label != new.label) {
             set_accessibility_label(self.view(), new.label.as_deref());
         }
@@ -104,19 +164,34 @@ impl SelectControl {
                 s.setSelectedSegment(*i as isize);
                 s.selectedSegment().max(0) as usize
             }
+            View::Radio { buttons, .. } => {
+                for (n, button) in buttons.iter().enumerate() {
+                    button.setState(if n == *i { NSControlStateValueOn } else { NSControlStateValueOff });
+                }
+                *i
+            }
         });
     }
 }
 
 impl FormControl for SelectControl {
     fn view(&self) -> &NSView {
-        self.control()
+        match &self.view {
+            View::PopUp(v) => v,
+            View::Segmented(v) => v,
+            View::Radio { stack, .. } => stack,
+        }
     }
 
     fn update(&mut self, old: &Props, new: &Props) -> bool {
         let (old, new): (&SelectProps, &SelectProps) = (props(old), props(new));
-        if segmented(old.mapping) != segmented(new.mapping) || old.options != new.options {
+        if style(old.mapping) != style(new.mapping) || old.options != new.options {
             return false;
+        }
+        if let View::Radio { stack, .. } = &self.view
+            && old.horizontal != new.horizontal
+        {
+            orient(stack, new.horizontal);
         }
         self.select(new.selected);
         self.apply_common(Some(old), new);
@@ -129,10 +204,17 @@ impl FormControl for SelectControl {
     }
 
     fn probe(&self, probe: &mut Probe) {
-        probe.enabled = Some(self.control().isEnabled());
+        probe.enabled = Some(match &self.view {
+            View::PopUp(p) => p.isEnabled(),
+            View::Segmented(s) => s.isEnabled(),
+            View::Radio { buttons, .. } => buttons.iter().all(|b| b.isEnabled()),
+        });
         let index = match &self.view {
             View::PopUp(p) => p.indexOfSelectedItem(),
             View::Segmented(s) => s.selectedSegment(),
+            View::Radio { buttons, .. } => {
+                buttons.iter().position(|b| b.state() == NSControlStateValueOn).map_or(-1, |i| i as isize)
+            }
         };
         probe.value = usize::try_from(index).ok().and_then(|i| self.props.options.get(i)).map(|o| o.to_string());
     }
@@ -145,8 +227,17 @@ impl FormControl for SelectControl {
         match &self.view {
             View::PopUp(p) => p.selectItemAtIndex(index as isize),
             View::Segmented(s) => s.setSelectedSegment(index as isize),
+            View::Radio { buttons, .. } => {
+                for (n, button) in buttons.iter().enumerate() {
+                    button.setState(if n == index { NSControlStateValueOn } else { NSControlStateValueOff });
+                }
+            }
         }
-        Some(send_action(self.control()))
+        Some(match (&self.view, self.control()) {
+            (View::Radio { buttons, .. }, _) => send_action(&buttons[index]),
+            (_, Some(control)) => send_action(control),
+            _ => unreachable!("a non-radio select has one control"),
+        })
     }
 
     fn set_accent(&self, accent: Option<Hsla>) {
@@ -154,6 +245,7 @@ impl FormControl for SelectControl {
         match &self.view {
             View::Segmented(s) => s.setSelectedSegmentBezelColor(color.as_deref()),
             View::PopUp(p) => p.setBezelColor(color.as_deref()),
+            View::Radio { buttons, .. } => buttons.iter().for_each(|b| b.setContentTintColor(color.as_deref())),
         }
     }
 }
