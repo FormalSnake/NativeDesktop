@@ -54,6 +54,8 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// Gesture recognition and scroll physics per window.
+    pub(crate) gestures: crate::gestures::Gestures,
 }
 
 impl Default for GpuiBackend {
@@ -88,6 +90,7 @@ impl GpuiBackend {
                 pending: Vec::new(),
             })),
             bounds: Rc::default(),
+            gestures: crate::gestures::Gestures::default(),
         }
     }
 
@@ -108,6 +111,7 @@ impl GpuiBackend {
     }
 
     pub(crate) fn forget_window(&self, window: WindowId) {
+        self.gestures.forget_window(window);
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
@@ -244,6 +248,7 @@ impl Backend for GpuiBackend {
     fn focus(&mut self, _node: Option<NodeId>) {}
 
     fn release(&mut self, node: NodeId) {
+        self.gestures.forget(node);
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {

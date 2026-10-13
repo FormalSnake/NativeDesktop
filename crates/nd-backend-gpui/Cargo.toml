@@ -13,6 +13,7 @@ capture = ["nd-gpui/test-support", "dep:image"]
 
 [dependencies]
 nd-core.workspace = true
+nd-gesture.workspace = true
 nd-ui.workspace = true
 nd-diag.workspace = true
 nd-components.workspace = true

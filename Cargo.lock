@@ -4011,6 +4011,7 @@ dependencies = [
  "nd-components",
  "nd-core",
  "nd-diag",
+ "nd-gesture",
  "nd-gpui",
  "nd-ui",
 ]
