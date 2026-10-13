@@ -51,3 +51,12 @@ The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libra
 ## CI
 
 `.github/workflows/ci.yml` runs on macOS and Linux: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest run --profile ci`, doc tests. Runners override the build dir with `CARGO_BUILD_BUILD_DIR` and `ND_ALLOW_LOCAL_BUILD=1`.
+
+## Remote Linux hosts (g815, e1504g)
+
+- Never build on e1504g. Build on g815 and copy the binary over; delete it after measuring.
+- On g815, every NativeDesktop checkout shares `CARGO_TARGET_DIR=$HOME/.cache/nd-build/target`. Check `df -h /` before large builds and stop under 15 GB free.
+- Unattended runs: the hosts power off unless g815 is in FormalShell overnight mode
+  (`formalshell ipc --any-display call overnight enable`, with `XDG_RUNTIME_DIR=/run/user/1000`).
+  Leave power profile, brightness and overnight state alone while it is on, and keep the fans quiet:
+  `nice -n 19 ionice -c3`, `CARGO_BUILD_JOBS=4`, nextest `--test-threads 4`, one heavy job at a time.
