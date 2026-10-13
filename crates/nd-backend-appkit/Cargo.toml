@@ -1,0 +1,23 @@
+[package]
+name = "nd-backend-appkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+
+[[test]]
+name = "dispatch_spike"
+harness = false
+
+[dev-dependencies]
+nd-gpui.workspace = true
