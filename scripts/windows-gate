@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# The Windows leg of the M2 gate, driven from the macbook (ARCHITECTURE.md 10.2, 16).
+#
+#   scripts/windows-gate sync          copy this checkout to the PC (tracked and untracked files)
+#   scripts/windows-gate agent         build ndshell there and (re)install the agent in the desktop session
+#   scripts/windows-gate test [runs]   tier 1 + 2 for the Windows crates, then the resize gate `runs` times
+#                                      (default 3), and copy the gate's PNGs back to target/windows-gate/
+#   scripts/windows-gate forward       forward the agent's port here: `ndshell agent ping` works locally
+#                                      once ND_AGENT_TOKEN holds the PC's token (printed by this command)
+#
+# The PC is `ssh windows` (PowerShell remote shell). The checkout lands in
+# $ND_WINDOWS_DIR (default C:\Users\kyan\dev\nativedesktop-<branch>), never in another checkout.
+# The repo's cargo config points at the macbook's cache drive through a POSIX wrapper, so builds
+# there set their own build dir and no wrapper.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+host=${ND_WINDOWS_HOST:-windows}
+branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
+dir=${ND_WINDOWS_DIR:-"C:\\Users\\kyan\\dev\\nativedesktop-$branch"}
+quiet='post-quantum|store now|openssh.com/pq'
+
+ps() {
+  ssh "$host" "$1" 2>&1 | { grep -Ev "$quiet" || true; }
+}
+
+# Cargo environment for every command run in the checkout.
+env_prefix="\$env:CARGO_BUILD_RUSTC_WRAPPER=''; \$env:CARGO_BUILD_BUILD_DIR='$dir\\target\\build'; Set-Location '$dir';"
+
+case "${1:-}" in
+  sync)
+    tarball=$(mktemp -t nd-windows).tar
+    (cd "$root" && git ls-files -co --exclude-standard -z | tar --null -T - -cf "$tarball")
+    ps "New-Item -ItemType Directory -Force -Path '$dir' | Out-Null"
+    scp -q "$tarball" "$host:$(echo "$dir" | tr '\\' '/')/sync.tar" 2>&1 | { grep -Ev "$quiet" || true; }
+    ps "Set-Location '$dir'; tar -xf sync.tar; Remove-Item sync.tar; Write-Output 'synced to $dir'"
+    rm -f "$tarball"
+    ;;
+  agent)
+    ps "$env_prefix cargo build -p ndshell 2>&1 | Select-Object -Last 3; .\\target\\debug\\ndshell.exe agent install; Start-Sleep 2; .\\target\\debug\\ndshell.exe agent ping"
+    ;;
+  test)
+    runs=${2:-3}
+    ps "$env_prefix cargo test -p nd-os-windows -p ndshell 2>&1 | Select-String -Pattern 'test result|FAILED|panicked|error'"
+    for i in $(seq 1 "$runs"); do
+      echo "gate run $i of $runs"
+      ps "$env_prefix \$env:ND_REAL='1'; \$env:ND_GATE_OUT='$dir\\target\\windows-gate\\run$i'; cargo test -p nd-os-windows --test real_resize_gate 2>&1 | Select-String -Pattern '^(ok|FAIL|     )|ND_M2_|error'"
+    done
+    mkdir -p "$root/target/windows-gate"
+    scp -q -r "$host:$(echo "$dir" | tr '\\' '/')/target/windows-gate/*" "$root/target/windows-gate/" 2>&1 | { grep -Ev "$quiet" || true; }
+    echo "captures in $root/target/windows-gate"
+    ;;
+  forward)
+    echo "ND_AGENT_TOKEN=$(ps "Get-Content \"\$env:LOCALAPPDATA\\nd\\agent\\token\"")"
+    exec ssh -N -L 47811:127.0.0.1:47811 "$host"
+    ;;
+  *)
+    sed -n '2,13p' "$0"
+    exit 2
+    ;;
+esac

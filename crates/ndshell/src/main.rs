@@ -1,9 +1,11 @@
-//! `ndshell grant <binary>`, `ndshell preflight` and `ndshell lock`; see the library modules.
+//! `ndshell grant <binary>`, `ndshell preflight`, `ndshell lock` and `ndshell agent`; see the
+//! library modules.
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("lock") => lock(&args[1..]),
+        Some("agent") => agent(&args[1..]),
         _ => run(&args),
     };
     if let Err(message) = result {
@@ -12,7 +14,34 @@ fn main() {
     }
 }
 
-const USAGE: &str = "usage: ndshell grant <binary> | ndshell preflight | ndshell lock [status | -- <command>...]";
+const USAGE: &str = "usage: ndshell grant <binary> | ndshell preflight | ndshell lock [status | -- <command>...] \
+                     | ndshell agent [install | uninstall | stop | run | ping | call <json>]";
+
+/// `ping` and `call` talk to an agent (on this machine, or forwarded with `ssh -L`); the rest
+/// manage it on Windows.
+fn agent(args: &[String]) -> Result<(), String> {
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["ping"] => {
+            let reply = ndshell::agent::Client::connect()?.call(serde_json::json!({ "cmd": "ping" }))?;
+            println!("{reply}");
+            Ok(())
+        }
+        ["call", json] => {
+            let request = serde_json::from_str(json).map_err(|e| format!("request: {e}"))?;
+            println!("{}", ndshell::agent::Client::connect()?.call(request)?);
+            Ok(())
+        }
+        #[cfg(windows)]
+        ["install"] => ndshell::agent::install::install().map(|done| println!("ndshell: {done}")),
+        #[cfg(windows)]
+        ["uninstall"] => ndshell::agent::install::uninstall(),
+        #[cfg(windows)]
+        ["stop"] => ndshell::agent::install::stop(),
+        #[cfg(windows)]
+        ["run"] => ndshell::agent::server::run(),
+        _ => Err(USAGE.into()),
+    }
+}
 
 /// `ndshell lock status` prints the holder; `ndshell lock -- <command>` runs the command holding
 /// the machine-wide real-input lock, queueing behind the current holder.
@@ -55,5 +84,5 @@ fn run(args: &[String]) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn run(_args: &[String]) -> Result<(), String> {
-    Err(format!("ndshell has only the lock on this OS yet; {USAGE}"))
+    Err(format!("ndshell has only the lock and the agent on this OS; {USAGE}"))
 }
