@@ -5,13 +5,15 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
+use nd_components::ContextMenuRequested;
 use nd_core::Size;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSAccessibilityStaticTextRole, NSAttributedStringNSExtendedStringDrawing, NSFont, NSFontAttributeName,
-    NSForegroundColorAttributeName, NSResponder, NSStringDrawingOptions, NSView, NSViewLayerContentsRedrawPolicy,
+    NSAccessibilityStaticTextRole, NSAttributedStringNSExtendedStringDrawing, NSEvent, NSEventModifierFlags, NSFont,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSResponder, NSStringDrawingOptions, NSView,
+    NSViewLayerContentsRedrawPolicy,
 };
 use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
@@ -23,6 +25,9 @@ pub(crate) type LayoutHook = Rc<dyn Fn(Size)>;
 pub struct RootIvars {
     on_layout: RefCell<Option<LayoutHook>>,
     content: OnceCell<Retained<NdLayerView>>,
+    /// Content covers the whole window, title bar included: a scaffold (whose split view
+    /// insets its panes itself) or a custom title bar.
+    full_size: Cell<bool>,
 }
 
 define_class!(
@@ -81,9 +86,18 @@ impl NdRootView {
         self.ivars().content.get().expect("content view")
     }
 
+    pub(crate) fn set_full_size(&self, full: bool) {
+        if self.ivars().full_size.replace(full) != full {
+            self.setNeedsLayout(true);
+        }
+    }
+
     /// The window's `contentLayoutRect` in this (full-size, flipped) view.
     fn safe_rect(&self) -> NSRect {
         let bounds = self.bounds();
+        if self.ivars().full_size.get() {
+            return bounds;
+        }
         let Some(window) = self.window() else { return bounds };
         let layout = window.contentLayoutRect();
         let top = (bounds.size.height - (layout.origin.y + layout.size.height)).max(0.);
@@ -96,11 +110,28 @@ impl NdRootView {
     }
 }
 
-#[derive(Default)]
 pub struct LayerIvars {
     props: RefCell<ViewLook>,
     /// Set once nd focuses the node; a plain `div` refuses first responder.
     focusable: Cell<bool>,
+    /// Multiplies the corner radius: the theme's radius scale at this node.
+    radius_scale: Cell<f32>,
+    /// A press on the view's own area moves the window (a title bar).
+    drag: Cell<bool>,
+    /// Right clicks report a context menu request to the node.
+    menu: RefCell<Option<(nd_ui::events::Emit, crate::events::Wake)>>,
+}
+
+impl Default for LayerIvars {
+    fn default() -> Self {
+        Self {
+            props: RefCell::default(),
+            focusable: Cell::new(false),
+            radius_scale: Cell::new(1.),
+            drag: Cell::new(false),
+            menu: RefCell::new(None),
+        }
+    }
 }
 
 define_class!(
@@ -126,6 +157,36 @@ define_class!(
             self.ivars().focusable.get()
         }
 
+        // Content under a transparent title bar must not move the window unless it is a drag
+        // region: a click on a card there is a click.
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn mouse_down_can_move_window(&self) -> bool {
+            false
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            if event.modifierFlags().contains(NSEventModifierFlags::Control) && self.request_menu(event) {
+                return;
+            }
+            if self.ivars().drag.get() && let Some(window) = self.window() {
+                if event.clickCount() == 2 {
+                    crate::titlebar::double_click(&window);
+                } else {
+                    window.performWindowDragWithEvent(event);
+                }
+                return;
+            }
+            let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+        }
+
+        #[unsafe(method(rightMouseDown:))]
+        fn right_mouse_down(&self, event: &NSEvent) {
+            if !self.request_menu(event) {
+                let _: () = unsafe { msg_send![super(self), rightMouseDown: event] };
+            }
+        }
+
         // Runs under the view's effective appearance, so system colours resolve for it here and
         // again whenever the appearance changes.
         #[unsafe(method(updateLayer))]
@@ -134,7 +195,8 @@ define_class!(
             let props = self.ivars().props.borrow();
             let background = props.background.map(|c| c.ns_color().CGColor());
             layer.setBackgroundColor(background.as_deref());
-            layer.setCornerRadius(props.corner_radius.into());
+            let radius = props.corner_radius * self.ivars().radius_scale.get();
+            layer.setCornerRadius(radius.into());
             match props.border {
                 Some((width, color)) => {
                     layer.setBorderWidth(width.into());
@@ -158,6 +220,31 @@ impl NdLayerView {
 
     pub(crate) fn set_focusable(&self) {
         self.ivars().focusable.set(true);
+    }
+
+    pub(crate) fn set_radius_scale(&self, scale: f32) {
+        if self.ivars().radius_scale.replace(scale) != scale {
+            self.setNeedsDisplay(true);
+        }
+    }
+
+    pub(crate) fn set_drag_region(&self, drag: bool) {
+        self.ivars().drag.set(drag);
+    }
+
+    /// Right clicks (and control-clicks) on this view emit [`ContextMenuRequested`] through
+    /// `emit`; `None` gives them back to AppKit.
+    pub(crate) fn set_menu(&self, menu: Option<(nd_ui::events::Emit, crate::events::Wake)>) {
+        *self.ivars().menu.borrow_mut() = menu;
+    }
+
+    fn request_menu(&self, event: &NSEvent) -> bool {
+        let menu = self.ivars().menu.borrow();
+        let Some((emit, wake)) = menu.as_ref() else { return false };
+        let at = self.convertPoint_fromView(event.locationInWindow(), None);
+        emit.emit(ContextMenuRequested { node: emit.node(), x: at.x as f32, y: at.y as f32 });
+        wake.wake();
+        true
     }
 
     pub(crate) fn set_props(&self, props: &ViewLook) {

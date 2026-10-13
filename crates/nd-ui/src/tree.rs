@@ -61,6 +61,9 @@ struct RNode {
     frame: Option<Rect>,
     /// Created this frame; its own children are not inserted yet.
     fresh: bool,
+    /// The size a native layout container gives this node (3.15 layout boundaries); its own
+    /// style's position and size are replaced by it.
+    boundary: Option<Size>,
 }
 
 struct ViewSlot {
@@ -109,6 +112,27 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
         .collect()
 }
 
+/// The node's own style, or, inside a native layout container, that style pinned to the box
+/// the container gives it.
+fn boundary_style(layout: &StyleRefinement, boundary: Option<Size>) -> taffy::Style {
+    let mut style = to_taffy(layout);
+    if let Some(size) = boundary {
+        style.position = taffy::Position::Absolute;
+        style.inset = taffy::Rect {
+            left: taffy::LengthPercentageAuto::length(0.),
+            top: taffy::LengthPercentageAuto::length(0.),
+            right: taffy::LengthPercentageAuto::auto(),
+            bottom: taffy::LengthPercentageAuto::auto(),
+        };
+        style.margin = taffy::Rect::zero();
+        style.size =
+            taffy::Size { width: taffy::Dimension::length(size.width), height: taffy::Dimension::length(size.height) };
+        style.min_size = taffy::Size::auto();
+        style.max_size = taffy::Size::auto();
+    }
+    style
+}
+
 fn root_style(size: Size) -> taffy::Style {
     taffy::Style {
         display: taffy::Display::Flex,
@@ -150,6 +174,7 @@ impl Tree {
                 taffy: root_taffy,
                 frame: None,
                 fresh: false,
+                boundary: None,
             },
         );
         let mut dispatch = DispatchTree::new(bindings);
@@ -267,6 +292,7 @@ impl Tree {
                 taffy: taffy.expect("taffy node"),
                 frame: None,
                 fresh: true,
+                boundary: None,
             },
         );
         let idents = idents(&el.children);
@@ -475,7 +501,7 @@ impl Tree {
             }
         }
         if node.layout != el.layout {
-            self.taffy.set_style(node.taffy, to_taffy(&el.layout)).expect("taffy node");
+            self.taffy.set_style(node.taffy, boundary_style(&el.layout, node.boundary)).expect("taffy node");
             node.layout = el.layout;
             self.needs_layout = true;
         }
@@ -580,6 +606,15 @@ impl Tree {
             return Vec::new();
         }
         self.needs_layout = false;
+        // Children of native layout containers (split panes, toolbar items) take the size the
+        // container gives them; Taffy lays out inside that box.
+        for (id, node) in &mut self.nodes {
+            let boundary = backend.boundary_size(*id);
+            if boundary != node.boundary {
+                node.boundary = boundary;
+                self.taffy.set_style(node.taffy, boundary_style(&node.layout, boundary)).expect("taffy node");
+            }
+        }
         let root = self.nodes[&self.root].taffy;
         let space = |s: taffy::AvailableSpace| match s {
             taffy::AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
@@ -621,6 +656,7 @@ impl App {
         let (Some(mut window), Some(mut tree)) = (slot.window.take(), slot.tree.take()) else {
             panic!("{id:?} drawn while leased");
         };
+        let outer = self.current_window.replace(id);
         tree.placed.clear();
         let root_view = tree.root_view.clone();
         tree.placed.insert(root_view.entity_id());
@@ -668,6 +704,7 @@ impl App {
         tx.commit_with(&mut *self.backend, &mut self.measure_cache, force, |backend, cache| {
             tree.layout(backend, cache)
         });
+        self.current_window = outer;
         let slot = self.windows.get_mut(&id).expect("window");
         slot.window = Some(window);
         slot.tree = Some(tree);

@@ -193,6 +193,29 @@ pub trait ParentElement: Sized {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DivProps {
     pub style: StyleRefinement,
+    /// What a layer above `nd-ui` attached to this container (a subtree theme override, a
+    /// context menu marker), for the backends that read it.
+    pub scope: Option<Scope>,
+}
+
+/// Type-erased props a layer above `nd-ui` hangs on a `div`, compared by value.
+#[derive(Clone, Debug)]
+pub struct Scope(pub Props);
+
+impl Scope {
+    pub fn new(props: impl AnyProps) -> Self {
+        Scope(Rc::new(props))
+    }
+
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
+}
+
+impl PartialEq for Scope {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.props_eq(&*other.0)
+    }
 }
 
 /// Props of the window's content root.
@@ -204,6 +227,8 @@ pub struct Div {
     style: StyleRefinement,
     children: Vec<AnyElement>,
     dispatch: DispatchProps,
+    scope: Option<Scope>,
+    handlers: Vec<(TypeId, Handler)>,
 }
 
 #[track_caller]
@@ -230,12 +255,37 @@ impl Div {
             style: StyleRefinement::default(),
             children: Vec::new(),
             dispatch: DispatchProps::default(),
+            scope: None,
+            handlers: Vec::new(),
         }
     }
 
     /// Keys the element explicitly, for siblings whose order or presence changes.
     pub fn id(mut self, id: impl Into<SharedString>) -> Self {
         self.key = Key::Id(id.into());
+        self
+    }
+
+    /// Attaches `scope` to the node's props; see [`DivProps::scope`].
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    pub fn scope_ref(&self) -> Option<&Scope> {
+        self.scope.as_ref()
+    }
+
+    /// Handles native events of type `E` the backend reports for this node (a context menu
+    /// request). Replaces an earlier handler for `E`.
+    pub fn on<E: 'static>(mut self, handler: impl Fn(&E, &mut Window, &mut App) + 'static) -> Self {
+        let handler: Handler = Rc::new(move |event, window, cx| {
+            if let Some(event) = event.downcast_ref::<E>() {
+                handler(event, window, cx);
+            }
+        });
+        self.handlers.retain(|(t, _)| *t != TypeId::of::<E>());
+        self.handlers.push((TypeId::of::<E>(), handler));
         self
     }
 }
@@ -265,11 +315,11 @@ impl IntoElement for Div {
         AnyElement::node(NodeElement {
             kind: NodeKind::View,
             key: self.key,
-            props: Rc::new(DivProps { style: self.style.clone() }),
+            props: Rc::new(DivProps { style: self.style.clone(), scope: self.scope }),
             layout: self.style,
             measured: false,
             children: self.children,
-            handlers: Vec::new(),
+            handlers: self.handlers,
             dispatch: self.dispatch,
         })
     }
@@ -359,6 +409,10 @@ impl<P: AnyProps> NativeElement<P> {
         &mut self.props
     }
 
+    pub fn props(&self) -> &P {
+        &self.props
+    }
+
     /// Handles events of type `E` the widget emits. Replaces an earlier handler for `E`.
     pub fn on<E: 'static>(mut self, handler: impl Fn(&E, &mut Window, &mut App) + 'static) -> Self {
         let handler: Handler = Rc::new(move |event, window, cx| {
@@ -405,21 +459,86 @@ impl<P: AnyProps> IntoElement for NativeElement<P> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClickEvent;
 
+/// What a button means, which each platform draws its own way (a default button, an accent
+/// fill, an outline).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ButtonVariant {
+    #[default]
+    Standard,
+    /// The window's default action: Return activates it.
+    Primary,
+    /// Filled with the accent colour.
+    Accent,
+    Outline,
+    Destructive,
+}
+
+/// The macOS bezel a button asks for; ignored elsewhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Bezel {
+    #[default]
+    Automatic,
+    /// Liquid Glass on macOS 26 and later, the automatic bezel below.
+    Glass,
+    Bordered,
+    Borderless,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ButtonProps {
     pub label: SharedString,
+    /// A Lucide icon name (`"share"`), mapped per platform (SF Symbols on macOS).
+    pub icon: Option<SharedString>,
+    pub variant: ButtonVariant,
+    pub bezel: Bezel,
+    pub tooltip: Option<SharedString>,
+    /// The element's style: a background becomes the bezel colour, a text colour and font
+    /// the title's, where the native control can express them.
+    pub style: StyleRefinement,
+}
+
+impl ButtonProps {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            icon: None,
+            variant: ButtonVariant::Standard,
+            bezel: Bezel::Automatic,
+            tooltip: None,
+            style: StyleRefinement::default(),
+        }
+    }
 }
 
 /// A push button; `NSButton` on AppKit. Its widget kind is `WidgetKind::of::<Button>()`.
 pub struct Button(NativeElement<ButtonProps>);
 
 pub fn button(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Button {
-    Button(NativeElement::new::<Button>(Key::Id(id.into()), ButtonProps { label: label.into() }))
+    Button(NativeElement::new::<Button>(Key::Id(id.into()), ButtonProps::new(label)))
 }
 
 impl Button {
     pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         Button(self.0.on(handler))
+    }
+
+    pub fn props_mut(&mut self) -> &mut ButtonProps {
+        self.0.props_mut()
+    }
+
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.0.props_mut().variant = variant;
+        self
+    }
+
+    pub fn bezel(mut self, bezel: Bezel) -> Self {
+        self.0.props_mut().bezel = bezel;
+        self
+    }
+
+    pub fn icon_name(mut self, icon: impl Into<SharedString>) -> Self {
+        self.0.props_mut().icon = Some(icon.into());
+        self
     }
 }
 
@@ -438,7 +557,8 @@ impl InteractiveElement for Button {
 }
 
 impl IntoElement for Button {
-    fn into_any_element(self) -> AnyElement {
+    fn into_any_element(mut self) -> AnyElement {
+        self.0.props.style = self.0.style.clone();
         self.0.into_any_element()
     }
 }
@@ -448,6 +568,9 @@ pub struct WindowControlsProps {
     /// Pins the OS window controls with their first button's top-left at this point, in
     /// window coordinates; `None` leaves them where the OS puts them.
     pub at: Option<nd_core::Point>,
+    /// A layout slot the size of the controls: the backend moves the real buttons onto the
+    /// slot's rect on every layout pass, so they ride with whatever moves the slot.
+    pub embedded: bool,
 }
 
 /// The window's own controls (traffic lights on macOS, ARCHITECTURE.md 5.4). The buttons stay
@@ -457,13 +580,27 @@ pub struct WindowControls(NativeElement<WindowControlsProps>);
 
 #[track_caller]
 pub fn window_controls() -> WindowControls {
-    let element = NativeElement::new::<WindowControls>(Key::Site(Location::caller()), WindowControlsProps { at: None });
+    let props = WindowControlsProps { at: None, embedded: false };
+    let element = NativeElement::new::<WindowControls>(Key::Site(Location::caller()), props);
     WindowControls(element.absolute())
 }
 
 impl WindowControls {
+    /// Takes space in layout, the size of the controls, and the controls follow it.
+    pub fn embedded(mut self) -> Self {
+        self.0.props_mut().embedded = true;
+        self.0.props_mut().at = None;
+        self.0.style().position = Some(nd_gpui::gpui::Position::Relative);
+        self
+    }
+
+    pub fn props(&self) -> &WindowControlsProps {
+        &self.0.props
+    }
+
     pub fn at(mut self, at: nd_gpui::gpui::Point<nd_gpui::gpui::Pixels>) -> Self {
         self.0.props_mut().at = Some(nd_core::Point { x: at.x.as_f32(), y: at.y.as_f32() });
+        self.0.props_mut().embedded = false;
         self
     }
 }

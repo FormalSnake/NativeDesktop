@@ -1,168 +1,100 @@
-//! Stand-in for `nd-theme` (M3): the token names apps read, with fixed light values, and the
-//! override types (ARCHITECTURE.md 3.6, 4) with nothing behind them yet. On macOS the text and
-//! accent tokens resolve from `NSColor` semantic colours.
+//! Theming for apps (ARCHITECTURE.md 4): `cx.theme()`, the app and window override layers, and
+//! the live sources (`theme.toml`, matugen `theme.json`, the OS appearance) wired to the
+//! running app. Subtree overrides are `.theme(..)` on a container (`SubtreeOverrides`).
 
 use std::sync::LazyLock;
 
-use nd_gpui::gpui::{Font, font};
-use nd_ui::App;
-use nd_ui::prelude::{Hsla, Pixels, hsla, px};
+pub use nd_theme::*;
+use nd_ui::{App, Window, WindowId};
 
-#[derive(Clone, Debug)]
-pub struct TextTokens {
-    pub primary: Hsla,
-    pub secondary: Hsla,
-    pub tertiary: Hsla,
-    pub on_accent: Hsla,
-}
+/// The app's theme registry, as a global.
+pub struct ThemeState(pub ThemeRegistry);
 
-#[derive(Clone, Debug)]
-pub struct SurfaceTokens {
-    /// The window background.
-    pub base: Hsla,
-    /// Cards, wells and anything one step above the base.
-    pub raised: Hsla,
-}
-
-#[derive(Clone, Debug)]
-pub struct BorderTokens {
-    pub subtle: Hsla,
-}
-
-#[derive(Clone, Debug)]
-pub struct SpacingTokens {
-    /// The platform's margin between window edge and content.
-    pub content_margin: Pixels,
-    /// The widest a readable column grows.
-    pub content_width: Pixels,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeScale {
-    pub caption: Pixels,
-    pub body: Pixels,
-    pub title: Pixels,
-}
-
-#[derive(Clone, Debug)]
-pub struct FontTokens {
-    pub body: Font,
-    /// SF Pro Rounded on macOS; the body font elsewhere.
-    pub rounded: Font,
-}
-
-#[derive(Clone, Debug)]
-pub struct Theme {
-    pub text: TextTokens,
-    pub accent: Hsla,
-    pub surface: SurfaceTokens,
-    pub border: BorderTokens,
-    pub spacing: SpacingTokens,
-    pub type_scale: TypeScale,
-    pub fonts: FontTokens,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme {
-            text: TextTokens {
-                primary: hsla(0., 0., 0., 0.85),
-                secondary: hsla(0., 0., 0., 0.5),
-                tertiary: hsla(0., 0., 0., 0.25),
-                on_accent: hsla(0., 0., 1., 1.),
-            },
-            accent: hsla(211. / 360., 1., 0.5, 1.),
-            surface: SurfaceTokens { base: hsla(0., 0., 0.98, 1.), raised: hsla(0., 0., 1., 1.) },
-            border: BorderTokens { subtle: hsla(0., 0., 0., 0.1) },
-            spacing: SpacingTokens { content_margin: px(20.), content_width: px(680.) },
-            type_scale: TypeScale { caption: px(11.), body: px(13.), title: px(22.) },
-            fonts: FontTokens { body: font(".SystemUIFont"), rounded: font(".SystemUIFont") },
-        }
-    }
-}
-
-static DEFAULT: LazyLock<Theme> = LazyLock::new(Theme::default);
-
-impl Theme {
-    /// The macOS preset: tokens read from `NSColor` semantic colours at launch.
-    #[cfg(target_os = "macos")]
-    pub(crate) fn from_system(c: nd_backend_appkit::SystemColors) -> Self {
-        Theme {
-            text: TextTokens {
-                primary: c.label,
-                secondary: c.secondary_label,
-                tertiary: c.tertiary_label,
-                on_accent: hsla(0., 0., 1., 1.),
-            },
-            accent: c.accent,
-            ..Theme::default()
-        }
-    }
-}
+static DEFAULT: LazyLock<Theme> = LazyLock::new(|| ThemeRegistry::default().app_theme().clone());
 
 pub trait ActiveTheme {
+    /// The tokens of the window being rendered (its override applied), or the app's outside
+    /// any window.
     fn theme(&self) -> &Theme;
 }
 
 impl ActiveTheme for App {
     fn theme(&self) -> &Theme {
-        self.try_global::<Theme>().unwrap_or(&DEFAULT)
+        let Some(state) = self.try_global::<ThemeState>() else { return &DEFAULT };
+        match self.current_window() {
+            Some(window) => state.0.window_theme(window),
+            None => state.0.app_theme(),
+        }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Appearance {
-    #[default]
-    System,
-    Light,
-    Dark,
+/// Runs `f` on the registry, then pushes the result to the backend and re-renders every view
+/// when anything changed.
+pub fn update_registry(cx: &mut App, f: impl FnOnce(&mut ThemeRegistry)) {
+    if !cx.has_global::<ThemeState>() {
+        cx.set_global(ThemeState(ThemeRegistry::default()));
+    }
+    let Some(state) = cx.try_global::<ThemeState>() else { return };
+    let mut registry = state.0.clone();
+    let before = registry.generation();
+    f(&mut registry);
+    if registry.generation() == before {
+        return;
+    }
+    cx.set_global(ThemeState(registry));
+    sync(cx);
 }
 
-/// Changes to the platform preset, at app, window or subtree level. Recorded, not applied, until
-/// `nd-theme` lands.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ThemeRefinement {
-    pub accent: Option<Hsla>,
-    pub radius_scale: Option<f32>,
-    pub appearance: Option<Appearance>,
+/// Pushes what native controls need to the backend and marks every view for re-render.
+pub(crate) fn sync(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    if let Some(state) = cx.try_global::<ThemeState>() {
+        let registry = &state.0;
+        // A window being built (its override set inside `open_window`) is not listed by the app
+        // yet; the registry knows it.
+        let mut windows: Vec<WindowId> = cx.window_ids().collect();
+        windows.extend(registry.overridden_windows().filter(|w| !windows.contains(w)).collect::<Vec<_>>());
+        let natives: Vec<(WindowId, NativeTheme)> = windows.iter().map(|w| (*w, registry.window_native(*w))).collect();
+        let app = registry.app_native();
+        let system = registry.system_scheme();
+        if let Some(backend) = cx.backend_as::<nd_backend_appkit::AppKitBackend>() {
+            backend.set_system_scheme(system);
+            backend.set_default_theme(app.clone());
+            backend.set_app_appearance(app.appearance);
+            for (window, native) in natives {
+                backend.set_window_theme(window, native);
+            }
+        }
+    }
+    cx.refresh_windows();
 }
 
-impl ThemeRefinement {
-    pub fn new() -> Self {
-        Self::default()
+/// Window-level theme overrides.
+pub trait WindowThemeExt {
+    /// Overrides the theme for this window only, over the app's.
+    fn set_theme(&mut self, theme: ThemeOverride, cx: &mut App);
+    /// Drops this window's override.
+    fn clear_theme(&mut self, cx: &mut App);
+}
+
+impl WindowThemeExt for Window {
+    fn set_theme(&mut self, theme: ThemeOverride, cx: &mut App) {
+        let id = self.id();
+        update_registry(cx, |r| r.set_window_override(id, Some(theme)));
     }
 
-    pub fn accent(mut self, accent: impl Into<Hsla>) -> Self {
-        self.accent = Some(accent.into());
-        self
-    }
-
-    pub fn radius_scale(mut self, scale: f32) -> Self {
-        self.radius_scale = Some(scale);
-        self
-    }
-
-    pub fn appearance(mut self, appearance: Appearance) -> Self {
-        self.appearance = Some(appearance);
-        self
+    fn clear_theme(&mut self, cx: &mut App) {
+        let id = self.id();
+        update_registry(cx, |r| r.set_window_override(id, None));
     }
 }
 
-/// An app- or window-level theme override.
-pub type ThemeOverride = ThemeRefinement;
-
-/// How a structural pattern is presented: the OS's own, or drawn by nd (3.6).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Pattern {
-    #[default]
-    Native,
-    Drawn,
+/// App-level overrides at runtime (the builder's `Application::theme` sets the first one).
+pub fn set_app_theme(cx: &mut App, theme: ThemeOverride) {
+    update_registry(cx, |r| r.set_app_override(theme));
 }
 
-/// App-wide pattern choices; `nativedesktop.toml` `[patterns]` sits below these.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Patterns {
-    pub tooltips: Pattern,
-    pub menus: Pattern,
-    pub popovers: Pattern,
+/// Forgets a closed window's override.
+pub fn forget_window(cx: &mut App, window: WindowId) {
+    update_registry(cx, |r| r.forget_window(window));
 }

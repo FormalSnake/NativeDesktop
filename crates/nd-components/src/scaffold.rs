@@ -1,0 +1,214 @@
+//! `scaffold()`: a window's structure, declared as intent (ARCHITECTURE.md 3.6, 3.10). On macOS
+//! it is an `NSSplitViewController` whose sidebar is `NSSplitViewItem(sidebarWithViewController:)`
+//! and whose inspector is `NSSplitViewItem(inspectorWithViewController:)`, with the toolbar an
+//! `NSToolbar`; the panes are layout boundaries sized by the split view. GPUI backends draw
+//! the same structure with the skin's tokens.
+
+use std::panic::Location;
+
+use nd_ui::prelude::*;
+use nd_ui::{ContainerElement, DispatchProps, InteractiveElement, Key, StyleRefinement};
+
+use crate::overrides::{HasScope, ScopedContainer, SubtreeScope};
+use crate::toolbar::Toolbar;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScaffoldProps {
+    pub scope: SubtreeScope,
+}
+
+impl HasScope for ScaffoldProps {
+    fn scope_mut(&mut self) -> &mut SubtreeScope {
+        &mut self.scope
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PaneRole {
+    Sidebar,
+    #[default]
+    Content,
+    Inspector,
+    /// Floats over the whole window: palettes, in-window sheets.
+    Overlay,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PaneProps {
+    pub role: PaneRole,
+    pub collapsed: bool,
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    /// Width the pane opens at, where the platform lets the app choose.
+    pub width: Option<f32>,
+    pub style: StyleRefinement,
+}
+
+/// Reported when the user collapses or expands a pane (the toolbar's sidebar button, a
+/// divider drag, a narrow window).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneCollapsed {
+    pub collapsed: bool,
+}
+
+pub struct Scaffold {
+    root: ContainerElement<ScaffoldProps>,
+    toolbar: Option<Toolbar>,
+    sidebar: Option<Pane>,
+    content: Option<AnyElement>,
+    inspector: Option<Pane>,
+    overlay: Option<AnyElement>,
+}
+
+#[track_caller]
+pub fn scaffold() -> Scaffold {
+    let root = ContainerElement::new::<Scaffold>(Key::Site(Location::caller()), ScaffoldProps::default());
+    Scaffold {
+        root: root.size_full().flex().flex_row(),
+        toolbar: None,
+        sidebar: None,
+        content: None,
+        inspector: None,
+        overlay: None,
+    }
+}
+
+impl Scaffold {
+    pub fn toolbar(mut self, toolbar: Toolbar) -> Self {
+        self.toolbar = Some(toolbar);
+        self
+    }
+
+    pub fn sidebar(mut self, sidebar: Pane) -> Self {
+        self.sidebar = Some(sidebar.role(PaneRole::Sidebar));
+        self
+    }
+
+    pub fn inspector(mut self, inspector: Pane) -> Self {
+        self.inspector = Some(inspector.role(PaneRole::Inspector));
+        self
+    }
+
+    pub fn content(mut self, content: impl IntoElement) -> Self {
+        self.content = Some(content.into_any_element());
+        self
+    }
+
+    /// Floats over the content: palettes, sheets drawn in-window.
+    pub fn overlay(mut self, overlay: impl IntoElement) -> Self {
+        self.overlay = Some(overlay.into_any_element());
+        self
+    }
+}
+
+impl InteractiveElement for Scaffold {
+    fn dispatch_props(&mut self) -> &mut DispatchProps {
+        self.root.dispatch_props()
+    }
+}
+
+impl ScopedContainer for Scaffold {
+    fn update_scope(mut self, f: impl FnOnce(&mut SubtreeScope)) -> Self {
+        self.root = self.root.update_scope(f);
+        self
+    }
+
+    fn on_native<E: 'static>(mut self, handler: impl Fn(&E, &mut Window, &mut App) + 'static) -> Self {
+        self.root = self.root.on(handler);
+        self
+    }
+}
+
+impl IntoElement for Scaffold {
+    fn into_any_element(self) -> AnyElement {
+        let content = self
+            .content
+            .map(|c| pane_with(Key::Id("nd-content".into()), PaneRole::Content).flex_1().min_w_0().h_full().child(c));
+        let overlay = self.overlay.map(|o| {
+            pane_with(Key::Id("nd-overlay".into()), PaneRole::Overlay).absolute().top_0().left_0().size_full().child(o)
+        });
+        self.root
+            .children(self.toolbar)
+            .children(self.sidebar.filter(|s| !(s.is_collapsed() && cfg!(not(target_os = "macos")))))
+            .children(content)
+            .children(self.inspector.filter(|s| !(s.is_collapsed() && cfg!(not(target_os = "macos")))))
+            .children(overlay)
+            .into_any_element()
+    }
+}
+
+/// A side pane of a [`scaffold`]: the sidebar or the inspector.
+pub struct Pane(ContainerElement<PaneProps>);
+
+fn pane_with(key: Key, role: PaneRole) -> Pane {
+    Pane(ContainerElement::new::<Pane>(key, PaneProps { role, ..PaneProps::default() }).flex().flex_col())
+}
+
+/// The sidebar. On macOS its material, width and collapse come from the split view.
+pub fn sidebar() -> Pane {
+    pane_with(Key::Id("nd-sidebar".into()), PaneRole::Sidebar).w(px(220.)).h_full()
+}
+
+/// The inspector, on the trailing side.
+pub fn inspector() -> Pane {
+    pane_with(Key::Id("nd-inspector".into()), PaneRole::Inspector).w(px(260.)).h_full()
+}
+
+impl Pane {
+    fn role(mut self, role: PaneRole) -> Self {
+        self.0.props_mut().role = role;
+        self
+    }
+
+    pub fn is_collapsed(&self) -> bool {
+        self.0.props().collapsed
+    }
+
+    /// Controlled: the pane shows or hides when this changes. A collapse the user makes is
+    /// reported through [`Pane::on_collapse_change`].
+    pub fn collapsed(mut self, collapsed: bool) -> Self {
+        self.0.props_mut().collapsed = collapsed;
+        self
+    }
+
+    pub fn on_collapse_change(self, handler: impl Fn(&PaneCollapsed, &mut Window, &mut App) + 'static) -> Self {
+        Pane(self.0.on(handler))
+    }
+
+    /// Width the pane opens at.
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.0.props_mut().width = Some(width.as_f32());
+        self.w(width)
+    }
+}
+
+impl Styled for Pane {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.0.style()
+    }
+}
+
+impl ParentElement for Pane {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.0.extend(elements);
+    }
+}
+
+impl FluentBuilder for Pane {}
+
+impl IntoElement for Pane {
+    fn into_any_element(mut self) -> AnyElement {
+        let style = self.0.style().clone();
+        let px_of = |l: Option<nd_gpui::gpui::Length>| match l {
+            Some(nd_gpui::gpui::Length::Definite(nd_gpui::gpui::DefiniteLength::Absolute(a))) => {
+                Some(a.to_pixels(px(16.)).as_f32())
+            }
+            _ => None,
+        };
+        let props = self.0.props_mut();
+        props.min_width = px_of(style.min_size.width).or(props.min_width);
+        props.max_width = px_of(style.max_size.width).or(props.max_width);
+        props.style = style;
+        self.0.into_any_element()
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "nd-components"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+nd-gpui.workspace = true
+nd-ui.workspace = true
+nd-theme.workspace = true
+
+[dev-dependencies]
+nd-ui = { workspace = true, features = ["test-support"] }

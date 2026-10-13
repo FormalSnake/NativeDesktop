@@ -39,7 +39,7 @@ impl From<Hsla> for Color {
 /// gpui's default rem, which `rems(..)` lengths resolve against until the theme sets one.
 const REM: f32 = 16.;
 
-fn length(l: AbsoluteLength) -> f32 {
+pub(crate) fn length(l: AbsoluteLength) -> f32 {
     l.to_pixels(px(REM)).as_f32()
 }
 
@@ -112,4 +112,35 @@ impl TextLook {
             }
         }
     }
+}
+
+/// The `NSFont` for an element's text style: nd's system families (`nd_theme::preset`) become
+/// the system font with that design, any other family is looked up by name. `None` when the
+/// style names no font, size or weight, so the control keeps its own.
+pub(crate) fn ns_font(style: &StyleRefinement, default_size: f64) -> Option<Retained<objc2_app_kit::NSFont>> {
+    use objc2_app_kit::{NSFont, NSFontDescriptorSystemDesignMonospaced, NSFontDescriptorSystemDesignRounded};
+    use objc2_foundation::NSString;
+    let text = &style.text;
+    if text.font_family.is_none() && text.font_size.is_none() && text.font_weight.is_none() {
+        return None;
+    }
+    let size = text.font_size.map_or(default_size, |s| f64::from(length(s)));
+    let weight = TextLook {
+        text: String::new(),
+        size: None,
+        weight: text.font_weight,
+        color: Color::Label,
+        tabular_nums: false,
+        opacity: 1.,
+    }
+    .ns_weight();
+    let system = NSFont::systemFontOfSize_weight(size, weight);
+    let design = match text.font_family.as_deref() {
+        None | Some(nd_theme::preset::SYSTEM_FONT) => return Some(system),
+        Some(nd_theme::preset::SYSTEM_FONT_ROUNDED) => unsafe { NSFontDescriptorSystemDesignRounded },
+        Some(nd_theme::preset::SYSTEM_FONT_MONO) => unsafe { NSFontDescriptorSystemDesignMonospaced },
+        Some(family) => return NSFont::fontWithName_size(&NSString::from_str(family), size).or(Some(system)),
+    };
+    let descriptor = system.fontDescriptor().fontDescriptorWithDesign(design)?;
+    NSFont::fontWithDescriptor_size(&descriptor, size).or(Some(system))
 }

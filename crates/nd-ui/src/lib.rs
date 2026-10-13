@@ -4,6 +4,7 @@
 pub mod actions;
 mod app;
 pub mod backend;
+mod container;
 pub mod dispatch;
 mod element;
 pub mod events;
@@ -18,16 +19,17 @@ mod tree;
 mod window;
 
 pub use app::{AnyView, App, Context, Entity, EntityId, Render, Subscription, WeakEntity};
+pub use container::ContainerElement;
 pub use element::{
-    AnyElement, Button, ButtonProps, ClickEvent, DispatchProps, Div, DivProps, InteractiveElement, IntoElement, Key,
-    NativeElement, ParentElement, RootProps, Text, TextProps, WindowControls, WindowControlsProps, button, div, h_flex,
-    text, v_flex, window_controls,
+    AnyElement, Bezel, Button, ButtonProps, ButtonVariant, ClickEvent, DispatchProps, Div, DivProps,
+    InteractiveElement, IntoElement, Key, NativeElement, ParentElement, RootProps, Scope, Text, TextProps,
+    WindowControls, WindowControlsProps, button, div, h_flex, text, v_flex, window_controls,
 };
 pub use nd_core::semantic::{Role, SemanticNode, SemanticTree, SemanticWindow};
 pub use nd_core::{FrameTime, NodeId, Point, Rect, Size, WindowId};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
-pub use window::{Window, WindowHandle, WindowOptions};
+pub use window::{Titlebar, Window, WindowHandle, WindowKind, WindowOptions};
 
 /// What an app imports: the vocabulary plus GPUI's geometry and colour helpers.
 pub mod prelude {
