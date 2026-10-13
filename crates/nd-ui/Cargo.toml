@@ -1,0 +1,18 @@
+[package]
+name = "nd-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes `TestBackend` for tier 1 tests in this and downstream crates.
+test-support = []
+
+[dependencies]
+nd-core.workspace = true
+nd-gpui.workspace = true
+
+[dev-dependencies]
+nd-ui = { path = ".", features = ["test-support"] }
