@@ -4,7 +4,8 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventMask, NSMenu, NSMenuItem,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventMask, NSEventModifierFlags, NSMenu,
+    NSMenuItem,
     NSWindowStyleMask,
 };
 use objc2_foundation::{
@@ -126,5 +127,20 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     app_menu.addItem(&quit);
     app_item.setSubmenu(Some(&app_menu));
     bar.addItem(&app_item);
+
+    let view_item = NSMenuItem::new(mtm);
+    let view_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("View"));
+    let full_screen = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Enter Full Screen"),
+            Some(sel!(toggleFullScreen:)),
+            &NSString::from_str("f"),
+        )
+    };
+    full_screen.setKeyEquivalentModifierMask(NSEventModifierFlags::Control | NSEventModifierFlags::Command);
+    view_menu.addItem(&full_screen);
+    view_item.setSubmenu(Some(&view_menu));
+    bar.addItem(&view_item);
     bar
 }

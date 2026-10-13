@@ -23,10 +23,12 @@ mod spike {
         NSWindow,
     };
     use nd_backend_appkit::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
-    use nd_backend_appkit::{AppKitDispatch, NdAppKitPlatform, ToolbarHost};
+    use nd_backend_appkit::{AppKitBackend, AppKitDispatch, HostOptions, NdAppKitPlatform, ToolbarHost, WindowHost};
     use nd_gpui::gpui;
     use nd_ui::dispatch::{DispatchTree, Focusable};
-    use nd_ui::{KeyBinding, KeyContext, NodeId};
+    use nd_ui::{KeyBinding, KeyContext, NodeId, WindowId};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     gpui::actions!(spike, [Ping]);
 
@@ -35,6 +37,7 @@ mod spike {
         pings: u32,
     }
 
+    const WINDOW: WindowId = WindowId(1);
     const ROOT: NodeId = NodeId(1);
     const SEARCH: NodeId = NodeId(2);
     const EDITOR: NodeId = NodeId(3);
@@ -111,6 +114,9 @@ mod spike {
         let mtm = MainThreadMarker::new().expect("the spike runs on the main thread");
         let platform = NdAppKitPlatform::new(mtm);
         let window = platform.open_window("Dispatch spike", 640., 300.);
+        let backend = Rc::new(RefCell::new(AppKitBackend::new(mtm)));
+        // Content is the host's flipped root, so field frames below are top-down.
+        let _host = WindowHost::new(&backend, WINDOW, &window, HostOptions::default());
 
         let search = NSSearchToolbarItem::initWithItemIdentifier(
             NSSearchToolbarItem::alloc(mtm),
@@ -135,7 +141,7 @@ mod spike {
         }
         tree.on_action(ROOT, |_: &Ping, cx| cx.cx.pings += 1);
 
-        let dispatch = AppKitDispatch::install(&window, tree, Spike::default());
+        let dispatch = AppKitDispatch::install(&window, WINDOW, &backend, tree, Spike::default());
         dispatch.register_view(SEARCH, &search_field);
         dispatch.register_view(EDITOR, &editor);
         dispatch.register_view(TITLE, &title);
@@ -150,17 +156,12 @@ mod spike {
 
         let mut c = Checks { failed: 0 };
         c.check(window.isKeyWindow(), "window is key (posted key events reach the key window)");
-        let before_resync = chain_matches(&editor, &title, &search_field);
-        println!(
-            "     chain right after show, before re-sync: {}",
-            if before_resync { "intact" } else { "rewritten by AppKit" }
-        );
-        // The toolbar re-links its search field's nextKeyView into the field's own hosting
-        // views when it installs the item, so the loop is synced again once the window is up.
-        dispatch.sync_key_view_loop();
+        // The toolbar re-links its search field's nextKeyView when it installs the item; the
+        // dispatcher notices on AppKit's next update pass and writes nd's order back.
+        println!("     key view loop re-synced {} time(s) after AppKit re-linked it", dispatch.key_view_resyncs());
         c.check(
             chain_matches(&editor, &title, &search_field),
-            "AppKit's nextKeyView chain matches nd's focus order, toolbar included",
+            "AppKit's nextKeyView chain matches nd's focus order, toolbar included, with no manual re-sync",
         );
         let search_in_toolbar = search_field.window().is_some_and(|w| std::ptr::eq(&*w, &**window))
             && !search_field.isDescendantOf(&content);

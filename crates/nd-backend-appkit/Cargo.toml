@@ -14,10 +14,28 @@ nd-ui.workspace = true
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"
 objc2-app-kit = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+block2 = "0.6.2"
 
 [[test]]
 name = "dispatch_spike"
 harness = false
 
+[[test]]
+name = "backend_seam"
+harness = false
+
+# Moves the real cursor, so it is an example (never run by `cargo test`); see its header.
+[[example]]
+name = "m0_resize_gate"
+
 [dev-dependencies]
 nd-gpui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+dispatch2 = "0.3.1"
+objc2-core-media = "0.3.2"
+objc2-core-video = "0.3.2"
+objc2-screen-capture-kit = "0.3.2"

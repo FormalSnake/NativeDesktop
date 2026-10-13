@@ -1,46 +1,59 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
+use nd_core::WindowId;
 use nd_ui::dispatch::{DispatchTree, KeyDispatch};
+use nd_ui::transaction::{MeasureCache, Op, Transaction};
 use nd_ui::{Keystroke, NodeId};
 use objc2::Message;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSResponder, NSTextView, NSView};
 
-use crate::{KeyRouter, NdWindow};
+use crate::{AppKitBackend, KeyRouter, NdWindow};
 
-/// One window's nd dispatch on AppKit: owns the [`DispatchTree`] and the app context, maps nd
-/// nodes to the views that take first responder for them, and keeps the two focus models in
-/// step. Until the AppKit `Backend` lands, focus changes go straight to `makeFirstResponder`
-/// instead of through a transaction's focus op.
+/// One window's nd dispatch on AppKit: owns the [`DispatchTree`] and the app context and keeps
+/// the two focus models in step. nd focus reaches AppKit only as a transaction focus op through
+/// the backend; AppKit-side changes (a click) are mirrored back into the tree.
 pub struct AppKitDispatch<C> {
     tree: RefCell<DispatchTree<C>>,
     cx: RefCell<C>,
-    views: RefCell<HashMap<NodeId, Retained<NSView>>>,
+    backend: Rc<RefCell<AppKitBackend>>,
+    window_id: WindowId,
     window: Weak<NdWindow>,
-    /// Set while nd itself moves the first responder, so the change is not reported back.
-    applying: Cell<bool>,
+    /// The `nextKeyView` chain nd last wrote. AppKit re-links it on its own (installing an
+    /// `NSSearchToolbarItem` rewrites the field's `nextKeyView` on macOS 27), so it is checked
+    /// after every event.
+    chain: RefCell<Vec<Retained<NSView>>>,
+    resyncs: Cell<u32>,
 }
 
 impl<C: 'static> AppKitDispatch<C> {
     /// Installs a dispatcher as `window`'s key router.
-    pub fn install(window: &NdWindow, tree: DispatchTree<C>, cx: C) -> Rc<Self> {
+    pub fn install(
+        window: &NdWindow,
+        window_id: WindowId,
+        backend: &Rc<RefCell<AppKitBackend>>,
+        tree: DispatchTree<C>,
+        cx: C,
+    ) -> Rc<Self> {
         let this = Rc::new(Self {
             tree: RefCell::new(tree),
             cx: RefCell::new(cx),
-            views: RefCell::new(HashMap::new()),
+            backend: backend.clone(),
+            window_id,
             window: Weak::from_retained(&window.retain()),
-            applying: Cell::new(false),
+            chain: RefCell::new(Vec::new()),
+            resyncs: Cell::new(0),
         });
         window.set_router(Some(this.clone()));
         this
     }
 
-    /// The view AppKit makes first responder when nd focuses `node`.
+    /// Names a view nd did not create through the seam (a toolbar item's field), so focus ops
+    /// and the key view loop can reach it.
     pub fn register_view(&self, node: NodeId, view: &NSView) {
-        self.views.borrow_mut().insert(node, view.retain());
+        self.backend.borrow_mut().register_external(node, view);
     }
 
     pub fn tree(&self) -> std::cell::Ref<'_, DispatchTree<C>> {
@@ -64,37 +77,50 @@ impl<C: 'static> AppKitDispatch<C> {
 
     /// Rebuilds AppKit's `nextKeyView` chain from nd's focus order, so AppKit's own traversal
     /// (VoiceOver, `selectNextKeyView:`) agrees with nd's Tab. Toolbar item views are part of
-    /// the chain like any other registered view.
+    /// the chain like any other node's view.
     pub fn sync_key_view_loop(&self) {
         let order = self.tree.borrow().focus_order();
-        let views = self.views.borrow();
-        let chain: Vec<&Retained<NSView>> = order.iter().filter_map(|n| views.get(n)).collect();
+        let chain: Vec<Retained<NSView>> = {
+            let backend = self.backend.borrow();
+            order.iter().filter_map(|n| backend.view(*n)).collect()
+        };
         for (i, view) in chain.iter().enumerate() {
-            let next = chain[(i + 1) % chain.len()];
+            let next = &chain[(i + 1) % chain.len()];
             unsafe { view.setNextKeyView(Some(next)) };
         }
         if let (Some(window), Some(first)) = (self.window.load(), chain.first()) {
             window.setInitialFirstResponder(Some(first));
         }
+        *self.chain.borrow_mut() = chain;
+    }
+
+    /// How often AppKit re-linked the chain and nd wrote it back.
+    pub fn key_view_resyncs(&self) -> u32 {
+        self.resyncs.get()
+    }
+
+    fn chain_intact(&self) -> bool {
+        let chain = self.chain.borrow();
+        chain.iter().enumerate().all(|(i, view)| {
+            let next = &chain[(i + 1) % chain.len()];
+            unsafe { view.nextKeyView() }.is_some_and(|n| std::ptr::eq(&*n, &**next))
+        })
     }
 
     fn apply_focus(&self) {
         let Some(change) = self.tree.borrow_mut().take_focus_change() else { return };
-        let Some(window) = self.window.load() else { return };
-        let view = change.and_then(|n| self.views.borrow().get(&n).cloned());
-        self.applying.set(true);
-        window.makeFirstResponder(view.as_deref().map(|v| &**v));
-        self.applying.set(false);
+        let mut tx = Transaction::new(self.window_id);
+        tx.push(Op::Focus { node: change });
+        // A focus-only transaction invalidates no measurement.
+        tx.commit(&mut *self.backend.borrow_mut(), &mut MeasureCache::default());
     }
 
     /// The nd node behind AppKit's first responder: `Some(None)` when the window itself holds
     /// it, `None` when it is a view nd does not know (nd focus then stays where it was).
     fn node_for_responder(&self, responder: Option<&NSResponder>) -> Option<Option<NodeId>> {
         let Some(responder) = responder else { return Some(None) };
-        let views = self.views.borrow();
-        let find = |object: *const AnyObject| {
-            views.iter().find(|(_, v)| std::ptr::eq(Retained::as_ptr(v).cast(), object)).map(|(n, _)| *n)
-        };
+        let backend = self.backend.try_borrow().ok()?;
+        let find = |object: *const AnyObject| backend.node_for_view(object.cast());
         let any: &AnyObject = responder;
         // A focused NSTextField hands first responder to the window's shared field editor,
         // whose delegate is the field.
@@ -134,14 +160,18 @@ impl<C: 'static> KeyRouter for AppKitDispatch<C> {
     }
 
     fn responder_changed(&self, window: &NdWindow) {
-        if self.applying.get() {
-            return;
-        }
         let Some(node) = self.node_for_responder(window.firstResponder().as_deref()) else { return };
         // A listener that moved AppKit focus directly is still inside dispatch; nd learns of it
         // from its own focus request instead.
         if let Ok(mut tree) = self.tree.try_borrow_mut() {
             tree.platform_focused(node);
+        }
+    }
+
+    fn window_updated(&self, _window: &NdWindow) {
+        if !self.chain.borrow().is_empty() && !self.chain_intact() {
+            self.resyncs.set(self.resyncs.get() + 1);
+            self.sync_key_view_loop();
         }
     }
 }
