@@ -24,7 +24,7 @@ pub use element::{
     text, v_flex, window_controls,
 };
 pub use nd_core::semantic::{Role, SemanticNode, SemanticTree, SemanticWindow};
-pub use nd_core::{NodeId, Point, Rect, Size, WindowId};
+pub use nd_core::{FrameTime, NodeId, Point, Rect, Size, WindowId};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
 pub use window::{Window, WindowHandle, WindowOptions};

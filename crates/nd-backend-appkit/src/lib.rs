@@ -8,6 +8,7 @@
 mod app_host;
 mod backend;
 mod button;
+mod diag;
 mod dispatch;
 mod events;
 mod frame_clock;
