@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use nd_core::semantic::Role;
-use nd_core::{Point, Rect};
+use nd_core::{NodeId, Point, Rect};
 use nd_gpui::gpui::Keystroke;
 
 use crate::backend::{NodeKind, Props};
@@ -145,6 +145,34 @@ pub struct Semantics {
     pub checked: Option<bool>,
     pub selected: Option<bool>,
     pub expanded: Option<bool>,
+    /// Parts of the one native control a user perceives as nodes of their own (a palette's
+    /// search box). They appear as its children; actions on one go to the control.
+    pub parts: Vec<SemanticPart>,
+}
+
+/// A node inside a widget, without a retained node of its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticPart {
+    /// Joined to the widget's test id with a dot (`palette.search`).
+    pub key: &'static str,
+    pub role: Role,
+    pub name: String,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    /// Has keyboard focus while the widget does.
+    pub focused: bool,
+}
+
+const PART_BIT: u64 = 1 << 63;
+
+/// The id of the `index`th part of `owner` in the semantic tree.
+pub fn part_id(owner: NodeId, index: usize) -> NodeId {
+    NodeId(PART_BIT | (owner.0 << 8) | index as u64)
+}
+
+/// The widget a part id belongs to; `None` for an ordinary node.
+pub fn part_owner(id: NodeId) -> Option<NodeId> {
+    (id.0 & PART_BIT != 0).then(|| NodeId((id.0 & !PART_BIT) >> 8))
 }
 
 impl Semantics {

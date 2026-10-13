@@ -167,6 +167,21 @@ fn palette_is_a_dialog_named_by_its_placeholder() {
 }
 
 #[test]
+fn the_search_box_is_a_node_of_its_own_and_takes_typing() {
+    let (mut cx, natives, handle) = palette_app();
+    user(&mut cx, &natives, |m| m.edited("tri"));
+    let tree = cx.semantic_tree();
+    let (_, palette) = tree.nodes().find(|(_, n)| n.test_id.as_deref() == Some("palette")).expect("palette node");
+    let search = palette.children.iter().find(|n| n.role == Role::SearchBox).expect("search box under the palette");
+    assert_eq!(search.test_id.as_deref(), Some("palette.search"));
+    assert_eq!(search.value.as_deref(), Some("tri|p to Lisbon"), "the completion shows after the caret");
+    let id = search.id;
+    cx.perform(id, &nd_ui::semantics::SemanticAction::Type("p".into())).expect("typing into the search box");
+    cx.run_until_idle();
+    read(&cx, &handle, |p| assert_eq!(p.queries.last().map(|s| s.as_ref()), Some("trip")));
+}
+
+#[test]
 fn typing_round_trips_and_the_fed_back_query_never_reseeds_the_field() {
     let (mut cx, natives, handle) = palette_app();
     user(&mut cx, &natives, |m| m.edited("tri"));

@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use nd_core::semantic::Role;
-use nd_ui::backend::Props;
 use nd_ui::prelude::*;
+use nd_ui::semantics::{SemanticAction, SemanticPart, Semantics, WidgetSemantics};
 use nd_ui::{Key, NativeElement, StyleRefinement};
 
 use crate::icon::Icon;
@@ -192,18 +192,47 @@ pub struct CommandPaletteKind;
 
 pub struct CommandPalette(NativeElement<CommandPaletteProps>);
 
-fn describe(props: &Props) -> (Role, String) {
-    let name = props
-        .downcast_ref::<CommandPaletteProps>()
-        .and_then(|p| p.placeholder.as_ref().map(|s| s.to_string()))
-        .unwrap_or_else(|| "Command Palette".into());
-    (Role::Dialog, name)
+impl WidgetSemantics for CommandPaletteProps {
+    /// A dialog named by its placeholder, holding the search box as a part of its own. The
+    /// box's value shows a completion the first row offers after a `|` (`tri|p to Lisbon`).
+    fn semantics(&self) -> Semantics {
+        let name = self.placeholder.as_ref().map_or_else(|| "Command Palette".to_owned(), |s| s.to_string());
+        let completion = self
+            .items
+            .first()
+            .and_then(|item| item.completion.as_ref())
+            .filter(|c| !self.query.is_empty() && c.len() > self.query.len())
+            .filter(|c| c.to_lowercase().starts_with(&self.query.to_lowercase()));
+        let value = match completion {
+            Some(c) => format!("{}|{}", self.query, c.get(self.query.len()..).unwrap_or_default()),
+            None => self.query.to_string(),
+        };
+        let mut s = Semantics::new(Role::Dialog, name.clone());
+        s.parts.push(SemanticPart {
+            key: "search",
+            role: Role::SearchBox,
+            name,
+            value: Some(value),
+            placeholder: self.placeholder.as_ref().map(|p| p.to_string()),
+            focused: true,
+        });
+        s
+    }
+
+    /// `setValue` and `type` on the palette or its search box edit the query, as typing does.
+    fn respond(&self, action: &SemanticAction) -> Option<nd_ui::semantics::Response> {
+        let text = match action {
+            SemanticAction::SetValue(v) => v.clone(),
+            SemanticAction::Type(t) => format!("{}{t}", self.query),
+            _ => return None,
+        };
+        Some(Ok(Box::new(PaletteQueryChanged { text: text.into() })))
+    }
 }
 
 /// A palette over the active window. The element takes no space where it sits; place it anywhere
 /// in the window's tree (`scaffold().overlay(..)` reads best).
 pub fn command_palette(id: impl Into<SharedString>) -> CommandPalette {
-    nd_ui::semantics::describe_widget::<CommandPaletteKind>(describe);
     let props = CommandPaletteProps {
         open: false,
         placeholder: None,
@@ -211,7 +240,7 @@ pub fn command_palette(id: impl Into<SharedString>) -> CommandPalette {
         items: Vec::new(),
         style: StyleRefinement::default(),
     };
-    CommandPalette(NativeElement::new::<CommandPaletteKind>(Key::Id(id.into()), props).absolute().size_0())
+    CommandPalette(NativeElement::described::<CommandPaletteKind>(Key::Id(id.into()), props).absolute().size_0())
 }
 
 impl CommandPalette {
