@@ -13,8 +13,10 @@
 #   bump <version> <fast version>
 #                    rebase the fork branch onto the snapshot of gpui-pre <version>, move the pins
 #                    (gpui-fast with it: each release pins one gpui-pre), export, vendor, gate
+#   patch_tests      run each patch's own tests in the vendored crates (Linux crates on Linux)
 #   gate             the rebase gate: queue applies, vendored crates match it, pins match the
-#                    snapshot, tiers 1 and 2 pass, the raw GPUI window builds
+#                    snapshot, tiers 1 and 2 pass, every patch's own tests pass, the raw GPUI
+#                    window builds
 #
 # The zed checkout is $ND_ZED_DIR (default: on the cache drive on macOS, ~/.cache/nd/zed elsewhere).
 # The gate and `vendor` never touch it: they apply the queue in a throwaway shared clone.
@@ -190,16 +192,65 @@ cmd_bump() {
   cmd_gate
 }
 
+# The `#[test]` functions a patch adds, one per line.
+patch_tests() {
+  awk '/^\+[[:space:]]*#\[test\]/ { t = 1; next }
+       t && /^\+[[:space:]]*(pub )?fn [a-z0-9_]+\(/ { match($0, /fn [a-z0-9_]+/); print substr($0, RSTART + 3, RLENGTH - 3) }
+       { t = 0 }' "$1"
+}
+
+# Runs each patch's tests in the vendored crates that carry them, on the OS those crates build on.
+# A published crate whose test target does not build on its own (tests that read zed's assets or
+# use zed's dev-dependencies) runs the test in the fork checkout instead, where it was written.
+cmd_patch_tests() {
+  local patch name pkg os dir log tested="" fork=""
+  case "$(uname -s)" in Linux) os=linux ;; Darwin) os=macos ;; *) os=windows ;; esac
+  log=$(mktemp "${TMPDIR:-/tmp}/nd-gpui-test.XXXXXX")
+  while read -r patch; do
+    [ -n "$(patch_tests "$fork_dir/patches/$patch")" ] || die "$patch adds no #[test]"
+    for name in $(patch_tests "$fork_dir/patches/$patch"); do
+      for pkg in $(grep -rl "fn $name(" "$vendor_dir" 2>/dev/null | sed "s#^$vendor_dir/\([^/]*\)/.*#\1#" | sort -u); do
+        case "$pkg:$os" in
+          *linux*:linux | *wgpu*:linux | *windows*:windows | *macos*:macos | *apple*:macos) ;;
+          *linux* | *wgpu* | *windows* | *macos* | *apple*) say "  $pkg $name: builds on another OS, skipped"; continue ;;
+        esac
+        case "$pkg" in
+          # gpui-fast crates are in the build graph only with nd-gpui's `fast` feature.
+          gpui-fast*) set -- -p nd-gpui --features nd-gpui/fast,nd-gpui/test-support ;;
+          *) set -- ;;
+        esac
+        if (cd "$root" && cargo test -q --release -p "$pkg" "$@" --lib --no-run) >"$log" 2>&1; then
+          (cd "$root" && cargo test -q --release -p "$pkg" "$@" --lib "$name") || die "$patch: $name fails in $pkg"
+          say "  $pkg $name: ok"
+        else
+          say "  $pkg: its published test target does not build on its own; $name runs in the fork"
+          [ -n "$fork" ] || fork="$(scratch_fork)/zed"
+          dir=$(grep -rl "fn $name(" "$fork/crates" 2>/dev/null | sed -n "s#^$fork/crates/\([^/]*\)/.*#\1#p" | head -1)
+          [ -n "$dir" ] || die "$patch: $name is in no crate of the fork"
+          case " $tested " in *" $dir:$name "*) continue ;; esac
+          # zed pins a newer toolchain than nd; the stable one builds it. The target dir sits next
+          # to the zed checkout so weekly gates stay incremental.
+          (cd "$fork" && RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR="$zed-target" cargo test -q -p "$dir" --lib "$name") ||
+            die "$patch: $name fails in the fork's $dir"
+          tested="$tested $dir:$name"
+        fi
+      done
+    done
+  done < <(queue)
+  rm -f "$log"
+  [ -z "$fork" ] || rm -rf "$(dirname "$fork")"
+}
+
 cmd_gate() {
   local version rev tmp short
   version=$(get crate_version)
   rev=$(get zed_rev)
-  say "1/5 queue applies on zed@${rev:0:7}"
+  say "1/6 queue applies on zed@${rev:0:7}"
   if [ -n "$(queue)" ]; then
     tmp=$(scratch_fork)
     rm -rf "$tmp"
   fi
-  say "2/5 vendored crates and [patch.crates-io] match the queue"
+  say "2/6 vendored crates and [patch.crates-io] match the queue"
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/nd-gpui-vendor.XXXXXX")
   mkdir -p "$tmp/crates/nd-gpui"
   cp "$workspace" "$tmp/Cargo.toml"
@@ -208,22 +259,24 @@ cmd_gate() {
   diff -r "$tmp/crates/nd-gpui/vendor" "$vendor_dir" >/dev/null 2>&1 ||
     { [ ! -e "$tmp/crates/nd-gpui/vendor" ] && [ ! -e "$vendor_dir" ]; } || die "crates/nd-gpui/vendor is stale; run vendor"
   rm -rf "$tmp"
-  say "3/5 pins match gpui-pre $version, the snapshot of zed@${rev:0:7}"
+  say "3/6 pins match gpui-pre $version, the snapshot of zed@${rev:0:7}"
   grep -q "package = \"gpui-pre\", version = \"=$version\"" "$workspace" || die "Cargo.toml does not pin gpui-pre =$version"
   grep -q "package = \"gpui-pre-platform\", version = \"=$version\"" "$workspace" || die "Cargo.toml does not pin gpui-pre-platform =$version"
   if [ "${ND_OFFLINE:-0}" != 1 ]; then
     short=$(cd "$root" && cargo info "gpui-pre@$version" 2>/dev/null | sed -n 's/.*snapshot of zed@\([0-9a-f]*\).*/\1/p')
     [ "${rev:0:${#short}}" = "$short" ] || die "gpui-pre $version snapshots zed@$short, fork.toml says ${rev:0:7}"
   fi
-  say "4/5 tiers 1 and 2"
+  say "4/6 tiers 1 and 2"
   (cd "$root" && cargo nextest run --profile fast --workspace)
-  say "5/5 raw GPUI window builds"
+  say "5/6 each patch's own tests"
+  cmd_patch_tests
+  say "6/6 raw GPUI window builds"
   (cd "$root" && cargo build -q -p nd-gpui --example raw_window --features platform)
   say "gate passed for gpui-pre $version + $(queue | wc -l | tr -d ' ') patch(es)"
 }
 
 case "${1:-}" in
-  apply | export | vendor | gate) "cmd_$1" ;;
+  apply | export | vendor | gate | patch_tests) "cmd_$1" ;;
   bump) shift; cmd_bump "$@" ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
