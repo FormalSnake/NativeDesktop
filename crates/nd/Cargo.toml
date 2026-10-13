@@ -5,10 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+links = "nd-swift"
+
+[features]
+default = ["runtime"]
+# The app vocabulary. An app's build script depends on `nd` with `default-features = false,
+# features = ["build"]`, which keeps gpui out of the host build.
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-backend-appkit"]
+build = ["dep:toml"]
 
 [dependencies]
-nd-core.workspace = true
-nd-ui.workspace = true
+nd-core = { workspace = true, optional = true }
+nd-ui = { workspace = true, optional = true }
+toml = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nd-backend-appkit.workspace = true
+nd-backend-appkit = { workspace = true, optional = true }
