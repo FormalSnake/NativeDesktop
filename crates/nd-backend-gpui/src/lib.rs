@@ -12,6 +12,7 @@ mod host;
 mod input;
 pub mod os;
 pub mod render;
+mod virtual_list;
 
 pub use backend::GpuiBackend;
 pub use clock::{DisplayClock, Pacing};

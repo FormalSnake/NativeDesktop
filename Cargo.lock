@@ -4012,6 +4012,7 @@ dependencies = [
  "nd-diag",
  "nd-gpui",
  "nd-ui",
+ "nd-virtual",
 ]
 
 [[package]]
@@ -4220,6 +4221,15 @@ dependencies = [
  "nd-core",
  "nd-gpui",
  "nd-ui",
+]
+
+[[package]]
+name = "nd-virtual"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
+ "nd-ui",
+ "nd-virtual",
 ]
 
 [[package]]

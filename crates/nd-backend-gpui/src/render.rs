@@ -173,6 +173,9 @@ impl Build<'_> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>() => {
+                self.virtual_list(id, node, window)
+            }
             NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
@@ -180,6 +183,45 @@ impl Build<'_> {
             }
         };
         Tracked { node: id, inner: element, bounds: self.backend.bounds.clone() }.into_any_element()
+    }
+
+    fn virtual_list(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
+        let props = node.props.downcast_ref::<nd_virtual::ListProps>().expect("ListProps").clone();
+        let emit = self.backend.state.borrow().events.emitter(id);
+        let rows = node
+            .children
+            .iter()
+            .filter_map(|c| {
+                let tag = self
+                    .nodes
+                    .get(c)?
+                    .props
+                    .downcast_ref::<DivProps>()?
+                    .scope
+                    .as_ref()?
+                    .get::<nd_virtual::RowTag>()?
+                    .clone();
+                Some(crate::virtual_list::Row { tag, node: *c, element: self.node(*c, window) })
+            })
+            .collect();
+        let header = match &props.kind {
+            nd_virtual::ListKind::Table(columns) => {
+                Some(crate::virtual_list::header(columns, &self.look, emit.clone(), self.wake.clone()))
+            }
+            _ => None,
+        };
+        crate::virtual_list::VirtualList {
+            node: id,
+            props,
+            rows,
+            header,
+            emit,
+            wake: self.wake.clone(),
+            presenters: self.backend.lists.clone(),
+            selection_color: self.look.control_active,
+            disclosure_color: self.look.text,
+        }
+        .into_any_element()
     }
 
     fn view(&self, id: NodeId, props: &DivProps, children: Vec<AnyElement>, window: &mut gpui::Window) -> AnyElement {

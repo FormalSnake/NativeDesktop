@@ -22,6 +22,7 @@ use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key,
 use crate::layout::{to_taffy, with_titlebar_insets};
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::{TitlebarInsets, Window};
+use nd_gpui::layout::MinMax;
 
 mod semantic_walk;
 
@@ -60,9 +61,9 @@ struct RNode {
     frame: Option<Rect>,
     /// Created this frame; its own children are not inserted yet.
     fresh: bool,
-    /// The size a native layout container gives this node (3.15 layout boundaries); its own
+    /// The box a native layout container gives this node (3.15 layout boundaries); its own
     /// style's position and size are replaced by it.
-    boundary: Option<(Size, BoundaryInsets)>,
+    boundary: Option<Boundary>,
 }
 
 struct ViewSlot {
@@ -112,10 +113,33 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
         .collect()
 }
 
+/// What a native layout container gives a child node.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Boundary {
+    /// A fixed box, with edges kept clear inside it.
+    Box(Size, BoundaryInsets),
+    /// A fixed width; the height is the content's (a row a native list hosts).
+    Width(f32),
+}
+
 /// The node's own style, or, inside a native layout container, that style pinned to the box
 /// the container gives it.
-fn pin_to_boundary(mut style: taffy::Style, boundary: Option<(Size, BoundaryInsets)>) -> taffy::Style {
-    if let Some((size, insets)) = boundary {
+fn pin_to_boundary(mut style: taffy::Style, boundary: Option<Boundary>) -> taffy::Style {
+    if let Some(Boundary::Width(width)) = boundary {
+        style.position = taffy::Position::Absolute;
+        style.inset = taffy::Rect {
+            left: taffy::LengthPercentageAuto::length(0.),
+            top: taffy::LengthPercentageAuto::length(0.),
+            right: taffy::LengthPercentageAuto::auto(),
+            bottom: taffy::LengthPercentageAuto::auto(),
+        };
+        style.margin = taffy::Rect::zero();
+        style.size = taffy::Size { width: taffy::Dimension::length(width), height: taffy::Dimension::auto() };
+        style.min_size.width = MinMax::auto();
+        style.max_size.width = MinMax::auto();
+        return style;
+    }
+    if let Some(Boundary::Box(size, insets)) = boundary {
         let add = |p: taffy::LengthPercentage, by: f32| match p.into_raw().tag() {
             taffy::CompactLength::LENGTH_TAG => taffy::LengthPercentage::length(p.into_raw().value() + by),
             _ => taffy::LengthPercentage::length(by),
@@ -251,12 +275,7 @@ impl Tree {
 
     /// The node's Taffy style: padded by the titlebar insets when it asks for them, pinned to
     /// the box a native layout container gives it.
-    fn taffy_style(
-        &self,
-        layout: &StyleRefinement,
-        props: &Props,
-        boundary: Option<(Size, BoundaryInsets)>,
-    ) -> taffy::Style {
+    fn taffy_style(&self, layout: &StyleRefinement, props: &Props, boundary: Option<Boundary>) -> taffy::Style {
         let style = if pads(props) { to_taffy(&with_titlebar_insets(layout, self.insets)) } else { to_taffy(layout) };
         pin_to_boundary(style, boundary)
     }
@@ -665,7 +684,10 @@ impl Tree {
         // container gives them; Taffy lays out inside that box.
         let ids: Vec<NodeId> = self.nodes.keys().copied().collect();
         for id in ids {
-            let boundary = backend.boundary_size(id).map(|size| (size, backend.boundary_insets(id)));
+            let boundary = match backend.boundary_size(id) {
+                Some(size) => Some(Boundary::Box(size, backend.boundary_insets(id))),
+                None => backend.boundary_width(id).map(Boundary::Width),
+            };
             if boundary != self.nodes[&id].boundary {
                 self.nodes.get_mut(&id).expect("node").boundary = boundary;
                 let node = &self.nodes[&id];

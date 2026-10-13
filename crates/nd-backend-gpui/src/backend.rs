@@ -54,6 +54,8 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// Presenter state of each `nd-virtual` list, by its node.
+    pub(crate) lists: crate::virtual_list::Presenters,
 }
 
 impl Default for GpuiBackend {
@@ -88,6 +90,7 @@ impl GpuiBackend {
                 pending: Vec::new(),
             })),
             bounds: Rc::default(),
+            lists: Rc::default(),
         }
     }
 
@@ -133,6 +136,29 @@ impl GpuiBackend {
     /// The nd window a GPUI window shows.
     pub fn window_for(&self, handle: AnyWindowHandle) -> Option<WindowId> {
         self.state.borrow().windows.iter().find(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id)
+    }
+
+    /// The `nd-virtual` lists drawn so far, by node.
+    pub fn lists(&self) -> Vec<NodeId> {
+        let mut lists: Vec<NodeId> = self.lists.borrow().keys().copied().collect();
+        lists.sort();
+        lists
+    }
+
+    /// The rows the list painted in its last frame, in order, with their bounds in window
+    /// coordinates as GPUI laid them out; and the list's viewport (below a table's header).
+    pub fn painted_rows(&self, list: NodeId) -> Option<(Rect, Vec<(nd_virtual::RowId, Rect)>)> {
+        let lists = self.lists.borrow();
+        let p = lists.get(&list)?;
+        let bounds = self.bounds.borrow();
+        let rows =
+            p.painted.iter().map(|(row, node, placed)| (*row, bounds.get(node).copied().unwrap_or(*placed))).collect();
+        Some((p.viewport, rows))
+    }
+
+    /// Replaces the list's scroll physics (momentum and rubber band from `nd-gesture`).
+    pub fn set_scroll_physics(&self, list: NodeId, physics: Box<dyn nd_virtual::physics::ScrollPhysics>) {
+        self.lists.borrow_mut().entry(list).or_default().set_physics(physics);
     }
 
     /// The node's bounds in window coordinates, as GPUI last laid it out.
