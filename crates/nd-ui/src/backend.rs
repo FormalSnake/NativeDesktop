@@ -154,4 +154,41 @@ pub trait Backend: Any {
     /// True when `nd-ui` lays out with Taffy and pushes frames (AppKit, tests); false when the
     /// backend lays out itself (GPUI runs Taffy inside its own element tree).
     fn retains_frames(&self) -> bool;
+
+    // Automation and the semantic tree (ARCHITECTURE.md 10.1): queries and commands, never inside a
+    // transaction. Each has a default, so a backend without them still renders.
+
+    /// What the native object adds to the node's semantics (live bounds, enabled, value).
+    fn probe(&self, _node: NodeId) -> crate::semantics::Probe {
+        crate::semantics::Probe::default()
+    }
+
+    /// The window as the OS has it; `None` where the backend has no OS window.
+    fn window_state(&self, _window: WindowId) -> Option<crate::semantics::WindowState> {
+        None
+    }
+
+    /// Carries out `action` through the native control. Events it causes go onto the event
+    /// queue like any user action's.
+    fn perform(
+        &mut self,
+        _node: NodeId,
+        action: &crate::semantics::SemanticAction,
+    ) -> Result<(), crate::semantics::ActionError> {
+        Err(crate::semantics::ActionError::Unsupported(format!("{action:?}")))
+    }
+
+    /// Posts input events into the app's own event queue for `window`.
+    fn synthesize(
+        &mut self,
+        _window: WindowId,
+        _input: &crate::semantics::SyntheticInput,
+    ) -> Result<(), crate::semantics::ActionError> {
+        Err(crate::semantics::ActionError::InputUnsupported)
+    }
+
+    /// Renders the window's content to a PNG.
+    fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {
+        Err(crate::semantics::ActionError::Unsupported("capture".into()))
+    }
 }

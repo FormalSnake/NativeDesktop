@@ -19,6 +19,7 @@ objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
 block2 = "0.6.2"
+dispatch2 = "0.3.1"
 
 [[test]]
 name = "dispatch_spike"

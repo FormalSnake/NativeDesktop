@@ -8,6 +8,7 @@ pub mod dispatch;
 mod element;
 pub mod events;
 mod layout;
+pub mod semantics;
 #[cfg(feature = "test-support")]
 pub mod test_app;
 #[cfg(feature = "test-support")]
@@ -22,6 +23,7 @@ pub use element::{
     NativeElement, ParentElement, RootProps, Text, TextProps, WindowControls, WindowControlsProps, button, div, h_flex,
     text, v_flex, window_controls,
 };
+pub use nd_core::semantic::{Role, SemanticNode, SemanticTree, SemanticWindow};
 pub use nd_core::{NodeId, Point, Rect, Size, WindowId};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
