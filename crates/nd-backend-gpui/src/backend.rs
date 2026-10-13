@@ -160,11 +160,6 @@ impl GpuiBackend {
         Some((p.viewport, rows))
     }
 
-    /// Replaces the list's scroll physics (momentum and rubber band from `nd-gesture`).
-    pub fn set_scroll_physics(&self, list: NodeId, physics: Box<dyn nd_virtual::physics::ScrollPhysics>) {
-        self.lists.borrow_mut().entry(list).or_default().set_physics(physics);
-    }
-
     /// The node's bounds in window coordinates, as GPUI last laid it out.
     pub fn bounds(&self, node: NodeId) -> Option<Rect> {
         self.bounds.borrow().get(&node).copied()

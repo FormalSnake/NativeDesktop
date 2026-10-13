@@ -133,7 +133,8 @@ impl Harness for Gpui {
         let handle = self.host.window_handle(self.window).expect("gpui window");
         let event = ScrollWheelEvent {
             position: at,
-            delta: ScrollDelta::Pixels(gpui::point(px(0.), px(-dy as f32))),
+            // A notched wheel: offsets move by exactly the delta, clamped, no momentum or rubber band.
+            delta: ScrollDelta::Lines(gpui::point(0., -dy as f32 / 20.)),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
         };

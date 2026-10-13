@@ -15,6 +15,13 @@ impl VelocityTracker {
         self.samples.clear();
     }
 
+    /// Moves every sample by `delta`, as when the coordinate space under them shifted.
+    pub fn shift(&mut self, delta: f32) {
+        for (_, v) in &mut self.samples {
+            *v += delta;
+        }
+    }
+
     pub fn add(&mut self, time: f64, value: f32) {
         if self.samples.len() == MAX_SAMPLES {
             self.samples.remove(0);

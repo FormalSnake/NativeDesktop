@@ -6,7 +6,6 @@
 mod core;
 mod heights;
 mod list;
-pub mod physics;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;

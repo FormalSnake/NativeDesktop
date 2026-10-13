@@ -218,6 +218,8 @@ impl Build<'_> {
             emit,
             wake: self.wake.clone(),
             presenters: self.backend.lists.clone(),
+            gestures: self.backend.gestures.clone(),
+            window_id: self.window_id,
             selection_color: self.look.control_active,
             disclosure_color: self.look.text,
         }

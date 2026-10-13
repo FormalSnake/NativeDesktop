@@ -142,6 +142,9 @@ pub struct ListProps {
     pub selection: Selection,
     pub selected: Vec<RowId>,
     pub style: StyleRefinement,
+    /// What the list takes part in on backends that recognise gestures themselves: vertical
+    /// scrolling, through the window's scroll arbiter like any scroll view.
+    pub gestures: nd_gesture::GestureSet,
 }
 
 /// Widget kind of the list container.
@@ -639,7 +642,11 @@ impl<K: RowKey> ListState<K> {
         let inner = self.inner.borrow();
         let generation = inner.core.borrow().generation();
         let selected = inner.selected.iter().filter_map(|k| inner.ids.get(k).copied()).collect();
-        ListProps { handle: ListHandle(inner.core.clone()), kind, generation, selection, selected, style }
+        let gestures = nd_gesture::GestureSet {
+            scroll: nd_gesture::Axes { horizontal: false, vertical: true },
+            ..Default::default()
+        };
+        ListProps { handle: ListHandle(inner.core.clone()), kind, generation, selection, selected, style, gestures }
     }
 
     fn children(&self) -> Vec<AnyElement> {

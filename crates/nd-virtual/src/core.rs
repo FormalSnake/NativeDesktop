@@ -468,8 +468,9 @@ impl Core {
 
     // Position.
 
-    /// The range the scroll offset may take: `(lo, hi)`.
-    fn bounds(&self) -> (f64, f64) {
+    /// The range the scroll offset may take: `(lo, hi)`. `lo` is negative for bottom-aligned rows
+    /// shorter than the viewport.
+    pub fn bounds(&self) -> (f64, f64) {
         let hi = self.total() - self.viewport;
         if hi >= 0. {
             (0., hi)

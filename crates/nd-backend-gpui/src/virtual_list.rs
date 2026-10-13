@@ -20,10 +20,9 @@ use nd_core::{NodeId, Rect};
 use nd_gpui::gpui::{
     self, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, ElementId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Refineable,
-    ScrollWheelEvent, Style, TouchPhase, fill, point, px, size,
+    Style, fill, point, px, size,
 };
 use nd_ui::events::Emit;
-use nd_virtual::physics::{Direct, ScrollPhysics, WheelPhase};
 use nd_virtual::{
     ListHandle, ListKind, ListProps, RowDisclosed, RowId, RowMeta, RowTag, RowsSelected, Selection, ViewportChanged,
 };
@@ -41,8 +40,11 @@ fn now() -> f64 {
 }
 
 /// A list's presenter state, kept across frames by the backend.
+#[derive(Default)]
 pub struct Presenter {
-    physics: Box<dyn ScrollPhysics>,
+    /// The router's offset for this list when the presenter last synced it with the model, in
+    /// router coordinates (`0` is the model's lowest offset). What it moved since is the user's.
+    router: Option<f32>,
     /// Rows painted in the last frame: their node and their rectangle in window coordinates.
     pub(crate) painted: Vec<(RowId, NodeId, Rect)>,
     /// The viewport in window coordinates, below a table's header.
@@ -50,25 +52,6 @@ pub struct Presenter {
     /// The rendered rows when it last asked the app for others, so it asks once per change.
     asked: Option<Range<usize>>,
     edges: (bool, bool),
-}
-
-impl Default for Presenter {
-    fn default() -> Self {
-        Self {
-            physics: Box::new(Direct),
-            painted: Vec::new(),
-            viewport: Rect::default(),
-            asked: None,
-            edges: (false, false),
-        }
-    }
-}
-
-impl Presenter {
-    /// Replaces the scroll physics (momentum and rubber band from `nd-gesture`).
-    pub fn set_physics(&mut self, physics: Box<dyn ScrollPhysics>) {
-        self.physics = physics;
-    }
 }
 
 pub(crate) type Presenters = Rc<RefCell<HashMap<NodeId, Presenter>>>;
@@ -98,6 +81,8 @@ pub(crate) struct VirtualList {
     pub emit: Emit,
     pub wake: Wake,
     pub presenters: Presenters,
+    pub gestures: crate::gestures::Gestures,
+    pub window_id: nd_core::WindowId,
     pub selection_color: Hsla,
     pub disclosure_color: Hsla,
 }
@@ -197,11 +182,21 @@ impl gpui::Element for VirtualList {
         let handle = self.props.handle.clone();
         let grid = handle.0.borrow().grid();
 
-        // Measure every rendered row at the width it gets, before the model places anything.
+        let viewport = nd_core::Size { width, height: view.size.height.as_f32() };
         {
             let mut core = handle.0.borrow_mut();
-            core.set_viewport(f64::from(width), f64::from(view.size.height.as_f32()));
+            core.set_viewport(f64::from(width), f64::from(viewport.height));
             core.set_time(now());
+        }
+        // The window's router owns scroll motion (momentum, rubber band, nested arbitration); the
+        // model owns position. What the router moved since the last frame goes to the model as a
+        // user scroll.
+        let routed = self.gestures.list_offset(self.window_id, self.node);
+        let last = self.presenters.borrow().get(&self.node).and_then(|p| p.router);
+        if let (Some(routed), Some(last)) = (routed, last)
+            && routed != last
+        {
+            handle.0.borrow_mut().scroll_by(f64::from(routed - last));
         }
         // Rows are laid out only where it matters: in the viewport, or with a height the model
         // has not measured at this width. Overscan rows already measured are only kept ready.
@@ -238,6 +233,14 @@ impl gpui::Element for VirtualList {
             }
         }
         let layout = handle.0.borrow_mut().layout();
+        // Keep the router on the model's position (rows above changed height, a jump, new rows),
+        // without stopping a fling; past an edge the difference is the rubber band, drawn as is.
+        let (lo, hi) = handle.0.borrow().bounds();
+        let range = (hi - lo) as f32;
+        let model = (layout.scroll_top - lo) as f32;
+        let synced = self.gestures.sync_list(self.window_id, self.node, &self.props.gestures, viewport, range, model);
+        let overscroll = synced - synced.clamp(0., range.max(0.));
+        self.presenters.borrow_mut().entry(self.node).or_default().router = Some(synced);
         self.ask_for_rows(layout.render.clone(), (layout.at_start, layout.at_end), cx);
         if handle.0.borrow().animating() || layout.unmeasured {
             window.request_animation_frame();
@@ -263,7 +266,8 @@ impl gpui::Element for VirtualList {
                     None => indent,
                 };
                 // Rounded to whole points like the rest of GPUI's layout, so rows tile exactly.
-                let origin = point(view.origin.x + px(x), view.origin.y + px(p.y.round() as f32));
+                let origin =
+                    point(view.origin.x + px(x), view.origin.y + px((p.y - f64::from(overscroll)).round() as f32));
                 let h = match grid {
                     Some(g) => g.item_height as f32,
                     None => p.height as f32,
@@ -303,45 +307,6 @@ impl gpui::Element for VirtualList {
         window: &mut gpui::Window,
         cx: &mut App,
     ) {
-        // Registered before the rows paint: in the bubble phase a row's own scroll handler runs
-        // first and can stop it, as in a nested scroller.
-        let hitbox = prepainted.hitbox.id;
-        let handle = self.props.handle.clone();
-        let presenters = self.presenters.clone();
-        let node = self.node;
-        let emit = self.emit.clone();
-        let wake = self.wake.clone();
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
-                return;
-            }
-            let delta = event.delta.pixel_delta(px(20.));
-            let wheel = match event.touch_phase {
-                TouchPhase::Started => WheelPhase::Started,
-                TouchPhase::Moved => WheelPhase::Moved,
-                TouchPhase::Ended => WheelPhase::Ended,
-                #[allow(unreachable_patterns)]
-                _ => WheelPhase::None,
-            };
-            let dy = {
-                let mut presenters = presenters.borrow_mut();
-                let p = presenters.entry(node).or_default();
-                p.physics.wheel(-f64::from(delta.y.as_f32()), wheel, now())
-            };
-            let moved = handle.0.borrow_mut().scroll_by(dy);
-            if moved {
-                // The app renders the rows the new position needs before the next draw.
-                let (at_start, at_end) = {
-                    let core = handle.0.borrow();
-                    (core.at_start(), core.at_end())
-                };
-                emit.emit(ViewportChanged { at_start, at_end });
-                wake(cx);
-                window.refresh();
-            }
-            cx.stop_propagation();
-        });
-
         let emit = self.emit.clone();
         let wake = self.wake.clone();
         let rows: Vec<(RowId, Bounds<Pixels>)> =

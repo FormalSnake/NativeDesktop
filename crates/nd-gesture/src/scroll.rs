@@ -202,6 +202,17 @@ impl AxisState {
         }
     }
 
+    fn shift(&mut self, delta: f32) {
+        self.raw += delta;
+        self.offset += delta;
+        self.tracker.shift(delta);
+        self.motion = match self.motion {
+            Motion::Decay { x0, v0, t0 } => Motion::Decay { x0: x0 + f64::from(delta), v0, t0 },
+            Motion::Spring(s) => Motion::Spring(s.shifted(f64::from(delta))),
+            m => m,
+        };
+    }
+
     fn animating(&self) -> bool {
         matches!(self.motion, Motion::Decay { .. } | Motion::Spring(_))
     }
@@ -335,6 +346,14 @@ impl Scroller {
         self.y.motion = Motion::Idle;
         self.x.offset = self.x.edge(offset.x);
         self.y.offset = self.y.edge(offset.y);
+    }
+
+    /// Moves the content's coordinates by `delta` without touching the motion: a fling keeps its
+    /// velocity and a bounce its spring. A virtualized list calls it when rows above the viewport
+    /// change height, so what is on screen stays where it is mid-fling.
+    pub fn shift(&mut self, delta: Point) {
+        self.x.shift(delta.x);
+        self.y.shift(delta.y);
     }
 
     /// Advances flings and springs to `time`, the frame being prepared. Returns whether the offset

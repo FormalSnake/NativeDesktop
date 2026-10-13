@@ -13,6 +13,7 @@ conformance = []
 [dependencies]
 nd-core.workspace = true
 nd-ui.workspace = true
+nd-gesture.workspace = true
 
 [dev-dependencies]
 nd-virtual = { path = ".", features = ["conformance"] }

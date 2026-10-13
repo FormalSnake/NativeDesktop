@@ -72,7 +72,7 @@ fn run() {
         let started = Instant::now();
         let event = ScrollWheelEvent {
             position: gpui::point(px(200.), px(300.)),
-            delta: ScrollDelta::Pixels(gpui::point(px(0.), px(-step))),
+            delta: ScrollDelta::Lines(gpui::point(0., -step / 20.)),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
         };
