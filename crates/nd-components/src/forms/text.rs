@@ -236,7 +236,7 @@ fn respond_text(text: &str, enabled: bool, editable: bool, action: &SemanticActi
 
 impl WidgetSemantics for TextFieldProps {
     fn semantics(&self) -> Semantics {
-        let role = if self.field == FieldStyle::Search { Role::SearchField } else { Role::TextField };
+        let role = if self.field == FieldStyle::Search { Role::SearchBox } else { Role::TextField };
         let name = self.label.clone().or_else(|| self.tooltip.clone()).unwrap_or_default();
         let mut s = Semantics::new(role, name.to_string())
             .placeholder(self.placeholder.as_ref().map(|p| p.to_string()))

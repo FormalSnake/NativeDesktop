@@ -1,3 +1,3 @@
 fn main() -> nd::Result<()> {
-    gallery::app().run(gallery::open)
+    gallery::app().run(gallery::init)
 }

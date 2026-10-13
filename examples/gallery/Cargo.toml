@@ -12,19 +12,23 @@ nd = { path = "../../crates/nd" }
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
 
+[[bin]]
+name = "gallery"
+path = "src/main.rs"
+
 [dev-dependencies]
 nd = { path = "../../crates/nd", features = ["test"] }
-png = "0.17"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 ndshell = { path = "../../crates/ndshell" }
+png = "0.17"
 
-# Tier 2 goldens of the forms page on macOS. AppKit owns the main thread, so libtest's harness
-# is off.
+# Tier 2 goldens of the macOS look. AppKit owns the main thread, so libtest's harness is off.
 [[test]]
 name = "goldens"
 harness = false
 
-[[bin]]
-name = "gallery"
-path = "src/main.rs"
+# Tier 2 goldens of the forms page on macOS.
+[[test]]
+name = "forms_goldens"
+harness = false

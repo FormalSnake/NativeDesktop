@@ -315,7 +315,7 @@ pub fn run(rig: &Rig, c: &mut Checks) {
     c.check(node.role == Role::TextField, "text field role");
     c.check(node.value.as_deref() == Some("Reset"), &format!("text field value ({:?})", node.value));
     c.check(node.placeholder.as_deref() == Some("Name"), "text field placeholder");
-    c.check(rig.node(id, "search").is_some_and(|n| n.role == Role::SearchField), "search field role");
+    c.check(rig.node(id, "search").is_some_and(|n| n.role == Role::SearchBox), "search field role");
     c.check(rig.node(id, "notes").is_some_and(|n| n.role == Role::TextArea), "text area role");
     c.check(
         rig.node(id, "fruit").is_some_and(|n| n.role == Role::ComboBox && n.value.as_deref() == Some("Banana")),

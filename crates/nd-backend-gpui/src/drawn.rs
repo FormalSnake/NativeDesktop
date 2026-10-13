@@ -7,9 +7,8 @@ use std::any::TypeId;
 
 use nd_components::{
     Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane, PaneProps,
-    PaneRole, Scaffold, SeparatorKind, SeparatorProps, SourceItem, SourceListKind, SourceListProps, SourceSelected,
-    SystemItem, SystemItemProps, TabSelected, Titlebar, TitlebarInset, TitlebarProps, Toolbar, ToolbarItem,
-    ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
+    PaneRole, Scaffold, SeparatorKind, SeparatorProps, SystemItem, SystemItemProps, TabSelected, Titlebar,
+    TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
 };
 use nd_core::NodeId;
 use nd_gpui::gpui::{
@@ -49,6 +48,9 @@ impl Build<'_> {
         let children = |w: &mut gpui::Window, cx: &mut gpui::App| -> Vec<AnyElement> {
             node.children.iter().map(|c| self.node(*c, w, cx)).collect()
         };
+        if let Some(element) = self.nav(id, kind, node, window) {
+            return Some(element);
+        }
         if let Some(control) = self.form_control(id, kind, node, window, cx) {
             return Some(control);
         }
@@ -149,40 +151,6 @@ impl Build<'_> {
             let p = props::<SeparatorProps>(node)?;
             let line = div().bg(look.border);
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
-        } else if is::<SourceListKind>(kind) {
-            let p = props::<SourceListProps>(node)?;
-            let emit = self.backend.state.borrow().events.emitter(id);
-            let mut list = styled(&p.style).flex().flex_col().gap_1().p_2();
-            for section in &p.sections {
-                if let Some(title) = &section.title {
-                    list = list
-                        .child(div().pt_2().px_2().text_xs().font_weight(FontWeight::SEMIBOLD).child(title.clone()));
-                }
-                for item in flatten(&section.items) {
-                    let emit = emit.clone();
-                    let wake = self.wake.clone();
-                    let selected = p.selected.as_ref() == Some(&item.id);
-                    let key = item.id.clone();
-                    list = list.child(
-                        div()
-                            .id(ElementId::Name(item.id.clone()))
-                            .flex()
-                            .flex_row()
-                            .px_2()
-                            .py_1()
-                            .rounded(px(6.))
-                            .when_bg(selected, look.control_active)
-                            .hover(move |s| s.bg(look.control_hover))
-                            .child(div().flex_1().child(item.title.clone()))
-                            .children(item.badge.clone())
-                            .on_click(move |_, _, cx| {
-                                emit.emit(SourceSelected { id: key.clone() });
-                                wake(cx);
-                            }),
-                    );
-                }
-            }
-            list.into_any_element()
         } else if is::<Form>(kind) {
             div().size_full().flex().flex_col().gap_4().p_4().children(children(window, cx)).into_any_element()
         } else if is::<FormSection>(kind) {
@@ -232,15 +200,6 @@ impl Build<'_> {
 
 fn is_kind<W: 'static>(node: &Node) -> bool {
     matches!(node.kind, nd_ui::backend::NodeKind::Widget(w) if is::<W>(w))
-}
-
-fn flatten(items: &[SourceItem]) -> Vec<&SourceItem> {
-    let mut out = Vec::new();
-    for item in items {
-        out.push(item);
-        out.extend(flatten(&item.children));
-    }
-    out
 }
 
 /// A background only when `on`, for selected rows and segments.

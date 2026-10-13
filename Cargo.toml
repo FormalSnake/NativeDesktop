@@ -14,6 +14,7 @@ publish = false
 [workspace.dependencies]
 nd-core = { path = "crates/nd-core" }
 nd-diag = { path = "crates/nd-diag" }
+nd-gesture = { path = "crates/nd-gesture" }
 nd-gpui = { path = "crates/nd-gpui" }
 nd-macros = { path = "crates/nd-macros" }
 nd-ui = { path = "crates/nd-ui" }

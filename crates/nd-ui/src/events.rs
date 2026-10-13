@@ -124,3 +124,21 @@ impl<T: Clone + PartialEq> Synced<T> {
         self.native.as_ref()
     }
 }
+
+/// Queues a recognized gesture for its node as the concrete event type its handler takes
+/// (`.on_pinch` takes [`nd_gesture::PinchEvent`], and so on).
+pub fn emit_gesture(emit: &Emit, event: nd_gesture::GestureEvent) {
+    use nd_gesture::GestureEvent as G;
+    match event {
+        G::Tap(e) if e.count >= 2 => emit.emit(nd_gesture::DoubleTapEvent { position: e.position }),
+        G::Tap(e) => emit.emit(e),
+        G::LongPress(e) => emit.emit(e),
+        G::Drag(e) => emit.emit(e),
+        G::Pinch(e) => emit.emit(e),
+        G::Rotate(e) => emit.emit(e),
+        G::SwipePage(e) => emit.emit(e),
+        G::RowSwipe(e) => emit.emit(e),
+        G::ForceClick(e) => emit.emit(e),
+        G::SmartMagnify(e) => emit.emit(e),
+    }
+}

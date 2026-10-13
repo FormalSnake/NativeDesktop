@@ -1,7 +1,7 @@
 //! Tier 1: the Forms page on the test backend. Every control family shows up in the semantic
 //! tree with its role, and one control of each family answers automation.
 
-use gallery::Gallery;
+use gallery::{Gallery, Page, Start};
 use nd::prelude::*;
 use nd::test::{Role, SemanticAction, SemanticNode, Size, TestApp};
 
@@ -12,7 +12,9 @@ struct Rig {
 
 fn open() -> Rig {
     let mut cx = TestApp::new();
-    let win = cx.open_window(Size { width: 960., height: 2400. }, |_, cx| cx.new(|cx| Gallery::new(cx)));
+    let win = cx.open_window(Size { width: 960., height: 2400. }, |_, cx| {
+        cx.new(|cx| Gallery::new(&Start { page: Page::Forms, ..Start::default() }, cx))
+    });
     Rig { cx, win }
 }
 
@@ -41,14 +43,14 @@ impl Rig {
 }
 
 #[test]
-fn the_forms_page_is_the_first_page_and_shows_every_control_role() {
+fn the_forms_page_shows_every_control_role() {
     let rig = open();
-    assert_eq!(rig.win.root().read(&rig.cx).current().as_ref(), "forms");
+    assert_eq!(rig.win.root().read(&rig.cx).page(), Page::Forms);
     let tree = rig.cx.semantic_tree();
     let roles: Vec<Role> = tree.nodes().map(|(_, n)| n.role).collect();
     for role in [
         Role::TextField,
-        Role::SearchField,
+        Role::SearchBox,
         Role::TextArea,
         Role::ComboBox,
         Role::Button,

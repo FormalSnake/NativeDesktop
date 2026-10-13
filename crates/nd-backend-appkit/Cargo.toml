@@ -9,6 +9,7 @@ links = "nd-swift-appkit"
 
 [dependencies]
 nd-core.workspace = true
+nd-gesture.workspace = true
 nd-ui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
@@ -42,10 +43,19 @@ harness = false
 name = "forms"
 harness = false
 
+[[test]]
+name = "nav_components"
+harness = false
+
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]
 name = "real_resize_gate"
+harness = false
+
+# Tier 3: a pinch and a page swipe through ndshell. `gate_m4::real_pinch_and_page_swipe`.
+[[test]]
+name = "real_gestures_gate"
 harness = false
 
 [dev-dependencies]

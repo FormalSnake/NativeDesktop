@@ -329,8 +329,9 @@ impl StepperControl {
             .max_by_key(|s| s.len());
         if let Some(widest) = widest {
             field.text.setStringValue(&widest);
-            field.width.setConstant(0.);
-            field.width.setConstant(field.text.fittingSize().width);
+            // The cell's size ignores the width constraint, which `fittingSize` would honour.
+            let width = field.text.cell().map_or(0., |c| c.cellSize().width);
+            field.width.setConstant(width.ceil());
         }
     }
 }

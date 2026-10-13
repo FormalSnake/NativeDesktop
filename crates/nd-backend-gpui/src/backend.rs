@@ -57,14 +57,18 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
-    /// What a drawn control keeps between frames (a text field's caret and selection, a slider
-    /// mid-drag), by node; dropped when the node is released.
-    pub(crate) drawn: Rc<RefCell<HashMap<NodeId, crate::forms::Drawn>>>,
+    /// What a drawn forms control keeps between frames (a text field's caret and selection, a
+    /// slider mid-drag), by node; dropped when the node is released.
+    pub(crate) form_drawn: Rc<RefCell<HashMap<NodeId, crate::forms::Drawn>>>,
     /// nd focus moves the drawn controls have yet to follow, by window. The window's next draw
     /// gives the target GPUI focus, or blurs when nd focus left the drawn controls.
     pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
     /// Focus the user gave a drawn control (a click), for the host to record in nd.
     pub(crate) platform_focus: PlatformFocus,
+    /// Gesture recognition and scroll physics per window.
+    pub(crate) gestures: crate::gestures::Gestures,
+    /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
+    pub(crate) drawn: crate::nav::DrawnMap,
 }
 
 impl Default for GpuiBackend {
@@ -99,9 +103,11 @@ impl GpuiBackend {
                 pending: Vec::new(),
             })),
             bounds: Rc::default(),
-            drawn: Rc::default(),
+            form_drawn: Rc::default(),
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
+            gestures: crate::gestures::Gestures::default(),
+            drawn: Rc::default(),
         }
     }
 
@@ -122,6 +128,7 @@ impl GpuiBackend {
     }
 
     pub(crate) fn forget_window(&self, window: WindowId) {
+        self.gestures.forget_window(window);
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
@@ -167,7 +174,7 @@ impl GpuiBackend {
         self.state.borrow().nodes.get(&node).map_or_else(Vec::new, |n| n.children.clone())
     }
 
-    fn window_of(&self, node: NodeId) -> Option<WindowId> {
+    pub(crate) fn window_of(&self, node: NodeId) -> Option<WindowId> {
         let state = self.state.borrow();
         let mut at = node;
         loop {
@@ -275,7 +282,8 @@ impl Backend for GpuiBackend {
     }
 
     fn release(&mut self, node: NodeId) {
-        self.drawn.borrow_mut().remove(&node);
+        self.form_drawn.borrow_mut().remove(&node);
+        self.gestures.forget(node);
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {
@@ -289,6 +297,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.drawn.borrow_mut().remove(&node);
     }
 
     fn commit(&mut self, window: WindowId) {
@@ -320,6 +329,7 @@ impl Backend for GpuiBackend {
             probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
             probe.enabled = Some(true);
         }
+        self.probe_nav(node, &mut probe);
         probe
     }
 

@@ -42,7 +42,6 @@ pub enum Role {
     Toolbar,
     ScrollArea,
     WindowControls,
-    SearchField,
     TextArea,
     RadioButton,
     RadioGroup,
@@ -54,6 +53,11 @@ pub enum Role {
     DatePicker,
     ColorWell,
     Link,
+    /// A floating panel that takes input until it closes (the command palette).
+    Dialog,
+    SearchBox,
+    /// A message that does not take focus (a toast, a banner).
+    Status,
     Generic,
 }
 
@@ -85,7 +89,6 @@ impl Role {
             Role::Toolbar => "toolbar",
             Role::ScrollArea => "scroll-area",
             Role::WindowControls => "window-controls",
-            Role::SearchField => "search-field",
             Role::TextArea => "text-area",
             Role::RadioButton => "radio-button",
             Role::RadioGroup => "radio-group",
@@ -96,6 +99,9 @@ impl Role {
             Role::DatePicker => "date-picker",
             Role::ColorWell => "color-well",
             Role::Link => "link",
+            Role::Dialog => "dialog",
+            Role::SearchBox => "search-box",
+            Role::Status => "status",
             Role::Generic => "generic",
         }
     }

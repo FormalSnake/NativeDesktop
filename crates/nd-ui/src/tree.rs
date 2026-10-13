@@ -578,6 +578,8 @@ impl Tree {
         let props = &self.nodes[&n].dispatch;
         self.dispatch.set_key_context(n, props.key_context.clone());
         self.dispatch.set_focusable(n, props.focusable);
+        self.dispatch.set_key_roles(n, props.roles);
+        self.dispatch.set_focus_scope(n, props.focus_scope);
         self.dispatch.clear_listeners(n);
         for register in props.actions.clone() {
             register(&mut self.dispatch, n, self.window);
@@ -773,6 +775,7 @@ impl App {
             }
         }
         tree.release_orphans(self);
+        tree.dispatch.settle_scopes();
         tree.push_focus_change();
         let mut reaffirm: Vec<NodeId> = tree.reaffirm.drain().filter(|n| tree.nodes.contains_key(n)).collect();
         reaffirm.sort();

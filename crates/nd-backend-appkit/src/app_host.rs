@@ -157,6 +157,13 @@ impl KeyRouter for AppRouter {
         result
     }
 
+    fn pointer_down(&self) {
+        let Some(host) = self.host.upgrade() else { return };
+        if let Ok(mut app) = host.app.try_borrow_mut() {
+            app.pointer_down(self.window);
+        }
+    }
+
     fn responder_changed(&self, window: &NdWindow) {
         let Some(host) = self.host.upgrade() else { return };
         let Some(node) = node_for_responder(&host.backend, window.firstResponder().as_deref()) else { return };

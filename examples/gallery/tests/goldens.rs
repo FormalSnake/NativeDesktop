@@ -1,15 +1,17 @@
-//! Tier 2 goldens of the forms page on macOS, light and dark: the gallery window in this process
-//! on the real AppKit backend, captured as the window server composites it (`screencapture -l`)
-//! and compared with `tests/goldens/forms-macos-<scheme>@<scale>x.png`. Needs Screen Recording
-//! for the process that runs the test, and holds the ndshell machine lock while the window is
-//! key.
+//! Tier 2 goldens of the navigation and feedback components in the macOS look, light and
+//! dark: the gallery window on the real AppKit backend, captured as the window server
+//! composites it (`screencapture -l`, so the palette's and toasts' glass is in it) and compared
+//! with `tests/goldens/macos-<view>-<scheme>@<scale>x.png`. Two views: the source list with a
+//! banner and a toast, and the command palette open over it. Holds the ndshell machine lock
+//! (activation and capture share one window server). Needs Screen Recording for the process
+//! that runs the test (`ndshell grant` on CI).
 //!
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens. A mismatch writes `<golden>.actual.png` beside
 //! the golden. Prints `ND_GALLERY_GOLDENS_OK`.
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let name = "gate_m6::gallery_forms_goldens";
+    let name = "gate_m6::gallery_goldens";
     if args.iter().any(|a| a == "--list") {
         if !args.iter().any(|a| a == "--ignored") && cfg!(target_os = "macos") {
             println!("{name}: test");
@@ -65,8 +67,8 @@ mod goldens {
         off as f64 / (a.len() / 4).max(1) as f64
     }
 
-    fn golden(scheme: &str, scale: u32) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/forms-macos-{scheme}@{scale}x.png"))
+    fn golden(view: &str, scheme: &str, scale: u32) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/macos-{view}-{scheme}@{scale}x.png"))
     }
 
     fn settle(host: &nd::appkit::AppHost) {
@@ -113,8 +115,17 @@ mod goldens {
         Ok(png)
     }
 
-    fn check(host: &nd::appkit::AppHost, appearance: Appearance, scheme: &str) -> Result<(), String> {
-        let handle = host.update(|cx| gallery::open_in(cx, Some(appearance)));
+    fn check(host: &nd::appkit::AppHost, view: &str, appearance: Appearance, scheme: &str) -> Result<(), String> {
+        let start = gallery::Start {
+            page: gallery::Page::SourceList,
+            palette: (view == "palette").then(|| "to".into()),
+            toast: true,
+            appearance: Some(appearance),
+        };
+        let handle = host.update(|cx| gallery::open(cx, start));
+        settle(host);
+        // The toast slides in over 220 ms.
+        host.platform().pump(Duration::from_millis(400), Duration::from_millis(600));
         settle(host);
         let window = host.ns_window(handle.id()).expect("window");
         // AppKit draws an inactive window's controls differently, and parallel tests take focus
@@ -130,11 +141,11 @@ mod goldens {
                 break;
             }
         }
-        let capture = capture.ok_or_else(|| format!("{scheme}: the window never stayed key for a capture"))?;
+        let capture = capture.ok_or_else(|| format!("{view} {scheme}: the window never stayed key for a capture"))?;
         let scale = window.backingScaleFactor().round() as u32;
         host.update(|cx| cx.close_window(handle.id()));
         settle(host);
-        let path = golden(scheme, scale);
+        let path = golden(view, scheme, scale);
         if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") || !path.exists() {
             std::fs::write(&path, &capture).map_err(|e| e.to_string())?;
             println!("recorded {}", path.display());
@@ -146,33 +157,40 @@ mod goldens {
         let actual_path = path.with_extension("actual.png");
         if (ew, eh) != (aw, ah) {
             let _ = std::fs::write(&actual_path, &capture);
-            return Err(format!("{scheme}: size {aw}x{ah}, golden {ew}x{eh}"));
+            return Err(format!("{view} {scheme}: size {aw}x{ah}, golden {ew}x{eh}"));
         }
         let diff = difference(&e, &a);
         if diff > PIXEL_TOLERANCE {
             let _ = std::fs::write(&actual_path, &capture);
-            return Err(format!("{scheme}: {:.2}% of pixels differ (see {})", diff * 100., actual_path.display()));
+            return Err(format!(
+                "{view} {scheme}: {:.2}% of pixels differ (see {})",
+                diff * 100.,
+                actual_path.display()
+            ));
         }
         let _ = std::fs::remove_file(&actual_path);
-        println!("ok   {scheme} matches {} ({:.3}% off)", path.display(), diff * 100.);
+        println!("ok   {view} {scheme} matches {} ({:.3}% off)", path.display(), diff * 100.);
         Ok(())
     }
 
     pub fn run() -> ! {
-        // Isolated from the user's theme files and data, so only the app's overrides apply.
+        // Activation and the capture share the window server with every other real-window run.
+        let _lock = ndshell::lock::acquire("gallery goldens").expect("machine lock");
+        // Isolated from the user's theme files and data.
         let data = std::env::temp_dir().join(format!("nd-gallery-goldens-{}", std::process::id()));
         unsafe {
             std::env::set_var("ND_APP_DATA_DIR", &data);
             std::env::set_var("ND_THEME_TOML", "");
             std::env::set_var("ND_THEME_JSON", "");
         }
-        let _lock = ndshell::lock::acquire("gallery forms goldens").expect("machine lock");
         let host = gallery::app().host(|_cx| {});
         let mut failed = 0;
-        for (appearance, scheme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {
-            if let Err(e) = check(&host, appearance, scheme) {
-                println!("FAIL {e}");
-                failed += 1;
+        for view in ["sidebar", "palette"] {
+            for (appearance, scheme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {
+                if let Err(e) = check(&host, view, appearance, scheme) {
+                    println!("FAIL {e}");
+                    failed += 1;
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&data);

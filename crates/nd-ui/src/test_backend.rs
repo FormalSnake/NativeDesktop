@@ -45,6 +45,7 @@ pub struct TestBackend {
     on_apply: Option<WidgetHook>,
     probes: HashMap<NodeId, Probe>,
     performed: Vec<(NodeId, SemanticAction)>,
+    haptics: Vec<nd_gesture::Haptic>,
 }
 
 impl Default for TestBackend {
@@ -66,6 +67,7 @@ impl TestBackend {
             on_apply: None,
             probes: HashMap::new(),
             performed: Vec::new(),
+            haptics: Vec::new(),
         }
     }
 
@@ -77,6 +79,11 @@ impl TestBackend {
     /// Semantic actions carried out so far, in order.
     pub fn performed(&self) -> &[(NodeId, SemanticAction)] {
         &self.performed
+    }
+
+    /// Haptics played so far, in order.
+    pub fn haptics(&self) -> &[nd_gesture::Haptic] {
+        &self.haptics
     }
 
     /// Behaves like the GPUI backend, which lays out itself and never receives frames.
@@ -378,6 +385,10 @@ impl Backend for TestBackend {
 
     /// A button answers clicks the way its native control would, by emitting [`ClickEvent`].
     /// Focus is nd's own; everything else is unsupported here.
+    fn haptic(&mut self, haptic: nd_gesture::Haptic) {
+        self.haptics.push(haptic);
+    }
+
     fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
         let Some(n) = self.nodes.get(&node) else {
             return Err(ActionError::NotActionable(format!("{node:?} is not live")));

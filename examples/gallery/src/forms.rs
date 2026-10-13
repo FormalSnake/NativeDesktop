@@ -1,11 +1,5 @@
 use nd::prelude::*;
 
-use crate::pages::{Page, mount};
-
-pub fn page() -> Page {
-    Page { id: "forms", title: "Forms", icon: Icon::SquarePen, mount: |cx| mount(cx.new(FormsPage::new)) }
-}
-
 /// Runs `$body` on the page when the control reports `$ty`, then renders again.
 macro_rules! on {
     ($cx:ident, $ty:ty, |$page:ident, $e:ident| $body:expr) => {

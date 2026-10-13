@@ -10,12 +10,16 @@ use std::panic::Location;
 use std::rc::Rc;
 
 use nd_core::{NodeId, WindowId};
+use nd_gesture::{
+    Axes, Axis, DoubleTapEvent, DragEvent, ForceClickEvent, GestureSet, LongPressEvent, PinchEvent, RotateEvent,
+    RowSwipeConfig, RowSwipeEvent, SmartMagnifyEvent, SwipePageEvent, TapEvent,
+};
 use nd_gpui::gpui::prelude::FluentBuilder;
-use nd_gpui::gpui::{Action, KeyContext, SharedString, StyleRefinement, Styled};
+use nd_gpui::gpui::{Action, KeyContext, Overflow, SharedString, StyleRefinement, Styled};
 
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AnyProps, NodeKind, Props, WidgetKind};
-use crate::dispatch::{DispatchTree, Focusable};
+use crate::dispatch::{DispatchTree, FocusScope, Focusable, KeyRoles};
 use crate::window::Window;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,6 +54,8 @@ pub struct DispatchProps {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) actions: Vec<ActionRegistrar>,
     pub(crate) focusable: Option<Focusable>,
+    pub(crate) focus_scope: Option<FocusScope>,
+    pub(crate) roles: KeyRoles,
 }
 
 /// Elements that take part in key dispatch: GPUI's `key_context` and `on_action`.
@@ -84,6 +90,20 @@ pub trait InteractiveElement: Sized {
     /// Focusable; `false` keeps it out of Tab traversal while `focus` can still reach it.
     fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.dispatch_props().focusable.get_or_insert_with(Focusable::default).tab_stop = tab_stop;
+        self
+    }
+
+    /// Makes the element a focus scope: mounting it saves focus (and with `trap`, moves focus in
+    /// and keeps Tab inside), unmounting restores it. Overlays and sheets are scopes.
+    fn focus_scope(mut self, scope: FocusScope) -> Self {
+        self.dispatch_props().focus_scope = Some(scope);
+        self
+    }
+
+    /// Keeps Return while focused (a multi-line text view), so it inserts a line instead of
+    /// activating the default button.
+    fn takes_return(mut self) -> Self {
+        self.dispatch_props().roles.takes_return = true;
         self
     }
 
@@ -224,6 +244,9 @@ pub struct DivProps {
     /// Padded by the window's [`TitlebarInsets`](crate::TitlebarInsets), so content never sits
     /// under the OS window controls.
     pub titlebar_insets: bool,
+    /// The gestures this node listens for, and the axes it scrolls on. Backends recognize them
+    /// and report the events through the queue (ARCHITECTURE.md 6.1).
+    pub gestures: GestureSet,
 }
 
 /// Type-erased props a layer above `nd-ui` hangs on a `div`, compared by value.
@@ -259,6 +282,7 @@ pub struct Div {
     handlers: Vec<(TypeId, Handler)>,
     drag_region: bool,
     titlebar_insets: bool,
+    gestures: GestureSet,
 }
 
 #[track_caller]
@@ -299,6 +323,7 @@ impl Div {
             handlers: Vec::new(),
             drag_region: false,
             titlebar_insets: false,
+            gestures: GestureSet::default(),
         }
     }
 
@@ -340,6 +365,99 @@ impl Div {
     }
 }
 
+/// Gesture modifiers (ARCHITECTURE.md 6.1). Each one marks the gesture on the node, so the backend
+/// recognizes it, and installs the handler; nested recognizers are arbitrated by the backend's
+/// arena, so an inner tap and an outer drag never both fire for one press.
+impl Div {
+    /// Scrolls its content vertically: `NSScrollView` on AppKit, framework momentum and rubber
+    /// band on GPUI backends. GPUI's names, which there need an id; here call-site identity
+    /// already keeps the scroll position.
+    pub fn overflow_y_scroll(mut self) -> Self {
+        self.style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_x_scroll(mut self) -> Self {
+        self.style.overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_scroll(self) -> Self {
+        self.overflow_x_scroll().overflow_y_scroll()
+    }
+
+    /// A press released in place. With `.on_double_tap` on the same node, a single tap waits out
+    /// the double-click interval first.
+    pub fn on_tap(mut self, handler: impl Fn(&TapEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.tap = true;
+        self.on(handler)
+    }
+
+    pub fn on_double_tap(mut self, handler: impl Fn(&DoubleTapEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.double_tap = true;
+        self.on(handler)
+    }
+
+    pub fn on_long_press(mut self, handler: impl Fn(&LongPressEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.long_press = true;
+        self.on(handler)
+    }
+
+    /// A pointer drag in any direction. The `Ended` event carries the release velocity.
+    pub fn on_drag(mut self, handler: impl Fn(&DragEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.drag = Some(None);
+        self.on(handler)
+    }
+
+    /// A drag along one axis; movement mostly across it is left to an outer recognizer.
+    pub fn on_drag_axis(mut self, axis: Axis, handler: impl Fn(&DragEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.drag = Some(Some(axis));
+        self.on(handler)
+    }
+
+    /// A trackpad pinch: `zoom *= event.scale`.
+    pub fn on_pinch(mut self, handler: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.pinch = true;
+        self.on(handler)
+    }
+
+    /// A trackpad rotation. macOS only; other platforms have none to report.
+    pub fn on_rotate(mut self, handler: impl Fn(&RotateEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.rotate = true;
+        self.on(handler)
+    }
+
+    /// A two-finger horizontal swipe between pages (back and forward). On macOS it follows the
+    /// user's "Swipe between pages" setting.
+    pub fn on_swipe_page(mut self, handler: impl Fn(&SwipePageEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.swipe_page = true;
+        self.on(handler)
+    }
+
+    /// A deep press on a Force Touch trackpad. macOS only.
+    pub fn on_force_click(mut self, handler: impl Fn(&ForceClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.force_click = true;
+        self.on(handler)
+    }
+
+    /// Two-finger double tap (smart zoom). macOS only.
+    pub fn on_smart_magnify(mut self, handler: impl Fn(&SmartMagnifyEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.gestures.smart_magnify = true;
+        self.on(handler)
+    }
+
+    /// Swipe-to-reveal on a row, for lists on backends without native row actions. The list's
+    /// `row_actions` sets this; apps use that instead.
+    pub fn on_row_swipe(
+        mut self,
+        config: RowSwipeConfig,
+        handler: impl Fn(&RowSwipeEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.gestures.row_swipe = Some(config);
+        self.on(handler)
+    }
+}
+
 impl Styled for Div {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
@@ -362,6 +480,9 @@ impl InteractiveElement for Div {
 
 impl IntoElement for Div {
     fn into_any_element(self) -> AnyElement {
+        let scrolls = |o: Option<Overflow>| o == Some(Overflow::Scroll);
+        let mut gestures = self.gestures;
+        gestures.scroll = Axes { horizontal: scrolls(self.style.overflow.x), vertical: scrolls(self.style.overflow.y) };
         AnyElement::node(NodeElement {
             kind: NodeKind::View,
             key: self.key,
@@ -370,6 +491,7 @@ impl IntoElement for Div {
                 scope: self.scope,
                 drag_region: self.drag_region,
                 titlebar_insets: self.titlebar_insets,
+                gestures,
             }),
             layout: self.style,
             measured: false,
@@ -596,8 +718,11 @@ impl Button {
         self.0.props_mut()
     }
 
+    /// `Primary` makes it the default button: Return activates it when nothing on the focus
+    /// path handled Return.
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.0.props_mut().variant = variant;
+        self.0.dispatch_props().roles.default_button = variant == ButtonVariant::Primary;
         self
     }
 

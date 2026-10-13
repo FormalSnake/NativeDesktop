@@ -304,6 +304,17 @@ pub fn run(rig: &Rig, c: &mut Checks) {
         "stepper: range and step reach the control",
     );
     c.check(field.doubleValue() == 1.5 && st.doubleValue() == 1.5, "stepper: value shown in both");
+    let shown = field.stringValue();
+    let widest = field.cell().map_or(0., |cell| {
+        cell.setStringValue(&nd_backend_appkit::objc2_foundation::NSString::from_str("10.00"));
+        let w = cell.cellSize().width;
+        cell.setStringValue(&shown);
+        w
+    });
+    c.check(
+        field.frame().size.width + 0.5 >= widest && widest > 0.,
+        &format!("stepper: the field is wide enough for its widest value ({} >= {widest})", field.frame().size.width),
+    );
     c.check(
         field.formatter().and_then(|f| f.downcast_ref::<NSNumberFormatter>().map(|f| f.minimumFractionDigits()))
             == Some(2),

@@ -223,7 +223,7 @@ fn bound_fields_read_the_entity_and_edits_update_it() {
     let mut rig = bound_rig(TextFieldState::default().placeholder("Search notes"));
     assert!(rig.kind_is::<TextFieldKind>("find"));
     let find = rig.sem("find");
-    assert_eq!((find.role, find.placeholder.as_deref()), (Role::SearchField, Some("Search notes")));
+    assert_eq!((find.role, find.placeholder.as_deref()), (Role::SearchBox, Some("Search notes")));
     assert_eq!(rig.props::<TextFieldProps>("find").field, FieldStyle::Search);
 
     rig.emit("find", TextChanged { text: "rust".into() });

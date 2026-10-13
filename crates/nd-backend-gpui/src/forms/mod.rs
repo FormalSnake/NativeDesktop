@@ -167,7 +167,7 @@ impl Build<'_> {
         make: impl FnOnce() -> T,
     ) -> (Ctl, Rc<RefCell<T>>) {
         let (focus, pointer, state) = {
-            let mut drawn = self.backend.drawn.borrow_mut();
+            let mut drawn = self.backend.form_drawn.borrow_mut();
             let found = drawn.get(&id).and_then(|d| {
                 Some((d.focus.clone(), d.pointer.clone(), d.state.clone().downcast::<RefCell<T>>().ok()?))
             });
