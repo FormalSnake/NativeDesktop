@@ -13,10 +13,12 @@ capture = ["nd-gpui/test-support", "dep:image"]
 
 [dependencies]
 nd-core.workspace = true
+nd-gesture.workspace = true
 nd-ui.workspace = true
 nd-diag.workspace = true
 nd-components.workspace = true
 nd-theme.workspace = true
+nd-virtual.workspace = true
 nd-gpui = { workspace = true, features = ["platform"] }
 futures = "0.3.34"
 image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
@@ -25,7 +27,32 @@ image = { version = "0.25.10", default-features = false, features = ["png"], opt
 nd-gpui = { workspace = true, features = ["platform", "test-support"] }
 nd-backend-gpui = { path = ".", features = ["capture"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+nd-virtual = { workspace = true, features = ["conformance"] }
 
 [[test]]
 name = "headless"
+harness = false
+
+[[test]]
+name = "nav"
+harness = false
+
+# Tables, trees and grids on the GPUI presenter.
+[[test]]
+name = "list_kinds"
+harness = false
+
+# Row swipe actions on the GPUI presenter.
+[[test]]
+name = "row_actions"
+harness = false
+
+# The 100k-row scroll budget without a display.
+[[test]]
+name = "scroll_budget"
+harness = false
+
+# The list conformance suite on the GPUI presenter, in GPUI's headless app.
+[[test]]
+name = "virtual_list"
 harness = false

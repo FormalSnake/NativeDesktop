@@ -35,6 +35,10 @@ use crate::clock::{DisplayClock, Pacing};
 use crate::os::{FrameRequest, NoOsHooks, OsHooks};
 use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH};
 
+fn point_of(p: gpui::Point<gpui::Pixels>) -> Point {
+    Point { x: p.x.as_f32(), y: p.y.as_f32() }
+}
+
 /// Work for the main thread that needs the app, sent from any thread.
 pub type AppJob = Box<dyn FnOnce(&mut App) + Send>;
 
@@ -313,6 +317,9 @@ impl Inner {
                     ..InputRecord::default()
                 });
             }
+            if inner.backend.drawn_claims_key(&event.keystroke, window) {
+                return;
+            }
             let Ok(mut app) = inner.app.try_borrow_mut() else { return };
             let result = app.dispatch_keystroke(id, &event.keystroke);
             drop(app);
@@ -531,6 +538,17 @@ impl Inner {
             window.request_animation_frame();
         }
         self.after_draw(id, started, window);
+        self.backend.prepare_drawn(id, window, cx);
+
+        // Flings, springs and gesture timers advance on this window's frames.
+        let (outputs, more) = self.backend.gestures.step(id);
+        let events = self.backend.state.borrow().events.clone();
+        if crate::gestures::deliver(&events, outputs).0 {
+            (self.wake())(cx);
+        }
+        if more {
+            window.request_animation_frame();
+        }
 
         let state = self.backend.state.borrow();
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
@@ -540,9 +558,17 @@ impl Inner {
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
         let origin = self.origin;
+        let (down, up, moved, wheel, pinch, pressure) = (
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+            Rc::downgrade(self),
+        );
         div()
             .size_full()
-            .capture_any_mouse_down(move |event, _, _| {
+            .capture_any_mouse_down(move |event, window, cx| {
                 if let Some(diag) = nd_diag::global() {
                     diag.record_input(InputRecord {
                         t: origin.elapsed().as_secs_f64(),
@@ -550,6 +576,53 @@ impl Inner {
                         kind: "mouse_down".into(),
                         position: Some([event.position.x.as_f32().into(), event.position.y.as_f32().into()]),
                         ..InputRecord::default()
+                    });
+                }
+                let Some(inner) = down.upgrade() else { return };
+                if event.button != gpui::MouseButton::Left {
+                    return;
+                }
+                if let Ok(mut app) = inner.app.try_borrow_mut() {
+                    app.pointer_down(id);
+                }
+                let at = point_of(event.position);
+                inner.gesture_input(id, window, cx, |g, tree| g.pointer(id, nd_gesture::PointerPhase::Down, at, tree));
+            })
+            .capture_any_mouse_up(move |event, window, cx| {
+                let Some(inner) = up.upgrade() else { return };
+                if event.button == gpui::MouseButton::Left {
+                    let at = point_of(event.position);
+                    inner
+                        .gesture_input(id, window, cx, |g, tree| g.pointer(id, nd_gesture::PointerPhase::Up, at, tree));
+                }
+            })
+            .on_mouse_move(move |event, window, cx| {
+                let Some(inner) = moved.upgrade() else { return };
+                if event.pressed_button == Some(gpui::MouseButton::Left) {
+                    let at = point_of(event.position);
+                    inner.gesture_input(id, window, cx, |g, tree| {
+                        g.pointer(id, nd_gesture::PointerPhase::Move, at, tree)
+                    });
+                }
+            })
+            .on_scroll_wheel(move |event, window, cx| {
+                let Some(inner) = wheel.upgrade() else { return };
+                inner.gesture_input(id, window, cx, |g, tree| g.scroll(id, event, tree));
+            })
+            .capture_pinch(move |event, window, cx| {
+                let Some(inner) = pinch.upgrade() else { return };
+                let gesture = crate::gestures::pinch_event(event);
+                let at = point_of(event.position);
+                inner
+                    .gesture_input(id, window, cx, |g, tree| g.os_gesture(id, gesture, at, tree).into_iter().collect());
+            })
+            .on_mouse_pressure(move |event, window, cx| {
+                let Some(inner) = pressure.upgrade() else { return };
+                if inner.backend.gestures.pressure(id, event.stage) {
+                    let at = point_of(event.position);
+                    let gesture = crate::gestures::force_click(at);
+                    inner.gesture_input(id, window, cx, |g, tree| {
+                        g.os_gesture(id, gesture, at, tree).into_iter().collect()
                     });
                 }
             })
@@ -583,6 +656,31 @@ impl Inner {
             );
         }
         time
+    }
+
+    /// Runs one input through the window's gesture router with the current tree and the bounds
+    /// of the last paint, then queues the events it produced and redraws for moved scroll views.
+    fn gesture_input(
+        &self,
+        id: WindowId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+        f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
+    ) {
+        let outputs = {
+            let state = self.backend.state.borrow();
+            let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
+            let bounds = self.backend.bounds.borrow();
+            f(&self.backend.gestures, (&state.nodes, &bounds, root))
+        };
+        let events = self.backend.state.borrow().events.clone();
+        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
+        if queued {
+            (self.wake())(cx);
+        }
+        if scrolled || self.backend.gestures.needs_frame(id) {
+            window.refresh();
+        }
     }
 
     /// First-frame bookkeeping and the budget knobs, once GPUI has drawn this frame.

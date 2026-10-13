@@ -1,0 +1,19 @@
+[package]
+name = "nd-virtual"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The list conformance suite, for the presenters' test binaries.
+conformance = []
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+nd-gesture.workspace = true
+
+[dev-dependencies]
+nd-virtual = { path = ".", features = ["conformance"] }

@@ -28,6 +28,11 @@ pub use element::{
 pub use layout::with_titlebar_insets;
 pub use nd_core::semantic::{Role, SemanticNode, SemanticTree, SemanticWindow};
 pub use nd_core::{FrameTime, NodeId, Point, Rect, Size, WindowId};
+pub use nd_gesture as gesture;
+pub use nd_gesture::{
+    DoubleTapEvent, DragEvent, ForceClickEvent, GesturePhase, Haptic, LongPressEvent, PinchEvent, RotateEvent,
+    SmartMagnifyEvent, SwipeDirection, SwipePageEvent, TapEvent,
+};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
 pub use window::{Titlebar, TitlebarInsets, Window, WindowHandle, WindowKind, WindowOptions};
@@ -38,6 +43,10 @@ pub mod prelude {
         AnyElement, AnyView, App, Button, ClickEvent, Context, Div, Entity, EntityId, FluentBuilder,
         InteractiveElement, IntoElement, NativeElement, ParentElement, Render, Styled, Subscription, Text, WeakEntity,
         Window, WindowHandle, WindowOptions, button, div, drag_region, h_flex, text, v_flex, window_controls,
+    };
+    pub use nd_gesture::{
+        DoubleTapEvent, DragEvent, ForceClickEvent, GesturePhase, Haptic, LongPressEvent, PinchEvent, RotateEvent,
+        SmartMagnifyEvent, SwipeDirection, SwipePageEvent, TapEvent,
     };
     pub use nd_gpui::gpui::{
         AbsoluteLength, DefiniteLength, FontWeight, Hsla, Length, Pixels, Rems, Rgba, SharedString, hsla, point, px,

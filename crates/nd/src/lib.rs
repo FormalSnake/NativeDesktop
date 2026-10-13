@@ -27,6 +27,10 @@ pub use nd_components as components;
 pub use nd_core as core;
 #[cfg(feature = "runtime")]
 pub use nd_ui::{actions, backend, dispatch, events, transaction};
+#[cfg(feature = "runtime")]
+pub use nd_update as update;
+#[cfg(feature = "runtime")]
+pub use nd_virtual as virtual_list;
 
 #[cfg(all(feature = "runtime", target_os = "macos"))]
 pub use nd_backend_appkit as appkit;

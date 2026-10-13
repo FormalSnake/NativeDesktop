@@ -589,3 +589,41 @@ fn one_view_in_two_places_in_one_render_still_panics() {
         cx.new(|_| Twice(child))
     });
 }
+
+/// A view that notifies itself while it renders, around a child view. Its first frame mounts it;
+/// the notify must wait for the next frame, not render it again into the frame that just placed
+/// the child (which panicked with "rendered in two places").
+struct Ticking {
+    child: Entity<Leaf>,
+    frames: u32,
+}
+
+struct Leaf;
+
+impl Render for Leaf {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        text("leaf")
+    }
+}
+
+impl Render for Ticking {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.frames += 1;
+        if self.frames < 3 {
+            cx.notify();
+        }
+        div().child(self.child.clone())
+    }
+}
+
+#[test]
+fn a_view_notifying_itself_on_mount_renders_once_per_frame() {
+    let mut cx = TestApp::new();
+    let handle = cx.open_window(WINDOW, |_, cx| {
+        let child = cx.new(|_| Leaf);
+        cx.new(|_| Ticking { child, frames: 0 })
+    });
+    let view = handle.root().clone();
+    assert_eq!(view.read(&cx).frames, 3);
+    assert!(find_text(&cx, "leaf").is_some());
+}

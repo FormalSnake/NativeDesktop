@@ -48,11 +48,69 @@ impl Render for Gallery {
     }
 }
 
+/// `nd-virtual` presenters: a list with a selected row, a table under its header, a tree with an
+/// expanded branch.
+struct Lists {
+    plain: ListState<u32>,
+    files: ListState<u32>,
+    outline: ListState<&'static str>,
+}
+
+impl Lists {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let mut plain = ListState::new(cx);
+        plain.set_items(0..20u32, cx);
+        plain.select(2, cx);
+        let mut files = ListState::new(cx);
+        files.set_items(0..20u32, cx);
+        files.select(1, cx);
+        let mut outline = ListState::new(cx);
+        let node = |key, parent| TreeNode { key, parent, version: 0 };
+        outline.set_tree([node("Projects", None), node("nd", Some("Projects")), node("Notes", None)], cx);
+        outline.set_expanded("Projects", true, cx);
+        Self { plain, files, outline }
+    }
+}
+
+impl Render for Lists {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let columns = vec![column("name", "Name").width(150.).sortable(), column("size", "Size").width(80.)];
+        h_flex()
+            .size_full()
+            .gap_2()
+            .child(
+                list("plain", &self.plain, |row: u32, _, _| div().h(px(24.)).child(text(format!("Item {row}"))))
+                    .selection(Selection::single())
+                    .w(px(200.)),
+            )
+            .child(
+                table("files", &self.files, columns, |row: u32, col: usize, _, _| {
+                    div().h(px(24.)).child(text(if col == 0 {
+                        format!("file-{row}")
+                    } else {
+                        format!("{} KB", row * 3)
+                    }))
+                })
+                .selection(Selection::single())
+                .w(px(240.)),
+            )
+            .child(
+                tree("outline", &self.outline, |key: &'static str, _, _| div().h(px(22.)).child(text(key))).w(px(200.)),
+            )
+    }
+}
+
 fn main() {
     nd::audit::Audit::new("intents", || Application::new(nd::manifest!()))
         .window("gallery", |cx| {
             cx.open_window(WindowOptions::main("gallery").title("Gallery").size(size(px(900.), px(640.))), |_, cx| {
                 cx.new(|_| Gallery)
+            })
+            .id()
+        })
+        .window("lists", |cx| {
+            cx.open_window(WindowOptions::main("lists").title("Lists").size(size(px(720.), px(400.))), |_, cx| {
+                cx.new(Lists::new)
             })
             .id()
         })

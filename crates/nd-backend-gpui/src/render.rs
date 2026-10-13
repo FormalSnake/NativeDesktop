@@ -298,6 +298,28 @@ impl<'a> Build<'a> {
         color
     }
 
+    /// Records what a drawn widget painted, each over its own fills and then what the build
+    /// has painted beneath the widget.
+    pub(crate) fn record_marks(&self, node: NodeId, marks: Vec<crate::nav::Mark>) {
+        let ink = self.top();
+        let mut paints = self.paints.borrow_mut();
+        for mark in marks {
+            let background = mark.under.iter().fold(ink.background, |b, f| over(*f, b));
+            let kind = match mark.text {
+                Some((size, weight)) => PaintKind::Text { size, weight },
+                None => PaintKind::Fill,
+            };
+            paints.push(Paint {
+                node: Some(node),
+                kind,
+                color: mark.color,
+                background,
+                scopes: ink.scopes.clone(),
+                label: mark.label,
+            });
+        }
+    }
+
     /// Enters the theme of `node`'s subtree scope, if it has one, for what `inside` builds. A
     /// scope that changes the scheme leaves its surface for the node to paint, so text inside
     /// reads on it.
@@ -377,12 +399,68 @@ impl<'a> Build<'a> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>() => {
+                self.virtual_list(id, node, window)
+            }
             NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
                 div().into_any_element()
             }
         }
+    }
+
+    fn virtual_list(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
+        let props = node.props.downcast_ref::<nd_virtual::ListProps>().expect("ListProps").clone();
+        let emit = self.backend.state.borrow().events.emitter(id);
+        let look = self.look();
+        let selection = look.control_active;
+        let rows = node
+            .children
+            .iter()
+            .filter_map(|c| {
+                let tag = self
+                    .nodes
+                    .get(c)?
+                    .props
+                    .downcast_ref::<DivProps>()?
+                    .scope
+                    .as_ref()?
+                    .get::<nd_virtual::RowTag>()?
+                    .clone();
+                let fill = props.selected.contains(&tag.row).then_some(selection);
+                let element = self.painted(*c, fill, None, "selected row", || {
+                    if tag.expandable {
+                        self.painted(*c, Some(self.top().text), None, "disclosure", || ());
+                    }
+                    self.node(*c, window)
+                });
+                Some(crate::virtual_list::Row { tag, node: *c, element })
+            })
+            .collect();
+        let header = match &props.kind {
+            nd_virtual::ListKind::Table(columns) => {
+                for column in columns {
+                    self.text_run(id, &column.title, Run::BODY, None, None);
+                }
+                Some(crate::virtual_list::header(columns, &look, self.top().text, emit.clone(), self.wake.clone()))
+            }
+            _ => None,
+        };
+        crate::virtual_list::VirtualList {
+            node: id,
+            props,
+            rows,
+            header,
+            emit,
+            wake: self.wake.clone(),
+            presenters: self.backend.lists.clone(),
+            gestures: self.backend.gestures.clone(),
+            window_id: self.window_id,
+            selection_color: selection,
+            disclosure_color: self.top().text,
+        }
+        .into_any_element()
     }
 
     fn view(
@@ -400,6 +478,27 @@ impl<'a> Build<'a> {
         }
         // Spelled out on every view, so text under a subtree scope takes the scope's colour.
         style.text.color = Some(self.top().text);
+        let gestures = &self.backend.gestures;
+        let last_bounds = self.backend.bounds.borrow().get(&id).copied();
+        if let Some(row) = props.gestures.row_swipe.map(|_| last_bounds.map_or(0., |b| b.size.width)) {
+            gestures.row_config(self.window_id, id, &props.gestures, row);
+        }
+        let children = if props.gestures.scroll.any() {
+            // nd scrolls it (momentum, rubber band); GPUI only clips.
+            let offset = gestures.scroll_offset(self.window_id, id, &props.gestures, last_bounds);
+            gestures.clear_content(id);
+            for (axis, scrolls) in [
+                (&mut style.overflow.x, props.gestures.scroll.horizontal),
+                (&mut style.overflow.y, props.gestures.scroll.vertical),
+            ] {
+                if scrolls {
+                    *axis = Some(gpui::Overflow::Hidden);
+                }
+            }
+            children.into_iter().map(|c| gestures.shifted(id, offset, c)).collect()
+        } else {
+            children
+        };
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);

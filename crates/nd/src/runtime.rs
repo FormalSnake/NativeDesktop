@@ -18,22 +18,32 @@ pub mod prelude {
 
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
+    pub use crate::chrome::fuzzy;
+    pub use crate::chrome::{
+        ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
+        PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,
+        SourceActivated, SourceCollapsed, SourceExpanded, SourceNode, SourceTree, Toast, ToastActionClicked,
+        ToastDismissed, ToastOverlay, banner, command_palette, palette_item, source_action, source_node,
+        source_section, source_tree, toast, toast_overlay,
+    };
     pub use crate::chrome::{
         Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, Mapping, Menu, MenuItem,
         MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select, SelectChanged,
-        Separator, Slider, SliderChanged, SourceItem, SourceList, SourceSelected, SubtreeOverrides, SystemItem,
-        TabSelected, Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group,
-        icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
-        system_item, titlebar, toolbar_sidebar_toggle,
+        Separator, Slider, SliderChanged, SourceItem, SourceSelected, SubtreeOverrides, SystemItem, TabSelected,
+        Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group, icon_button,
+        inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list, system_item,
+        titlebar, toolbar_sidebar_toggle,
     };
-    pub use crate::controls::{
-        Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, ListState, Painter, Processor, canvas,
-    };
+    pub use crate::controls::{Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas};
     pub use crate::native::{ElementId, NativeStyled};
     pub use crate::theme::{
         ActiveTheme, Appearance, GlassVariant, Material, Theme, ThemeOverride, ThemeRefinement, WindowThemeExt,
     };
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
+    pub use nd_virtual::{
+        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, SelectEvent, Selection,
+        SortChanged, SortDirection, TreeNode, column, grid, list, table, tree,
+    };
 }
 
 #[derive(Debug)]
@@ -54,18 +64,63 @@ impl std::error::Error for Error {}
 
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 
-/// Identity of the app, from its `Cargo.toml` (`nativedesktop.toml` from M7).
+/// Identity of the app, from its `Cargo.toml`, plus the update feed `nd::build::app()` baked in.
 #[derive(Clone, Debug)]
 pub struct Manifest {
     pub name: &'static str,
     pub version: &'static str,
+    pub updates: Option<nd_update::UpdateConfig>,
 }
 
 #[macro_export]
 macro_rules! manifest {
     () => {
-        $crate::Manifest { name: env!("CARGO_PKG_NAME"), version: env!("CARGO_PKG_VERSION") }
+        $crate::Manifest {
+            name: env!("CARGO_PKG_NAME"),
+            version: env!("CARGO_PKG_VERSION"),
+            updates: $crate::update::build_config!(),
+        }
     };
+}
+
+/// Release notes of the update this launch is the result of, until [`mark_whats_new_seen`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn whats_new(manifest: &Manifest) -> Option<nd_update::WhatsNew> {
+    nd_update::whats_new(&update_state_dir(manifest), manifest.version)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn mark_whats_new_seen(manifest: &Manifest) {
+    nd_update::mark_whats_new_seen(&update_state_dir(manifest), manifest.version);
+}
+
+fn update_state_dir(manifest: &Manifest) -> std::path::PathBuf {
+    nd_core::paths::app_data_dir(manifest.name).join("updates")
+}
+
+/// Starts the background check of a packaged app: first after a short delay (`ND_UPDATE_DELAY_MS`,
+/// default 10 s), then every six hours until an update is downloaded, which then applies when
+/// the app quits.
+#[cfg(target_arch = "wasm32")]
+fn start_updates(_manifest: &Manifest) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_updates(manifest: &Manifest) {
+    nd_update::startup();
+    let Some(config) = manifest.updates else { return };
+    match nd_update::Updater::new(&config, &update_state_dir(manifest), None) {
+        Ok(updater) => {
+            let delay = std::env::var("ND_UPDATE_DELAY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000);
+            updater.spawn_background(
+                std::time::Duration::from_millis(delay),
+                std::time::Duration::from_secs(6 * 3600),
+                |update| eprintln!("nd: update {} ready, applies on quit", update.version),
+                |error| eprintln!("nd: {error}"),
+            );
+        }
+        Err(nd_update::Unavailable::NotInstalled(_)) => {}
+        Err(why) => eprintln!("nd: updates off: {why}"),
+    }
 }
 
 /// Writes a `-report` incident bundle with `message` and returns its directory, or `None` when
@@ -130,6 +185,7 @@ impl Application {
         #[cfg(target_os = "macos")]
         {
             nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "appkit"));
+            start_updates(&self.manifest);
             let files = crate::theme::ThemeFiles::for_app(self.manifest.name);
             let watched = files.clone();
             nd_backend_appkit::run_with(
@@ -154,6 +210,7 @@ impl Application {
     #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
     fn run_gpui<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
         nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "gpui"));
+        start_updates(&self.manifest);
         let files = crate::theme::ThemeFiles::for_app(self.manifest.name);
         let watched = files.clone();
         let app_theme = self.theme.unwrap_or_default();

@@ -17,6 +17,9 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
+use nd_gesture::PointerPhase;
+
+use crate::gestures::GestureHost;
 use crate::look::{Color, TextLook, ViewLook};
 
 pub(crate) type LayoutHook = Rc<dyn Fn(Size)>;
@@ -150,6 +153,10 @@ pub struct LayerIvars {
     /// Painted when the style sets no background: the window background, under a subtree
     /// scope that flips the appearance, so text inside reads on it.
     surface: Cell<Option<Color>>,
+    /// The gestures the node listens for.
+    gestures: RefCell<Option<GestureHost>>,
+    /// The last Force Touch stage seen, so a force click fires once per press.
+    stage: Cell<isize>,
 }
 
 impl Default for LayerIvars {
@@ -161,6 +168,8 @@ impl Default for LayerIvars {
             drag: Cell::new(false),
             menu: RefCell::new(None),
             surface: Cell::new(None),
+            gestures: RefCell::new(None),
+            stage: Cell::new(0),
         }
     }
 }
@@ -208,7 +217,63 @@ define_class!(
                 }
                 return;
             }
+            if crate::gestures::mouse(self, event, PointerPhase::Down) {
+                return;
+            }
             let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, event: &NSEvent) {
+            if !crate::gestures::mouse(self, event, PointerPhase::Move) {
+                let _: () = unsafe { msg_send![super(self), mouseDragged: event] };
+            }
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, event: &NSEvent) {
+            if !crate::gestures::mouse(self, event, PointerPhase::Up) {
+                let _: () = unsafe { msg_send![super(self), mouseUp: event] };
+            }
+        }
+
+        #[unsafe(method(magnifyWithEvent:))]
+        fn magnify_with_event(&self, event: &NSEvent) {
+            if !crate::gestures::magnify(self, self.ivars().gestures.borrow().as_ref(), event) {
+                let _: () = unsafe { msg_send![super(self), magnifyWithEvent: event] };
+            }
+        }
+
+        #[unsafe(method(rotateWithEvent:))]
+        fn rotate_with_event(&self, event: &NSEvent) {
+            if !crate::gestures::rotate(self, self.ivars().gestures.borrow().as_ref(), event) {
+                let _: () = unsafe { msg_send![super(self), rotateWithEvent: event] };
+            }
+        }
+
+        #[unsafe(method(smartMagnifyWithEvent:))]
+        fn smart_magnify_with_event(&self, event: &NSEvent) {
+            if !crate::gestures::smart_magnify(self, self.ivars().gestures.borrow().as_ref(), event) {
+                let _: () = unsafe { msg_send![super(self), smartMagnifyWithEvent: event] };
+            }
+        }
+
+        #[unsafe(method(pressureChangeWithEvent:))]
+        fn pressure_change_with_event(&self, event: &NSEvent) {
+            let mut stage = self.ivars().stage.get();
+            let handled = crate::gestures::pressure(self, self.ivars().gestures.borrow().as_ref(), event, &mut stage);
+            self.ivars().stage.set(stage);
+            if !handled {
+                let _: () = unsafe { msg_send![super(self), pressureChangeWithEvent: event] };
+            }
+        }
+
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            let host = self.ivars().gestures.borrow().clone();
+            if !crate::gestures::scroll_wheel(host.as_ref(), event) {
+                let _: () = unsafe { msg_send![super(self), scrollWheel: event] };
+            }
         }
 
         #[unsafe(method(rightMouseDown:))]
@@ -280,6 +345,15 @@ impl NdLayerView {
     /// `emit`; `None` gives them back to AppKit.
     pub(crate) fn set_menu(&self, menu: Option<(nd_ui::events::Emit, crate::events::Wake)>) {
         *self.ivars().menu.borrow_mut() = menu;
+    }
+
+    /// The gestures this view's node listens for; `None` when it listens for none.
+    pub(crate) fn set_gestures(&self, host: Option<GestureHost>) {
+        *self.ivars().gestures.borrow_mut() = host;
+    }
+
+    pub(crate) fn gesture_host(&self) -> Option<GestureHost> {
+        self.ivars().gestures.borrow().clone()
     }
 
     fn request_menu(&self, event: &NSEvent) -> bool {

@@ -30,7 +30,9 @@ use nd_theme::color::{over, with_alpha};
 use nd_ui::Scope;
 use nd_ui::prelude::Hsla;
 use nd_ui::semantics::{Paint, PaintKind};
-use objc2_app_kit::{NSAppearance, NSColor, NSControl, NSFont, NSTableView, NSTextField};
+use objc2_app_kit::{
+    NSAppearance, NSBackgroundStyle, NSColor, NSColorType, NSControl, NSFont, NSTableRowView, NSTableView, NSTextField,
+};
 
 use super::{AppKitBackend, Native, State, WindowRecord};
 use crate::system_colors::hsla;
@@ -111,12 +113,15 @@ impl AppKitBackend {
         let Ok(state) = self.0.try_borrow() else { return Probe::default() };
         let Some(native) = state.nodes.get(&node) else { return Probe::default() };
         let mut probe = Probe::default();
+        let mut content = None;
         if let Some(view) = native.view()
             && let Some(record) = state.record_of_view(view)
         {
-            let content = record.root.content();
-            probe.bounds = Some(rect(content.convertRect_fromView(view.bounds(), Some(view))));
+            let root = record.root.content();
+            probe.bounds = Some(rect(root.convertRect_fromView(view.bounds(), Some(view))));
+            content = Some(root);
         }
+        state.probe_nav(native, content.map(|c| &**c), &mut probe);
         if let Native::Button(b) = native {
             probe.enabled = Some(b.button.isEnabled());
             probe.name = Some(b.button.title().to_string());
@@ -170,6 +175,9 @@ impl AppKitBackend {
     }
 
     pub(super) fn perform_action(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        if let Some(result) = self.perform_nav(node, action) {
+            return result;
+        }
         match action {
             SemanticAction::Click => self.press(node),
             SemanticAction::DoubleClick => {
@@ -359,8 +367,10 @@ impl AppKitBackend {
     pub(super) fn paints_of(&self, window: WindowId) -> Result<Vec<Paint>, ActionError> {
         let state = self.0.borrow();
         let record = state.record(window)?;
-        // The window's own content view: a scaffold moves the root under a split view.
+        // From the window's frame view: a scaffold moves the root under a split view, and the
+        // palette and toasts sit above the content view.
         let content = record.window.contentView().ok_or_else(|| not_actionable("window has no content view"))?;
+        let content = unsafe { content.superview() }.unwrap_or(content);
         let mut owners = HashMap::new();
         for (id, native) in &state.nodes {
             if state.node_window.get(id) == Some(&window)
@@ -415,6 +425,11 @@ impl Walk<'_> {
         if view.isHidden() || view.alphaValue() <= 0. {
             return;
         }
+        // The title bar is the window server's: its title and buttons follow the OS.
+        // KVO subclasses the class at runtime, so the name can carry a prefix.
+        if view.class().name().to_str().is_ok_and(|n| n.contains("NSTitlebar")) {
+            return;
+        }
         let node = self.owners.get(&(view as *const NSView)).copied().or(node);
         let appearance = view.effectiveAppearance();
         let alpha = view.alphaValue() as f32;
@@ -424,6 +439,19 @@ impl Walk<'_> {
         {
             self.push(node, PaintKind::Fill, color, background, "view".into());
             background = over(color, background);
+        }
+        // A selected table row draws its selection behind the cells; the row view is AppKit's.
+        if let Some(row) = view.downcast_ref::<NSTableRowView>()
+            && row.isSelected()
+        {
+            let selection = if row.isEmphasized() {
+                NSColor::selectedContentBackgroundColor()
+            } else {
+                NSColor::unemphasizedSelectedContentBackgroundColor()
+            };
+            if let Some(fill) = resolve(&selection, &appearance) {
+                background = over(fill, background);
+            }
         }
         if let Some(text) = view.downcast_ref::<NdTextView>() {
             if let Some(look) = text.look()
@@ -445,7 +473,17 @@ impl Walk<'_> {
                 Some(fill) => over(fill, background),
                 None => background,
             };
-            if let Some(color) = field.textColor().and_then(|c| resolve(&c, &appearance)) {
+            // On an emphasized selection a field in a cell draws its system label colour as the
+            // selected-text colour; a colour the app chose stays.
+            let emphasized = field.cell().is_some_and(|c| c.backgroundStyle() == NSBackgroundStyle::Emphasized);
+            let drawn = field.textColor().map(|c| {
+                if emphasized && c.r#type() == NSColorType::Catalog {
+                    NSColor::alternateSelectedControlTextColor()
+                } else {
+                    c
+                }
+            });
+            if let Some(color) = drawn.and_then(|c| resolve(&c, &appearance)) {
                 let size = field.font().map_or(NSFont::systemFontSize(), |f| f.pointSize()) as f32;
                 let text = field.stringValue().to_string();
                 if !text.is_empty() {

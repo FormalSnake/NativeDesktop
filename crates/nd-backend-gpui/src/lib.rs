@@ -8,10 +8,13 @@ mod backend;
 mod budget;
 mod clock;
 mod drawn;
+mod gestures;
 mod host;
 mod input;
+pub mod nav;
 pub mod os;
 pub mod render;
+mod virtual_list;
 
 pub use backend::GpuiBackend;
 pub use clock::{DisplayClock, Pacing};
