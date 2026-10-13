@@ -201,6 +201,10 @@ pub trait Backend: Any {
         Err(crate::semantics::ActionError::InputUnsupported)
     }
 
+    /// Plays `haptic` on the trackpad, timed to the next drawn frame. A no-op where the OS has no
+    /// haptics (everything but macOS).
+    fn haptic(&mut self, _haptic: nd_gesture::Haptic) {}
+
     /// Renders the window's content to a PNG.
     fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {
         Err(crate::semantics::ActionError::Unsupported("capture".into()))

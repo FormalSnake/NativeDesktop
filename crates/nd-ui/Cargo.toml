@@ -12,6 +12,7 @@ test-support = []
 
 [dependencies]
 nd-core.workspace = true
+nd-gesture.workspace = true
 nd-gpui.workspace = true
 
 [dev-dependencies]

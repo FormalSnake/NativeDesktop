@@ -15,7 +15,7 @@ use std::rc::Rc;
 use nd_core::NodeId;
 use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keymap, Keystroke};
 
-use crate::actions::{FocusNext, FocusPrevious};
+use crate::actions::{Cancel, Confirm, FocusNext, FocusPrevious};
 
 type Listener<C> = Rc<dyn Fn(&dyn Action, &mut ActionCx<'_, C>)>;
 
@@ -84,17 +84,65 @@ impl Default for Focusable {
     }
 }
 
+/// The last input that moved things: decides whether focus shows a ring. A click focuses
+/// quietly; Tab, or any key, shows where focus is (`:focus-visible` semantics).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputModality {
+    #[default]
+    Pointer,
+    Keyboard,
+}
+
+/// A subtree that owns focus while it is mounted: an overlay, a sheet, a palette. Mounting it
+/// saves the focus it took over; unmounting restores it (ARCHITECTURE.md 6.2, 6.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FocusScope {
+    /// Tab cycles inside the scope, and mounting it moves focus to its first tab stop (modal).
+    pub trap: bool,
+    /// Escape that no listener handled dismisses this scope.
+    pub dismiss_on_escape: bool,
+}
+
+/// Queued to a focus scope's root when Escape dismissed it; the overlay closes itself in its
+/// handler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DismissRequested;
+
+/// Per-node roles in the Return and Escape defaults.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyRoles {
+    /// Activated by Return when no listener handled it (the window's or the scope's default button).
+    pub default_button: bool,
+    /// Keeps Return for itself while focused (a multi-line text view): the default button waits.
+    pub takes_return: bool,
+}
+
+struct ScopeEntry {
+    node: NodeId,
+    scope: FocusScope,
+    /// Focus when the scope mounted, restored when it unmounts.
+    restore: Option<NodeId>,
+}
+
 struct Node<C> {
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     key_context: Option<KeyContext>,
     listeners: Vec<(TypeId, Listener<C>)>,
     focusable: Option<Focusable>,
+    roles: KeyRoles,
 }
 
 impl<C> Node<C> {
     fn new(parent: Option<NodeId>) -> Self {
-        Self { parent, children: Vec::new(), key_context: None, listeners: Vec::new(), focusable: None }
+        Self {
+            parent,
+            children: Vec::new(),
+            key_context: None,
+            listeners: Vec::new(),
+            focusable: None,
+            roles: KeyRoles::default(),
+        }
     }
 }
 
@@ -109,6 +157,13 @@ pub struct DispatchTree<C> {
     /// Set when nd focus changed and the platform has not been told yet.
     focus_change: Option<Option<NodeId>>,
     pending: Vec<Keystroke>,
+    modality: InputModality,
+    /// Mounted focus scopes, outermost first.
+    scopes: Vec<ScopeEntry>,
+    /// A default button Return activated, for the app to click.
+    activate: Option<NodeId>,
+    /// A scope Escape dismissed, for the app to tell.
+    dismiss: Option<NodeId>,
 }
 
 impl<C: 'static> DispatchTree<C> {
@@ -124,6 +179,10 @@ impl<C: 'static> DispatchTree<C> {
             default_target: None,
             focus_change: None,
             pending: Vec::new(),
+            modality: InputModality::default(),
+            scopes: Vec::new(),
+            activate: None,
+            dismiss: None,
         }
     }
 
@@ -186,10 +245,12 @@ impl<C: 'static> DispatchTree<C> {
             p.children.retain(|c| *c != node);
         }
         let mut stack = vec![node];
+        let mut removed_nodes = Vec::new();
         while let Some(n) = stack.pop() {
             if let Some(removed) = self.nodes.remove(&n) {
                 stack.extend(removed.children);
             }
+            removed_nodes.push(n);
             if self.focused == Some(n) {
                 self.set_focus(None);
             }
@@ -197,10 +258,119 @@ impl<C: 'static> DispatchTree<C> {
                 self.default_target = None;
             }
         }
+        for n in removed_nodes {
+            self.unmount_scope(n);
+        }
     }
 
     pub fn contains(&self, node: NodeId) -> bool {
         self.nodes.contains_key(&node)
+    }
+
+    /// Marks `node` as a focus scope root (`Some`) or not. Becoming one saves the current focus
+    /// and, for a trapping scope, moves focus to its first tab stop unless focus is already
+    /// inside; ceasing to be one (or leaving the tree) restores the saved focus.
+    pub fn set_focus_scope(&mut self, node: NodeId, scope: Option<FocusScope>) {
+        let existing = self.scopes.iter().position(|s| s.node == node);
+        match (existing, scope) {
+            (Some(i), Some(scope)) => self.scopes[i].scope = scope,
+            (Some(_), None) => self.unmount_scope(node),
+            (None, Some(scope)) => {
+                let restore = self.focused;
+                self.scopes.push(ScopeEntry { node, scope, restore });
+                if scope.trap && !self.focused.is_some_and(|f| self.is_within(f, node)) {
+                    // The scope's children may not be bound yet in this render; the tree calls
+                    // `settle_scopes` after the pass to finish the move.
+                    if let Some(first) = self.focus_order_in(Some(node)).first().copied() {
+                        self.set_focus(Some(first));
+                    }
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// After a render pass: a trapping scope that mounted before its content gets its focus now.
+    pub fn settle_scopes(&mut self) {
+        let Some(top) = self.scopes.iter().rev().find(|s| s.scope.trap).map(|s| s.node) else { return };
+        if self.focused.is_some_and(|f| self.is_within(f, top)) {
+            return;
+        }
+        if let Some(first) = self.focus_order_in(Some(top)).first().copied() {
+            self.set_focus(Some(first));
+        }
+    }
+
+    fn unmount_scope(&mut self, node: NodeId) {
+        let Some(i) = self.scopes.iter().position(|s| s.node == node) else { return };
+        let entry = self.scopes.remove(i);
+        // Restore only when focus was inside the closing scope (or went with it): an overlay
+        // closing never steals focus the user moved elsewhere.
+        let inside = match self.focused {
+            None => true,
+            Some(f) => !self.nodes.contains_key(&f) || self.is_within(f, node),
+        };
+        if !inside {
+            return;
+        }
+        let target = entry.restore.filter(|r| self.is_focusable(*r) && self.in_active_scope(*r));
+        match target {
+            Some(r) => self.set_focus(Some(r)),
+            None => {
+                let fallback = self.scopes.iter().rev().find(|s| s.scope.trap).map(|s| s.node);
+                let first = fallback.and_then(|f| self.focus_order_in(Some(f)).first().copied());
+                self.set_focus(first);
+            }
+        }
+    }
+
+    pub fn set_key_roles(&mut self, node: NodeId, roles: KeyRoles) {
+        self.node_mut(node).roles = roles;
+    }
+
+    /// Records the input that last moved things. Keys show focus rings, pointers hide them.
+    pub fn set_modality(&mut self, modality: InputModality) {
+        self.modality = modality;
+    }
+
+    pub fn modality(&self) -> InputModality {
+        self.modality
+    }
+
+    /// Whether the focused node draws its focus ring: something has focus and the keyboard
+    /// moved last.
+    pub fn focus_visible(&self) -> bool {
+        self.focused.is_some() && self.modality == InputModality::Keyboard
+    }
+
+    /// The default button Return activated in the last dispatch, once.
+    pub fn take_activation(&mut self) -> Option<NodeId> {
+        self.activate.take()
+    }
+
+    /// The focus scope Escape dismissed in the last dispatch, once.
+    pub fn take_dismissal(&mut self) -> Option<NodeId> {
+        self.dismiss.take()
+    }
+
+    fn is_within(&self, node: NodeId, ancestor: NodeId) -> bool {
+        let mut cursor = Some(node);
+        while let Some(n) = cursor {
+            if n == ancestor {
+                return true;
+            }
+            cursor = self.nodes.get(&n).and_then(|n| n.parent);
+        }
+        false
+    }
+
+    /// The innermost trapping scope, which confines Tab and focus.
+    fn trap(&self) -> Option<NodeId> {
+        self.scopes.iter().rev().find(|s| s.scope.trap).map(|s| s.node)
+    }
+
+    fn in_active_scope(&self, node: NodeId) -> bool {
+        self.trap().is_none_or(|t| self.is_within(node, t))
     }
 
     pub fn set_key_context(&mut self, node: NodeId, context: Option<KeyContext>) {
@@ -271,10 +441,15 @@ impl<C: 'static> DispatchTree<C> {
         self.focus_change.take()
     }
 
-    /// Tab stops in traversal order: by `tab_index`, then tree order.
+    /// Tab stops in traversal order: by `tab_index`, then tree order. Inside a trapping focus
+    /// scope (a modal overlay), only the scope's own.
     pub fn focus_order(&self) -> Vec<NodeId> {
+        self.focus_order_in(self.trap())
+    }
+
+    fn focus_order_in(&self, within: Option<NodeId>) -> Vec<NodeId> {
         let mut order = Vec::new();
-        let mut stack: Vec<NodeId> = self.root.into_iter().collect();
+        let mut stack: Vec<NodeId> = within.or(self.root).into_iter().collect();
         while let Some(n) = stack.pop() {
             let Some(node) = self.nodes.get(&n) else { continue };
             if let Some(f) = node.focusable
@@ -329,6 +504,24 @@ impl<C: 'static> DispatchTree<C> {
         }
     }
 
+    /// The button Return activates: the first default button in tree order inside the innermost
+    /// scope (or the window), unless the focused node keeps Return.
+    fn default_button(&self) -> Option<NodeId> {
+        if self.focused.and_then(|f| self.nodes.get(&f)).is_some_and(|n| n.roles.takes_return) {
+            return None;
+        }
+        let within = self.scopes.last().map(|s| s.node).or(self.root)?;
+        let mut stack = vec![within];
+        while let Some(n) = stack.pop() {
+            let Some(node) = self.nodes.get(&n) else { continue };
+            if node.roles.default_button {
+                return Some(n);
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        None
+    }
+
     /// Focused node up to the root; from the default target, or just the root, when nothing
     /// has focus.
     fn dispatch_path(&self) -> Vec<NodeId> {
@@ -352,6 +545,7 @@ impl<C: 'static> DispatchTree<C> {
     /// Matches `keystroke` against the keymap in the focused node's contexts and dispatches
     /// the bound action. Runs before the platform's own key handling.
     pub fn dispatch_key(&mut self, keystroke: &Keystroke, cx: &mut C) -> KeyDispatch {
+        self.modality = InputModality::Keyboard;
         let contexts = self.context_stack();
         let mut input = std::mem::take(&mut self.pending);
         let had_pending = !input.is_empty();
@@ -405,6 +599,12 @@ impl<C: 'static> DispatchTree<C> {
             } else if type_id == TypeId::of::<FocusPrevious>() {
                 focus = Some(FocusRequest::Previous);
                 handled = true;
+            } else if type_id == TypeId::of::<Confirm>() {
+                self.activate = self.default_button();
+                handled = self.activate.is_some();
+            } else if type_id == TypeId::of::<Cancel>() {
+                self.dismiss = self.scopes.iter().rev().find(|s| s.scope.dismiss_on_escape).map(|s| s.node);
+                handled = self.dismiss.is_some();
             }
         }
         match focus {
