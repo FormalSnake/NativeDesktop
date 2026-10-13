@@ -1,53 +1,53 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NotesSettings",
+  "description": "Mirrors `examples/notes/src/settings.rs`, which cannot build until M6.",
+  "type": "object",
+  "properties": {
+    "compact_rows": {
+      "description": "One-line rows without a preview.",
+      "type": "boolean",
+      "default": false,
+      "x-nd-order": 0
+    },
+    "editor_font_size": {
+      "description": "Editor text size in points, before pinch zoom.",
+      "type": "number",
+      "format": "float",
+      "default": 15.0,
+      "x-nd-order": 1,
+      "minimum": 11,
+      "maximum": 24,
+      "x-nd-step": 1.0
+    },
+    "spellcheck": {
+      "description": "Underline misspelled words.",
+      "type": "boolean",
+      "default": true,
+      "x-nd-order": 2
+    },
+    "new_note_folder": {
+      "description": "Where new notes start.",
+      "$ref": "#/$defs/NewNoteFolder",
+      "default": "current",
+      "x-nd-order": 3
+    }
+  },
+  "additionalProperties": false,
   "$defs": {
     "NewNoteFolder": {
       "oneOf": [
         {
-          "const": "current",
           "description": "The folder shown in the sidebar.",
-          "type": "string"
+          "type": "string",
+          "const": "current"
         },
         {
-          "const": "pinned",
           "description": "Always pinned.",
-          "type": "string"
+          "type": "string",
+          "const": "pinned"
         }
       ]
     }
-  },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "description": "Mirrors `examples/notes/src/settings.rs`, which cannot build until M6.",
-  "properties": {
-    "compact_rows": {
-      "default": false,
-      "description": "One-line rows without a preview.",
-      "type": "boolean",
-      "x-nd-order": 0
-    },
-    "editor_font_size": {
-      "default": 15.0,
-      "description": "Editor text size in points, before pinch zoom.",
-      "format": "float",
-      "maximum": 24,
-      "minimum": 11,
-      "type": "number",
-      "x-nd-order": 1,
-      "x-nd-step": 1.0
-    },
-    "new_note_folder": {
-      "$ref": "#/$defs/NewNoteFolder",
-      "default": "current",
-      "description": "Where new notes start.",
-      "x-nd-order": 3
-    },
-    "spellcheck": {
-      "default": true,
-      "description": "Underline misspelled words.",
-      "type": "boolean",
-      "x-nd-order": 2
-    }
-  },
-  "title": "NotesSettings",
-  "type": "object"
+  }
 }

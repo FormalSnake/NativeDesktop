@@ -17,7 +17,9 @@ path = "src/bin/nd-config.rs"
 [dependencies]
 schemars = "1.2.3"
 serde.workspace = true
-serde_json.workspace = true
+# preserve_order pinned here: gpui enables it workspace-wide, and generated schema files must not
+# depend on which crates share the build.
+serde_json = { workspace = true, features = ["preserve_order"] }
 toml = "0.9"
 
 [dev-dependencies]
