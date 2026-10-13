@@ -1,0 +1,65 @@
+//! The chrome policy read from a live GPUI window, and the OS action behind each drawn control.
+//! GPUI owns the Wayland toplevel: it binds `zxdg_toplevel_decoration_v1` at creation, sends
+//! `set_mode` for the decorations the window was opened with, and stores the compositor's
+//! `configure` answer and `wm_capabilities`. This module only reads those back.
+
+use nd_gpui::gpui::{self, App, Window, WindowButton, WindowButtonLayout, WindowDecorations};
+
+use crate::chrome::{ButtonLayout, Capabilities, ChromePlan, ChromeState, Control, ControlMetrics, Decorations};
+
+/// What nd asks the compositor for. Server-side wherever the compositor offers it; the answer in
+/// `configure` wins either way, and [`chrome_state`] reports that answer, never this request.
+pub const REQUESTED_DECORATIONS: WindowDecorations = WindowDecorations::Server;
+
+pub fn chrome_state(window: &Window, layout: &ButtonLayout) -> ChromeState {
+    let decorations = match window.window_decorations() {
+        gpui::Decorations::Server => Decorations::Server,
+        gpui::Decorations::Client { .. } => Decorations::Client,
+    };
+    let c = window.window_controls();
+    ChromeState {
+        decorations,
+        capabilities: Capabilities {
+            maximize: c.maximize,
+            minimize: c.minimize,
+            fullscreen: c.fullscreen,
+            window_menu: c.window_menu,
+        },
+        layout: layout.clone(),
+        fullscreen: window.is_fullscreen(),
+    }
+}
+
+pub fn chrome_plan(window: &Window, cx: &App) -> ChromePlan {
+    crate::chrome::plan(&chrome_state(window, &button_layout(cx)), ControlMetrics::default())
+}
+
+/// The desktop's `button-layout` as GPUI read it (from the settings portal on Linux), or GNOME's
+/// default where it has none.
+pub fn button_layout(cx: &App) -> ButtonLayout {
+    cx.button_layout().map(from_gpui).unwrap_or_default()
+}
+
+fn from_gpui(layout: WindowButtonLayout) -> ButtonLayout {
+    let side = |buttons: &[Option<WindowButton>]| {
+        buttons
+            .iter()
+            .flatten()
+            .map(|b| match b {
+                WindowButton::Minimize => Control::Minimize,
+                WindowButton::Maximize => Control::Maximize,
+                WindowButton::Close => Control::Close,
+            })
+            .collect()
+    };
+    ButtonLayout { leading: side(&layout.left), trailing: side(&layout.right) }
+}
+
+/// The OS action of a drawn control.
+pub fn perform(control: Control, window: &mut Window) {
+    match control {
+        Control::Minimize => window.minimize_window(),
+        Control::Maximize => window.zoom_window(),
+        Control::Close => window.remove_window(),
+    }
+}

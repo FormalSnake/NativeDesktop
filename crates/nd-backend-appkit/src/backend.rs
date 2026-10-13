@@ -44,7 +44,7 @@ use crate::controls::{SelectNative, SliderNative};
 use crate::events::Wake;
 use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
-use crate::look::{TextLook, ViewLook};
+use crate::look::{Color, TextLook, ViewLook};
 use crate::overlay::OverlayNative;
 use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
@@ -55,6 +55,7 @@ use crate::toast::{BannerNative, ToastNative};
 use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative, ToolbarTabNative};
 use crate::traffic_lights::TrafficLights;
 use crate::views::{NdLayerView, NdRootView, NdTextView, ns_rect};
+use crate::virtual_list::ListNative;
 
 mod automation;
 mod nav;
@@ -94,6 +95,8 @@ enum Native {
     Palette(PaletteNative),
     Toasts(ToastNative),
     Banner(BannerNative),
+    /// An `nd-virtual` list, table or tree.
+    List(ListNative),
     Form(FormNative),
     /// Logical: the form draws sections and rows; these hold what goes in them.
     FormSection(FormSectionProps, Vec<NodeId>),
@@ -124,6 +127,7 @@ impl Native {
             Native::Palette(p) => Some(p.view()),
             Native::Toasts(t) => Some(t.view()),
             Native::Banner(b) => Some(b.view()),
+            Native::List(l) => Some(l.view()),
             Native::Form(f) => Some(&f.outer),
             Native::Surface(s) => Some(s.view()),
             Native::FormSection(..) | Native::FormRow(..) | Native::Overlay(_) => None,
@@ -173,6 +177,12 @@ struct State {
     forms_dirty: HashSet<NodeId>,
     /// The size each form row's control was laid out at, which the form shows it at.
     form_sizes: HashMap<NodeId, (f64, f64)>,
+    /// `nd-virtual` row roots and table cells, by the tag their div carries.
+    row_tags: HashMap<NodeId, nd_virtual::RowTag>,
+    cell_tags: HashMap<NodeId, usize>,
+    /// `overflow_*_scroll()` divs: the scroll view inside the div's layer view and the document
+    /// their children go in.
+    scrolls: HashMap<NodeId, crate::scroll_view::ScrollBox>,
     weak: Weak<RefCell<State>>,
 }
 
@@ -231,6 +241,9 @@ impl AppKitBackend {
                 system_items: HashMap::new(),
                 forms_dirty: HashSet::new(),
                 form_sizes: HashMap::new(),
+                row_tags: HashMap::new(),
+                cell_tags: HashMap::new(),
+                scrolls: HashMap::new(),
                 weak: weak.clone(),
             })
         });
@@ -267,6 +280,46 @@ impl AppKitBackend {
 
     /// The node whose view is `view`, if nd created or registered it. `None` while a
     /// transaction is applying.
+    /// The `nd-virtual` lists, by node, oldest first.
+    pub fn lists(&self) -> Vec<NodeId> {
+        let state = self.0.borrow();
+        let mut lists: Vec<NodeId> =
+            state.nodes.iter().filter(|(_, n)| matches!(n, Native::List(_))).map(|(id, _)| *id).collect();
+        lists.sort();
+        lists
+    }
+
+    /// The scroll views of `overflow_*_scroll()` divs, by node, oldest first.
+    pub fn scroll_views(&self) -> Vec<(NodeId, Retained<objc2_app_kit::NSScrollView>)> {
+        let state = self.0.borrow();
+        let mut out: Vec<_> = state.scrolls.iter().map(|(n, s)| (*n, s.scroll.clone())).collect();
+        out.sort_by_key(|(n, _)| *n);
+        out
+    }
+
+    /// Titles of the native row actions the list shows for its `row`th row on one edge.
+    pub fn list_row_actions(&self, list: NodeId, row: usize, leading: bool) -> Vec<String> {
+        match self.0.borrow().nodes.get(&list) {
+            Some(Native::List(l)) => l.row_action_titles(row, leading),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The `nd-virtual` row a row root node shows.
+    pub fn list_row(&self, node: NodeId) -> Option<nd_virtual::RowId> {
+        self.0.borrow().row_tags.get(&node).map(|t| t.row)
+    }
+
+    /// The view presenting the list (an `NSTableView`, `NSOutlineView` or `NSCollectionView`)
+    /// and its scroll view.
+    pub fn list_views(&self, list: NodeId) -> Option<(Retained<NSView>, Retained<objc2_app_kit::NSScrollView>)> {
+        let state = self.0.borrow();
+        match state.nodes.get(&list)? {
+            Native::List(l) => Some((l.document().retain(), l.scroll().retain())),
+            _ => None,
+        }
+    }
+
     pub fn node_for_view(&self, view: *const NSView) -> Option<NodeId> {
         let state = self.0.try_borrow().ok()?;
         state.nodes.iter().find(|(_, n)| n.view().is_some_and(|v| std::ptr::eq(v, view))).map(|(id, _)| *id)
@@ -410,6 +463,82 @@ impl State {
         })
     }
 
+    /// The list a node belongs to as a row (`parent` is the list) or a table cell (`parent` is a
+    /// row of the list).
+    fn list_of(&self, parent: NodeId) -> Option<NodeId> {
+        match self.nodes.get(&parent)? {
+            Native::List(_) => Some(parent),
+            _ => {
+                let list = *self.parents.get(&parent)?;
+                matches!(self.nodes.get(&list), Some(Native::List(l)) if l.is_row(parent)).then_some(list)
+            }
+        }
+    }
+
+    /// Applies each list's changes in one table update; a list whose rows must lay out at a new
+    /// width asks the window for another layout pass on the next turn.
+    fn commit_lists(&mut self, window: WindowId) {
+        let lists: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(id, n)| matches!(n, Native::List(_)) && self.node_window.get(id) == Some(&window))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut relayout = false;
+        for id in lists {
+            if let Some(Native::List(l)) = self.nodes.get_mut(&id) {
+                relayout |= l.commit();
+            }
+        }
+        if relayout && let Some(record) = self.windows.get(&window) {
+            let root = objc2::rc::Weak::from_retained(&record.root);
+            crate::events::defer(move || {
+                if let Some(root) = root.load() {
+                    root.setNeedsLayout(true);
+                }
+            });
+        }
+    }
+
+    /// Rows and cells of a native list go into the containers the table shows, not under the
+    /// list's view. Returns false for any other node.
+    fn attach_to_list(&mut self, parent: NodeId, node: NodeId) -> bool {
+        let Some(list) = self.list_of(parent) else { return false };
+        let Some(view) = self.view(node).map(|v| v.retain()) else { return false };
+        let row = self.row_tags.get(&node).cloned();
+        let cell = self.cell_tags.get(&node).copied();
+        let Some(Native::List(l)) = self.nodes.get_mut(&list) else { return false };
+        if list == parent {
+            if let Some(row) = row {
+                l.attach_row(node, row.row, &view);
+                l.set_row_actions(row.row, row.actions);
+                return true;
+            }
+            return false;
+        }
+        match cell {
+            Some(column) if l.is_table() => {
+                l.attach_cell(parent, node, column, &view);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn detach_from_list(&mut self, node: NodeId, parent: Option<NodeId>) -> bool {
+        let Some(list) = parent.and_then(|p| self.list_of(p)) else { return false };
+        let Some(Native::List(l)) = self.nodes.get_mut(&list) else { return false };
+        if l.is_row(node) {
+            l.detach_row(node);
+            true
+        } else if l.is_cell(node) {
+            l.detach_cell(node);
+            true
+        } else {
+            false
+        }
+    }
+
     fn attach(&mut self, parent: NodeId, node: NodeId, before: Option<NodeId>) {
         self.parents.insert(node, parent);
         if !self.node_window.contains_key(&node)
@@ -426,6 +555,9 @@ impl State {
             if let Some(owner) = owner {
                 overlay.attach(anchor, owner);
             }
+            return;
+        }
+        if self.attach_to_list(parent, node) {
             return;
         }
         let hook = matches!(self.nodes.get(&node), Some(Native::Pane(_))).then(|| self.pane_hook());
@@ -504,7 +636,12 @@ impl State {
             }
             _ => {}
         }
-        let (Some(container), Some(view)) = (self.native(parent).container(), self.view(node)) else { return };
+        let scroll_doc = self.scrolls.get(&parent).map(|s| Retained::into_super(s.document.clone()));
+        let (Some(container), Some(view)) =
+            (scroll_doc.as_deref().or_else(|| self.native(parent).container()), self.view(node))
+        else {
+            return;
+        };
         match before.and_then(|b| self.view(b)) {
             Some(sibling) if unsafe { sibling.superview() }.is_some_and(|s| std::ptr::eq(&*s, container)) => {
                 container.addSubview_positioned_relativeTo(view, NSWindowOrderingMode::Below, Some(sibling))
@@ -514,6 +651,11 @@ impl State {
     }
 
     fn detach(&mut self, node: NodeId) {
+        let parent = self.parents.get(&node).copied();
+        if self.detach_from_list(node, parent) {
+            self.parents.remove(&node);
+            return;
+        }
         let parent = self.parents.remove(&node);
         if let Some(Native::Overlay(overlay)) = self.nodes.get(&node) {
             overlay.detach();
@@ -684,12 +826,19 @@ impl State {
             let theme = self.effective(node, &mut memo);
             let forced: Option<&ThemeRefinement> = self.scopes.get(&node).and_then(|s| s.theme.as_ref());
             let appearance = forced.and_then(|r| r.appearance).map(|_| theme.appearance.and_then(appearance_for));
+            let outer = match self.parents.get(&node) {
+                Some(parent) => self.effective(*parent, &mut memo),
+                None => theme.clone(),
+            };
+            let flips =
+                theme.appearance.unwrap_or(self.system_scheme) != outer.appearance.unwrap_or(self.system_scheme);
             match self.nodes.get_mut(&node) {
                 Some(Native::Layer(v) | Native::Root(v) | Native::Titlebar(v)) => {
                     v.set_radius_scale(theme.radius_scale);
                     if let Some(a) = appearance {
                         v.setAppearance(a.as_deref());
                     }
+                    v.set_surface(flips.then_some(Color::WindowBackground));
                 }
                 Some(Native::Pane(p)) => p.content.set_radius_scale(theme.radius_scale),
                 Some(Native::Glass(g)) => {
@@ -760,6 +909,9 @@ impl Backend for AppKitBackend {
                 let div = props::<DivProps>(p, "View");
                 let view = NdLayerView::new(mtm, &ViewLook::from_style(&div.style, state.expose));
                 view.set_gestures(gesture_host(div, emit(), &state.wake));
+                if div.gestures.scroll.any() {
+                    state.scrolls.insert(node, crate::scroll_view::ScrollBox::new(mtm, &view, div.gestures.scroll));
+                }
                 Native::Layer(view)
             }
             NodeKind::Text => Native::Text(NdTextView::new(mtm, &TextLook::from_props(props(p, "Text")))),
@@ -845,6 +997,12 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<BannerKind>(w) => {
                 Native::Banner(BannerNative::new(mtm, emit(), state.wake.clone(), props::<BannerProps>(p, "Banner")))
             }
+            NodeKind::Widget(w) if is::<nd_virtual::ListWidget>(w) => Native::List(ListNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<nd_virtual::ListProps>(p, "List"),
+            )),
             NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
             NodeKind::Widget(w) if is::<Overlay>(w) => Native::Overlay(OverlayNative::new(
                 mtm,
@@ -866,6 +1024,14 @@ impl Backend for AppKitBackend {
                 panic!("the AppKit backend has no {kind:?} yet")
             }
         };
+        if let Some(scope) = p.downcast_ref::<DivProps>().and_then(|d| d.scope.as_ref()) {
+            if let Some(tag) = scope.get::<nd_virtual::RowTag>() {
+                state.row_tags.insert(node, tag.clone());
+            }
+            if let Some(cell) = scope.get::<nd_virtual::CellTag>() {
+                state.cell_tags.insert(node, cell.0);
+            }
+        }
         state.nodes.insert(node, native);
         state.node_window.insert(node, window);
         let scope = scope_of(p);
@@ -907,12 +1073,14 @@ impl Backend for AppKitBackend {
         let mut recreate_select = None;
         let mut recreate_surface = None;
         let mut form_changed = false;
+        let mut scroll_axes = None;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Layer(v) => {
                 let div = props::<DivProps>(&patch.new, "View");
                 v.set_props(&ViewLook::from_style(&div.style, expose));
                 if props::<DivProps>(&patch.old, "View").gestures != div.gestures {
                     v.set_gestures(gesture_host(div, events.emitter(node), &wake));
+                    scroll_axes = Some(div.gestures.scroll);
                 }
             }
             Native::Titlebar(v) => {
@@ -956,6 +1124,7 @@ impl Backend for AppKitBackend {
             Native::Palette(p) => p.update(props(&patch.new, "CommandPalette")),
             Native::Toasts(t) => t.update(props(&patch.new, "ToastOverlay")),
             Native::Banner(b) => b.update(props(&patch.new, "Banner")),
+            Native::List(l) => l.update(props(&patch.new, "List")),
             Native::FormSection(p, _) => {
                 *p = props::<FormSectionProps>(&patch.new, "FormSection").clone();
                 form_changed = true;
@@ -981,6 +1150,33 @@ impl Backend for AppKitBackend {
         }
         if form_changed {
             state.mark_form(node);
+        }
+        let row_tag = patch.new.downcast_ref::<DivProps>().and_then(|d| d.scope.as_ref()?.get::<nd_virtual::RowTag>());
+        if let Some(tag) = row_tag {
+            let tag = tag.clone();
+            state.row_tags.insert(node, tag.clone());
+            if let Some(list) = state.parents.get(&node).copied()
+                && let Some(Native::List(l)) = state.nodes.get_mut(&list)
+                && l.is_row(node)
+            {
+                l.set_row_actions(tag.row, tag.actions);
+            }
+        }
+        if let (Some(axes), Some(Native::Layer(v))) = (scroll_axes, state.nodes.get(&node)) {
+            let v = v.clone();
+            match (state.scrolls.get(&node), axes.any()) {
+                (Some(s), true) => s.set_axes(axes),
+                (Some(_), false) => {
+                    if let Some(s) = state.scrolls.remove(&node) {
+                        s.dissolve(&v);
+                    }
+                }
+                (None, true) => {
+                    let mtm = state.mtm;
+                    state.scrolls.insert(node, crate::scroll_view::ScrollBox::adopt(mtm, &v, axes));
+                }
+                (None, false) => {}
+            }
         }
         if let Some((w, wc)) = place {
             state.place_lights(w, &wc);
@@ -1026,6 +1222,26 @@ impl Backend for AppKitBackend {
                     state.mark_form(node);
                 }
                 return;
+            }
+        }
+        {
+            let mut state = self.0.borrow_mut();
+            if let Some(Native::List(l)) = state.nodes.get_mut(&node) {
+                l.set_frame(frame);
+                return;
+            }
+            let parent = state.parents.get(&node).copied();
+            if let Some(list) = parent.and_then(|p| state.list_of(p))
+                && let Some(Native::List(l)) = state.nodes.get_mut(&list)
+            {
+                if l.is_row(node) {
+                    l.set_row_frame(node, frame);
+                    return;
+                }
+                if l.is_cell(node) {
+                    l.set_cell_frame(node, frame);
+                    return;
+                }
             }
         }
         let state = self.0.borrow();
@@ -1086,6 +1302,9 @@ impl Backend for AppKitBackend {
         state.scopes.remove(&node);
         state.system_items.remove(&node);
         state.form_sizes.remove(&node);
+        state.row_tags.remove(&node);
+        state.cell_tags.remove(&node);
+        state.scrolls.remove(&node);
         if let Some(Native::Scaffold(_)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {
@@ -1101,6 +1320,12 @@ impl Backend for AppKitBackend {
         assert_eq!(state.open, Some(window), "commit closes the open transaction");
         state.rebuild_toolbars();
         state.rebuild_forms();
+        state.commit_lists(window);
+        for (node, scroll) in &state.scrolls {
+            if state.node_window.get(node) == Some(&window) {
+                scroll.fit_document();
+            }
+        }
         state.place_embedded_lights(window);
         state.apply_dirty_themes();
         CATransaction::commit();
@@ -1161,6 +1386,15 @@ impl Backend for AppKitBackend {
         }
     }
 
+    fn boundary_width(&self, node: NodeId) -> Option<f32> {
+        let state = self.0.try_borrow().ok()?;
+        let list = *state.parents.get(&node)?;
+        match state.nodes.get(&list)? {
+            Native::List(l) => l.boundary_width(node),
+            _ => None,
+        }
+    }
+
     fn boundary_insets(&self, node: NodeId) -> nd_ui::backend::BoundaryInsets {
         match self.0.try_borrow().ok().as_ref().and_then(|s| s.nodes.get(&node)) {
             Some(Native::Pane(p)) if p.role != PaneRole::Overlay => p.insets(),
@@ -1202,5 +1436,9 @@ impl Backend for AppKitBackend {
 
     fn capture(&mut self, window: WindowId) -> Result<nd_ui::semantics::Capture, nd_ui::semantics::ActionError> {
         self.capture_window(window)
+    }
+
+    fn paints(&self, window: WindowId) -> Result<Vec<nd_ui::semantics::Paint>, nd_ui::semantics::ActionError> {
+        self.paints_of(window)
     }
 }

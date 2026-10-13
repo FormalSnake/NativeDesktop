@@ -1,0 +1,217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FormalSnake <kyaniserni@gmail.com>
+Date: Tue, 13 Oct 2026 20:52:09 +0100
+Subject: [PATCH 4/4] gpui_linux: report wp_presentation present times through
+ Window::last_presentation
+
+---
+ crates/gpui/src/platform.rs                   | 16 +++++
+ crates/gpui/src/window.rs                     |  6 ++
+ crates/gpui_linux/src/linux/wayland/client.rs | 68 +++++++++++++++++++
+ crates/gpui_linux/src/linux/wayland/window.rs | 14 ++++
+ 4 files changed, 104 insertions(+)
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index c08d964..4b46c88 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -801,6 +801,16 @@ pub enum Decorations {
+     },
+ }
+ 
++/// A frame the compositor put on screen, as reported by the platform.
++#[derive(Debug, Copy, Clone, PartialEq, Eq)]
++pub struct PresentationTime {
++    /// When the frame turned into light, on the monotonic clock.
++    pub presented: std::time::Instant,
++    /// The display's refresh interval as the compositor predicts it for the next frame; `None`
++    /// when the output has no constant refresh.
++    pub refresh: Option<Duration>,
++}
++
+ /// What window controls this platform supports
+ #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+ pub struct WindowControls {
+@@ -1347,6 +1357,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn set_client_inset(&self, _inset: Pixels) {}
+     fn gpu_specs(&self) -> Option<GpuSpecs>;
+ 
++    /// When the compositor presented this window's latest frame, where the platform measures
++    /// presentation (Wayland `wp_presentation`).
++    fn last_presentation(&self) -> Option<PresentationTime> {
++        None
++    }
++
+     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+ 
+     // Mobile platform methods.
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 1214b03..5737fe9 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -6927,6 +6927,12 @@ impl Window {
+         self.platform_window.gpu_specs()
+     }
+ 
++    /// When the compositor presented this window's latest frame. Wayland only, through
++    /// `wp_presentation`; `None` elsewhere and before the first presentation.
++    pub fn last_presentation(&self) -> Option<crate::PresentationTime> {
++        self.platform_window.last_presentation()
++    }
++
+     /// Perform titlebar double-click action.
+     /// This is macOS specific.
+     pub fn titlebar_double_click(&self) {
+diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
+index 84f4d0f..5d42cc6 100644
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -57,6 +57,7 @@ use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
+ use wayland_protocols::wp::text_input::zv3::client::{
+     zwp_text_input_manager_v3, zwp_text_input_v3,
+ };
++use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
+ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+ use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
+ use wayland_protocols::xdg::decoration::zv1::client::{
+@@ -258,6 +259,7 @@ pub struct Globals {
+     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
+     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
+     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
++    pub presentation: Option<wp_presentation::WpPresentation>,
+     pub executor: ForegroundExecutor,
+     pub frame_ping: Ping,
+ }
+@@ -308,6 +310,7 @@ impl Globals {
+             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
+             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
+             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
++            presentation: globals.bind(&qh, 1..=1, ()).ok(),
+             executor,
+             qh,
+             frame_ping,
+@@ -2803,6 +2806,71 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
+     }
+ }
+ 
++/// The clock `wp_presentation` reports in, from its `clock_id` event; CLOCK_MONOTONIC until then.
++static PRESENTATION_CLOCK: std::sync::atomic::AtomicU32 =
++    std::sync::atomic::AtomicU32::new(libc::CLOCK_MONOTONIC as u32);
++
++impl Dispatch<wp_presentation::WpPresentation, ()> for WaylandClientStatePtr {
++    fn event(
++        _: &mut Self,
++        _: &wp_presentation::WpPresentation,
++        event: wp_presentation::Event,
++        _: &(),
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        if let wp_presentation::Event::ClockId { clk_id } = event {
++            PRESENTATION_CLOCK.store(clk_id, std::sync::atomic::Ordering::Relaxed);
++        }
++    }
++}
++
++impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, ObjectId> for WaylandClientStatePtr {
++    fn event(
++        this: &mut Self,
++        _: &wp_presentation_feedback::WpPresentationFeedback,
++        event: wp_presentation_feedback::Event,
++        surface_id: &ObjectId,
++        _: &Connection,
++        _: &QueueHandle<Self>,
++    ) {
++        let wp_presentation_feedback::Event::Presented {
++            tv_sec_hi,
++            tv_sec_lo,
++            tv_nsec,
++            refresh,
++            ..
++        } = event
++        else {
++            return;
++        };
++        // The timestamp is on the compositor's clock; carry it over to an Instant through the
++        // current reading of that clock.
++        let mut now = libc::timespec {
++            tv_sec: 0,
++            tv_nsec: 0,
++        };
++        let clock = PRESENTATION_CLOCK.load(std::sync::atomic::Ordering::Relaxed) as libc::clockid_t;
++        // SAFETY: `now` is a valid timespec to write into.
++        if unsafe { libc::clock_gettime(clock, &mut now) } != 0 {
++            return;
++        }
++        let presented = Duration::new(((tv_sec_hi as u64) << 32) | tv_sec_lo as u64, tv_nsec);
++        let reading = Duration::new(now.tv_sec as u64, now.tv_nsec as u32);
++        let Some(presented) = Instant::now().checked_sub(reading.saturating_sub(presented)) else {
++            return;
++        };
++        let refresh = (refresh > 0).then(|| Duration::from_nanos(refresh as u64));
++        let client = this.get_client();
++        let mut state = client.borrow_mut();
++        let Some(window) = get_window(&mut state, surface_id) else {
++            return;
++        };
++        drop(state);
++        window.set_last_presentation(gpui::PresentationTime { presented, refresh });
++    }
++}
++
+ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientStatePtr {
+     fn event(
+         this: &mut Self,
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index 01af6c8..ed947e9 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -141,6 +141,7 @@ pub struct WaylandWindowState {
+     /// acked size: acking it right away let the compositor draw the new window geometry around
+     /// the old buffer for a frame.
+     deferred_configure: Option<(u32, InProgressConfigure)>,
++    last_presentation: Option<gpui::PresentationTime>,
+     in_progress_window_controls: Option<WindowControls>,
+     window_controls: WindowControls,
+     client_inset: Option<Pixels>,
+@@ -634,6 +635,7 @@ impl WaylandWindowState {
+             in_progress_configure: None,
+             resize_throttle: false,
+             deferred_configure: None,
++            last_presentation: None,
+             client,
+             appearance,
+             handle,
+@@ -1216,6 +1218,10 @@ impl WaylandWindowStatePtr {
+         }
+     }
+ 
++    pub fn set_last_presentation(&self, presentation: gpui::PresentationTime) {
++        self.state.borrow_mut().last_presentation = Some(presentation);
++    }
++
+     pub fn handle_fractional_scale_event(&self, event: wp_fractional_scale_v1::Event) {
+         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+             self.rescale(scale as f32 / 120.0);
+@@ -2054,6 +2060,10 @@ impl PlatformWindow for WaylandWindow {
+             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
+             state.pending_frame_callback = Some(callback);
+         }
++        // Applies to the commit the renderer's present makes.
++        if let Some(presentation) = &state.globals.presentation {
++            presentation.feedback(&state.surface, &state.globals.qh, state.surface.id());
++        }
+         if renderer.draw(scene) {
+             state.presentation = PresentationState::Presented;
+             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+@@ -2226,6 +2236,10 @@ impl PlatformWindow for WaylandWindow {
+         state.client.update_ime_position(bounds);
+     }
+ 
++    fn last_presentation(&self) -> Option<gpui::PresentationTime> {
++        self.borrow().last_presentation
++    }
++
+     fn gpu_specs(&self) -> Option<GpuSpecs> {
+         self.borrow().renderer.as_ref()?.gpu_specs()
+     }

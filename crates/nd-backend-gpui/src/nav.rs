@@ -16,26 +16,47 @@ use nd_components::{
 };
 use nd_core::{NodeId, WindowId};
 use nd_gpui::gpui::{
-    self, Animation, AnimationExt, AnyElement, BoxShadow, ElementId, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, Keystroke, MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    WindowAppearance, anchored, deferred, div, point, px, relative,
+    self, Animation, AnimationExt, AnyElement, BoxShadow, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, Keystroke, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled,
+    anchored, deferred, div, point, px, relative,
 };
 use nd_theme::{Metrics, Palette, Preset, Scheme, Theme};
 
-/// The theme drawn widgets use: the platform's preset (Fluent on Windows, libadwaita metrics
-/// elsewhere) with the baked palette for the window's scheme.
-pub fn drawn_theme(appearance: WindowAppearance) -> Theme {
-    let scheme = match appearance {
-        WindowAppearance::Dark | WindowAppearance::VibrantDark => Scheme::Dark,
-        WindowAppearance::Light | WindowAppearance::VibrantLight => Scheme::Light,
-    };
-    theme_for(scheme)
-}
-
-/// The drawn theme for `scheme`.
+/// The baked theme for `scheme`, for rendering the builders outside an app. In an app they get
+/// the window's resolved theme.
 pub fn theme_for(scheme: Scheme) -> Theme {
     let preset = if cfg!(target_os = "windows") { Preset::Fluent } else { Preset::Adwaita };
     Theme::derive(preset, scheme, Palette::baked(scheme), Metrics::preset(preset), 1.)
+}
+
+/// One colour a drawn widget paints at rest, for the backend's paint record (the appearance
+/// audit reads it): `under` are the widget's own fills beneath it, innermost last.
+#[derive(Clone, Debug)]
+pub struct Mark {
+    pub label: String,
+    pub color: Hsla,
+    pub under: Vec<Hsla>,
+    /// Text size and CSS weight; `None` for a fill.
+    pub text: Option<(f32, f32)>,
+}
+
+/// Where the builders leave their [`Mark`]s.
+#[derive(Default)]
+pub struct Marks(RefCell<Vec<Mark>>);
+
+impl Marks {
+    pub(crate) fn fill(&self, label: &str, color: Hsla, under: &[Hsla]) {
+        self.0.borrow_mut().push(Mark { label: label.into(), color, under: under.to_vec(), text: None });
+    }
+
+    pub(crate) fn text(&self, label: &str, color: Hsla, under: &[Hsla], size: Pixels, weight: FontWeight) {
+        let text = Some((size.as_f32(), weight.0));
+        self.0.borrow_mut().push(Mark { label: label.into(), color, under: under.to_vec(), text });
+    }
+
+    pub fn take(&self) -> Vec<Mark> {
+        self.0.take()
+    }
 }
 
 /// Input the drawn palette turns into model calls.
@@ -91,6 +112,7 @@ pub fn palette_overlay(
     viewport: gpui::Size<gpui::Pixels>,
     focus: Option<&FocusHandle>,
     on_input: Option<OnInput<PaletteInput>>,
+    marks: &Marks,
 ) -> AnyElement {
     if !model.is_presented() {
         return div().into_any_element();
@@ -101,6 +123,12 @@ pub fn palette_overlay(
     let top = (h * m.top_fraction).max(m.margin);
     let line = m.field_font_size * 1.25;
     let rows = model.rows();
+    let scrim = theme.scrim;
+    marks.fill("palette scrim", scrim, &[]);
+    marks.fill("palette card", theme.surface.overlay, &[scrim]);
+    let card_under = [scrim, theme.surface.overlay];
+    let field_size = px(m.field_font_size);
+    let regular = FontWeight::NORMAL;
 
     let mut field = div()
         .id("nd-palette-field")
@@ -112,21 +140,30 @@ pub fn palette_overlay(
         .h(px(line))
         .text_size(px(m.field_font_size));
     let text = model.field_text();
+    let selected = [scrim, theme.surface.overlay, theme.selection];
     if text.is_empty() {
-        field = field
-            .child(caret(theme, line))
-            .child(div().text_color(theme.text.tertiary).child(placeholder.unwrap_or("").to_owned()));
+        // Secondary, not tertiary: a placeholder is read text and needs 4.5:1.
+        let placeholder = placeholder.unwrap_or("");
+        marks.text(placeholder, theme.text.secondary, &card_under, field_size, regular);
+        field =
+            field.child(caret(theme, line)).child(div().text_color(theme.text.secondary).child(placeholder.to_owned()));
     } else {
         match model.selection() {
             FieldSelection::All => {
+                marks.fill("field selection", theme.selection, &card_under);
+                marks.text(&text, theme.text.primary, &selected, field_size, regular);
                 field = field.child(div().bg(theme.selection).text_color(theme.text.primary).child(text));
             }
             FieldSelection::Caret => {
+                marks.text(model.typed(), theme.text.primary, &card_under, field_size, regular);
                 field = field
                     .child(div().text_color(theme.text.primary).child(model.typed().to_owned()))
                     .child(caret(theme, line));
             }
             FieldSelection::Completion => {
+                marks.text(model.typed(), theme.text.primary, &card_under, field_size, regular);
+                marks.fill("field selection", theme.selection, &card_under);
+                marks.text(model.completion(), theme.text.primary, &selected, field_size, regular);
                 field = field.child(div().text_color(theme.text.primary).child(model.typed().to_owned())).child(
                     div().bg(theme.selection).text_color(theme.text.primary).child(model.completion().to_owned()),
                 );
@@ -151,6 +188,16 @@ pub fn palette_overlay(
         } else {
             (None, theme.text.primary, theme.text.secondary)
         };
+        let mut under = card_under.to_vec();
+        if let Some(bg) = bg {
+            marks.fill("palette row", bg, &under);
+            under.push(bg);
+        }
+        let body = theme.type_scale.body;
+        marks.text(&item.title, fg, &under, body, regular);
+        for quiet in item.subtitle.iter().chain(item.hint.iter()) {
+            marks.text(quiet, secondary, &under, body, regular);
+        }
         let mut row = div()
             .id(ElementId::NamedInteger("nd-palette-row".into(), i as u64))
             .role(gpui::Role::ListBoxOption)
@@ -228,6 +275,9 @@ pub fn palette_overlay(
                 .child(div().flex_shrink_0().size(px(m.search_icon)))
                 .child(field.role(gpui::Role::SearchInput).aria_value(model.field_text())),
         );
+    if !rows.is_empty() {
+        marks.fill("palette separator", theme.separator, &card_under);
+    }
     if rows.is_empty() {
         card = card.child(div().h(px(m.separator_gap + 1. + m.list_gap)));
     } else {
@@ -250,7 +300,7 @@ pub fn palette_overlay(
         .size_full()
         .w(viewport.width)
         .h(viewport.height)
-        .bg(gpui::black().opacity(m.dim_alpha))
+        .bg(scrim)
         .occlude()
         .child(card);
     if let Some(on_input) = on_input {
@@ -284,7 +334,10 @@ pub fn source_tree_view(
     hovered: Option<&SharedString>,
     theme: &Theme,
     on_input: Option<OnInput<TreeInput>>,
+    marks: &Marks,
 ) -> AnyElement {
+    let (body, footnote) = (theme.type_scale.body, theme.type_scale.footnote);
+    let (regular, semibold) = (FontWeight::NORMAL, FontWeight::SEMIBOLD);
     let mut list = div()
         .id(ElementId::Integer(id.0))
         .role(gpui::Role::Tree)
@@ -297,6 +350,10 @@ pub fn source_tree_view(
         .text_size(theme.type_scale.body);
     if props.nodes.is_empty() {
         if let Some(empty) = &props.empty {
+            marks.text(&empty.title, theme.text.secondary, &[], body, semibold);
+            if let Some(description) = &empty.description {
+                marks.text(description, theme.text.secondary, &[], footnote, regular);
+            }
             list = list.justify_center().items_center().gap(theme.spacing.xs).child(
                 div().text_color(theme.text.secondary).font_weight(FontWeight::SEMIBOLD).child(empty.title.clone()),
             );
@@ -304,7 +361,7 @@ pub fn source_tree_view(
                 list = list.child(
                     div()
                         .text_size(theme.type_scale.footnote)
-                        .text_color(theme.text.tertiary)
+                        .text_color(theme.text.secondary)
                         .child(description.clone()),
                 );
             }
@@ -318,6 +375,7 @@ pub fn source_tree_view(
     for (i, depth) in index.visible(&props.nodes) {
         let node = &props.nodes[i];
         if node.section {
+            marks.text(&node.title, theme.text.secondary, &[], footnote, semibold);
             list = list.child(
                 div()
                     .pt(theme.spacing.md)
@@ -337,6 +395,24 @@ pub fn source_tree_view(
         } else {
             (theme.text.primary, theme.text.secondary)
         };
+        let mut under = Vec::new();
+        if selected {
+            marks.fill("selected row", theme.accent_container.bg, &[]);
+            under.push(theme.accent_container.bg);
+        }
+        let show_actions = !hover_only || hovered == Some(&node.id);
+        if expandable {
+            marks.text(if node.expanded { "\u{25be}" } else { "\u{25b8}" }, secondary, &under, body, regular);
+        }
+        marks.text(&node.title, fg, &under, body, regular);
+        for quiet in node.caption.iter().chain(node.badge.iter()) {
+            marks.text(quiet, secondary, &under, footnote, regular);
+        }
+        for action in node.actions.iter().filter_map(|a| actions.get(a)).filter(|_| show_actions) {
+            let color = if action.destructive { theme.danger } else { secondary };
+            let label = action.label.clone().unwrap_or_else(|| action.accessible_label());
+            marks.text(&label, color, &under, footnote, regular);
+        }
         let key = node.id.clone();
         let mut disclosure = div()
             .id(ElementId::Name(format!("{}-disclosure", node.id).into()))
@@ -351,7 +427,6 @@ pub fn source_tree_view(
                 on_input(TreeInput::Toggle(key.clone(), expand), window, cx);
             });
         }
-        let show_actions = !hover_only || hovered == Some(&node.id);
         let mut row = div()
             .id(ElementId::Name(node.id.clone()))
             .role(gpui::Role::TreeItem)
@@ -451,9 +526,16 @@ pub fn toast_view(
     viewport: gpui::Size<gpui::Pixels>,
     animate: bool,
     on_input: Option<OnInput<ToastInput>>,
+    marks: &Marks,
 ) -> AnyElement {
     let Some(toast) = toast else { return div().into_any_element() };
     let t = TOAST;
+    let under = [theme.surface.overlay];
+    marks.fill("toast", theme.surface.overlay, &[]);
+    marks.text(&toast.title, theme.text.primary, &under, theme.type_scale.body, FontWeight::NORMAL);
+    if let Some(label) = &toast.action {
+        marks.text(label, theme.text.primary, &under, theme.type_scale.body, FontWeight::SEMIBOLD);
+    }
     let mut body = div()
         .id(ElementId::Name(format!("nd-toast-{}", toast.id).into()))
         .role(gpui::Role::Status)
@@ -483,7 +565,9 @@ pub fn toast_view(
             .flex_shrink_0()
             .px(theme.spacing.sm)
             .rounded(theme.radius.sm)
-            .text_color(theme.accent)
+            // libadwaita's toast button is a flat button in the window's text colour; the
+            // accent is under 4.5:1 on the dark overlay.
+            .text_color(theme.text.primary)
             .font_weight(FontWeight::SEMIBOLD)
             .child(label.clone());
         if let Some(on_input) = on_input.clone() {
@@ -523,9 +607,23 @@ pub fn toast_view(
 }
 
 /// The drawn banner: the title and an optional button on the accent container.
-pub fn banner_view(id: NodeId, props: &BannerProps, theme: &Theme, on_action: Option<OnAction>) -> AnyElement {
+pub fn banner_view(
+    id: NodeId,
+    props: &BannerProps,
+    theme: &Theme,
+    on_action: Option<OnAction>,
+    marks: &Marks,
+) -> AnyElement {
     if !props.revealed {
         return div().into_any_element();
+    }
+    let (bg, fg) = (theme.accent_container.bg, theme.accent_container.fg);
+    let button = theme.pressed(bg);
+    marks.fill("banner", bg, &[]);
+    marks.text(&props.title, fg, &[bg], theme.type_scale.body, FontWeight::NORMAL);
+    if let Some(label) = &props.action {
+        marks.fill("banner button", button, &[bg]);
+        marks.text(label, fg, &[bg, button], theme.type_scale.body, FontWeight::SEMIBOLD);
     }
     let mut bar = div()
         .id(ElementId::Integer(id.0))
@@ -551,7 +649,7 @@ pub fn banner_view(id: NodeId, props: &BannerProps, theme: &Theme, on_action: Op
             .px(theme.spacing.md)
             .py(theme.spacing.xs)
             .rounded(theme.radius.md)
-            .bg(theme.accent_container.fg.opacity(0.12))
+            .bg(button)
             .font_weight(FontWeight::SEMIBOLD)
             .child(label.clone());
         if let Some(on_action) = on_action {
@@ -796,7 +894,23 @@ impl Build<'_> {
         node: &Node,
         window: &mut gpui::Window,
     ) -> Option<AnyElement> {
-        let theme = drawn_theme(window.appearance());
+        let theme = self.theme();
+        let theme = &*theme;
+        let marks = Marks::default();
+        let element = self.nav_element(id, kind, node, theme, &marks, window);
+        self.record_marks(id, marks.take());
+        element
+    }
+
+    fn nav_element(
+        &self,
+        id: NodeId,
+        kind: WidgetKind,
+        node: &Node,
+        theme: &Theme,
+        marks: &Marks,
+        window: &mut gpui::Window,
+    ) -> Option<AnyElement> {
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
         if is::<CommandPaletteKind>(kind) {
@@ -834,10 +948,11 @@ impl Build<'_> {
             let overlay = palette_overlay(
                 &p.model,
                 props.placeholder.as_deref(),
-                &theme,
+                theme,
                 window.viewport_size(),
                 Some(&p.focus),
                 Some(on_input),
+                marks,
             );
             return Some(div().absolute().size_0().child(overlay).into_any_element());
         }
@@ -860,7 +975,7 @@ impl Build<'_> {
                 };
                 backend.apply_toasts(id, window_id, &handler, changes, cx);
             });
-            let view = toast_view(current.as_ref(), &theme, window.viewport_size(), true, Some(on_input));
+            let view = toast_view(current.as_ref(), theme, window.viewport_size(), true, Some(on_input), marks);
             return Some(div().absolute().size_0().child(view).into_any_element());
         }
         if is::<SourceTreeKind>(kind) {
@@ -896,7 +1011,9 @@ impl Build<'_> {
             let mut style = div();
             gpui::Refineable::refine(style.style(), &props.style);
             return Some(
-                style.child(source_tree_view(id, props, hovered.as_ref(), &theme, Some(on_input))).into_any_element(),
+                style
+                    .child(source_tree_view(id, props, hovered.as_ref(), theme, Some(on_input), marks))
+                    .into_any_element(),
             );
         }
         if is::<BannerKind>(kind) {
@@ -905,7 +1022,7 @@ impl Build<'_> {
                 emit.emit(BannerActionClicked);
                 wake(cx);
             });
-            return Some(banner_view(id, props, &theme, Some(on_action)));
+            return Some(banner_view(id, props, theme, Some(on_action), marks));
         }
         None
     }

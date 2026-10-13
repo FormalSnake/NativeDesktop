@@ -15,6 +15,7 @@ pub mod nav;
 pub mod os;
 mod overlay;
 pub mod render;
+mod virtual_list;
 
 pub use backend::GpuiBackend;
 pub use clock::{DisplayClock, Pacing};

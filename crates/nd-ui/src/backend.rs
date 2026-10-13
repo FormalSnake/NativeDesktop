@@ -160,6 +160,11 @@ pub trait Backend: Any {
     /// The size a native layout container (table row, split pane, toolbar item, scroll
     /// document) gives `node`, when `node` is the child of such a layout boundary.
     fn boundary_size(&self, node: NodeId) -> Option<Size>;
+    /// The width a native list gives `node`, a row it hosts: the row lays out at that width and
+    /// its content's height, and the backend reads the height back from the row's frame.
+    fn boundary_width(&self, _node: NodeId) -> Option<f32> {
+        None
+    }
     /// Inside that box, the edges the container keeps clear of content (a split pane under
     /// the toolbar): added to the node's padding, so its background still fills the box.
     fn boundary_insets(&self, _node: NodeId) -> BoundaryInsets {
@@ -208,5 +213,11 @@ pub trait Backend: Any {
     /// Renders the window's content to a PNG.
     fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {
         Err(crate::semantics::ActionError::Unsupported("capture".into()))
+    }
+
+    /// Every text run and fill the window last painted at rest, with the colour each was given
+    /// and what it sits on.
+    fn paints(&self, _window: WindowId) -> Result<Vec<crate::semantics::Paint>, crate::semantics::ActionError> {
+        Err(crate::semantics::ActionError::Unsupported("paints".into()))
     }
 }

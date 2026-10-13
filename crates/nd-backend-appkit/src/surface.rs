@@ -10,7 +10,7 @@ use objc2_app_kit::NSView;
 use objc2_foundation::{MainThreadMarker, NSRect, NSString, NSURL, NSURLRequest};
 use objc2_web_kit::{WKUserScript, WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration};
 
-use crate::look::{Color, ViewLook};
+use crate::look::ViewLook;
 use crate::views::NdLayerView;
 
 pub(crate) enum SurfaceNative {
@@ -19,7 +19,7 @@ pub(crate) enum SurfaceNative {
         props: Box<SurfaceProps>,
     },
     /// The GPU test pattern's stand-in: AppKit has no GPU surface host before the embedded GPUI
-    /// surface patch lands, so it is a plain layer.
+    /// surface patch lands, so it is an empty layer that takes its frame like any surface.
     Pattern(Retained<NdLayerView>),
 }
 
@@ -40,8 +40,7 @@ fn load(view: &WKWebView, source: &SurfaceSource) {
 impl SurfaceNative {
     pub fn new(mtm: MainThreadMarker, props: &SurfaceProps) -> Self {
         if props.source == SurfaceSource::TestPattern {
-            let look = ViewLook { background: Some(Color::Rgba(0.2, 0.45, 0.9, 1.)), ..ViewLook::default() };
-            return SurfaceNative::Pattern(NdLayerView::new(mtm, &look));
+            return SurfaceNative::Pattern(NdLayerView::new(mtm, &ViewLook::default()));
         }
         let config = unsafe { WKWebViewConfiguration::new(mtm) };
         if props.count_input {

@@ -29,6 +29,8 @@ pub struct FrameRequest {
     pub window: WindowId,
     /// When the backend started this frame.
     pub now: Instant,
+    /// `now` on the clock's scale: seconds since the app started, which `FrameTime` counts in.
+    pub now_seconds: f64,
     /// The display interval GPUI reports for the window's current display, in seconds.
     pub interval: f64,
     /// The clock's previous frame.

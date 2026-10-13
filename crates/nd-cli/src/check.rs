@@ -19,6 +19,9 @@ pub struct CheckArgs {
     /// Skip clippy (fmt and the framework lints still run).
     #[arg(long)]
     pub no_clippy: bool,
+    /// Skip the appearance audit (`tests/appearance.rs`).
+    #[arg(long)]
+    pub no_audit: bool,
     #[arg(long)]
     pub manifest_path: Option<PathBuf>,
 }
@@ -126,6 +129,17 @@ pub fn run(args: CheckArgs) -> Result<ExitCode> {
             clippy.args(["-D", lint]);
         }
         ok &= step("clippy", &mut clippy)?;
+    }
+
+    if !args.no_audit {
+        for package in packages.iter().filter(|p| p.dir.join("tests/appearance.rs").is_file()) {
+            let mut audit = Command::new("cargo");
+            audit.args(["test", "-p", &package.name, "--test", "appearance"]);
+            if let Some(path) = &args.manifest_path {
+                audit.arg("--manifest-path").arg(path);
+            }
+            ok &= step(&format!("appearance audit ({})", package.name), &mut audit)?;
+        }
     }
 
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE })

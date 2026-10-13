@@ -32,6 +32,12 @@ pub struct SpringMotion {
 }
 
 impl SpringMotion {
+    /// The same motion about a target moved by `delta`.
+    pub fn shifted(mut self, delta: f64) -> Self {
+        self.target += delta;
+        self
+    }
+
     pub fn target(&self) -> f64 {
         self.target
     }

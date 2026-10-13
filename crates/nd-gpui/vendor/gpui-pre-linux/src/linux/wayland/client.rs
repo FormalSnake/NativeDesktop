@@ -57,6 +57,7 @@ use wayland_protocols::wp::text_input::zv3::client::zwp_text_input_v3::{
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3, zwp_text_input_v3,
 };
+use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
 use wayland_protocols::xdg::decoration::zv1::client::{
@@ -258,6 +259,7 @@ pub struct Globals {
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
+    pub presentation: Option<wp_presentation::WpPresentation>,
     pub executor: ForegroundExecutor,
     pub frame_ping: Ping,
 }
@@ -308,6 +310,7 @@ impl Globals {
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
+            presentation: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
             frame_ping,
@@ -2800,6 +2803,71 @@ impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()>
             }
             _ => {}
         }
+    }
+}
+
+/// The clock `wp_presentation` reports in, from its `clock_id` event; CLOCK_MONOTONIC until then.
+static PRESENTATION_CLOCK: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(libc::CLOCK_MONOTONIC as u32);
+
+impl Dispatch<wp_presentation::WpPresentation, ()> for WaylandClientStatePtr {
+    fn event(
+        _: &mut Self,
+        _: &wp_presentation::WpPresentation,
+        event: wp_presentation::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wp_presentation::Event::ClockId { clk_id } = event {
+            PRESENTATION_CLOCK.store(clk_id, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &wp_presentation_feedback::WpPresentationFeedback,
+        event: wp_presentation_feedback::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let wp_presentation_feedback::Event::Presented {
+            tv_sec_hi,
+            tv_sec_lo,
+            tv_nsec,
+            refresh,
+            ..
+        } = event
+        else {
+            return;
+        };
+        // The timestamp is on the compositor's clock; carry it over to an Instant through the
+        // current reading of that clock.
+        let mut now = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let clock = PRESENTATION_CLOCK.load(std::sync::atomic::Ordering::Relaxed) as libc::clockid_t;
+        // SAFETY: `now` is a valid timespec to write into.
+        if unsafe { libc::clock_gettime(clock, &mut now) } != 0 {
+            return;
+        }
+        let presented = Duration::new(((tv_sec_hi as u64) << 32) | tv_sec_lo as u64, tv_nsec);
+        let reading = Duration::new(now.tv_sec as u64, now.tv_nsec as u32);
+        let Some(presented) = Instant::now().checked_sub(reading.saturating_sub(presented)) else {
+            return;
+        };
+        let refresh = (refresh > 0).then(|| Duration::from_nanos(refresh as u64));
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
+            return;
+        };
+        drop(state);
+        window.set_last_presentation(gpui::PresentationTime { presented, refresh });
     }
 }
 

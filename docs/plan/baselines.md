@@ -68,3 +68,30 @@ Rerun: `cargo build -p hello` after the edit for LLVM; for Cranelift
 'profile.dev.codegen-backend="cranelift"' --config 'profile.dev.package."*".codegen-backend="llvm"'`
 with `CARGO_BUILD_BUILD_DIR` and `CARGO_TARGET_DIR` pointed at a separate directory (two compilers in
 one build dir fail with E0514).
+
+## 100k-row scroll, M5 (2026-10-13)
+
+`nd diag scroll --rows N --seconds 10 --step S` launches `scroll-bench` (`examples/scroll`): a
+virtualized list of rows 28 to 124 points tall, scrolled `S` points every display frame through
+`ListState::scroll_by`, under the GPUI host's `ND_ANIMATE` frame line. It passes at no more than 2
+missed frames and p95 within 1.25 periods.
+
+| Where | Build | Rows, step | Result |
+| --- | --- | --- | --- |
+| e1504g, eDP-1 60 Hz, window | 0c485261 (before the fixes below) | 100k, 40 | p95 52.7 to 100.6 ms, missed 153 to 253 of 154 to 269: over |
+| e1504g | 0c485261 | 10k, 40 | p95 100.6 ms: over, so per-frame cost, not row count |
+| g815, headless, release | 8d03a1c5, again on ee5049c6 (router scrolling) | 100k, 40 | p95 0.87 to 0.94 ms, max 1.43 per frame, 0 over 16.7 ms |
+| g815, headless, release | same | 10k, 40 | p95 0.90 ms |
+| g815, headless, release | same | 100k, 400 | p95 1.69 ms, max 2.06 |
+
+The two fixes: `nd-diag`'s recorder kept each frame's semantic tree as a `serde_json::Value`
+(about a quarter of main-thread samples on the macbook, far more on e1504g); it now keeps typed
+records and serializes when a bundle is written. The GPUI presenter laid out every rendered row
+each frame, overscan included; it now lays out visible rows and rows not yet measured at the
+current width. e1504g was offline for the rerun.
+
+Rerun: build on g815 (`cargo build --release -p scroll-bench -p nd-cli`), stage both binaries and
+the dev shell's `LD_LIBRARY_PATH` on e1504g, then `nd diag scroll --rows 100000 --bin ./scroll-bench`
+with the Hyprland session's `WAYLAND_DISPLAY`. Headless work budget anywhere:
+`cargo nextest run --cargo-profile release -p nd-backend-gpui --test scroll_budget` (`ND_ROWS`,
+`ND_SCROLL_STEP`, `ND_FRAMES`).

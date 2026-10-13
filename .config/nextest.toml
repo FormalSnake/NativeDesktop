@@ -3,7 +3,8 @@ dir = "target/nextest"
 
 # Tier 3 tests post real HID events and take over focus, so they run one at a time. Their last
 # path segment starts with `real_` or they live in a `real` module (`tests/real.rs`), so a gate
-# test such as `gate_m0::real_resize_drag` is tier 3 too.
+# test such as `gate_m0::real_resize_drag` is tier 3 too. On Linux each tier 3 test runs its own
+# headless Hyprland with its own seat (`ndshell::hyprland`), so there they stay parallel.
 [test-groups.real-window]
 max-threads = 1
 
@@ -15,15 +16,17 @@ fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [[profile.default.overrides]]
+platform = 'cfg(not(target_os = "linux"))'
 filter = "test(/(^|::)(real::|real_)/)"
 test-group = "real-window"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 # Tier 2 AppKit tests that need their own window to stay key (posted key events, active-state
 # goldens) take it from each other, so they queue too; so does the matugen recolour timing,
-# which a loaded machine would push past its 100 ms budget.
+# which a loaded machine would push past its 100 ms budget. The appearance audits open AppKit
+# windows that would take key from them.
 [[profile.default.overrides]]
-filter = "binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/)"
+filter = "binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/)"
 test-group = "real-window"
 
 # Tiers 1 and 2 only, what `just test` and CI's first step run.
@@ -49,6 +52,7 @@ fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 4 }
 
 [[profile.real.overrides]]
+platform = 'cfg(not(target_os = "linux"))'
 filter = "all()"
 test-group = "real-window"
 
@@ -63,8 +67,14 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 # The dispatch spike and the other key-window tests need their window key, which a real-input
 # test activating its own app takes away, so they queue with them.
 [[profile.gate.overrides]]
+platform = 'cfg(not(target_os = "linux"))'
 filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/)"
 test-group = "real-window"
+
+# The M10 flow builds and packs an app three times (release profile, one cold), so it gets room.
+[[profile.gate.overrides]]
+filter = "test(/^gate_m10::real_/)"
+slow-timeout = { period = "300s", terminate-after = 4 }
 
 # `nd new` compiles a whole app from cold, so its gate gets room and stays out of the default run.
 [[profile.gate.overrides]]

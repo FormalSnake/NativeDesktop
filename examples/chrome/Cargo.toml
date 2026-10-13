@@ -9,6 +9,9 @@ publish.workspace = true
 [dependencies]
 nd = { path = "../../crates/nd" }
 
+[dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
+
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
 
@@ -20,4 +23,9 @@ path = "src/main.rs"
 # thread, so libtest's harness is off.
 [[test]]
 name = "settings"
+harness = false
+
+# Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
+[[test]]
+name = "appearance"
 harness = false

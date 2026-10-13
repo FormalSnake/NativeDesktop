@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nd_backend_gpui::GpuiHost;
-use nd_backend_gpui::nav::{banner_view, palette_overlay, source_tree_view, theme_for, toast_view};
+use nd_backend_gpui::nav::{Marks, banner_view, palette_overlay, source_tree_view, theme_for, toast_view};
 use nd_components::*;
 use nd_core::semantic::Role;
 use nd_gpui::gpui::{self, HeadlessAppContext};
@@ -281,6 +281,7 @@ impl gpui::Render for Golden {
                 None,
                 &theme,
                 None,
+                &Marks::default(),
             )))
             .child(
                 gpui::div()
@@ -288,17 +289,25 @@ impl gpui::Render for Golden {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(banner_view(NodeId(2), &banner, &theme, None))
+                    .child(banner_view(NodeId(2), &banner, &theme, None, &Marks::default()))
                     .child(gpui::div().p(gpui::px(24.)).child("Q3 planning")),
             )
-            .child(toast_view(Some(&toast), &theme, viewport, false, None));
+            .child(toast_view(Some(&toast), &theme, viewport, false, None, &Marks::default()));
         if let GoldenView::Palette = self.view {
             let mut model = PaletteModel::default();
             model.set_items(&items("tri"));
             model.present();
             model.edited("tri");
             model.set_items(&items("tri"));
-            root = root.child(palette_overlay(&model, Some("Search notes"), &theme, viewport, None, None));
+            root = root.child(palette_overlay(
+                &model,
+                Some("Search notes"),
+                &theme,
+                viewport,
+                None,
+                None,
+                &Marks::default(),
+            ));
         }
         root.into_any_element()
     }

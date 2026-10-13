@@ -46,6 +46,8 @@ const PANEL_TOP: f32 = 0.18;
 
 /// An open drawn context menu: where, and its items.
 pub(crate) struct MenuOverlay {
+    /// The node that asked for it, which its paints are recorded under.
+    pub node: NodeId,
     pub at: Point,
     pub items: Vec<MenuItem>,
 }
@@ -66,15 +68,21 @@ impl Build<'_> {
 
     pub(crate) fn overlay(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
         let props = node.props.downcast_ref::<OverlayProps>().expect("Overlay node needs OverlayProps");
-        let children: Vec<AnyElement> = node.children.iter().map(|c| self.node(*c, window)).collect();
-        let look = self.look;
+        let theme = self.theme();
         let passive = props.modality == Modality::Passive;
         let mut content = div().id(ElementId::Integer(id.0));
         content.style().refine(&props.style);
         content.style().position = Some(gpui::Position::Relative);
-        if props.style.background.is_none() {
-            content = content.bg(look.background).border_1().border_color(look.border).rounded(px(8.)).shadow_md();
+        // The app's own background, or the theme's overlay surface; content builds over it.
+        let styled = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let fill = styled.unwrap_or(theme.surface.overlay);
+        if styled.is_none() {
+            content =
+                content.bg(fill).border_1().border_color(theme.border.subtle).rounded(theme.radius.lg).shadow_md();
         }
+        let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(theme.text.primary), "overlay", || {
+            node.children.iter().map(|c| self.node(*c, window)).collect()
+        });
         if !passive {
             content = content
                 .occlude()
@@ -202,7 +210,11 @@ impl Build<'_> {
 
     /// The window's open context menu, drawn above everything, with a light-dismiss backdrop.
     pub(crate) fn menu(&self, menu: &MenuOverlay, window: &gpui::Window) -> AnyElement {
-        let look = self.look;
+        let theme = self.theme();
+        let marks = crate::nav::Marks::default();
+        let (surface, body) = (theme.surface.overlay, theme.type_scale.body);
+        let regular = gpui::FontWeight::NORMAL;
+        marks.fill("context menu", surface, &[]);
         let viewport = window.viewport_size();
         let window_id = self.window_id;
         let mut list = div()
@@ -211,37 +223,46 @@ impl Build<'_> {
             .flex_col()
             .min_w(px(180.))
             .py(px(4.))
-            .bg(look.background)
+            .bg(surface)
             .border_1()
-            .border_color(look.border)
-            .rounded(px(6.))
+            .border_color(theme.border.subtle)
+            .rounded(theme.radius.md)
+            .text_color(theme.text.primary)
             .shadow_md()
             .occlude()
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation());
         for (i, item) in menu.items.iter().enumerate() {
             list = list.child(match item {
-                MenuItem::Separator => div().h(px(1.)).my(px(4.)).bg(look.border).into_any_element(),
+                MenuItem::Separator => {
+                    marks.fill("menu separator", theme.separator, &[surface]);
+                    div().h(px(1.)).my(px(4.)).bg(theme.separator).into_any_element()
+                }
                 MenuItem::Action { label, action, enabled, .. } => {
                     let backend = self.backend.clone();
                     let wake = self.wake.clone();
                     let action = action.boxed_clone();
                     let mut row = div().id(ElementId::Integer(i as u64)).px(px(12.)).py(px(4.)).child(label.clone());
                     if *enabled {
-                        row = row.hover(move |s| s.bg(look.control_hover)).on_click(move |_, _, cx| {
+                        marks.text(label, theme.text.primary, &[surface], body, regular);
+                        let hover = theme.hover(surface);
+                        row = row.hover(move |s| s.bg(hover)).on_click(move |_, _, cx| {
                             backend.choose(window_id, action.boxed_clone());
                             wake(cx);
                         });
                     } else {
-                        row = row.text_color(look.border);
+                        marks.text(label, theme.text.tertiary, &[surface], body, regular);
+                        row = row.text_color(theme.text.tertiary);
                     }
                     row.into_any_element()
                 }
                 MenuItem::Submenu(sub) => {
+                    marks.text(&sub.title, theme.text.primary, &[surface], body, regular);
                     div().px(px(12.)).py(px(4.)).child(format!("{} \u{203a}", sub.title)).into_any_element()
                 }
                 MenuItem::Role(_) => div().into_any_element(),
             });
         }
+        self.record_marks(menu.node, marks.take());
         let backend = self.backend.clone();
         let wake = self.wake.clone();
         let backdrop = div()
@@ -330,7 +351,9 @@ impl ChromeServices for GpuiChrome {
     ) {
         let origin = self.0.bounds(node).map_or(Point::default(), |b| b.origin);
         let mut state = self.0.state.borrow_mut();
-        state.menus.insert(window, MenuOverlay { at: Point { x: origin.x + x, y: origin.y + y }, items: menu.items });
+        state
+            .menus
+            .insert(window, MenuOverlay { node, at: Point { x: origin.x + x, y: origin.y + y }, items: menu.items });
         state.dirty.insert(window);
     }
 

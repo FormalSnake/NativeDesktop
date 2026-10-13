@@ -885,9 +885,11 @@ target/action (about 1.7 ms per click in the old repo).
 macOS: input posted as `NSEvent`s into the app's queue (no TCC, window may be in the background);
 `--real` uses the `ndshell` HID helper; gestures synthesised at the WindowServer layout fields;
 `ndshell grant` writes TCC rows with SIP off keyed to the signing identifier and real path;
-`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one
-`HYPRLAND_HEADLESS_ONLY=1` Hyprland per test with virtual pointer and keyboard,
-`ext-image-copy-capture`, `wp_presentation`; gestures injected at the platform event layer.
+`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one headless Hyprland
+per test in a private runtime dir, nested on a headless labwc that lends it a render node (Hyprland
+0.56 ignores `HYPRLAND_HEADLESS_ONLY` and its headless backend has no allocator without a seat),
+with virtual pointer and keyboard, `ext-image-copy-capture`, `wp_presentation`; a headless Weston
+for the client-decorated path; gestures injected at the platform event layer.
 Windows: processes started by OpenSSH run outside the interactive desktop, so a resident
 `ndshell agent` starts at logon in the user's session (Task Scheduler, interactive) and `nd test`
 reaches it over ssh or a named pipe; it runs `SendInput` and Windows.Graphics.Capture jobs, refuses
@@ -968,6 +970,14 @@ publisher chosen in `[updates.publish]` (`s3` with endpoint/bucket for R2/S3/Min
 `dir`); no publisher talks to a hosted service of ours and no host-specific logic lives in the app.
 `nd release serve` serves the directory locally for update tests. The ed25519 public key ships in the
 app, so swapping hosts never weakens verification. Default domain: none baked in; each app sets `feed`.
+
+As built (M10): `releases.<os>-<channel>.json.sig` is base64 ed25519 over `nd-feed-v1\0<channel>\0<feed bytes>`,
+so a host cannot swap channels; Velopack channels are `mac-stable`, `linux-beta`, `win-stable`, so every OS
+shares one feed directory (`target/nd/releases`). `nd::build::app()` bakes `feed` and `public_key` into the
+binary unless `ND_NO_UPDATES=1` (set by `mkApp`); a binary under `/nix/store` refuses to update anyway.
+`vpk` is pinned to the `velopack` crate version and fetched into the user cache with `dotnet tool install`.
+On macOS the first update after a `.pkg` install is a full download (its postinstall clears Velopack's
+package cache, so there is no base for a delta); later updates are deltas.
 
 Settings layers: defaults < Nix-managed file < user `config.toml` < `config.local.toml` (writable
 overlay when the main file is a `/nix/store` symlink) < env `<APP>_*` < CLI flags. `toml` reads,

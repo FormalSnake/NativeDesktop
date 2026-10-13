@@ -4,7 +4,7 @@
 
 use nd_gpui::gpui::{Font, Hsla, Pixels};
 
-use crate::color::{is_dark, mix, over, with_alpha};
+use crate::color::{is_dark, legible, mix, over, with_alpha};
 use crate::palette::{Palette, Scheme};
 use crate::preset::{ControlHeights, Materials, Metrics, Motion, Preset, Radii, Spacing, TypeScale};
 
@@ -80,6 +80,12 @@ impl Theme {
         let ink = with_alpha(p.text_primary, 1.);
         let raised_hover = mix(p.surface_raised, ink, if scheme.is_dark() { 0.08 } else { 0.05 });
         let strong = with_alpha(p.text_tertiary, (p.text_tertiary.a * 1.2).min(1.));
+        // Body text keeps WCAG AA (4.5:1) on every surface it sits on, whatever the source says:
+        // a source's secondary label can fall short (Adwaita's 50% black, macOS's
+        // secondaryLabelColor on white).
+        let surfaces = [p.surface, p.surface_sidebar, p.surface_raised];
+        let text_primary = legible(p.text_primary, &surfaces, 4.5);
+        let text_secondary = legible(p.text_secondary, &surfaces, 4.5);
         Theme {
             preset,
             scheme,
@@ -93,8 +99,8 @@ impl Theme {
             border: BorderTokens { subtle: p.separator, strong },
             separator: p.separator,
             text: TextTokens {
-                primary: p.text_primary,
-                secondary: p.text_secondary,
+                primary: text_primary,
+                secondary: text_secondary,
                 tertiary: p.text_tertiary,
                 on_accent: p.on_accent,
             },
