@@ -1,0 +1,20 @@
+{
+  "colors": {
+    "surface": { "light": "{{colors.surface.light.hex}}", "dark": "{{colors.surface.dark.hex}}" },
+    "surface_container_low": { "light": "{{colors.surface_container_low.light.hex}}", "dark": "{{colors.surface_container_low.dark.hex}}" },
+    "surface_container": { "light": "{{colors.surface_container.light.hex}}", "dark": "{{colors.surface_container.dark.hex}}" },
+    "surface_container_high": { "light": "{{colors.surface_container_high.light.hex}}", "dark": "{{colors.surface_container_high.dark.hex}}" },
+    "outline_variant": { "light": "{{colors.outline_variant.light.hex}}", "dark": "{{colors.outline_variant.dark.hex}}" },
+    "on_surface": { "light": "{{colors.on_surface.light.hex}}", "dark": "{{colors.on_surface.dark.hex}}" },
+    "on_surface_variant": { "light": "{{colors.on_surface_variant.light.hex}}", "dark": "{{colors.on_surface_variant.dark.hex}}" },
+    "outline": { "light": "{{colors.outline.light.hex}}", "dark": "{{colors.outline.dark.hex}}" },
+    "primary": { "light": "{{colors.primary.light.hex}}", "dark": "{{colors.primary.dark.hex}}" },
+    "on_primary": { "light": "{{colors.on_primary.light.hex}}", "dark": "{{colors.on_primary.dark.hex}}" },
+    "primary_container": { "light": "{{colors.primary_container.light.hex}}", "dark": "{{colors.primary_container.dark.hex}}" },
+    "on_primary_container": { "light": "{{colors.on_primary_container.light.hex}}", "dark": "{{colors.on_primary_container.dark.hex}}" },
+    "error": { "light": "{{colors.error.light.hex}}", "dark": "{{colors.error.dark.hex}}" },
+    "secondary_container": { "light": "{{colors.secondary_container.light.hex}}", "dark": "{{colors.secondary_container.dark.hex}}" },
+    "green": { "light": "{{colors.green.light.hex}}", "dark": "{{colors.green.dark.hex}}" },
+    "yellow": { "light": "{{colors.yellow.light.hex}}", "dark": "{{colors.yellow.dark.hex}}" }
+  }
+}
