@@ -14,6 +14,7 @@
 //!   control's own action, so the same report-and-emit path runs as for the user.
 
 mod choice;
+mod text;
 mod value;
 
 use std::any::TypeId;
@@ -87,6 +88,12 @@ pub(crate) fn create(kind: WidgetKind, p: &Props, cx: Ctx) -> Option<Box<dyn For
         Box::new(choice::SelectControl::new(cx, props(p)))
     } else if is::<SliderKind>(kind) {
         Box::new(value::SliderControl::new(cx, props(p)))
+    } else if is::<TextFieldKind>(kind) {
+        Box::new(text::TextFieldControl::new(cx, props(p)))
+    } else if is::<TextAreaKind>(kind) {
+        Box::new(text::TextAreaControl::new(cx, props(p)))
+    } else if is::<ComboBoxKind>(kind) {
+        Box::new(text::ComboBoxControl::new(cx, props(p)))
     } else {
         return None;
     };
