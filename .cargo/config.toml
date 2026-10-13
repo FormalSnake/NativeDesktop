@@ -1,0 +1,9 @@
+[build]
+# Intermediate artifacts live on the external drive, one directory per checkout. Final
+# binaries stay in each worktree's `target/`.
+build-dir = "/Volumes/Kyan Drive/dev-cache.noindex/cargo-target/nativedesktop/{workspace-path-hash}"
+# Fails the build when the drive is missing; chains to $ND_RUSTC_WRAPPER (sccache) when set.
+rustc-wrapper = "scripts/rustc-guard"
+
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/clang"

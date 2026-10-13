@@ -1,0 +1,15 @@
+#!/bin/sh
+# Cargo runs this in place of rustc (build.rustc-wrapper in .cargo/config.toml), including for
+# its `rustc -vV` probe, which happens before the build dir is created. Failing here keeps a
+# build from landing on the internal disk when the cache drive is not mounted.
+drive="/Volumes/Kyan Drive"
+cache="$drive/dev-cache.noindex/cargo-target"
+if [ "$(uname -s)" = Darwin ]; then
+  if [ ! -d "$cache" ] || [ "$(/usr/bin/stat -f %d "$drive" 2>/dev/null)" = "$(/usr/bin/stat -f %d /)" ]; then
+    echo "nd: '$drive' is not mounted, refusing to build (build-dir is $cache)." >&2
+    echo "nd: mount the drive, or override with CARGO_BUILD_BUILD_DIR=<dir> ND_ALLOW_LOCAL_BUILD=1." >&2
+    [ "${ND_ALLOW_LOCAL_BUILD:-0}" = 1 ] || exit 101
+  fi
+fi
+if [ -n "${ND_RUSTC_WRAPPER:-}" ]; then exec "$ND_RUSTC_WRAPPER" "$@"; fi
+exec "$@"
