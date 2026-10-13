@@ -39,6 +39,7 @@ define_class!(
     impl NdWindow {
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
+            crate::diag::record_event(self, event);
             if event.r#type() == NSEventType::KeyDown && self.route_key(event) {
                 return;
             }

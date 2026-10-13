@@ -10,6 +10,8 @@ links = "nd-swift-appkit"
 [dependencies]
 nd-core.workspace = true
 nd-ui.workspace = true
+nd-diag.workspace = true
+serde_json = "1.0.154"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
@@ -19,6 +21,7 @@ objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
 block2 = "0.6.2"
+dispatch2 = "0.3.1"
 
 [[test]]
 name = "dispatch_spike"

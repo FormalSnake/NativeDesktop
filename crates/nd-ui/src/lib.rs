@@ -22,9 +22,10 @@ pub use element::{
     NativeElement, ParentElement, RootProps, Text, TextProps, WindowControls, WindowControlsProps, button, div, h_flex,
     text, v_flex, window_controls,
 };
-pub use nd_core::{NodeId, Point, Rect, Size, WindowId};
+pub use nd_core::{FrameTime, NodeId, Point, Rect, Size, WindowId};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
+pub use tree::TreeNode;
 pub use window::{Window, WindowHandle, WindowOptions};
 
 /// What an app imports: the vocabulary plus GPUI's geometry and colour helpers.

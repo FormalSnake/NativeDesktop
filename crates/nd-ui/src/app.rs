@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 
-use nd_core::{NodeId, Size, WindowId};
+use nd_core::{FrameTime, NodeId, Size, WindowId};
 use nd_gpui::gpui::{Action, KeyBinding, Keystroke};
 
 use crate::backend::Backend;
@@ -441,6 +441,25 @@ impl App {
         if let Some(tree) = slot.tree.as_mut() {
             tree.resize(size);
         }
+    }
+
+    /// The window's display clock ticked: the next frame of that window renders for `time`.
+    pub fn tick_window(&mut self, id: WindowId, time: FrameTime) {
+        if let Some(window) = self.windows.get_mut(&id).and_then(|w| w.window.as_mut()) {
+            window.set_frame_time(time);
+        }
+    }
+
+    /// The test clock: every window's clock ticks once, `interval` seconds later.
+    pub fn advance_clock(&mut self, interval: f64) {
+        for window in self.windows.values_mut().filter_map(|w| w.window.as_mut()) {
+            window.set_frame_time(window.frame_time().advance(interval));
+        }
+    }
+
+    /// The latest frame target across windows, in seconds: `cx.now()` outside a window.
+    pub fn now(&self) -> f64 {
+        self.windows.values().filter_map(|w| w.window.as_ref()).map(Window::now).fold(0., f64::max)
     }
 
     /// True when a frame would do work: a mounted view is dirty or a window needs layout.

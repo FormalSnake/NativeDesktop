@@ -1,6 +1,8 @@
 //! A window's display clock (ARCHITECTURE.md 5.3): `NSView.displayLink(target:selector:)`, which
 //! follows the display the window is on, so each window ticks at its own display's rate. Paused
-//! while idle; nothing requests frames unless something animates.
+//! while idle; nothing requests frames unless something animates. Every frame the host runs
+//! for the window reads its time from here ([`FrameClock::next_frame_time`]), so `window.now()`
+//! is the display's target time whether the link or a layout pass (a live resize) drove it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -9,7 +11,8 @@ use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSView;
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
-use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
+use nd_core::FrameTime;
+use objc2_quartz_core::{CACurrentMediaTime, CADisplayLink, CAFrameRateRange};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameTick {
@@ -26,6 +29,9 @@ struct Inner {
     callback: RefCell<Option<Callback>>,
     now: Cell<f64>,
     ticks: Cell<u64>,
+    /// The link's latest tick, until a frame consumes it.
+    pending: Cell<Option<FrameTick>>,
+    last: Cell<FrameTime>,
     /// First and last target timestamps and tick count of the current animating run.
     run: Cell<Option<(f64, f64, u64)>>,
     diag: bool,
@@ -59,6 +65,7 @@ define_class!(
             let tick = FrameTick { timestamp: link.timestamp(), target_timestamp: link.targetTimestamp() };
             clock.now.set(tick.target_timestamp);
             clock.ticks.set(clock.ticks.get() + 1);
+            clock.pending.set(Some(tick));
             let run = clock.run.get().map_or((tick.target_timestamp, tick.target_timestamp, 0), |r| r);
             clock.run.set(Some((run.0, tick.target_timestamp, run.2 + 1)));
             let callback = clock.callback.borrow().clone();
@@ -81,6 +88,8 @@ impl FrameClock {
             callback: RefCell::new(None),
             now: Cell::new(0.),
             ticks: Cell::new(0),
+            pending: Cell::new(None),
+            last: Cell::new(FrameTime::default()),
             run: Cell::new(None),
             diag,
         });
@@ -121,6 +130,23 @@ impl FrameClock {
     /// The target timestamp of the latest frame.
     pub fn now(&self) -> f64 {
         self.inner.now.get()
+    }
+
+    /// The time of the frame about to run: the link's pending tick, or for a frame the link did
+    /// not drive, now plus one display interval. Targets never go backwards.
+    pub fn next_frame_time(&self) -> FrameTime {
+        let last = self.inner.last.get();
+        let (timestamp, target) = match self.inner.pending.take() {
+            Some(tick) => (tick.timestamp, tick.target_timestamp),
+            None => {
+                let interval = self.inner.link.borrow().as_ref().map_or(0., |l| l.duration());
+                let now = CACurrentMediaTime();
+                (now, now + if interval > 0. { interval } else { 1. / 60. })
+            }
+        };
+        let time = FrameTime { frame: last.frame + 1, timestamp, target: target.max(last.target) };
+        self.inner.last.set(time);
+        time
     }
 
     pub fn ticks(&self) -> u64 {

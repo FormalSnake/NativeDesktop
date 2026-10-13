@@ -45,6 +45,12 @@ macro_rules! manifest {
     };
 }
 
+/// Writes a `-report` incident bundle with `message` and returns its directory, or `None` when
+/// diagnostics are not running.
+pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
+    nd_diag::global()?.report_issue(message).ok()
+}
+
 pub struct Application {
     manifest: Manifest,
 }
@@ -60,10 +66,12 @@ impl Application {
 
     /// Runs the app on the platform host and returns when it quits. Where no host is linked
     /// yet (everything but macOS until M2) this returns [`Error::NoBackend`] without calling
-    /// `init`.
+    /// `init`. Diagnostics (logs, incident bundles, crash and hang capture) start first; in the
+    /// copy of the executable launched as the crash helper this never returns.
     pub fn run<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
         #[cfg(target_os = "macos")]
         {
+            nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "appkit"));
             use nd_backend_appkit::objc2_foundation::MainThreadMarker;
             nd_backend_appkit::run(move |cx| {
                 let colors = nd_backend_appkit::system_colors(MainThreadMarker::new().expect("main thread"));

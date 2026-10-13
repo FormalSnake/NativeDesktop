@@ -1,4 +1,4 @@
-use nd_core::{Size, WindowId};
+use nd_core::{FrameTime, Size, WindowId};
 use nd_gpui::gpui::{self, Pixels, SharedString};
 
 use crate::app::Entity;
@@ -39,6 +39,7 @@ pub struct Window {
     id: WindowId,
     title: SharedString,
     viewport: Size,
+    clock: FrameTime,
 }
 
 impl Window {
@@ -47,7 +48,7 @@ impl Window {
             .size
             .map(|s| Size { width: s.width.as_f32(), height: s.height.as_f32() })
             .unwrap_or(Size { width: 800., height: 600. });
-        Self { id, title: options.title.clone().unwrap_or_default(), viewport }
+        Self { id, title: options.title.clone().unwrap_or_default(), viewport, clock: FrameTime::default() }
     }
 
     pub fn id(&self) -> WindowId {
@@ -65,6 +66,20 @@ impl Window {
 
     pub(crate) fn set_viewport_size(&mut self, size: Size) {
         self.viewport = size;
+    }
+
+    /// The window's frame clock: its display's refresh on a real host, the test clock in tests.
+    pub fn frame_time(&self) -> FrameTime {
+        self.clock
+    }
+
+    /// When the frame being prepared will be presented, in seconds. Animations sample here.
+    pub fn now(&self) -> f64 {
+        self.clock.target
+    }
+
+    pub(crate) fn set_frame_time(&mut self, time: FrameTime) {
+        self.clock = time;
     }
 }
 
