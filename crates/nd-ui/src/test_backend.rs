@@ -8,7 +8,9 @@ use nd_core::{NodeId, Rect, Size, WindowId};
 
 use crate::backend::{Backend, Constraint, NodeKind, Phase, Props, PropsPatch, SurfaceOp};
 use crate::events::EventQueue;
+use crate::semantics::{ActionError, Probe, SemanticAction};
 use crate::transaction::Op;
+use crate::{Button, ClickEvent};
 
 type MeasureFn = Box<dyn FnMut(NodeId, &Props, Constraint) -> Size>;
 /// Simulates a native widget's side effects on create and update, such as a delegate the
@@ -41,6 +43,8 @@ pub struct TestBackend {
     retains_frames: bool,
     events: EventQueue,
     on_apply: Option<WidgetHook>,
+    probes: HashMap<NodeId, Probe>,
+    performed: Vec<(NodeId, SemanticAction)>,
 }
 
 impl Default for TestBackend {
@@ -60,7 +64,19 @@ impl TestBackend {
             retains_frames: true,
             events: EventQueue::default(),
             on_apply: None,
+            probes: HashMap::new(),
+            performed: Vec::new(),
         }
+    }
+
+    /// What [`Backend::probe`] answers for `node`, standing in for a native control's state.
+    pub fn set_probe(&mut self, node: NodeId, probe: Probe) {
+        self.probes.insert(node, probe);
+    }
+
+    /// Semantic actions carried out so far, in order.
+    pub fn performed(&self) -> &[(NodeId, SemanticAction)] {
+        &self.performed
     }
 
     /// Behaves like the GPUI backend, which lays out itself and never receives frames.
@@ -348,5 +364,31 @@ impl Backend for TestBackend {
 
     fn retains_frames(&self) -> bool {
         self.retains_frames
+    }
+
+    fn probe(&self, node: NodeId) -> Probe {
+        self.probes.get(&node).cloned().unwrap_or_default()
+    }
+
+    /// A button answers clicks the way its native control would, by emitting [`ClickEvent`].
+    /// Focus is nd's own; everything else is unsupported here.
+    fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        let Some(n) = self.nodes.get(&node) else {
+            return Err(ActionError::NotActionable(format!("{node:?} is not live")));
+        };
+        if self.probes.get(&node).and_then(|p| p.enabled) == Some(false) {
+            return Err(ActionError::NotActionable(format!("{node:?} is disabled")));
+        }
+        let button = n.kind == NodeKind::Widget(crate::backend::WidgetKind::of::<Button>());
+        let clicks = match action {
+            SemanticAction::Click if button => 1,
+            SemanticAction::DoubleClick if button => 2,
+            _ => return Err(ActionError::Unsupported(format!("{action:?} on {:?}", n.kind))),
+        };
+        for _ in 0..clicks {
+            self.events.emitter(node).emit(ClickEvent);
+        }
+        self.performed.push((node, action.clone()));
+        Ok(())
     }
 }

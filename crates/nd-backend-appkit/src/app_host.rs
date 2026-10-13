@@ -4,8 +4,9 @@
 //! were queued.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
 
 use nd_core::WindowId;
 use nd_ui::App;
@@ -86,9 +87,56 @@ fn tick(host: &Weak<Host>) {
     }
 }
 
+/// Work for the main thread that needs the app, sent from any thread.
+pub type AppJob = Box<dyn FnOnce(&mut App) + Send>;
+
+type Jobs = Arc<Mutex<VecDeque<AppJob>>>;
+
+thread_local! {
+    static HOST: RefCell<Weak<Host>> = const { RefCell::new(Weak::new()) };
+}
+
+/// Runs [`AppJob`]s on the main thread, between frames and outside every entity lease. Cheap to
+/// clone and `Send`; the automation server holds one.
+#[derive(Clone)]
+pub struct AppSender {
+    jobs: Jobs,
+}
+
+impl AppSender {
+    pub fn send(&self, job: AppJob) {
+        self.jobs.lock().expect("job queue").push_back(job);
+        let jobs = self.jobs.clone();
+        dispatch2::DispatchQueue::main().exec_async(move || run_jobs(&jobs));
+    }
+}
+
+fn run_jobs(jobs: &Jobs) {
+    let Some(host) = HOST.with(|h| h.borrow().upgrade()) else { return };
+    loop {
+        let Some(job) = jobs.lock().expect("job queue").pop_front() else { break };
+        let Ok(mut app) = host.app.try_borrow_mut() else {
+            // A frame or a handler holds the app (a nested run loop); try again next turn.
+            jobs.lock().expect("job queue").push_front(job);
+            let jobs = jobs.clone();
+            crate::events::defer(move || run_jobs(&jobs));
+            return;
+        };
+        job(&mut app);
+        app.flush_effects();
+    }
+    host.after_frame();
+}
+
 /// Builds the app with `init` (which opens its windows) and runs AppKit's event loop. Never
 /// returns; AppKit exits the process when the last window closes.
 pub fn run(init: impl FnOnce(&mut App)) -> ! {
+    run_with(init, |_| {})
+}
+
+/// As [`run`], handing `started` an [`AppSender`] once the windows are up and before the event
+/// loop starts.
+pub fn run_with(init: impl FnOnce(&mut App), started: impl FnOnce(AppSender)) -> ! {
     let mtm = MainThreadMarker::new().expect("nd apps run on the main thread");
     let platform = NdAppKitPlatform::new(mtm);
     let backend = AppKitBackend::new(mtm);
@@ -104,6 +152,8 @@ pub fn run(init: impl FnOnce(&mut App)) -> ! {
         host.kick();
     });
     host.sync_windows();
+    HOST.with(|h| *h.borrow_mut() = Rc::downgrade(&host));
+    started(AppSender { jobs: Jobs::default() });
     host.platform.run();
     std::process::exit(0)
 }

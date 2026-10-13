@@ -24,6 +24,8 @@ use crate::layout::to_taffy;
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::Window;
 
+mod semantic_walk;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum SlotKind {
     Node(NodeKind),
