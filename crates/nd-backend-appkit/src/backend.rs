@@ -263,14 +263,12 @@ impl AppKitBackend {
         self.0.borrow().row_tags.get(&node).copied()
     }
 
-    /// The table (or outline) view presenting the list, and its scroll view.
-    pub fn list_views(
-        &self,
-        list: NodeId,
-    ) -> Option<(Retained<objc2_app_kit::NSTableView>, Retained<objc2_app_kit::NSScrollView>)> {
+    /// The view presenting the list (an `NSTableView`, `NSOutlineView` or `NSCollectionView`)
+    /// and its scroll view.
+    pub fn list_views(&self, list: NodeId) -> Option<(Retained<NSView>, Retained<objc2_app_kit::NSScrollView>)> {
         let state = self.0.borrow();
         match state.nodes.get(&list)? {
-            Native::List(l) => Some((l.table().retain(), l.scroll.clone())),
+            Native::List(l) => Some((l.document().retain(), l.scroll().retain())),
             _ => None,
         }
     }

@@ -16,6 +16,7 @@ mod mac {
     use std::time::Duration;
 
     use nd_backend_appkit::AppHost;
+    use nd_backend_appkit::objc2_app_kit::NSTableView;
     use nd_backend_appkit::objc2_foundation::NSPoint;
     use nd_ui::prelude::*;
     use nd_ui::{NodeId, WindowId};
@@ -174,6 +175,7 @@ mod mac {
         fn painted(&mut self) -> Vec<Painted> {
             let backend = self.host.backend();
             let (table, scroll) = backend.list_views(self.list()).expect("list views");
+            let table = table.downcast::<NSTableView>().expect("an NSTableView");
             let clip = scroll.contentView();
             let visible = clip.bounds();
             let range = table.rowsInRect(visible);

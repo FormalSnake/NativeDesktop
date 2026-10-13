@@ -26,17 +26,18 @@ use nd_virtual::{
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSControlTextEditingDelegate, NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSScrollView,
-    NSTableColumn, NSTableColumnResizingOptions, NSTableView, NSTableViewAnimationOptions,
-    NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSView,
-    NSViewBoundsDidChangeNotification,
+    NSCollectionView, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewFlowLayout,
+    NSCollectionViewItem, NSControlTextEditingDelegate, NSIndexPathNSCollectionViewAdditions, NSOutlineView,
+    NSOutlineViewDataSource, NSOutlineViewDelegate, NSScrollView, NSTableColumn, NSTableColumnResizingOptions,
+    NSTableView, NSTableViewAnimationOptions, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource,
+    NSTableViewDelegate, NSTableViewStyle, NSView, NSViewBoundsDidChangeNotification,
 };
 use objc2_core_foundation::CGFloat;
 use objc2_foundation::{
-    MainThreadMarker, NSDictionary, NSEdgeInsets, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification,
-    NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSString, NSUserDefaults,
+    MainThreadMarker, NSDictionary, NSEdgeInsets, NSIndexPath, NSIndexSet, NSInteger, NSMutableIndexSet,
+    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSString, NSUserDefaults,
 };
 
 use crate::events::Wake;
@@ -119,6 +120,24 @@ pub struct Shared {
 }
 
 impl Shared {
+    fn new(mtm: MainThreadMarker, props: &ListProps, emit: Emit, wake: Wake) -> Self {
+        Self {
+            mtm,
+            kind: RefCell::new(props.kind.clone()),
+            handle: props.handle.clone(),
+            snap: RefCell::new(Snapshot::default()),
+            containers: RefCell::default(),
+            rows: RefCell::default(),
+            items: RefCell::default(),
+            emit,
+            wake,
+            programmatic: Cell::new(0),
+            user_top: Cell::new(None),
+            asked: RefCell::default(),
+            edges: Cell::new((false, false)),
+        }
+    }
+
     fn programmatic<R>(&self, f: impl FnOnce() -> R) -> R {
         self.programmatic.set(self.programmatic.get() + 1);
         let r = f();
@@ -380,7 +399,7 @@ impl NdListSource {
     }
 }
 
-pub(crate) struct ListNative {
+pub(crate) struct TableNative {
     pub scroll: Retained<NSScrollView>,
     table: Retained<NSTableView>,
     source: Retained<NdListSource>,
@@ -398,24 +417,10 @@ pub(crate) struct ListNative {
     row_width: f32,
 }
 
-impl ListNative {
+impl TableNative {
     pub fn new(mtm: MainThreadMarker, emit: Emit, wake: Wake, props: &ListProps) -> Self {
         disable_estimation();
-        let shared = Rc::new(Shared {
-            mtm,
-            kind: RefCell::new(props.kind.clone()),
-            handle: props.handle.clone(),
-            snap: RefCell::new(Snapshot::default()),
-            containers: RefCell::default(),
-            rows: RefCell::default(),
-            items: RefCell::default(),
-            emit,
-            wake,
-            programmatic: Cell::new(0),
-            user_top: Cell::new(None),
-            asked: RefCell::default(),
-            edges: Cell::new((false, false)),
-        });
+        let shared = Rc::new(Shared::new(mtm, props, emit, wake));
         let source = NdListSource::alloc(mtm).set_ivars(ListIvars { shared: shared.clone() });
         let source: Retained<NdListSource> = unsafe { msg_send![super(source), init] };
         let table: Retained<NSTableView> = if props.kind == ListKind::Tree {
@@ -684,14 +689,13 @@ impl ListNative {
     }
 
     /// The list's own frame. Returns true when rows must lay out again at a new width.
-    pub fn set_frame(&mut self, frame: Rect) -> bool {
+    pub fn set_frame(&mut self, frame: Rect) {
         let rect = crate::views::ns_rect(frame);
         if self.scroll.frame() != rect {
             self.scroll.setFrame(rect);
         }
         self.size = frame.size;
         self.scroll.tile();
-        false
     }
 
     /// Applies what changed since the last commit in one table update, then puts the clip view
@@ -798,33 +802,37 @@ impl ListNative {
         }
     }
 
-    /// Lays the model out and moves the clip view to its offset, unless the user's own scroll
-    /// already put it there.
     fn place_clip(&self) {
-        let layout = self.props.handle.0.borrow_mut().layout();
-        let clip = self.scroll.contentView();
-        let inset = (-layout.scroll_top).max(0.);
-        let insets = NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. };
-        let current = self.scroll.contentInsets();
-        if (current.top - inset).abs() > 0.25 {
-            self.scroll.setContentInsets(insets);
-        }
-        let origin = clip.bounds().origin;
-        let target = layout.scroll_top;
-        let model_moved = match self.shared.user_top.take() {
-            Some(user) => (user - target).abs() > 0.25,
-            None => true,
-        };
-        if model_moved && (origin.y - target).abs() > 0.25 {
-            clip.scrollToPoint(NSPoint::new(origin.x, target));
-            self.scroll.reflectScrolledClipView(&clip);
-        } else if !model_moved {
-            self.shared.user_top.set(Some(target));
-        }
+        place_clip(&self.scroll, &self.shared, &self.props.handle);
     }
 }
 
-impl Drop for ListNative {
+/// Lays the model out and moves the clip view to its offset, unless the user's own scroll already
+/// put it there. A bottom-aligned list shorter than the viewport rests on the bottom edge through
+/// the scroll view's top inset.
+fn place_clip(scroll: &NSScrollView, shared: &Shared, handle: &ListHandle) {
+    let layout = handle.0.borrow_mut().layout();
+    let clip = scroll.contentView();
+    let inset = (-layout.scroll_top).max(0.);
+    let current = scroll.contentInsets();
+    if (current.top - inset).abs() > 0.25 {
+        scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. });
+    }
+    let origin = clip.bounds().origin;
+    let target = layout.scroll_top;
+    let model_moved = match shared.user_top.take() {
+        Some(user) => (user - target).abs() > 0.25,
+        None => true,
+    };
+    if model_moved && (origin.y - target).abs() > 0.25 {
+        clip.scrollToPoint(NSPoint::new(origin.x, target));
+        scroll.reflectScrolledClipView(&clip);
+    } else if !model_moved {
+        shared.user_top.set(Some(target));
+    }
+}
+
+impl Drop for TableNative {
     fn drop(&mut self) {
         unsafe {
             NSNotificationCenter::defaultCenter().removeObserver(&self.source);
@@ -840,4 +848,412 @@ fn index_set(indices: &[usize]) -> Retained<NSIndexSet> {
         set.addIndex(*i);
     }
     Retained::into_super(set)
+}
+
+/// A grid item: a plain view the data source puts the row's container in.
+pub struct GridItemIvars;
+
+define_class!(
+    // SAFETY: NSCollectionViewItem may be subclassed; loadView only sets the view.
+    #[unsafe(super(NSCollectionViewItem, objc2_app_kit::NSViewController, objc2_app_kit::NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = GridItemIvars]
+    pub struct NdGridItem;
+
+    impl NdGridItem {
+        #[unsafe(method(loadView))]
+        fn load_view(&self) {
+            let view = NdLayerView::new(MainThreadMarker::from(self), &ViewLook::default());
+            self.setView(&view);
+        }
+    }
+);
+
+pub struct GridIvars {
+    shared: Rc<Shared>,
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements and this type does not implement Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = GridIvars]
+    pub struct NdGridSource;
+
+    unsafe impl NSObjectProtocol for NdGridSource {}
+
+    unsafe impl NSCollectionViewDataSource for NdGridSource {
+        #[unsafe(method(numberOfSectionsInCollectionView:))]
+        fn sections(&self, _cv: &NSCollectionView) -> NSInteger {
+            1
+        }
+
+        #[unsafe(method(collectionView:numberOfItemsInSection:))]
+        fn items(&self, _cv: &NSCollectionView, _section: NSInteger) -> NSInteger {
+            self.ivars().shared.snap.borrow().ids.len() as NSInteger
+        }
+
+        #[unsafe(method_id(collectionView:itemForRepresentedObjectAtIndexPath:))]
+        fn item(&self, cv: &NSCollectionView, path: &NSIndexPath) -> Retained<NSCollectionViewItem> {
+            let shared = &self.ivars().shared;
+            let item = cv.makeItemWithIdentifier_forIndexPath(&NSString::from_str(GRID_ITEM), path);
+            let view = item.view();
+            for sub in view.subviews().iter() {
+                sub.removeFromSuperview();
+            }
+            let row = shared.snap.borrow().ids.get(path.item() as usize).copied();
+            if let Some(row) = row {
+                let container = shared.container(row, 0);
+                container.setFrame(view.bounds());
+                container.setAutoresizingMask(
+                    objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable
+                        | objc2_app_kit::NSAutoresizingMaskOptions::ViewHeightSizable,
+                );
+                view.addSubview(&container);
+            }
+            item
+        }
+    }
+
+    unsafe impl NSCollectionViewDelegate for NdGridSource {
+        #[unsafe(method(collectionView:didSelectItemsAtIndexPaths:))]
+        fn did_select(&self, cv: &NSCollectionView, _paths: &objc2_foundation::NSSet<NSIndexPath>) {
+            self.report_selection(cv);
+        }
+
+        #[unsafe(method(collectionView:didDeselectItemsAtIndexPaths:))]
+        fn did_deselect(&self, cv: &NSCollectionView, _paths: &objc2_foundation::NSSet<NSIndexPath>) {
+            self.report_selection(cv);
+        }
+    }
+
+    impl NdGridSource {
+        #[unsafe(method(boundsChanged:))]
+        fn bounds_changed(&self, notification: &NSNotification) {
+            let shared = &self.ivars().shared;
+            if shared.programmatic.get() > 0 {
+                return;
+            }
+            let Some(clip) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSClipView>().ok()) else {
+                return;
+            };
+            let y = clip.bounds().origin.y;
+            let top = {
+                let mut core = shared.handle.0.borrow_mut();
+                core.scroll_to_offset(y);
+                core.scroll_top()
+            };
+            shared.user_top.set(Some(top));
+            shared.ask_for_rows();
+        }
+    }
+);
+
+const GRID_ITEM: &str = "nd.grid.item";
+
+impl NdGridSource {
+    fn report_selection(&self, cv: &NSCollectionView) {
+        let shared = &self.ivars().shared;
+        if shared.programmatic.get() > 0 {
+            return;
+        }
+        let snap = shared.snap.borrow();
+        let mut rows: Vec<(usize, RowId)> = cv
+            .selectionIndexPaths()
+            .iter()
+            .filter_map(|p| snap.ids.get(p.item() as usize).map(|r| (p.item() as usize, *r)))
+            .collect();
+        drop(snap);
+        rows.sort_unstable();
+        shared.emit.emit(RowsSelected(rows.into_iter().map(|(_, r)| r).collect()));
+        shared.wake.wake();
+    }
+}
+
+/// A grid on `NSCollectionView` with a flow layout of fixed-size items. The model's lanes use
+/// the flow layout's own rule (as many items as fit with the gap between them), so rows and the
+/// anchor agree with what AppKit places.
+pub(crate) struct GridNative {
+    pub scroll: Retained<NSScrollView>,
+    collection: Retained<NSCollectionView>,
+    source: Retained<NdGridSource>,
+    shared: Rc<Shared>,
+    props: ListProps,
+    generation: Option<u64>,
+    node_rows: HashMap<NodeId, RowId>,
+    size: Size,
+}
+
+impl GridNative {
+    pub fn new(mtm: MainThreadMarker, emit: Emit, wake: Wake, props: &ListProps) -> Self {
+        let shared = Rc::new(Shared::new(mtm, props, emit, wake));
+        let source = NdGridSource::alloc(mtm).set_ivars(GridIvars { shared: shared.clone() });
+        let source: Retained<NdGridSource> = unsafe { msg_send![super(source), init] };
+        let collection = NSCollectionView::new(mtm);
+        let layout = NSCollectionViewFlowLayout::new(mtm);
+        if let Some(g) = props.handle.0.borrow().grid() {
+            layout.setItemSize(objc2_foundation::NSSize::new(g.item_width, g.item_height));
+            layout.setMinimumInteritemSpacing(g.gap);
+            layout.setMinimumLineSpacing(g.gap);
+        }
+        layout.setSectionInset(NSEdgeInsets { top: 0., left: 0., bottom: 0., right: 0. });
+        collection.setCollectionViewLayout(Some(&layout));
+        unsafe {
+            collection.registerClass_forItemWithIdentifier(Some(NdGridItem::class()), &NSString::from_str(GRID_ITEM));
+            collection.setDataSource(Some(ProtocolObject::from_ref(&*source)));
+            collection.setDelegate(Some(ProtocolObject::from_ref(&*source)));
+        }
+        collection.setSelectable(props.selection != Selection::None);
+        collection.setAllowsMultipleSelection(props.selection == Selection::Multiple);
+        let scroll = NSScrollView::new(mtm);
+        scroll.setDocumentView(Some(&collection));
+        scroll.setHasVerticalScroller(true);
+        scroll.setDrawsBackground(false);
+        scroll.setAutomaticallyAdjustsContentInsets(false);
+        let clip = scroll.contentView();
+        clip.setPostsBoundsChangedNotifications(true);
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &source,
+                sel!(boundsChanged:),
+                Some(NSViewBoundsDidChangeNotification),
+                Some(&clip),
+            );
+        }
+        Self {
+            scroll,
+            collection,
+            source,
+            shared,
+            props: props.clone(),
+            generation: None,
+            node_rows: HashMap::new(),
+            size: Size::default(),
+        }
+    }
+
+    pub fn collection(&self) -> &NSCollectionView {
+        &self.collection
+    }
+
+    pub fn update(&mut self, props: &ListProps) {
+        self.collection.setSelectable(props.selection != Selection::None);
+        self.collection.setAllowsMultipleSelection(props.selection == Selection::Multiple);
+        let changed = self.props.selected != props.selected;
+        self.props = props.clone();
+        if changed {
+            self.select();
+        }
+    }
+
+    fn select(&self) {
+        let snap = self.shared.snap.borrow();
+        let paths: Vec<Retained<NSIndexPath>> = self
+            .props
+            .selected
+            .iter()
+            .filter_map(|r| snap.index.get(r))
+            .map(|i| NSIndexPath::indexPathForItem_inSection(*i as NSInteger, 0))
+            .collect();
+        drop(snap);
+        let set = objc2_foundation::NSSet::from_retained_slice(&paths);
+        self.shared.programmatic(|| self.collection.setSelectionIndexPaths(&set));
+    }
+
+    pub fn attach_row(&mut self, node: NodeId, row: RowId, view: &NSView) {
+        self.node_rows.insert(node, row);
+        if let Some(c) = self.shared.containers.borrow().get(&(row, 0)) {
+            c.addSubview(view);
+        }
+        use objc2::Message;
+        self.shared.rows.borrow_mut().insert(row, RowNodes { view: view.retain(), cells: HashMap::new() });
+    }
+
+    pub fn detach_row(&mut self, node: NodeId) {
+        let Some(row) = self.node_rows.remove(&node) else { return };
+        if let Some(r) = self.shared.rows.borrow_mut().remove(&row) {
+            r.view.removeFromSuperview();
+        }
+    }
+
+    pub fn is_row(&self, node: NodeId) -> bool {
+        self.node_rows.contains_key(&node)
+    }
+
+    pub fn boundary_width(&self, node: NodeId) -> Option<f32> {
+        self.node_rows.get(&node)?;
+        self.props.handle.0.borrow().grid().map(|g| g.item_width as f32)
+    }
+
+    pub fn set_row_frame(&mut self, node: NodeId, frame: Rect) {
+        let Some(&row) = self.node_rows.get(&node) else { return };
+        let rows = self.shared.rows.borrow();
+        let Some(r) = rows.get(&row) else { return };
+        let rect = crate::views::ns_rect(Rect::new(0., 0., frame.size.width, frame.size.height));
+        if r.view.frame() != rect {
+            r.view.setFrame(rect);
+        }
+    }
+
+    pub fn set_frame(&mut self, frame: Rect) {
+        let rect = crate::views::ns_rect(frame);
+        if self.scroll.frame() != rect {
+            self.scroll.setFrame(rect);
+        }
+        self.size = frame.size;
+        self.scroll.tile();
+    }
+
+    pub fn commit(&mut self) -> bool {
+        let shared = self.shared.clone();
+        let clip = self.scroll.contentView().bounds().size;
+        self.props.handle.0.borrow_mut().set_viewport(clip.width, clip.height);
+        let generation = self.props.handle.0.borrow().generation();
+        shared.programmatic(|| {
+            if self.generation != Some(generation) {
+                self.generation = Some(generation);
+                let next = Snapshot::read(&self.props.handle.0.borrow());
+                shared.containers.borrow_mut().retain(|(row, _), _| next.index.contains_key(row));
+                *shared.snap.borrow_mut() = next;
+                self.collection.reloadData();
+                self.select();
+            }
+            // Sized now, so the clip view is placed against the grid's real height.
+            self.collection.layoutSubtreeIfNeeded();
+            place_clip(&self.scroll, &shared, &self.props.handle);
+        });
+        shared.ask_for_rows();
+        false
+    }
+}
+
+impl Drop for GridNative {
+    fn drop(&mut self) {
+        unsafe {
+            NSNotificationCenter::defaultCenter().removeObserver(&self.source);
+            self.collection.setDataSource(None);
+            self.collection.setDelegate(None);
+        }
+    }
+}
+
+/// A list's native presenter: a table (lists, tables, trees) or a collection view (grids).
+pub(crate) enum ListNative {
+    Table(TableNative),
+    Grid(GridNative),
+}
+
+impl ListNative {
+    pub fn new(mtm: MainThreadMarker, emit: Emit, wake: Wake, props: &ListProps) -> Self {
+        match props.kind {
+            ListKind::Grid => ListNative::Grid(GridNative::new(mtm, emit, wake, props)),
+            _ => ListNative::Table(TableNative::new(mtm, emit, wake, props)),
+        }
+    }
+
+    pub fn view(&self) -> &NSView {
+        match self {
+            ListNative::Table(t) => t.view(),
+            ListNative::Grid(g) => &g.scroll,
+        }
+    }
+
+    pub fn scroll(&self) -> &NSScrollView {
+        match self {
+            ListNative::Table(t) => &t.scroll,
+            ListNative::Grid(g) => &g.scroll,
+        }
+    }
+
+    /// The document view: the table, outline or collection view.
+    pub fn document(&self) -> &NSView {
+        match self {
+            ListNative::Table(t) => t.table(),
+            ListNative::Grid(g) => g.collection(),
+        }
+    }
+
+    pub fn update(&mut self, props: &ListProps) {
+        match self {
+            ListNative::Table(t) => t.update(props),
+            ListNative::Grid(g) => g.update(props),
+        }
+    }
+
+    pub fn attach_row(&mut self, node: NodeId, row: RowId, view: &NSView) {
+        match self {
+            ListNative::Table(t) => t.attach_row(node, row, view),
+            ListNative::Grid(g) => g.attach_row(node, row, view),
+        }
+    }
+
+    pub fn detach_row(&mut self, node: NodeId) {
+        match self {
+            ListNative::Table(t) => t.detach_row(node),
+            ListNative::Grid(g) => g.detach_row(node),
+        }
+    }
+
+    pub fn is_row(&self, node: NodeId) -> bool {
+        match self {
+            ListNative::Table(t) => t.is_row(node),
+            ListNative::Grid(g) => g.is_row(node),
+        }
+    }
+
+    pub fn is_table(&self) -> bool {
+        matches!(self, ListNative::Table(t) if t.is_table())
+    }
+
+    pub fn is_cell(&self, node: NodeId) -> bool {
+        matches!(self, ListNative::Table(t) if t.is_cell(node))
+    }
+
+    pub fn attach_cell(&mut self, row_node: NodeId, node: NodeId, column: usize, view: &NSView) {
+        if let ListNative::Table(t) = self {
+            t.attach_cell(row_node, node, column, view);
+        }
+    }
+
+    pub fn detach_cell(&mut self, node: NodeId) {
+        if let ListNative::Table(t) = self {
+            t.detach_cell(node);
+        }
+    }
+
+    pub fn boundary_width(&self, node: NodeId) -> Option<f32> {
+        match self {
+            ListNative::Table(t) => t.boundary_width(node),
+            ListNative::Grid(g) => g.boundary_width(node),
+        }
+    }
+
+    pub fn set_cell_frame(&mut self, node: NodeId, frame: Rect) {
+        if let ListNative::Table(t) = self {
+            t.set_cell_frame(node, frame);
+        }
+    }
+
+    pub fn set_row_frame(&mut self, node: NodeId, frame: Rect) {
+        match self {
+            ListNative::Table(t) => t.set_row_frame(node, frame),
+            ListNative::Grid(g) => g.set_row_frame(node, frame),
+        }
+    }
+
+    pub fn set_frame(&mut self, frame: Rect) {
+        match self {
+            ListNative::Table(t) => {
+                t.set_frame(frame);
+            }
+            ListNative::Grid(g) => g.set_frame(frame),
+        }
+    }
+
+    pub fn commit(&mut self) -> bool {
+        match self {
+            ListNative::Table(t) => t.commit(),
+            ListNative::Grid(g) => g.commit(),
+        }
+    }
 }
