@@ -26,6 +26,14 @@ pub mod prelude {
         icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
         system_item, titlebar, toolbar_sidebar_toggle,
     };
+    pub use crate::chrome::{
+        ButtonGroup, Checkbox, CivilDateTime, Clamp, ColorChanged, ColorWell, ComboBox, FormSection, DateChanged, DatePicker,
+        DatePickerMode, DatePickerStyle, FieldIconClicked, FormField, IconEdge, Label, LabelTone, Link, LinkActivated,
+        Progress, RowActivated, Stepper, StepperChanged, Switch, TextArea, TextChanged, TextEvent, TextField,
+        TextFieldState, TextStyle, TextSubmitted, Toggled, button_group, checkbox, clamp, color_well, combo_box,
+        date_picker, form_field, label, link, navigation_row, progress, radio_group, row, search_field, secure_field,
+        segmented, settings_group, spinner, stepper, switch, switch_row, text_area, text_field,
+    };
     pub use crate::controls::{
         Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, ListState, Painter, Processor, canvas,
     };
