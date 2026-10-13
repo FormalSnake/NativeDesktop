@@ -38,6 +38,15 @@ get() { sed -n "s/^$1 = \"\(.*\)\"$/\1/p" "$conf"; }
 set_conf() { K=$1 V=$2 perl -pi -e 's/^\Q$ENV{K}\E = ".*"$/$ENV{K} = "$ENV{V}"/' "$conf"; }
 queue() { grep -v -e '^#' -e '^[[:space:]]*$' "$series" || true; }
 
+# zed's crates/<dir> as the gpui-fast package that publishes its fork of it.
+fast_package_for() {
+  case "$1" in
+    gpui) echo gpui-fast ;;
+    gpui_*) echo "gpui-fast-$(echo "${1#gpui_}" | tr _ -)" ;;
+    *) echo "gpui-fast-$(echo "$1" | tr _ -)" ;;
+  esac
+}
+
 # zed's crates/<dir> as the gpui-pre package that publishes it.
 package_for() {
   case "$1" in
@@ -75,8 +84,9 @@ scratch_fork() {
 # Writes the vendored crates and the patch block for the current queue under $1 (a root holding
 # crates/nd-gpui/vendor and Cargo.toml).
 render_vendor() {
-  local out=$1 version tmp dirs dir pkg src block
+  local out=$1 version fast_version tmp dirs dir pkg src block
   version=$(get crate_version)
+  fast_version=$(sed -n 's/^gpui_fast = { package = "gpui-fast", version = "=\([^"]*\)".*/\1/p' "$root/Cargo.toml")
   # Fetch while the workspace's own patch block still points at existing directories.
   [ -z "$(queue)" ] || (cd "$root" && cargo fetch -q)
   rm -rf "$out/crates/nd-gpui/vendor"
@@ -95,6 +105,14 @@ render_vendor() {
       cp -R "$src" "$out/crates/nd-gpui/vendor/$pkg"
       git -C "$tmp/zed" diff --cached "$(get zed_rev)" -- "crates/$dir" |
         patch -s -p3 --no-backup-if-mismatch -d "$out/crates/nd-gpui/vendor/$pkg" || die "the queue's change to crates/$dir does not apply to $pkg $version"
+      block="$block
+$pkg = { path = \"crates/nd-gpui/vendor/$pkg\" }"
+      pkg=$(fast_package_for "$dir")
+      src=$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/"$pkg-$fast_version" 2>/dev/null | head -1)
+      [ -n "$src" ] || continue
+      cp -R "$src" "$out/crates/nd-gpui/vendor/$pkg"
+      git -C "$tmp/zed" diff --cached "$(get zed_rev)" -- "crates/$dir" |
+        patch -s -p3 --no-backup-if-mismatch -d "$out/crates/nd-gpui/vendor/$pkg" || die "the queue's change to crates/$dir does not apply to $pkg $fast_version"
       block="$block
 $pkg = { path = \"crates/nd-gpui/vendor/$pkg\" }"
     done
