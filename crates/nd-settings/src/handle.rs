@@ -24,6 +24,7 @@ pub struct Options {
     env: Option<Vec<(String, String)>>,
     cli: Vec<(String, String)>,
     store_roots: Vec<PathBuf>,
+    plugin_defaults: Table,
 }
 
 impl Options {
@@ -37,6 +38,7 @@ impl Options {
             env: None,
             cli: Vec::new(),
             store_roots: vec![PathBuf::from("/nix/store")],
+            plugin_defaults: Table::new(),
         }
     }
 
@@ -54,6 +56,13 @@ impl Options {
     /// Replaces the process environment, for tests.
     pub fn env(mut self, vars: Vec<(String, String)>) -> Self {
         self.env = Some(vars);
+        self
+    }
+
+    /// `PluginHost::default_sections()`. Plugin sections load over these, and the settings
+    /// schema gains one typed field per plugin key.
+    pub fn plugin_defaults(mut self, defaults: Table) -> Self {
+        self.plugin_defaults = defaults;
         self
     }
 
@@ -176,7 +185,7 @@ impl<T: Settings> SettingsHandle<T> {
     /// Reads every layer. Fails with the file, key and line when something does not load; apps
     /// that prefer to start anyway fall back to `T::default()`.
     pub fn load(opts: Options) -> Result<Self, LoadError> {
-        let schema = SettingsSchema::of::<T>();
+        let schema = SettingsSchema::of::<T>().with_plugins(&opts.plugin_defaults);
         let env = opts.env.clone().unwrap_or_else(|| std::env::vars().collect());
         let ctx = context(&opts, &env);
         let loaded = layers::load::<T>(&ctx, &schema, None)?;
@@ -201,6 +210,14 @@ impl<T: Settings> SettingsHandle<T> {
     /// The metadata a settings form renders.
     pub fn schema(&self) -> &SettingsSchema {
         &self.inner.schema
+    }
+
+    /// A root table holding only `plugins`, in the shape `PluginHost::load` and `reload` take:
+    /// defaults first, then the Nix-managed file, the user file and the rest.
+    pub fn plugins_root(&self) -> Table {
+        let mut root = self.inner.state.read().expect("settings lock").loaded.combined();
+        root.retain(|k, _| k == "plugins");
+        root
     }
 
     /// The `[plugins.<name>]` section, split off before the app's struct parses.
@@ -250,7 +267,8 @@ impl<T: Settings> SettingsHandle<T> {
     /// The Nix expression that sets `key` to its current value ("Copy as Nix").
     pub fn copy_as_nix(&self, key: &str) -> Option<String> {
         let state = self.inner.state.read().expect("settings lock");
-        let value = layers::get_path(&state.loaded.table, key)?;
+        let combined = state.loaded.combined();
+        let value = layers::get_path(&combined, key)?;
         Some(format!("{} = {};", self.nix_option(key), nix::literal(value)))
     }
 
@@ -326,7 +344,7 @@ impl<T: Settings> SettingsHandle<T> {
         let new = Arc::new(from_table(&loaded.table));
         let (old, changed) = {
             let mut state = self.inner.state.write().expect("settings lock");
-            let changed = diff(&state.loaded.table, &loaded.table);
+            let changed = diff(&state.loaded.combined(), &loaded.combined());
             let old = Arc::clone(&state.value);
             *state = State { loaded, value: Arc::clone(&new), fingerprint };
             (old, changed)
@@ -378,7 +396,14 @@ impl<T: Settings> SettingsHandle<T> {
 }
 
 fn context<'a>(opts: &'a Options, env: &'a [(String, String)]) -> Context<'a> {
-    Context { paths: &opts.paths, env_prefix: &opts.env_prefix, env, cli: &opts.cli, store_roots: &opts.store_roots }
+    Context {
+        paths: &opts.paths,
+        env_prefix: &opts.env_prefix,
+        env,
+        cli: &opts.cli,
+        store_roots: &opts.store_roots,
+        plugin_defaults: &opts.plugin_defaults,
+    }
 }
 
 /// `T` has no `Clone` bound; the merged table already loaded once, so it loads again.

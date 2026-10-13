@@ -18,6 +18,6 @@ path = "src/bin/nd-config.rs"
 schemars = "1.2.3"
 serde.workspace = true
 serde_json.workspace = true
-toml = "1.1.8"
+toml = "0.9"
 
 [dev-dependencies]

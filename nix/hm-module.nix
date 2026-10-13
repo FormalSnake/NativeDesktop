@@ -72,16 +72,19 @@ in
 
     settings = lib.mkOption {
       type = lib.types.submodule {
-        options = (settingsOptions {
-          inherit lib;
-          tomlType = toml.type;
-        }) // {
-          plugins = lib.mkOption {
-            type = lib.types.attrsOf toml.type;
-            default = { };
-            description = "Plugin sections, written as `[plugins.<name>]`. Each plugin checks its own keys.";
+        options =
+          {
+            # Replaced by the typed `plugins` option when the app registers plugins.
+            plugins = lib.mkOption {
+              type = lib.types.attrsOf toml.type;
+              default = { };
+              description = "Plugin sections, written as `[plugins.<name>]`. Each plugin checks its own keys.";
+            };
+          }
+          // settingsOptions {
+            inherit lib;
+            tomlType = toml.type;
           };
-        };
       };
       default = { };
       description = ''

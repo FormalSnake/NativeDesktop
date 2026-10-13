@@ -97,6 +97,7 @@
 
       # The settings schema of examples/notes, committed as a fixture of nd-settings' tests.
       notesFixture = ./crates/nd-settings/tests/fixtures/notes;
+      notesPluginsFixture = ./crates/nd-settings/tests/fixtures/notes-plugins;
     in
     {
       devShells = forAll (pkgs: {
@@ -110,6 +111,29 @@
       };
 
       checks = forAll (pkgs: {
+        hm-module-eval-notes-plugins = hmEvalCheck {
+          inherit pkgs;
+          pname = "notes";
+          homeModule = hmModule {
+            pname = "notes";
+            settingsOptions = import (notesPluginsFixture + "/nix/settings-options.nix");
+            defaultPackage = _: pkgs.hello;
+          };
+          settings = {
+            compact_rows = true;
+            plugins.discord.enabled = false;
+            plugins.other.anything = "passes";
+          };
+          expectLines = [
+            "compact_rows = true"
+            "enabled = false"
+          ];
+          rejects = [
+            { plugins.discord.enabled = "no"; }
+            { plugins.discord.buttons = 3; }
+          ];
+        };
+
         hm-module-eval-notes = hmEvalCheck {
           inherit pkgs;
           pname = "notes";

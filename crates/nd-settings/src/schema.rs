@@ -268,6 +268,37 @@ impl SettingsSchema {
         out
     }
 
+    /// Adds one field per key of the plugins' default sections (`plugins.<name>.<key>`), typed
+    /// from the default value, under a section named after the plugin.
+    pub fn with_plugins(mut self, defaults: &toml::Table) -> Self {
+        for (name, section) in defaults {
+            let Some(section) = section.as_table() else { continue };
+            self.sections.push(SectionInfo { path: format!("plugins.{name}"), title: humanize(name), help: None });
+            self.collect_plugin(&format!("plugins.{name}"), section);
+        }
+        self
+    }
+
+    fn collect_plugin(&mut self, prefix: &str, table: &toml::Table) {
+        for (key, value) in table {
+            let path = format!("{prefix}.{key}");
+            if let Some(inner) = value.as_table() {
+                self.collect_plugin(&path, inner);
+                continue;
+            }
+            self.fields.push(Field {
+                title: humanize(key),
+                help: None,
+                kind: plugin_kind(value),
+                optional: false,
+                default: serde_json::to_value(value).ok(),
+                step: None,
+                reload: Reload::Live,
+                path,
+            });
+        }
+    }
+
     pub fn field(&self, path: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.path == path)
     }
@@ -322,6 +353,17 @@ fn kind_of(ty: &Ty) -> FieldKind {
         Ty::Map(_) => FieldKind::Map,
         Ty::Nullable(inner) => kind_of(inner),
         Ty::Object(_) | Ty::Any => FieldKind::Raw,
+    }
+}
+
+fn plugin_kind(value: &toml::Value) -> FieldKind {
+    match value {
+        toml::Value::Boolean(_) => FieldKind::Toggle,
+        toml::Value::Integer(_) => FieldKind::Integer { min: None, max: None },
+        toml::Value::Float(_) => FieldKind::Number { min: None, max: None },
+        toml::Value::String(_) => FieldKind::Text,
+        toml::Value::Array(items) => FieldKind::List(Box::new(items.first().map_or(FieldKind::Raw, plugin_kind))),
+        _ => FieldKind::Raw,
     }
 }
 

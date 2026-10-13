@@ -107,6 +107,18 @@ pub enum LoadError {
     },
 }
 
+impl Loaded {
+    /// The app's merged table with `plugins` put back, for diffs and lookups by dotted key.
+    pub(crate) fn combined(&self) -> Table {
+        let mut table = self.table.clone();
+        let plugins: Table = self.plugins.iter().map(|(k, v)| (k.clone(), Value::Table(v.clone()))).collect();
+        if !plugins.is_empty() {
+            table.insert("plugins".into(), Value::Table(plugins));
+        }
+        table
+    }
+}
+
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -125,12 +137,15 @@ pub(crate) struct Context<'a> {
     pub env: &'a [(String, String)],
     pub cli: &'a [(String, String)],
     pub store_roots: &'a [PathBuf],
+    /// `PluginHost::default_sections()`: the base every `[plugins.<name>]` section layers over.
+    pub plugin_defaults: &'a Table,
 }
 
 pub(crate) struct Loaded {
     /// Defaults plus every layer, merged. `plugins` is split off.
     pub table: Table,
     pub sources: BTreeMap<String, LayerRef>,
+    /// Plugin defaults with every layer's `[plugins.<name>]` merged over them.
     pub plugins: BTreeMap<String, Table>,
     /// The config files that exist, lowest precedence first.
     pub files: Vec<LayerRef>,
@@ -165,7 +180,9 @@ pub(crate) fn load<T: Settings>(
         message: e.to_string(),
     })?;
     let mut layers: Vec<(LayerRef, Table, Option<String>)> = Vec::new();
-    let mut plugins: BTreeMap<String, Table> = BTreeMap::new();
+    let mut plugins: BTreeMap<String, Table> =
+        ctx.plugin_defaults.iter().filter_map(|(name, v)| v.as_table().map(|t| (name.clone(), t.clone()))).collect();
+    let mut plugin_layers: Vec<(LayerRef, Table)> = Vec::new();
     let mut files = Vec::new();
 
     for (kind, path) in candidate_files(ctx) {
@@ -184,6 +201,7 @@ pub(crate) fn load<T: Settings>(
         let kind = if file_state(&path, ctx.store_roots) == FileState::NixManaged { LayerKind::Nix } else { kind };
         let layer = LayerRef { kind, origin: Some(path.clone()), label: path.display().to_string() };
         if let Some(Value::Table(sections)) = table.remove("plugins") {
+            plugin_layers.push((layer.clone(), sections.clone()));
             for (name, section) in sections {
                 if let Value::Table(section) = section {
                     merge(plugins.entry(name).or_default(), section);
@@ -208,6 +226,9 @@ pub(crate) fn load<T: Settings>(
     for (layer, table, _) in &layers {
         merge(&mut merged, table.clone());
         record(&mut sources, "", table, layer);
+    }
+    for (layer, sections) in &plugin_layers {
+        record(&mut sources, "plugins", sections, layer);
     }
     match Value::Table(merged.clone()).try_into::<T>() {
         Ok(value) => {
