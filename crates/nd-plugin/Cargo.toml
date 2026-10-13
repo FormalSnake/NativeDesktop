@@ -1,0 +1,18 @@
+[package]
+name = "nd-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+serde.workspace = true
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync"] }
+toml = "0.9"
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
