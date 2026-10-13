@@ -170,6 +170,7 @@ pub(crate) struct SliderControl {
     view: View,
     value: Rc<RefCell<Synced<f32>>>,
     props: Rc<RefCell<SliderProps>>,
+    cx: Ctx,
 }
 
 impl SliderControl {
@@ -200,7 +201,7 @@ impl SliderControl {
             target.wire(&slider);
             View::Native { slider, _target: target }
         };
-        let this = Self { view, value, props: live };
+        let this = Self { view, value, props: live, cx: cx.clone() };
         this.apply(None, props);
         this
     }
@@ -227,10 +228,15 @@ impl SliderControl {
                 if old.is_none_or(|o| o.label != props.label) {
                     set_accessibility_label(slider, props.label.as_deref());
                 }
-                self.value.borrow_mut().apply(&props.value, |v| {
+                let wanted = props.normalise(props.value);
+                let normalised = self.value.borrow_mut().apply(&wanted, |v| {
                     slider.setDoubleValue((*v).into());
                     slider.doubleValue() as f32
                 });
+                let held = normalised.unwrap_or(wanted);
+                if held != props.value && old.is_none_or(|o| o.value != props.value) {
+                    self.cx.send_normalised(SliderChanged { value: held });
+                }
             }
             View::Drawn(view) => {
                 let ivars = view.ivars();

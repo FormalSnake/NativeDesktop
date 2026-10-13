@@ -73,6 +73,13 @@ impl Ctx {
         self.emit.emit(event);
         self.wake.wake();
     }
+
+    /// Reports a value the control normalised while the app set it. Updates run inside
+    /// `programmatic`, which drops events, so it goes out on the next run loop turn.
+    pub fn send_normalised<E: 'static>(&self, event: E) {
+        let cx = self.clone();
+        crate::events::defer(move || cx.send(event));
+    }
 }
 
 fn is<W: 'static>(kind: WidgetKind) -> bool {

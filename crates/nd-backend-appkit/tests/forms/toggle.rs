@@ -334,9 +334,15 @@ pub fn run(rig: &Rig, c: &mut Checks) {
         cx.notify();
     });
     rig.pump();
-    c.check(st.doubleValue() == 10. && count("st") == 2, "stepper: an app value past max is clamped without an event");
+    rig.pump();
     c.check(
-        rig.perform(win, "st", SemanticAction::SetValue("4".into())).is_ok() && count("st") == 3,
+        st.doubleValue() == 10.
+            && count("st") == 3
+            && rig.read(&opened, |f| f.last("st").cloned()).as_deref() == Some("st:10"),
+        "stepper: an app value past max is clamped and reported once (3.13 normalisation)",
+    );
+    c.check(
+        rig.perform(win, "st", SemanticAction::SetValue("4".into())).is_ok() && count("st") == 4,
         "stepper: SetValue reaches the app",
     );
     c.check(

@@ -219,6 +219,7 @@ pub(crate) struct StepperControl {
     _target: Retained<NdControlTarget>,
     props: Rc<RefCell<StepperProps>>,
     value: Rc<RefCell<Synced<f64>>>,
+    cx: Ctx,
 }
 
 struct Field {
@@ -248,6 +249,7 @@ impl StepperControl {
             Field { text, formatter, width }
         });
         let send = cx.clone();
+        let owner = cx.clone();
         let (s, f, l, v) = (stepper.clone(), field.as_ref().map(|f| f.text.clone()), live.clone(), value.clone());
         let target = NdControlTarget::new(cx.mtm, move |sender| {
             let raw = sender.downcast_ref::<NSTextField>().map_or_else(|| s.doubleValue(), |t| t.doubleValue());
@@ -277,7 +279,7 @@ impl StepperControl {
             }
             None => Retained::into_super(Retained::into_super(stepper.clone())),
         };
-        let this = Self { root, stepper, field, _target: target, props: live, value };
+        let this = Self { root, stepper, field, _target: target, props: live, value, cx: owner };
         this.apply(None, props);
         this
     }
@@ -294,10 +296,14 @@ impl StepperControl {
             set_accessibility_label(stepper, new.label.as_deref());
         }
         let next = new.normalise(new.value);
-        self.value.borrow_mut().apply(&next, |v| {
+        let held = self.value.borrow_mut().apply(&next, |v| {
             stepper.setDoubleValue(*v);
             stepper.doubleValue()
         });
+        let held = held.unwrap_or(next);
+        if held != new.value && self.value.borrow().value() == Some(&held) && old.is_none_or(|o| o.value != new.value) {
+            self.cx.send_normalised(StepperChanged { value: held });
+        }
         if let Some(field) = &self.field {
             field.text.setEnabled(new.enabled);
             if old.is_none_or(|o| (o.field, o.min, o.max) != (new.field, new.min, new.max)) {
