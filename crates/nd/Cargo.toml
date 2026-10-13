@@ -6,9 +6,25 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# `nd::build::app()` for app build scripts.
+build = []
+
 [dependencies]
 nd-core.workspace = true
 nd-ui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit.workspace = true
+
+# The design-target examples type-check against this crate until they move to `examples/`
+# (M1): `cargo check -p nd --examples --features build`.
+[[example]]
+name = "hello"
+path = "../../docs/plan/examples/hello/src/main.rs"
+
+[[example]]
+name = "hello-build"
+path = "../../docs/plan/examples/hello/build.rs"
+required-features = ["build"]
