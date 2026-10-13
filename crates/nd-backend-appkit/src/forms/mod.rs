@@ -14,6 +14,7 @@
 //!   control's own action, so the same report-and-emit path runs as for the user.
 
 mod choice;
+mod toggle;
 mod value;
 
 use std::any::TypeId;
@@ -85,6 +86,12 @@ pub(crate) fn create(kind: WidgetKind, p: &Props, cx: Ctx) -> Option<Box<dyn For
     use nd_components::forms::*;
     let control: Box<dyn FormControl> = if is::<SelectKind>(kind) {
         Box::new(choice::SelectControl::new(cx, props(p)))
+    } else if is::<CheckboxKind>(kind) {
+        Box::new(toggle::CheckboxControl::new(cx, props(p)))
+    } else if is::<SwitchKind>(kind) {
+        Box::new(toggle::SwitchControl::new(cx, props(p)))
+    } else if is::<StepperKind>(kind) {
+        Box::new(toggle::StepperControl::new(cx, props(p)))
     } else if is::<SliderKind>(kind) {
         Box::new(value::SliderControl::new(cx, props(p)))
     } else {

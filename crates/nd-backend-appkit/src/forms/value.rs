@@ -1,5 +1,5 @@
 //! `slider` as `NSSlider` (or nd's drawn slider through `.drawn()`, which takes style
-//! overrides the native one cannot express) and `stepper` as `NSStepper`.
+//! overrides the native one cannot express). The stepper lives in `toggle.rs`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -169,12 +169,13 @@ enum View {
 pub(crate) struct SliderControl {
     view: View,
     value: Rc<RefCell<Synced<f32>>>,
-    props: SliderProps,
+    props: Rc<RefCell<SliderProps>>,
 }
 
 impl SliderControl {
     pub fn new(cx: Ctx, props: &SliderProps) -> Self {
         let value: Rc<RefCell<Synced<f32>>> = Rc::default();
+        let live = Rc::new(RefCell::new(props.clone()));
         let view = if props.drawn {
             let view = NdDrawnSlider::new(cx.mtm);
             *view.ivars().emit.borrow_mut() = Some((cx.emit.clone(), cx.wake.clone()));
@@ -183,8 +184,14 @@ impl SliderControl {
         } else {
             let reported = value.clone();
             let send = cx.clone();
+            let steps = live.clone();
             let target = NdControlTarget::new(cx.mtm, move |sender| {
-                let v = sender.doubleValue() as f32;
+                // The knob can sit between steps while dragging; the app is told the snapped value.
+                let v = steps.borrow().normalise(sender.doubleValue() as f32);
+                sender.setDoubleValue(v.into());
+                if reported.borrow().value() == Some(&v) {
+                    return;
+                }
                 reported.borrow_mut().report(v);
                 send.send(SliderChanged { value: v });
             });
@@ -193,7 +200,7 @@ impl SliderControl {
             target.wire(&slider);
             View::Native { slider, _target: target }
         };
-        let this = Self { view, value, props: props.clone() };
+        let this = Self { view, value, props: live };
         this.apply(None, props);
         this
     }
@@ -206,11 +213,16 @@ impl SliderControl {
                 if old.is_none_or(|o| o.vertical != props.vertical) {
                     slider.setVertical(props.vertical);
                 }
-                // Tick marks, and with a step, one tick per step so the knob snaps to them.
+                // Tick marks as asked; with a step and no ticks, one per step (up to a count that
+                // stays legible) so the knob snaps to them. Other steps snap in the action.
                 let steps = props.step.filter(|s| *s > 0.).map(|s| ((props.max - props.min) / s).round() as isize + 1);
-                let ticks = steps.unwrap_or(props.ticks as isize);
-                slider.setNumberOfTickMarks(if props.ticks > 0 || steps.is_some_and(|n| n <= 64) { ticks } else { 0 });
-                slider.setAllowsTickMarkValuesOnly(steps.is_some_and(|n| n <= 64));
+                let ticks = match steps {
+                    _ if props.ticks > 0 => props.ticks as isize,
+                    Some(n) if n <= 64 => n,
+                    _ => 0,
+                };
+                slider.setNumberOfTickMarks(ticks);
+                slider.setAllowsTickMarkValuesOnly(ticks > 0 && steps == Some(ticks));
                 apply_common(Some(slider), slider, old.map(|o| (o.enabled, &o.tooltip)), props.enabled, &props.tooltip);
                 if old.is_none_or(|o| o.label != props.label) {
                     set_accessibility_label(slider, props.label.as_deref());
@@ -251,8 +263,8 @@ impl FormControl for SliderControl {
         if old.drawn != new.drawn {
             return false;
         }
+        *self.props.borrow_mut() = new.clone();
         self.apply(Some(old), new);
-        self.props = new.clone();
         true
     }
 
@@ -277,7 +289,7 @@ impl FormControl for SliderControl {
         let Ok(v) = value.trim().parse::<f64>() else {
             return Some(Err(ActionError::NotActionable(format!("\"{value}\" is not a number"))));
         };
-        slider.setDoubleValue(f64::from(self.props.normalise(v as f32)));
+        slider.setDoubleValue(f64::from(self.props.borrow().normalise(v as f32)));
         Some(send_action(slider))
     }
 
