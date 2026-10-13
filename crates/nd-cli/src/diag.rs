@@ -99,7 +99,10 @@ pub fn run(args: DiagArgs) -> Result<ExitCode> {
 
 fn scroll(args: ScrollArgs) -> Result<ExitCode> {
     let bin = bench_binary(&args)?;
+    // The frame line comes from the GPUI host's `ND_ANIMATE` budget mode; on macOS that is the
+    // GPUI backend (a `scroll-bench` built with `--features gpui`).
     let mut child = Command::new(&bin)
+        .env("ND_BACKEND", "gpui")
         .env("ND_ROWS", args.rows.to_string())
         .env("ND_SCROLL_STEP", args.step.to_string())
         .env("ND_ANIMATE", args.seconds.to_string())
@@ -107,6 +110,13 @@ fn scroll(args: ScrollArgs) -> Result<ExitCode> {
         .spawn()
         .with_context(|| format!("starting {}", bin.display()))?;
     let stdout = child.stdout.take().expect("piped stdout");
+    // A host without the budget mode never quits on its own: stop it well after the run's end.
+    let pid = child.id();
+    let deadline = std::time::Duration::from_secs_f64(args.seconds + 30.);
+    std::thread::spawn(move || {
+        std::thread::sleep(deadline);
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+    });
     let mut frames = None;
     let mut passes = 0;
     for line in BufReader::new(stdout).lines() {
@@ -120,7 +130,10 @@ fn scroll(args: ScrollArgs) -> Result<ExitCode> {
     }
     let status = child.wait()?;
     let Some(frames) = frames else {
-        bail!("{} exited ({status}) without a frame line", bin.display());
+        bail!(
+            "{} exited ({status}) without a frame line; on macOS build it with `--features gpui`, the AppKit host has no frame budget mode",
+            bin.display()
+        );
     };
     let ok = frames.within_budget();
     println!(
