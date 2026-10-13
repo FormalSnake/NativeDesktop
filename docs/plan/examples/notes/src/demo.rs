@@ -17,6 +17,7 @@ pub fn seed(cx: &mut App) {
         pinned,
         archived: false,
         updated: at(minutes),
+        version: 0,
     };
     Store::<LibraryData>::replace(
         "library",

@@ -38,13 +38,13 @@ impl NoteList {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let ids = self.library.read(cx).visible_ids(self.folder, &self.query);
-        // Keyed diff: inserts and removals animate, the anchor row stays put.
-        self.list.set_items(ids, cx);
+        let rows = self.library.read(cx).rows(self.folder, &self.query);
+        // Keyed diff: inserts and removals animate and the anchor row stays put. Versioned: only
+        // rows whose note changed re-render.
+        self.list.set_items_versioned(rows, cx);
     }
 
-    fn row(&mut self, id: &NoteId, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let id = *id;
+    fn row(&mut self, id: NoteId, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let compact = cx.settings::<NotesSettings>().compact_rows;
         let Some(note) = self.library.read(cx).note(&id) else {
@@ -55,7 +55,6 @@ impl NoteList {
         let accent = theme.accent;
 
         h_flex()
-            .id(("note", id.0))
             .test_id(format!("note-{}", id.0))
             .gap_3()
             .px_3()
@@ -72,6 +71,7 @@ impl NoteList {
                         paint.fill_rounded_rect(notch, px(1.), accent);
                     }
                 })
+                .cache_key((tag, pinned, accent))
                 .w(px(10.))
                 .h_full(),
             )
@@ -85,10 +85,11 @@ impl NoteList {
                             .gap_2()
                             .child(text(note.title.clone()).font_weight(FontWeight::SEMIBOLD).truncate().flex_1())
                             .child(
-                                text(nd::time::relative(note.updated))
+                                // A self-updating relative time: re-renders on its own minute tick,
+                                // never through the row.
+                                relative_time(note.updated)
                                     .text_size(theme.type_scale.caption)
-                                    .text_color(theme.text.tertiary)
-                                    .tabular_nums(),
+                                    .text_color(theme.text.tertiary),
                             ),
                     )
                     .when(!compact, |col| {
@@ -101,16 +102,6 @@ impl NoteList {
                     .separator()
                     .item_destructive("Delete", DeleteNote(id))
             })
-            .swipe_actions(
-                SwipeActions::trailing()
-                    .action(swipe_action("Delete", Icon::Trash).destructive().dispatch(DeleteNote(id)))
-                    .full_swipe(true),
-            )
-            .swipe_actions(
-                SwipeActions::leading().action(
-                    swipe_action(if pinned { "Unpin" } else { "Pin" }, Icon::Pin).tint(accent).dispatch(PinNote(id)),
-                ),
-            )
             .into_any_element()
     }
 }
@@ -118,11 +109,23 @@ impl NoteList {
 impl Render for NoteList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let compact = cx.settings::<NotesSettings>().compact_rows;
-        list(&self.list, cx.processor(Self::row))
+        let accent = cx.theme().accent;
+        let pinned = |library: &Entity<Library>, id: NoteId, cx: &App| library.read(cx).note(&id).is_some_and(|n| n.pinned);
+        let library = self.library.clone();
+
+        list("notes", &self.list, cx.processor(Self::row))
             .test_id("notes")
             .estimated_row_height(if compact { px(36.) } else { px(64.) })
             .selection(Selection::single())
             .type_ahead(true)
+            // Row actions belong to the list: on macOS they are NSTableView row actions.
+            .row_actions(move |id: NoteId, cx: &App| {
+                let pin_label = if pinned(&library, id, cx) { "Unpin" } else { "Pin" };
+                RowActions::new()
+                    .trailing(row_action("Delete", Icon::Trash).destructive().dispatch(DeleteNote(id)))
+                    .leading(row_action(pin_label, Icon::Pin).tint(accent).dispatch(PinNote(id)))
+                    .full_swipe(RowEdge::Trailing)
+            })
             .on_select(cx.listener(|_, e: &SelectEvent<NoteId>, _window, cx| cx.emit(NoteSelected(e.key))))
             .empty(
                 status_page(Icon::Notebook, "No Notes").description(match window.binding_label(&NewNote) {

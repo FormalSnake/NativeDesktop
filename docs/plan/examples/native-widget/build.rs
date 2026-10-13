@@ -1,4 +1,5 @@
 fn main() {
-    // Builds and links the SwiftPM package on macOS; does nothing on other targets.
-    nd::build::swift_package("swift/Widgets");
+    // Links the app's Swift (framework packages plus `[macos] swift_packages`) into one archive on
+    // macOS; a no-op on every other target.
+    nd::build::app();
 }

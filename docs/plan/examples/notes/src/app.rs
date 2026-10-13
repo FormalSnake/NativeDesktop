@@ -37,7 +37,7 @@ impl Notes {
         })
         .detach();
         cx.subscribe(&search, |this, _, event: &TextEvent, cx| {
-            if let TextEvent::Changed = event {
+            if let TextEvent::Edited = event {
                 this.apply_filter(cx);
             }
         })
@@ -72,7 +72,8 @@ impl Notes {
             id
         });
         self.select(id, window, cx);
-        self.editor.read(cx).focus(window, cx);
+        let focus = self.editor.read(cx).focus_handle(cx);
+        focus.focus(window, cx);
     }
 
     fn select(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
@@ -99,7 +100,8 @@ impl Notes {
     }
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
-        self.search.read(cx).focus_handle().focus(window);
+        let focus = self.search.read(cx).focus_handle();
+        focus.focus(window, cx);
     }
 
     fn toggle_sidebar(&mut self, _: &ToggleSidebar, _window: &mut Window, cx: &mut Context<Self>) {
@@ -113,26 +115,31 @@ impl Notes {
         cx.notify();
     }
 
-    /// The palette is controlled: it shows exactly these rows, in this order.
+    /// The palette is controlled: it shows exactly these rows, in this order. Notes come first, so a
+    /// title that starts with the query offers itself as the inline completion.
     fn palette_items(&self, window: &Window, cx: &App) -> Vec<PaletteItem> {
+        let query = self.palette_query.to_lowercase();
+        let library = self.library.read(cx);
+        let notes = library.rows(Folder::All, "").into_iter().filter_map(|(id, _)| library.note(&id));
+
+        let mut items: Vec<PaletteItem> = fuzzy::rank(&self.palette_query, notes, |n| n.title.as_ref())
+            .take(20)
+            .map(|note| {
+                let completes = !query.is_empty() && note.title.to_lowercase().starts_with(&query);
+                palette_item(format!("note:{}", note.id.0), note.title.clone())
+                    .subtitle(note.preview())
+                    .icon(Icon::FileText)
+                    .when(completes, |item| item.completion(note.title.clone()))
+            })
+            .collect();
+
         let commands = [
             ("cmd:new", "New Note", Icon::SquarePen, window.binding_label(&NewNote)),
             ("cmd:settings", "Settings", Icon::Settings, window.binding_label(&OpenSettings)),
             ("cmd:sidebar", "Toggle Sidebar", Icon::PanelLeft, window.binding_label(&ToggleSidebar)),
         ];
-        let library = self.library.read(cx);
-        let notes = library.visible_ids(Folder::All, "").into_iter().filter_map(|id| library.note(&id));
-
-        let mut items: Vec<PaletteItem> = fuzzy::rank(&self.palette_query, commands, |c| c.1)
-            .map(|(id, title, icon, keys)| {
-                palette_item(id, title).icon(icon).when_some(keys, |item, keys| item.hint(keys))
-            })
-            .collect();
-        items.extend(fuzzy::rank(&self.palette_query, notes, |n| n.title.as_ref()).take(20).map(|note| {
-            palette_item(format!("note:{}", note.id.0), note.title.clone())
-                .subtitle(note.preview())
-                .icon(Icon::FileText)
-                .completion(note.title.clone())
+        items.extend(fuzzy::rank(&self.palette_query, commands, |c| c.1).map(|(id, title, icon, keys)| {
+            palette_item(id, title).icon(icon).when_some(keys, |item, keys| item.hint(keys))
         }));
         items
     }
@@ -173,7 +180,7 @@ impl Render for Notes {
                     .item(toolbar_sidebar_toggle())
                     .item(icon_button("new-note", Icon::SquarePen).tooltip("New Note").dispatch(NewNote))
                     .flexible_space()
-                    .item(search_field(&self.search).w(px(220.))),
+                    .item(search_field("search", &self.search).w(px(220.))),
             )
             .sidebar(sidebar().collapsed(self.sidebar_collapsed).min_w(px(200.)).child(self.sidebar.clone()))
             .content(
@@ -197,6 +204,7 @@ impl Render for Notes {
                     .on_submit(cx.listener(|this, e: &PaletteSubmitted, window, cx| {
                         // Nothing matched: typed text becomes a new note.
                         this.palette_open = false;
+                        cx.notify();
                         let id = this.library.update(cx, |library, cx| {
                             let id = library.create(cx);
                             library.set_body(id, e.text.to_string(), cx);

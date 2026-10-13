@@ -51,8 +51,9 @@ async fn palette_completes_and_opens_a_note(cx: &mut TestApp) -> nd::Result<()> 
     win.keyboard().press("secondary-k").await?;
     let palette = win.get_by_role(Role::Dialog).name("Command Palette");
     expect(&palette).to_be_visible().await?;
-    win.keyboard().type_text("lis").await?;
-    expect(palette.get_by_role(Role::SearchBox)).to_have_value("lis|bon").await?; // completion shown selected
+    win.keyboard().type_text("tri").await?;
+    // The first row's title starts with the query, so its completion shows selected after the caret.
+    expect(palette.get_by_role(Role::SearchBox)).to_have_value("tri|p to Lisbon").await?;
     win.keyboard().press("tab").await?;
     win.keyboard().press("enter").await?;
     expect(palette).to_be_gone().await?;
@@ -68,6 +69,15 @@ async fn settings_sheet_round_trips_to_toml(cx: &mut TestApp) -> nd::Result<()> 
     win.get_by_role(Role::Button).name("Done").click().await?;
     let toml = std::fs::read_to_string(cx.config_dir().join("config.toml"))?;
     assert!(toml.contains("compact_rows = true"));
+    Ok(())
+}
+
+#[nd::test]
+async fn opening_a_note_does_not_reorder_the_list(cx: &mut TestApp) -> nd::Result<()> {
+    let win = open(cx);
+    win.get_by_test_id("note-4").click().await?;
+    let rows = win.get_by_role(Role::ListItem).within(win.get_by_test_id("notes"));
+    expect(rows.nth(3)).to_contain_text("Ideas").await?; // still last: set_text emits Replaced, not Edited
     Ok(())
 }
 
@@ -95,7 +105,8 @@ async fn swipe_to_delete_on_the_real_window() -> nd::Result<()> {
     let app = launch(env!("CARGO_BIN_EXE_notes")).env("NOTES_DEMO", "1").start().await?;
     let row = app.get_by_test_id("note-3");
     row.swipe(Direction::Left).await?; // trackpad gesture on macOS, synthesized at the platform layer elsewhere
-    app.get_by_role(Role::Button).name("Delete").click().await?;
+    // Row actions are drawn by AppKit on macOS; they are synthetic nodes in the semantic tree.
+    row.get_by_role(Role::Button).name("Delete").click().await?;
     expect(row).to_be_gone().await?;
     app.record().last_frames(30).save("swipe-delete")?; // kept as a test artifact for review
     Ok(())

@@ -13,8 +13,10 @@ pub struct Editor {
 impl Editor {
     pub fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let text = cx.new(|cx| TextEditorState::new(window, cx).placeholder("Start writing"));
+        // Only user edits write back. `set_text` in `open` emits `Replaced`, so opening a note
+        // never touches its timestamp or its place in the list.
         cx.subscribe_in(&text, window, |this, text, event: &TextEvent, _window, cx| {
-            if let (TextEvent::Changed, Some(id)) = (event, this.note) {
+            if let (TextEvent::Edited, Some(id)) = (event, this.note) {
                 let body = text.read(cx).text().to_string();
                 this.library.update(cx, |library, cx| library.set_body(id, body, cx));
             }
@@ -30,8 +32,8 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        self.text.read(cx).focus_handle().focus(window);
+    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.text.read(cx).focus_handle()
     }
 
     fn pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -58,7 +60,7 @@ impl Render for Editor {
             .bg(theme.surface.base)
             .on_pinch(cx.listener(Self::pinch))
             .child(
-                text_editor(&self.text)
+                text_editor("body", &self.text)
                     .flex_1()
                     .px(theme.spacing.content_margin)
                     .py_4()

@@ -1,6 +1,8 @@
 //! A circular capacity gauge: SwiftUI's `Gauge` (written in Swift, `swift/Widgets`) on macOS,
 //! a drawn ring elsewhere.
 
+use std::convert::Infallible;
+
 use nd::native::*;
 use nd::prelude::*;
 use serde::Serialize;
@@ -17,7 +19,7 @@ pub struct GaugeWidget;
 
 impl NativeWidget for GaugeWidget {
     type Props = GaugeProps;
-    type Event = ();
+    type Event = Infallible;
 
     fn semantics(props: &GaugeProps) -> Semantics {
         Semantics::new(Role::ProgressIndicator)
@@ -25,7 +27,7 @@ impl NativeWidget for GaugeWidget {
             .value(SemanticValue::range(props.value, props.min, props.max))
     }
 
-    fn drawn(props: &GaugeProps, _emit: Emit<()>, _window: &mut Window, cx: &mut App) -> AnyElement {
+    fn drawn(props: &GaugeProps, _emit: Emit<Infallible>, _window: &mut Window, cx: &mut App) -> AnyElement {
         let theme = cx.theme();
         let fraction = ((props.value - props.min) / (props.max - props.min)).clamp(0.0, 1.0) as f32;
         let (track, fill) = (theme.border.subtle, theme.accent);

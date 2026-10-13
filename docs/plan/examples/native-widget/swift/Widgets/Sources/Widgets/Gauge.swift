@@ -22,6 +22,10 @@ enum GaugeWidget: NDSwiftWidget {
         (view as? NSHostingView<GaugeBody>)?.rootView = GaugeBody(props: props)
     }
 
+    static func measure(_ view: NSView, props: GaugeProps, available: NDAvailableSize) -> CGSize {
+        view.fittingSize
+    }
+
     static func value(_ view: NSView) -> NDSemanticValue? {
         guard let props = (view as? NSHostingView<GaugeBody>)?.rootView.props else { return nil }
         return .range(value: props.value, min: props.min, max: props.max)

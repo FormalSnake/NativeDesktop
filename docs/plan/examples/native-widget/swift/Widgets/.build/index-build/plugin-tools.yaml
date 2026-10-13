@@ -1,0 +1,47 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "Widgets-arm64-apple-macosx-debug.module": ["<Widgets-arm64-apple-macosx-debug.module>"]
+  "main": ["<Widgets-arm64-apple-macosx-debug.module>"]
+  "test": ["<Widgets-arm64-apple-macosx-debug.module>"]
+default: "main"
+nodes:
+  "/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Sources/Widgets/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Sources/Widgets/Gauge.swift"]
+    outputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/sources"]
+    description: "Write auxiliary file /Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/sources"
+
+  "/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+
+  "<Widgets-arm64-apple-macosx-debug.module>":
+    tool: phony
+    inputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Modules/Widgets.swiftmodule"]
+    outputs: ["<Widgets-arm64-apple-macosx-debug.module>"]
+
+  "C.Widgets-arm64-apple-macosx-debug.module":
+    tool: shell
+    inputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Sources/Widgets/Gauge.swift","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/sources"]
+    outputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Modules/Widgets.swiftmodule"]
+    description: "Compiling Swift Module 'Widgets' (1 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","Widgets","-emit-dependencies","-emit-module","-emit-module-path","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Modules/Widgets.swiftmodule","-output-file-map","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/output-file-map.json","-parse-as-library","-incremental","@/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/sources","-I","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx14.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j10","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-parse-as-library","-emit-objc-header","-emit-objc-header-path","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/.build/index-build/arm64-apple-macosx/debug/Widgets.build/include/Widgets-Swift.h","-swift-version","6","-Xfrontend","-experimental-lazy-typecheck","-Xfrontend","-experimental-skip-all-function-bodies","-Xfrontend","-experimental-allow-module-with-compiler-errors","-Xfrontend","-empty-abi-descriptor","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","widgets"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Sources/Widgets/","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Package.swift","/Users/kyandesutter/Developer/ecosystem/nativedesktop/docs/plan/examples/native-widget/swift/Widgets/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

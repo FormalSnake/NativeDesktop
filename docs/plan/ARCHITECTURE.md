@@ -1,6 +1,6 @@
 # NativeDesktop (Rust): architecture
 
-Status: draft for adversarial review, 2026-10-13. Inputs: `docs/plan/PROMPT.md` (requirements and
+Status: draft, revised 2026-10-13 after the adversarial review in `docs/plan/REVIEW.md`. Inputs: `docs/plan/PROMPT.md` (requirements and
 kickoff decisions, including the 2026-10-13 correction), `docs/research/*.md` (evidence),
 `docs/parity/zig.md` and `docs/parity/apps.md` (what must survive). Example apps that use the API
 defined here live in `docs/plan/examples/`. "Old repo" means `~/Developer/NativeDesktop`, branch `zig`.
@@ -78,14 +78,32 @@ native widget's macOS module (checked by `nd check`, 15.4).
 | `nd-docs` | Static site generator and content loader | nd-config, pulldown-cmark |
 | `apps/docs` | Docs app, built with `nd` | nd |
 
-### 2.1 GPUI channel and patch queue
+### 2.1 GPUI channel and the maintained fork
 `nd-gpui` pins exact versions, bumped weekly in one PR gated by tiers 1-2 (`docs/research/gpui.md`
-recommendation 1). Missing features live as a small patch series in a fork (`nativedesktop/zed`,
-branch `nd/<snapshot>`) consumed with `[patch.crates-io]`: embedded-surface `PlatformWindow` for
-macOS (3.8), `momentumPhase` forwarding, frame clock injection for animations, Windows per-monitor
-pacing, Acrylic, X11 refresh re-query, wasm fixes found in M12. Each patch is filed upstream. M0
-checks whether `gpui-pre 0.3.9` has Linux headless rendering (zed PR #64718,
-`docs/research/testing-profiling.md` 1.2); if not, it pins that zed rev.
+recommendation 1). GPUI owns the OS connections (the `wl_display` and registry, the Win32 wndproc
+and swap chain, the per-window AccessKit adapter), so protocol work happens inside GPUI, not beside
+it. `nativedesktop/zed` (branch `nd/<snapshot>`) is therefore a maintained fork from M0, consumed
+with `[patch.crates-io]` on the `gpui-pre-*` crates, with a rebase gate: each weekly bump rebases
+the queue and must pass tiers 1-2 before it merges. `nd-os-*` crates consume the patched APIs; they
+own no protocol objects. nd semantics reach AccessKit through GPUI's own integration (element
+roles and labels from the semantic tree), never a second adapter.
+
+| Patch | Lane | Upstream |
+| --- | --- | --- |
+| Raw key and IME event hook so nd dispatch runs instead of GPUI's per-frame tree (3.12) | M0 dispatch | to file |
+| Embedded-surface `PlatformWindow` for macOS, one shared renderer and atlas per window (3.8) | M0/M6 | to file |
+| `deferred`/`anchored` overlays from embedded surfaces routed to nd's overlay layer | M6 | to file |
+| Frame clock injection for animations and springs | M1 | to file |
+| `momentumPhase` forwarding; rotate and smart-magnify events (macOS) | M4 | to file |
+| Wayland `pointer-gestures` swipe and hold, `wp_presentation`, `xdg-toplevel-drag`, KDE blur, `xdg_popup` for nd menus | M2/M4 | to file |
+| X11 refresh re-query on output change | M2 | to file |
+| Windows per-monitor pacing; `WM_POINTER` pen and touch; Acrylic backdrop; caption variant from the M2 spike (5.4) | M2 | to file |
+| Occlusion-based throttling instead of the inactive-window cap (5.3) | M2 | to file |
+| Remove the GL path when Vulkan wins (youtubemusic's local patch) | M2 | zed #63313 (open) |
+| Window composition: native surface between GPUI base and overlay layers | M4 | zed #62379 (open), shipped in gpui-fast |
+| Alpha-preserving content over glass | M3 | zed #58833 (open) |
+| Linux headless rendering, only if `gpui-pre 0.3.9` lacks it (checked in M0) | M0 | zed #64718 (merged) |
+| wasm fixes found while building the web backend | M11 | to file |
 
 ## 3. App programming model
 
@@ -94,9 +112,11 @@ Apps write GPUI-shaped code against `nd-ui`: entities hold state, `cx.notify()` 
 dirty, `impl Render` returns elements built with `div()`-style fluent methods, `actions!` plus
 `KeyBinding` drive commands. `App`, `Entity<T>`, `Context<T>`, `AsyncApp` and the executors are
 thin newtypes over GPUI's application core (entity store, effect queue, keymap, focus handles, test
-dispatcher), so the semantics are GPUI's and the surface stays ours across GPUI bumps. Elements
-are ours, because one element must become an `NSButton` on macOS and a drawn Fluent button on
-Windows. An app never learns which backend an element resolves to.
+dispatcher), so entity semantics are GPUI's and the surface stays ours across GPUI bumps. Focus,
+key contexts and action dispatch are nd's own on every backend (3.12), because GPUI's dispatch tree
+only exists for windows GPUI paints. Elements are ours, because one element must become an
+`NSButton` on macOS and a drawn Fluent button on Windows. An app never learns which backend an
+element resolves to.
 
 ### 3.2 A full screen
 Sidebar, toolbar with the traffic light slot, a virtual list with custom-drawn rows, a context
@@ -105,14 +125,13 @@ menu, swipe and pinch, and a settings sheet, in one file. This is a condensed fo
 views and adds the command palette and tests.
 ```rust
 use nd::prelude::*;
-use crate::{actions::*, editor::Editor, model::{Library, NoteId}, settings::{NotesSettings, SettingsSheet}};
+use crate::{actions::*, editor::Editor, model::{Folder, Library, NoteId}, settings::{NotesSettings, SettingsSheet}};
 
 pub struct Notes {
     library: Entity<Library>,
     list: ListState<NoteId>,
     search: Entity<TextFieldState>,
     editor: Entity<Editor>,
-    zoom: f32,
 }
 
 impl Notes {
@@ -120,34 +139,34 @@ impl Notes {
         let library = Library::open(cx);
         let list = ListState::new(cx).follow(Follow::None);
         cx.observe(&library, |this, library, cx| {
-            this.list.set_items(library.read(cx).visible_ids(), cx); // keyed: scroll never resets
+            // Keyed and versioned: scroll never resets, only rows whose note changed re-render.
+            let rows = library.read(cx).rows(Folder::All, "");
+            this.list.set_items_versioned(rows, cx);
         }).detach();
         Self {
             search: cx.new(|cx| TextFieldState::new(window, cx).placeholder("Search")),
             editor: cx.new(|cx| Editor::new(library.clone(), window, cx)),
-            library, list, zoom: 1.0,
+            library, list,
         }
     }
 
-    fn row(&mut self, id: &NoteId, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let note = self.library.read(cx).note(id);
+    fn row(&mut self, id: NoteId, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let id = *id;
+        let Some(note) = self.library.read(cx).note(&id) else { return div().into_any_element() };
+        let tag = note.tag.map(|t| t.color(theme));
         h_flex()
-            .id(id)
             .gap_3().px_3().py_2()
             .child(canvas(move |bounds, paint, _cx| {                  // custom-drawn colour tag
-                paint.fill_circle(bounds.center(), bounds.size.width / 2., note.tag_color);
-            }).size(px(10.)))
+                if let Some(color) = tag { paint.fill_circle(bounds.center(), bounds.size.width / 2., color) }
+            }).cache_key(tag).size(px(10.)))
             .child(v_flex().flex_1().min_w_0()
                 .child(text(note.title.clone()).font_weight(FontWeight::SEMIBOLD).truncate())
-                .child(text(note.preview.clone()).text_color(theme.text.secondary).line_clamp(2)))
+                .child(text(note.preview()).text_color(theme.text.secondary).line_clamp(2)))
             .context_menu(move |menu, _window, _cx| {
                 menu.item("Pin", PinNote(id)).item("Duplicate", DuplicateNote(id))
                     .separator().item_destructive("Delete", DeleteNote(id))
             })
-            .swipe_actions(SwipeActions::trailing()
-                .action(swipe_action("Delete", Icon::Trash).destructive().dispatch(DeleteNote(id))))
+            .into_any_element()
     }
 
     fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
@@ -165,27 +184,25 @@ impl Render for Notes {
                 .leading(window_controls().embedded())
                 .item(icon_button("new", Icon::SquarePen).tooltip("New Note").dispatch(NewNote))
                 .flexible_space()
-                .item(search_field(&self.search)))
+                .item(search_field("search", &self.search)))
             .sidebar(sidebar().min_w(px(220.)).child(
-                list(&self.list, cx.processor(Self::row))
+                list("notes", &self.list, cx.processor(Self::row))
                     .estimated_row_height(if compact { px(36.) } else { px(56.) })
                     .selection(Selection::single())
-                    .on_select(cx.listener(|this, e: &SelectEvent<NoteId>, _w, cx| {
-                        this.editor.update(cx, |editor, cx| editor.open(e.key, cx));
+                    .row_actions(|id: NoteId, _cx: &App| RowActions::new()
+                        .trailing(row_action("Delete", Icon::Trash).destructive().dispatch(DeleteNote(id))))
+                    .on_select(cx.listener(|this, e: &SelectEvent<NoteId>, window, cx| {
+                        this.editor.update(cx, |editor, cx| editor.open(e.key, window, cx));
                     }))))
-            .content(div().size_full()
-                .on_pinch(cx.listener(|this, e: &PinchEvent, _w, cx| {
-                    this.zoom = (this.zoom * e.scale).clamp(0.5, 3.0);
-                    cx.notify();
-                }))
-                .child(self.editor.clone()))
+            .content(div().size_full().child(self.editor.clone())) // pinch zoom lives in Editor
     }
 }
 ```
 Nothing here names AppKit, GPUI or a platform. On macOS `scaffold()` is an `NSSplitViewController`
 window with a glass sidebar, the toolbar is an `NSToolbar`, `list()` is a view-based `NSTableView`
-whose cells hold the row subtree, swipe actions are native row actions and the context menu is an
-`NSMenu`. On Linux and Windows the same tree draws through GPUI with the matugen or Fluent skin.
+whose cells hold the row subtree, row actions are NSTableView row actions and the context menu is
+an `NSMenu`. Row closures take the key by value (`K: Copy`); nd's `cx.processor` has its own
+signature for that, unlike GPUI's. On Linux and Windows the same tree draws through GPUI with the matugen or Fluent skin.
 
 ### 3.3 State, actions, async, errors
 - State: `Entity<T>`, `cx.observe`, `cx.subscribe`, `cx.notify()`; views are not bound to a window,
@@ -212,8 +229,10 @@ pub trait Plugin: 'static {
 }
 ```
 A Discord RPC crate implements `init` (spawns its client on `nd::runtime`, observes an app global)
-and `settings` (a `discord` section), and gets a settings page and a
-`programs.<app>.settings.discord` HM option without the app writing either.
+and `settings` (a `[plugins.discord]` section), and gets a settings page and a
+`programs.<app>.settings.plugins.discord` HM option without the app writing either. Plugin
+sections live under `[plugins.<name>]`; the loader splits them off before the app's root struct
+parses, so an app keeps `deny_unknown_fields` and each section checks its own keys.
 
 ### 3.5 Widgets: composed and native, one trait
 Two ways to build a widget, both identical at the call site to built-ins:
@@ -237,16 +256,19 @@ pub trait NativeWidget: Sized + 'static {
 #[cfg(target_os = "macos")]
 pub trait AppKitWidget<W: NativeWidget>: 'static {
     type View: objc2::Message;
-    fn create(&self, props: &W::Props, cx: &mut AppKitCx<W>) -> Retained<Self::View>;
-    fn update(&self, view: &Self::View, old: &W::Props, new: &W::Props, cx: &mut AppKitCx<W>);
+    /// Per-node state the framework keeps beside the view: delegates, `Synced<T>` slots (3.13).
+    type State: 'static;
+    fn create(&self, props: &W::Props, cx: &mut AppKitCx<W>) -> (Retained<Self::View>, Self::State);
+    fn update(&self, view: &Self::View, state: &mut Self::State, old: &W::Props, new: &W::Props, cx: &mut AppKitCx<W>);
     fn measure(&self, view: &Self::View, props: &W::Props, available: AvailableSize) -> Size<Pixels>;
     fn value(&self, _view: &Self::View) -> Option<SemanticValue> { None }
 }
 ```
 An element type implements `NativeElement` (`type Widget`, `base_mut()`, `into_parts()`), and
 blanket impls give it `Styled`, `InteractiveElement` and the override modifiers. `AppKitCx` gives
-the main thread marker, `emitter()`, `request_layout()`, `keep_alive(obj)` (retain a delegate for
-the node's lifetime) and the objc2 re-exports under `nd::native::appkit`. A widget written in
+the main thread marker, `emitter()` (an `Emit` that queues, never calls app code, 3.13),
+`programmatic(..)`, `request_layout()` and the objc2 re-exports under `nd::native::appkit`. An
+event type with no events is `std::convert::Infallible`. A widget written in
 Swift registers with `Backends::swift(..)` instead (3.9). Worked example:
 `docs/plan/examples/native-widget/` (an `MKMapView` through objc2 and a SwiftUI `Gauge` through
 Swift on macOS, drawn fallbacks elsewhere).
@@ -258,8 +280,9 @@ Apps declare intent; the backend maps it.
 | --- | --- | --- | --- |
 | `scaffold().sidebar()` | `NSSplitViewItem(sidebarWithViewController:)` hosting a source-list `NSOutlineView`, `NSBackgroundExtensionView` | Nav pane on Mica | Sidebar on `surface_container_low` |
 | `scaffold().inspector()` | `NSSplitViewItem(inspectorWithViewController:)` | Right pane on Mica | Right pane |
-| `toolbar()` | `NSToolbar` with system items (`toggleSidebar`, `sidebarTrackingSeparator`, `NSSearchToolbarItem`) and native item views | Title row in the DWM-extended frame | Header row; no controls under server decorations |
-| `window_controls()` | Real traffic lights in the slot | System DWM caption buttons (Snap Layouts included) | Drawn only when client-decorated |
+| `toolbar()` | `NSToolbar` with system items (`toggleSidebar`, `sidebarTrackingSeparator`, `NSSearchToolbarItem`) and native item views | Title row with caption buttons (variant from the M2 spike, 5.4) | Header row; no controls under server decorations |
+| `titlebar()` (custom titlebar) | Content under a transparent titlebar; leading inset for the traffic lights | Trailing inset for the caption buttons | Insets from `button-layout` when client-decorated, none on Hyprland |
+| `window_controls()` | Real traffic lights in the slot | Caption buttons with Snap Layouts (5.4) | Drawn only when client-decorated |
 | `.context_menu()` | `NSMenu` | Fluent menu in the overlay stack | Menu in `xdg_popup` with grab |
 | `window.open_sheet()` | Window sheet | Content dialog with scrim | Dialog with scrim, libadwaita metrics |
 | settings window | Toolbar-tab window with SwiftUI `Form` (`.grouped`) rows, `cmd-,` | Separate window, nav list | Window or dialog per preset |
@@ -279,15 +302,18 @@ Overrides, every layer, no fork needed:
 - Theme: `Application::theme(..)`, `window.set_theme(..)`, subtree `.theme(|t| t.accent(..))`.
 - Patterns: `.pattern(Pattern::Drawn)` per element, `Application::patterns(..)` per app,
   `[patterns]` in `nativedesktop.toml`, and window chrome such as
-  `WindowOptions::titlebar(Titlebar::Custom)` (custom titlebar on macOS too, traffic lights in
-  the slot). See `docs/plan/examples/overrides/`.
+  `WindowOptions::titlebar(Titlebar::Custom)` (custom titlebar on macOS too). A custom titlebar is
+  built with the `titlebar()` intent, which reserves the OS controls' side and size as leading and
+  trailing insets (traffic lights left on macOS, caption buttons right on Windows, GNOME's
+  `button-layout` either side, nothing on Hyprland), updated on fullscreen and RTL, so content never
+  hand-tunes a margin past the controls. See `docs/plan/examples/overrides/`.
 
 ### 3.7 How backends satisfy the model (and stay fast)
 Invalidation is per view, as in GPUI. `cx.notify()` on a view re-runs that view's `render` only;
 child views (`Entity` children) are boundaries and are not re-rendered unless notified themselves.
 `nd-ui` reconciles the new element description of that one view against its retained subtree by
-position and `.id()` key, compares typed props with `PartialEq`, and emits only changed setters to
-the backend. Event handlers are stored on the retained node and swapped without a backend call,
+identity (3.14), compares typed props with `PartialEq`, and emits only changed setters to the
+backend through the seam (3.15). Event handlers are stored on the retained node and swapped without a backend call,
 since a fresh closure each render is normal. Cost is the size of the dirty view, never the window.
 The profiler HUD flags a view whose render produces more than 500 nodes or takes over 1 ms.
 
@@ -295,9 +321,11 @@ The profiler HUD flags a view whose render produces more than 500 nodes or takes
   layer-backed `NDLayerView` (background, radius, border, shadow, opacity on its CALayer), `text`
   is a CoreText-drawing view with an NSAccessibility role, `canvas` draws through `Painter` on
   CoreGraphics, `img` sets layer contents. Native widgets are their AppKit views.
-- GPUI backend: each `nd` view is a cached GPUI view rendering its retained subtree into GPUI
-  elements; only dirty views re-render. Under `nd-gpui/fast` the retained-mode fork skips
-  unchanged layout and paint as well.
+- GPUI backend: each `nd` view is a cached GPUI view (`AnyView::cached`) rendering its retained
+  subtree into GPUI elements, so clean views cost nothing per frame and a dirty view costs one
+  element build. Upstream GPUI still re-runs Taffy over the window on any notify; gpui-fast's
+  retained mode skips unchanged layout and paint. Whether `nd-gpui/fast` is the default on Linux
+  and Windows is decided at the M2 gate from e1504g numbers measured both ways (9.5).
 
 Hard parts and how they are resolved:
 1. Layout authority. Taffy is the authority everywhere: inside GPUI on GPUI backends, and an
@@ -315,8 +343,7 @@ Hard parts and how they are resolved:
 3. Text metrics differ between CoreText, DirectWrite and cosmic-text; goldens are per platform.
 4. Animations: `.with_animation` on transform and opacity becomes Core Animation on macOS and
    frame-clock tweens on GPUI; both read the same timing tokens.
-5. Focus: `nd-ui` focus order drives AppKit's key view loop; the first responder and the nd
-   focused node are synced both ways.
+5. Focus: nd owns focus and dispatch (3.12); AppKit's first responder mirrors it.
 6. Accessibility: native controls carry NSAccessibility; drawn nodes on macOS get
    `NSAccessibilityElement` proxies from `semantics`; GPUI backends use AccessKit.
 
@@ -326,12 +353,13 @@ Hard parts and how they are resolved:
   so Rust calls it directly through objc2: the controls on screen are AppKit's own classes, not a
   Rust imitation of them. Swift appears only for Swift-only and SwiftUI APIs (3.9). GPUI runs on macOS only for
   GPU-only content: `canvas(..).gpu()` for heavy custom drawing, the code editor, charts with
-  large series, CEF frames when a CALayer cannot take the IOSurface directly. Such a subtree is
+  large series. Such a subtree is
   hosted in a `CAMetalLayer` view inside the AppKit tree through an embedded-surface
-  `PlatformWindow` (patch queue, 2.1). Rules for that case: it is an ordinary NSView, so sibling
-  order decides z-order among native views; overlays never draw inside it (menus, popovers,
-  tooltips from inside it go through the native overlay path, 6.3), so nothing is clipped or
-  covered; AppKit hit-testing delivers events to it and it forwards them to GPUI dispatch; it
+  `PlatformWindow` (patch queue, 2.1); all embedded surfaces of one window share one renderer and
+  sprite atlas. Rules for that case: it is an ordinary NSView, so sibling order decides z-order
+  among native views; overlays never draw inside it (menus, popovers, tooltips, and GPUI-internal
+  `deferred`/`anchored` popups through the routing patch, go through nd's overlay layer, 6.3), so
+  nothing is clipped or covered; AppKit hit-testing delivers events to it and it forwards them to GPUI dispatch; it
   becomes first responder and implements `NSTextInputClient` for IME; its frame is set in the
   same transaction as its siblings and it presents with the transaction during live resize.
 - Windows: decision is GPUI with a Fluent 2 skin. Evidence: `windows-reactor` is a preview
@@ -359,26 +387,37 @@ universal props (enabled, tooltip, focus) and the semantic value probe must be t
 SwiftUI state, because a hosting view is not the control the user sees (`NDLeafState`).
 
 Bridge:
-- `nd-backend-appkit/swift/NDSwift` is a SwiftPM package. `build.rs` runs `swift build -c release`
-  for the target triple and deployment target, links `libNDSwift.a` statically, adds the Swift
-  runtime search path (`/usr/lib/swift` rpath, toolchain `lib/swift/macosx` for compatibility
-  libs) and clears `SDKROOT` for the Swift step (the old repo's `env -u SDKROOT` quirk). Command
-  Line Tools are enough; there is no Xcode project, and `cargo build` is the only command.
-  `nd doctor` checks the toolchain; the Nix dev shell provides it on darwin.
+- Toolchain and SDK: Swift and the macOS SDK come from the system Xcode or Command Line Tools,
+  never from Nix (nixpkgs ships Swift 6.2.4 and SDK 14.4; the design needs the 26/27 SDK). The
+  pin is `swift-toolchain.toml` at the repo root (minimum Swift and SDK major); `nd doctor` fails
+  when the installed Swift or SDK major does not match, and CI selects the pinned Xcode with
+  `xcode-select`. On darwin the Nix dev shell exports no `SDKROOT` and no linker;
+  `.cargo/config.toml` sets `target.aarch64-apple-darwin.linker = "/usr/bin/clang"`, and build
+  scripts resolve the SDK with `xcrun --sdk macosx --show-sdk-path`. One SDK links everything.
+- Linking: `cargo:rustc-link-arg` reaches only a package's own binaries, so a library crate cannot
+  link Swift for an app. Every crate that carries Swift (`nd-backend-appkit` with `NDSwift` and
+  `NDKit`, any widget crate) declares `links = "nd-swift-<name>"` and exports its package path
+  as `DEP_*` metadata. The app's build script, `nd::build::app()` (one line, emitted by `nd new`
+  into every template, a no-op off macOS, with `nd` feature `build` as build dependency), collects
+  those paths plus the app's own `[macos] swift_packages`, generates one aggregate SwiftPM package
+  in `OUT_DIR`, builds one static library, and emits `-force_load`, the Swift library search paths
+  and the rpath for the final binary. `NDKit` is compiled exactly once; nothing is written into
+  the source tree.
+- Runtime: one Swift runtime, the OS's in `/usr/lib/swift` (present from macOS 14); back-deploy
+  compatibility libraries link statically from the pinned toolchain. Release stripping uses
+  `strip -x` (local symbols only) and keeps the `__swift5_*` metadata sections.
 - Seam: a narrow C ABI. Swift exports `@_cdecl` functions per hosted kind (`create`, `update`,
-  `measure`, `destroy`, `value`); Rust declares them `extern "C"`. Framework hot paths pass
-  `#[repr(C)]` prop structs; events come back through a C callback carrying the node id. No
-  Swift type is visible above `nd-backend-appkit`.
-- App Swift views: an app or crate adds a SwiftPM package (for example `swift/Widgets`) and a
-  one-line build script, `nd::build::swift_package("swift/Widgets")`, with `nd` (feature `build`)
-  as the build dependency. In Swift the view conforms to `NDSwiftWidget` (from the `NDKit`
-  product the framework ships: `static func make(props: Props, emit: NDEmitter<Event>) -> NSView`,
-  `update`, `measure`, `value`, with `Props` and `Event` `Codable`) and is exported with the
-`#ndExport(..)` macro, which emits the C registration symbol the build script links. In Rust the widget registers
-  `Backends::swift(SwiftWidget::named("Gauge"))`; props and events cross as JSON, which is fine
-  because a leaf's props cross only when they change. Layout, focus, input, overlays, semantics
-  and overrides then work exactly as for an objc2 widget. On other targets the build script is a
-  no-op and the drawn implementation is used.
+  `measure`, `destroy`, `value`); framework hot paths pass `#[repr(C)]` prop structs; events come
+  back through a C callback carrying the node id, into the event queue (3.13). Registration is a
+  generated Rust `extern "C"` table naming every exported symbol, so dead stripping never drops
+  one. No Swift type is visible above `nd-backend-appkit`.
+- App Swift views: the view conforms to `NDSwiftWidget` from `NDKit`
+  (`static func make(props: Props, emit: NDEmitter<Event>) -> NSView`, `update`, `measure`,
+  `value`; `Props` and `Event` `Codable`; `Never` pairs with Rust's `Infallible`) and is exported
+  with `#ndExport(..)`. In Rust it registers `Backends::swift(SwiftWidget::named("Gauge"))`;
+  props and events cross as JSON, which is fine because a leaf's props cross only when they
+  change. Layout, focus, input, overlays, semantics and overrides then work exactly as for an
+  objc2 widget. Off macOS the drawn implementation is used.
 
 ### 3.10 Rule: the OS draws its own structure
 Big structural elements use the highest-level system component the OS offers, never a pixel
@@ -392,11 +431,12 @@ replica, so a new OS release restyles apps with no framework change.
   (`NSColor` semantic colours resolved at draw time, `NSFont.preferredFont(forTextStyle:)`, control
   sizes from `fittingSize`) or lets the control draw itself. The macOS preset for composed content
   is computed at launch and on appearance change from those same sources.
-- Windows: Mica, Acrylic, accent, high contrast, text scale, DWM corners and shadow, and caption
-  buttons come from the OS: the title row lives in a DWM-extended frame
-  (`DwmExtendFrameIntoClientArea` with `DwmDefWindowProc` hit-testing), so the system draws the
-  caption buttons and the Snap Layouts flyout. Drawn caption buttons exist only as an app
-  override. The Fluent skin for leaf controls is a replica by necessity until a `winui` backend
+- Windows: Mica, Acrylic, accent, high contrast, text scale, DWM corners and shadow, and the Snap
+  Layouts flyout come from the OS. Caption buttons are decided by an M2 spike (5.4): system-drawn
+  in a DWM-extended frame if they pass a tall-titlebar and Snap Layouts test, otherwise app-drawn
+  with `HTMAXBUTTON` hit-testing as the research recommends
+  (`docs/research/windows-packaging-updates.md` section 1), recorded as an exception to this
+  rule. The Fluent skin for leaf controls is a replica by necessity until a `winui` backend
   exists; it reads every token it can from the OS.
 - Linux: the look is GPUI's by the user's choice; colours come from matugen and the portal,
   fonts, scale and reduced motion from the portal settings.
@@ -410,9 +450,11 @@ search fields, switch, checkbox, radio, slider, segmented, select and combobox, 
 colour and font pickers, progress and spinners, `glass()`, source list and sidebar, list, table,
 grid, tree (section 7), tabs and panes (split, dock, tiles), toolbar items, menus and popovers,
 dialogs, sheets and forms, `settings_form`, toast and banner, status page, badges, tags, kbd,
-avatar, breadcrumb, rich text, charts (Swift Charts on macOS), code editor, video, image pipeline
+avatar, breadcrumb, `relative_time` (re-renders itself on a minute tick, never its parent), rich text, charts (Swift Charts on macOS), code editor, video, image pipeline
 with display-size decode and LRU, media transport (player bar, seek clock, queue), synced lyrics
-view, carousel/shelf, composer, inspector panel, and the command palette below.
+view, carousel/shelf, composer, inspector panel, the zig `@nativedesktop/ui` set (Accordion,
+ButtonGroup, DescriptionList, Form and FormField, HoverCard, OtpInput, Pagination,
+SearchableList, StatusBar, Stepper, with their pure helpers), and the command palette below.
 
 Command palette, `command_palette(id)`. On macOS it is exactly the zig branch's Spotlight-style
 palette (`NDShell/CommandPalette.swift`, metrics `NDPaletteMetrics` in `NDShell/Metrics.swift`),
@@ -444,6 +486,86 @@ yields first, and a right-aligned hint that never truncates. Behaviour carried o
 - Automation drives the same paths (`setValue`, `type`, `click` routed to the real field and
   table) and `paletteLayout` reports the drawn geometry.
 On GPUI backends the drawn impl has the same structure and behaviour with the skin's material.
+
+### 3.12 Dispatch, focus and who owns the application
+nd owns focus, key contexts, keystroke matching and action dispatch over its retained tree on
+every backend. `key_context` and `on_action` are properties of retained nodes; dispatch walks from
+the focused node to the root; GPUI's `Keymap` is used only as the matcher (binding parsing,
+context predicates, pending multi-stroke state). `FocusHandle::focus(window, cx)` and focus order
+(tree order plus `tab_index`) are nd's. GPUI's dispatch tree is rebuilt only while GPUI paints
+(`gpui/src/window.rs:2546-2557` at the pinned zed rev), so it cannot serve the AppKit backend;
+using one dispatcher everywhere also means tier 1 tests on the `TestBackend` exercise the real
+dispatch path.
+- GPUI backends: the root GPUI view forwards raw key and IME events into nd dispatch through the
+  hook patch (2.1); text inputs receive text after bindings had their turn.
+- macOS: `NdAppKitPlatform` implements `gpui::Platform` (public trait, `gpui/src/platform.rs:363`),
+  so nd, not `gpui_macos`, owns `NSApplication`, its delegate, menus, windows, open-URL and
+  open-file handling, the run loop and the main-queue dispatcher. `gpui_macos` is not linked; the
+  Metal renderer from `gpui_apple` is used only for embedded surfaces. The NSWindow subclass routes
+  key-downs to nd dispatch first (bindings, menu key equivalents), then to the first responder for
+  text editing. AppKit's first responder mirrors nd focus: native views report
+  `becomeFirstResponder` to nd and nd calls `makeFirstResponder`; the key view loop is computed by
+  nd and includes NSToolbar items and recycled table cells, which re-register on reuse.
+- M0 opens with this spike, before any other lane: dispatch on `TestBackend`, `NdAppKitPlatform`
+  with one window, a binding firing while a native `NSTextField` has focus, and a toolbar item in
+  the key view loop.
+
+### 3.13 Native callbacks, reentrancy and controlled values
+Rule 1: no native callback calls app code. AppKit calls delegates and data sources inside setters
+and layout (`setRegion` fires `regionDidChange`, `selectRowIndexes` fires `selectionDidChange`,
+`reloadData` calls `viewForTableColumn:row:`), and an in-process callback would land while the
+app's entity is leased. So:
+- `Emit` pushes onto a per-window event queue; the queue drains after the reconciler's apply and
+  after any nested run loop (menu tracking, modal session, drag session) returns, outside every
+  entity lease.
+- Table and outline data sources answer from the row cache `nd-virtual` filled during the last
+  render pass (viewport plus overscan rendered ahead), never by calling the row closure.
+- Menus, alerts, sheets and drags start from a deferred main-queue hop, never inside a borrow.
+- Tier 2 test: every native widget has its props set from inside its own event handler; nothing
+  panics, loops or emits twice.
+
+Rule 2: controlled values never echo. Per controlled prop the widget keeps a `Synced<T>` slot in
+its `State`: `apply(value, set)` calls the setter only when the value differs from both the last
+applied and the last reported value, and `report(value)` records what the native side produced
+(user input or OS normalisation, such as MKMapView fitting a region to its aspect ratio, slider
+step snapping, a split divider clamp). Setters run inside `cx.programmatic(..)`, and events fired
+during it are dropped by `Emit`. An app that feeds a reported value back therefore causes no
+second set. Text is native-owned while focused: app writes wait until IME composition ends, user
+edits emit `TextEvent::Edited`, `set_text` emits `TextEvent::Replaced`, and the native undo
+manager is the only undo stack while editing. The widget conformance suite has an echo test: set a
+value the control normalises, assert exactly one event and no second set.
+
+### 3.14 Identity
+A child's identity is `(element type, explicit id)` when it has an id, else `(element type,
+#[track_caller] call site, occurrence index)`. GPUI-style `.when(..)`/`.when_some(..)` leave no
+hole, so position-based matching would shift a native view when a conditional sibling appears and
+tear it down; with call-site identity it keeps its NSView, focus, IME state, page and scroll
+position (the zig renderer learned this, `docs/parity/zig.md:335`). Stateful native widgets
+(`webview`, `text_editor`, `text_field`, `search_field`, `map`-style app widgets, `list`, `table`)
+take an id in their constructor. Tier 1 test: toggling a `.when` above a text field produces no
+create op for it.
+
+### 3.15 The backend seam
+`nd-ui` talks to backends through one `Backend` trait, implemented by `nd-backend-appkit`,
+`nd-backend-gpui` and `TestBackend`:
+- Ops: `create(node, kind, props)`, `update(node, patch)`, `insert(parent, node, before)`,
+  `move(node, parent, before)`, `remove(node)` (detach), `release(node)` (drop the native object),
+  `set_frame(node, rect)` (retained backends only), `focus(node)`, `measure(node, constraint)`
+  (a query, cached by props and constraint), `surface(node, op)` for `NativeSurface`.
+- Order inside one transaction: creates, then structural ops parents first, then updates (so a
+  popover opens over its new content, the zig rule), then frames, then focus, then releases.
+- Transaction: one `begin`/`commit` per window per frame. AppKit wraps it in a `CATransaction`
+  with implicit animations off; GPUI marks the affected cached views dirty.
+- Lifetime: the backend holds one strong reference per node, dropped on `release`; nothing is
+  freed while a transaction can still name it.
+- Threading: main thread only; a backend never calls `nd-ui` during apply except through the event
+  queue (3.13).
+- Live resize: every op may arrive; the transaction runs synchronously inside the OS resize pass
+  (`viewWillDraw`, `WM_SIZING`, the Wayland configure) so the frame presented is the frame laid out.
+- Layout boundaries: a native container reports the size it gives a child (`boundary_size`);
+  `nd-ui` lays out inside it and returns height or intrinsic size.
+The zig null-backend conformance suite is ported against this trait and runs on `TestBackend`
+(tier 1) and on both real backends (tier 2).
 
 ## 4. Theming and design tokens
 
@@ -496,17 +618,26 @@ frame. macOS: Taffy runs inside `viewWillDraw`/live-resize layout and frames com
 transaction; GPU surface views present with the transaction. Windows: render synchronously in
 `WM_SIZING`/`WM_WINDOWPOSCHANGED`, one DirectComposition commit for content and sibling visuals.
 Wayland: ack `configure` only with a buffer of that size; subsurfaces commit in sync mode. X11:
-`_NET_WM_SYNC_REQUEST`. Gate on all OSes: a scripted edge drag recorded by the frame recorder
-(9.2); each frame's content size equals the reported window size and no native rect trails.
+`_NET_WM_SYNC_REQUEST`. Gate on all OSes: a real edge drag through the OS (HID CGEvents from
+`ndshell` on macOS, so the window enters live resize; the virtual pointer on headless Hyprland;
+`SendInput` through the Windows agent, 10.2), with every presented frame captured (SCStream,
+`wp_presentation` plus `ext-image-copy-capture`, Windows.Graphics.Capture) and the content edges
+asserted against the window edge per frame. Reading back the frames the backend just set proves
+nothing; only presented pixels count. From M4 the window also holds a webview and a GPU surface.
 
 ### 5.3 Multi-window, multi-monitor, pacing
 Each window owns a display clock at the refresh of the display it is on; `cx.now()` reads it (the
 test clock in tests). macOS: `NSView.displayLink(target:selector:)` per window (macOS 14), with a
 `preferredFrameRateRange` up to 120 while animating. Windows: per-window pacing from the window's
 monitor (frame-latency waitable swap chain or `DCompositionWaitForCompositorClock`) instead of
-GPUI's single `DwmFlush` clock, claimed only after a g815 trace at 240 + 144 Hz. Wayland:
+GPUI's single `DwmFlush` clock, claimed only after a trace on a Windows machine driving two
+refresh rates (a real 240 + 144 Hz pair if the Windows PC has one, else an indirect display driver
+virtual monitor pair at 240 and 144 Hz installed by `ndshell` on Windows). Wayland:
 `wl_surface.frame` plus `wp_presentation` for measured present times. X11: re-query randr on output
-change. Idle windows request no frames; inactive ones cap at 30 fps. Budgets per display interval
+change. Idle windows request no frames. Only occluded or minimised windows are throttled
+(`NSWindow.occlusionState`, Wayland frame callbacks stop by themselves, `DXGI_STATUS_OCCLUDED`); a
+visible unfocused window, such as lyrics on the 144 Hz monitor, runs at its display's rate while
+animating. Budgets per display interval
 (4.17 ms at 240 Hz to 16.6 ms at 60 Hz) feed the profiler. Window frames persist by
 `WindowOptions` id and are clamped onto a live display when the saved monitor is gone.
 
@@ -517,11 +648,14 @@ change. Idle windows request no frames; inactive ones cap at 30 fps. Budgets per
 - `window_controls()`: `.at(point(px(16.), px(18.)))` pins traffic lights at window coordinates;
   `.embedded()` makes it a layout slot and the backend moves the real buttons onto the slot's rect
   each layout pass, keeping hover group, menu and accessibility (port of the old
-  `WindowControls.swift`, including riding a sliding sidebar). On Windows the system draws the caption
-  buttons in the DWM-extended frame and the slot reserves their space (an app override can draw
-  Fluent buttons with `WindowControlArea` hit-testing instead); on Linux it draws buttons only when decorations are
-  client-side and `wm_capabilities` lists the action; on Hyprland it renders nothing and takes no
-  space. Drawn variants take tokens so they match the app.
+  `WindowControls.swift`, including riding a sliding sidebar). Without arguments it resolves to
+  the OS side through the `titlebar()` insets (3.6). On Windows an M2 spike compares system DWM
+  caption buttons (`DwmExtendFrameIntoClientArea` + `DwmDefWindowProc`) with app-drawn Fluent
+  buttons using `WindowControlArea` and `HTMAXBUTTON` hit-testing (GPUI's current path and the
+  research recommendation); DWM buttons are kept only if they pass a tall-titlebar test and Snap
+  Layouts, otherwise app-drawn is the default and the exception is recorded in 3.10. On Linux it
+  draws buttons only when decorations are client-side and `wm_capabilities` lists the action; on
+  Hyprland it renders nothing and takes no space. Drawn variants take tokens so they match the app.
 
 ### 5.5 Tabs and tear-off
 `tab_group()` intent: NSWindow tabbing on macOS, a framework tab strip elsewhere. A tab's view is
@@ -535,7 +669,8 @@ until the app drops the tab's view.
 
 ### 6.1 Gestures
 App surface: `.on_pinch`, `.on_rotate`, `.on_swipe_page`, `.on_force_click`, `.on_long_press`,
-`.swipe_actions(..)`, `.on_drag(..)`, scroll views with momentum and rubber band, and
+`.on_drag(..)`, row actions on list rows (`list(..).row_actions(|key, cx| ..)`, a list method because
+macOS row actions come from the table delegate, so misuse does not compile), scroll views with momentum and rubber band, and
 `cx.haptic(Haptic::Alignment | LevelChange | Generic)`.
 - macOS: native recognition. Scroll views are `NSScrollView` (native momentum, elastic overscroll),
   pinch/rotate/smart zoom/force click come from `NSResponder` events, page swipes use
@@ -556,14 +691,19 @@ GPUI's `text-input-v3`/XIM/TSF on GPUI backends, CEF OSR through the same input 
 ### 6.3 Overlays: no leaks, always on top
 Every floating element (popover, menu, tooltip, toast, command palette, sheet, dropdown) opens
 through `cx.overlay(spec)` or a built-in that uses it, with modality `Modal`, `LightDismiss` or
-`Passive`. macOS: overlays are native (`NSPopover`, `NSMenu`, child `NSPanel` for custom panels,
-sheets), so they are separate windows above every view in the window and AppKit's tracking owns
-their input; toasts are a top sibling view. GPUI backends: one overlay stack per window; the
+`Passive`. macOS: system overlays stay system classes (`NSMenu` for menus, `NSPopover` for
+anchored popovers, window sheets), which keep the parent window's active chrome. Framework panels
+(command palette, hover cards, dropdowns, toasts) are a top-most in-window view above every
+content view, WKWebView, CEF and GPU surface views included (all ordinary sibling NSViews), with
+`hitTest:` returning the overlay for points it covers, so nothing below receives them. A
+non-activating `NSPanel` is used only when an overlay must extend past the window frame; a panel
+that must take typing never deactivates the owner's chrome. GPUI backends: one overlay stack per window; the
 input router checks it before content (outside press on `LightDismiss` closes and is consumed);
 overlays intersecting a registered native surface (WebView2, WPE, iframe) are promoted to GPUI's
 overlay composition surface under `nd-gpui/fast` (zed PR #62379) or to a child popup window;
 menus that do not fit use `xdg_popup` with grab or owned popups. Overlays close when their anchor
-subtree goes, on Esc, or on key-window loss. Gate: a tier 3 test opens a popover over a live
+subtree goes, on Esc, on a click outside, or when the app deactivates; never on a key change
+inside the app's own window group. Gate: a tier 3 test opens a popover over a live
 webview, clicks inside and outside and scrolls over it, and asserts the webview saw zero events,
 on all three OSes.
 
@@ -576,10 +716,13 @@ key and width, selection, type-ahead. Presenters:
 - macOS: view-based `NSTableView` (lists, tables), `NSOutlineView` (trees, source lists),
   `NSCollectionView` (grids). Cells are reused through `makeView(withIdentifier:)` and the row
   subtree is reconciled into the reused cell (the old `SourceTrees.swift` reused items by id so
-  open branches survived updates). Heights come from Taffy measurement of the row at table width
-  through `heightOfRow`; a row whose size changes calls `noteHeightOfRowsWithIndexesChanged`.
-  Keyed diffs become `insertRows`/`removeRows`/`moveRow` with native animation. Anchoring on
-  prepend and tail follow adjust the clip view origin in the same transaction.
+  open branches survived updates). `nd-virtual` owns the height tree on every backend: AppKit's
+  own row-height estimation (on since macOS 13) is disabled (`NSTableViewCanEstimateRowHeights`
+  off in the app's defaults domain), `heightOfRow` answers in O(1) from our tree (measured or our
+  estimate), rows near the viewport are measured outside AppKit callbacks, then
+  `noteHeightOfRowsWithIndexesChanged` and the clip-origin shift for the anchor commit in one
+  transaction. Keyed diffs become `insertRows`/`removeRows`/`moveRow` with native animation;
+  data sources answer from the row cache (3.13).
 - GPUI backends: our own element on GPUI's `Element` trait, not GPUI's `ListState`, because its
   contract ("items outside the viewport must not change height unless you call `splice`",
   `gpui/src/elements/list.rs:1-4`) is the source of "last rows disappearing".
@@ -594,13 +737,14 @@ Requirements from `docs/parity/apps.md` section 3, structural on both presenters
 | (c) tail follow stops on user scroll | `Follow::Tail` disengages on scroll away, re-engages near the end |
 | (d) jump to item with offset | `state.scroll_to(key, Align::Center, px(-96.))`, animated on the frame clock |
 | (f) last rows always reachable | Estimates, idle-time measurement near the viewport, synchronous tail measure before painting the end |
-| (g) clean rows do not repaint | Row subtrees are views; a row animation touches one row |
+| (g) clean rows do not repaint | Row output is cached by `(key, version)` (`set_items_versioned`); an owner re-render reuses unchanged rows, `canvas(..).cache_key(..)` skips repaint; rows that animate are their own views |
 
 Also: bottom alignment for chat, sticky headers, `on_near_start/end`, selection modes, column
 resize/reorder/sort events (sorting stays app-owned), drag reorder with edge auto-scroll, empty
 states, wheel hand-off between nested scrollers. One conformance suite (randomized
 insert/remove/resize sequences asserting the anchor row does not move, tail visibility, 100k rows
-within frame budget on e1504g) runs against both presenters.
+within frame budget on e1504g) runs on the GPUI presenter in tier 1 and on a real `NSTableView`
+in tier 2 (manual run-loop stepping, animations off).
 
 ## 8. Webview and CEF
 
@@ -611,16 +755,32 @@ the frame's transaction, visibility, focus hand-off, `reparent`, and occlusion i
   WPE WebKit on Linux, rendering to dmabuf imported as a texture, because WebKitGTK cannot embed
   in a non-GTK Wayland window (gpui-webview: Wayland unsupported). If the M8 spike fails, Linux
   uses CEF OSR or WebKitGTK under XWayland. Web: an iframe (section 12).
-- CEF (`nd-cef`, feature `cef`): OSR with `accelerated_osr` by default. macOS shows the IOSurface
-  as CALayer contents in an NSView (no GPU surface needed); GPUI backends import it as a texture.
+- CEF (`nd-cef`, feature `cef`): OSR with `accelerated_osr` by default. CEF's handle cannot be
+  cached and must be copied (`docs/research/macos-and-cef.md` section 6), so on macOS each
+  `OnAcceleratedPaint` is blitted with Metal into an IOSurface from our own double-buffered pool,
+  set as CALayer contents of an NSView; GPUI backends copy into a texture.
   `external_begin_frame_enabled` is driven by the window's display clock. OSR input, IME,
   `<select>` popups as overlays, context menus through our menus, drag and drop, cursor, screen
   info and the accessibility bridge are gated one by one. A windowed Chrome-style mode
   (`[webview.cef] style = "chrome"`) keeps extensions, 1Password and native messaging for
-  nativebrowser on macOS, Windows and X11. Runtime loading, version pin, signed helper bundles,
+  nativebrowser on macOS, Windows and X11. On Hyprland (Wayland), where windowed CEF is unshipped,
+  an app with `style = "chrome"` runs GPUI's X11 backend under XWayland, which is how the zig
+  branch shipped it (`src/cef/hyprland.zig`); M15 gates extensions and 1Password on Hyprland. Runtime loading, version pin, signed helper bundles,
   stripped `libcef.so`, zero Chromium bytes unless enabled. Ported behaviours: ordered shutdown,
   chromium children ignore SIGTERM/SIGINT, tab parking, per-origin permissions, app-owned
   downloads, popups adopted as tabs, content blocking.
+
+Engine coverage of the zig webview API (`docs/parity/zig.md` section 7), each cell a named test:
+
+| API group | WKWebView | WebView2 | WPE | CEF OSR | iframe (web) |
+| --- | --- | --- | --- | --- | --- |
+| Navigation, title, progress, history, zoom, find | M8 | M8 | M8 | M9 | url and title only |
+| User scripts, script messages, scheme handlers | M8 | M8 | M8 | M9 | no |
+| Cookies, sessions, profiles, permissions | M8 | M8 | M8 | M9 | no |
+| Downloads, popups as tabs, context menu merge | M8 | M8 | M8 | M9 | no |
+| Input forwarding (mouse, pointer, wheel, drag-drop, cursor) | native | `SendMouseInput`, `SendPointerInput`, `DragEnter/Over/Drop`, `CursorChanged` (M8) | M8 | M9 | native |
+| IME and accessibility | native | `AutomationProvider` (M8) | M8 | M9 (a11y last) | native |
+| Extensions, native messaging | no | no | no | Chrome-style only (M9) | no |
 
 ## 9. Diagnostics, profiling, logging
 
@@ -633,20 +793,39 @@ display interval. On demand: tracy (`ondemand`, `only-localhost`), GPU timestamp
 misses, slowest view renders.
 
 ### 9.2 Frame recorder
-A ring of the last frames per window: Metal drawable copies and `CALayer` snapshots of the window's
-backing on macOS, DX11 staging copies and wgpu readbacks on GPUI backends, read back only on
-incident or test request. Composited capture (sheets, menus, glass) comes from `ndshell`.
+GPUI backends: in production one downscaled copy of the last presented frame per window, taken
+from the swap chain only when an incident is written; under test a full ring of presented frames
+(DX11 staging copies, wgpu readbacks). macOS: an AppKit window has no app-owned drawable and
+`renderInContext` misses glass, vibrancy, Metal layers and web content, so production bundles
+record per-frame layout and tree diffs instead of pixels (bounds, z-order, overlay stack, the
+native view and layer hierarchy); pixel recording on macOS happens only under `ndshell` through
+ScreenCaptureKit. Composited capture on every OS comes from `ndshell`.
 
 ### 9.3 Incident bundles
 On panic, native crash (crash-handler + minidumper server, zed's `crashes` pattern), hang, or
 `nd::report_issue()`, written to `<data>/diagnostics/<timestamp>-<kind>/`: dump or `panic.txt` or
 `hang.json`; `log.ndjson` (last 5000 events + log tail); `tree.json` (semantic tree, windows,
-displays with Hz, focus, open overlays; the automation `getTree` schema); `input.ndjson` (last 200
-inputs, text redacted in release); `frames/` (last 5 per window); `profile.json`; `meta.json`
+displays with Hz, focus, open overlays, and the native view and layer hierarchy on macOS; the
+automation `getTree` schema); `input.ndjson` (last 200 inputs, text redacted in release);
+`frames/` (last frame per window on GPUI backends; layout diffs of the last 120 frames on macOS); `profile.json`; `meta.json`
 (version, sha, OS, GPU, backend, config hash). A memory-mapped snapshot refreshed every few
 seconds supplies tree and inputs after a native crash. Optional Sentry upload per app.
 
-### 9.4 Retention
+### 9.4 Hangs
+The zig branch kept the window up when the JS child hung. In one process a main-thread hang
+freezes the window, as in any native app. The crash helper process watches a heartbeat: after
+5 s it writes a hang bundle with the main thread's stack, after 10 s it shows its own small window
+offering to wait or relaunch with state restored.
+
+### 9.5 Budgets on e1504g
+Measured on e1504g (60 Hz, Intel iGPU, built on g815) for `examples/hello` and `examples/notes`
+with demo data: cold start to first frame under 300 ms; idle CPU 0.0% over 60 s focused and
+unfocused; RSS under 80 MB with the GL path patched out; key-to-present p95 under 16.7 ms measured
+by `wp_presentation`; zero missed frames scrolling 10k rows; 100k rows within budget. `nd diag
+budget` prints them; M0 measures a raw `gpui-pre` window on e1504g as the baseline, M2 gates the
+GPUI backend on them, M5 and M13 gate again.
+
+### 9.6 Retention
 Logs roll daily or at 10 MB, 7 kept, gzipped. Bundles: newest 20, none older than 14 days, 200 MB
 total. Cleanup runs on a background thread after first frame. `nd diagnose --last` prints a
 summary for agents; `--zip` packs it. On by default in every app; no app code needed.
@@ -662,15 +841,22 @@ report values through `AppKitWidget::value`, so a locator never asks the OS acce
 - Tier 1, logic: `#[nd::test]` with the `TestBackend` (records backend ops, no OS) on GPUI's test
   dispatcher: deterministic clock, simulated input, resize, scale, refresh and display changes.
   Parallel, no window server, on every OS.
-- Tier 2, pixels: GPUI headless rendering for the Linux, Fluent and web looks (Metal headless on
-  macOS, wgpu headless on Linux with lavapipe in CI); offscreen AppKit windows for the AppKit
-  backend in `harness = false` binaries, one process per test so they run in parallel. Glass is
-  composited by the window server and only appears in tier 3 captures. Animation capture is
-  `advance_clock(1/Hz)` + snapshot in a loop.
+- Tier 2, real backends in-process: GPUI headless rendering for the Linux and web looks (Metal
+  headless on macOS, wgpu headless on Linux with lavapipe in CI); Fluent goldens render only on
+  the Windows host (Segoe UI Variable and DirectWrite exist only there), compared pixel to pixel
+  Windows to Windows and by control metrics (sizes, paddings, radii, sampled colours) against
+  WinUI Gallery. AppKit runs offscreen windows in `harness = false` binaries, one process per test
+  so they run in parallel: the backend conformance suite, the list conformance suite on a real
+  `NSTableView`, and one test per built-in component's AppKit mapping (`NSMenu` items, row actions,
+  sheets, palette). Glass is composited by the window server and only appears in tier 3 captures.
+  Animation capture: GPUI looks use `advance_clock(1/Hz)` + snapshot; Core Animation is frozen with
+  `layer.speed = 0` and stepped through `timeOffset` per frame.
 - Tier 3, real windows: the app as its own process with `NATIVE_AUTOMATION=1`; `nd-test` talks to
   it over the automation socket. For OS-owned behaviour only.
 
-Locators are the same in every tier: `app.get_by_role(Role::Button).name("Save")`,
+Framework-created native items (menu items built from a menu spec, row actions, toolbar overflow)
+enter the semantic tree as synthetic nodes with real action routes, so locators reach what AppKit
+draws. Locators are the same in every tier: `app.get_by_role(Role::Button).name("Save")`,
 `get_by_test_id`, `get_by_text`, `get_by_label`, `locator("role=button[name=\"Save\"] >> nth=1")`,
 the actionability ladder, `expect(..).to_be_visible().await`. Tier 3 adds `app.cursor`,
 `app.capture` and `app.record`. Native AppKit controls are actioned semantically through their
@@ -683,14 +869,21 @@ macOS: input posted as `NSEvent`s into the app's queue (no TCC, window may be in
 `CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one
 `HYPRLAND_HEADLESS_ONLY=1` Hyprland per test with virtual pointer and keyboard,
 `ext-image-copy-capture`, `wp_presentation`; gestures injected at the platform event layer.
-Windows: `SendInput` and Windows.Graphics.Capture, serialized, over `ssh windows`. Private APIs
-live in `ndshell` only.
+Windows: processes started by OpenSSH run outside the interactive desktop, so a resident
+`ndshell agent` starts at logon in the user's session (Task Scheduler, interactive) and `nd test`
+reaches it over ssh or a named pipe; it runs `SendInput` and Windows.Graphics.Capture jobs, refuses
+real-input jobs while a fullscreen app or game is in the foreground, and uses a second session
+(RDP loopback user) when one is configured. Private APIs live in `ndshell` only.
 
 ### 10.3 Isolation
 Every path (socket, data, settings, logs, diagnostics, single-instance lock) resolves from a
 per-launch root set via `ND_APP_DATA_DIR`; sockets sit in a per-test temp dir and the child reports
-the path on stderr. nextest runs each test in its own process; tier 3 on macOS and Windows runs in
-a `max-threads = 1` group, Linux in parallel. Two agents testing two apps never collide.
+the path on stderr. nextest runs each test in its own process. Real input on macOS and Windows
+(HID events, activation, SCStream) takes a machine-wide lock (`flock` under
+`~/Library/Caches/nd/` and its Windows equivalent) held by `ndshell`, so two agents in two
+worktrees queue instead of stealing focus; a waiting run prints the holder's worktree. Tests that
+post `NSEvent`s into the app's own queue skip the lock and stay parallel. Linux runs in parallel,
+one Hyprland each.
 
 ### 10.4 Speed targets
 | Loop | Target |
@@ -702,9 +895,11 @@ a `max-threads = 1` group, Linux in parallel. Two agents testing two apps never 
 | VMs anywhere | none |
 
 ### 10.5 Build speed
-nextest; one integration test binary per crate; deps at `opt-level = 2` in dev; Cranelift for
-`nd dev` builds (LLVM for macOS test profiles, since Cranelift aborts on panic there); wild or mold
-on Linux. Cargo `build-dir` on `/Volumes/Kyan Drive/dev-cache.noindex/` per workspace, `target-dir`
+nextest; one integration test binary per crate; deps at `opt-level = 2` in dev; LLVM at
+`opt-level = 0` with `split-debuginfo = "unpacked"` for workspace crates. Cranelift needs a nightly
+toolchain and aborts on panic on macOS (no panic bundle in dev), so it is an opt-in Linux dev
+profile with a pinned nightly, adopted only if M0 measurements show a clear win; wild or mold on
+Linux. Cargo `build-dir` on `/Volumes/Kyan Drive/dev-cache.noindex/` per workspace, `target-dir`
 per worktree, sccache for third-party crates; a `just` guard fails readably when the drive is
 missing; Spotlight off on it. g815 builds on local NVMe; e1504g never builds.
 
@@ -729,7 +924,7 @@ for editors. Full examples: `docs/plan/examples/*/nativedesktop.toml`. Tables: `
 display name, icon, categories, URL schemes, `[[app.file_associations]]`), `[patterns]`,
 `[webview]` and `[webview.cef]` (`enabled`, `style`), `[updates]` (feed, channels, ed25519 public
 key), `[diagnostics]` (retention overrides, Sentry DSN), `[macos]` (minimum version, signing
-identity, notarize, entitlements), `[windows]` (publisher, installer splash, accent, shortcuts,
+identity, notarize, entitlements, `swift_packages`), `[windows]` (publisher, installer splash, accent, shortcuts,
 signing), `[linux]` (formats), `[web]` (base path).
 
 ### 11.2 Commands
@@ -757,7 +952,8 @@ app, so swapping hosts never weakens verification. Default domain: none baked in
 
 Settings layers: defaults < Nix-managed file < user `config.toml` < `config.local.toml` (writable
 overlay when the main file is a `/nix/store` symlink) < env `<APP>_*` < CLI flags. `toml` reads,
-`toml_edit` writes so comments survive; own writes are tagged so the watcher ignores them; each
+`toml_edit` writes so comments survive; drop-in files in `config.d/*.toml` merge in name
+order between the user file and `config.local.toml` (kopuz's `settings.d` pattern); own writes are tagged so the watcher ignores them; each
 field carries `reload = live | restart`; Nix-managed keys show "Managed by Nix" with their option
 path and "Copy as Nix". `settings_form::<T>()` renders the schema as native settings rows.
 `Store<T>` keeps versioned machine state (debounced tmp+rename writes, migrate on load, flush on
@@ -791,6 +987,11 @@ unchanged; app code has no `cfg`.
   and so on, at runtime (the old `hasWidget`/`hasCommand` idea). APIs that cannot work on the web
   return `Err(Unsupported)` and are marked `#[nd::unavailable(web)]`, which `nd check --target web`
   turns into warnings at each call site that lacks a `supports` check.
+- Runtime, not only compilation: `std::time::Instant`, `SystemTime`, threads and `std::fs`
+  compile on `wasm32-unknown-unknown` and panic at runtime, so `nd check --target web` denies them
+  in app crates (use `nd::time`, executors, `Store`), and the M11 gate runs each example's tier 1
+  tests under `wasm-bindgen-test` in headless Chromium. Crates such as jiff need their `js`
+  feature on wasm; `nd-data` and `nd::runtime::tokio()` are unavailable there.
 - `nd build --target web` produces the bundle (wasm, JS loader, assets). Not in the update or
   packaging paths beyond `nd package web` producing a static folder.
 
@@ -839,17 +1040,20 @@ Sections refer to `docs/parity/zig.md`; boxes there are ticked when the named ga
 | 3. menu bar, context menus, popovers, palette, DnD, type-ahead | Intents, overlays, `nd-virtual` | Kept |
 | 4. automation RPC, error codes, waitFor, dialog scripts, capture modes, helpers | `nd-automation`, `nd-test`, `ndshell` | Same method names and codes |
 | 4. GTK `-32003 inputUnsupported` | Fixed | Linux tier 3 has real input |
-| 5. system APIs | `nd-system`, `nd-config` | All three OSes plus web subset |
+| 5. system APIs | `nd-system`, `nd-config` | All three OSes plus web subset; `clipboard.readImage` kept |
 | 5. ACL grants | Narrowed | App code is trusted Rust; checks stay on web content bridges and the automation socket (per-launch token) |
 | 5. native plugin C ABI, `<nativeview>` | Replaced | `NativeWidget` (3.5) and `NativeSurface`; C libraries via FFI crates |
 | 5. `hasWidget`/`hasCommand` | `cx.supports(Feature)` | Compile-time availability for widgets |
 | 5. update system | `nd-update` | Adds deltas, channels, Windows |
 | 6. two processes, NDP, binary encoder, vtable ABI, codegen | Dropped | Single process; perf gates become frame-time and view-render gates |
-| 6. Solid renderer, HMR, `nd-solid-build` | Replaced | `nd dev`: Cranelift incremental, relaunch with state restore, live theme/settings/assets; Rust hot-patching (`subsecond`) evaluated in M10 |
+| 6. JS crash or hang leaves the window up | Replaced | Panic: bundle and relaunch with state restore (3.3). Hang: the window freezes like any native app; the helper writes a bundle at 5 s and offers relaunch at 10 s (9.4) |
+| 6. Solid renderer, HMR, `nd-solid-build` | Replaced | `nd dev`: incremental build, relaunch with state restore, live theme/settings/assets; `subsecond` hot-patching (render functions re-run, entities kept) spiked in M1, gated in M10: edit to visible change under 1.5 s with view state kept |
 | 6. null backend + conformance | `TestBackend` + backend conformance suite | Kept in spirit |
 | 7. webview API, engines, CEF features, adblock | `nd-webview`, `nd-cef`, `nd-adblock` | Request interception still absent |
 | 8. terminal | `nd-terminal` | One renderer per backend kind |
-| 9. data, store, rpc, panes, ui package | `nd-data`, `Store<T>`, `nd-ipc`, panes model, built-ins | Panes keep the same-value-when-unchanged contract |
+| 9. data, store, rpc, panes | `nd-data`, `Store<T>`, `nd-ipc`, panes model | Panes keep the same-value-when-unchanged contract |
+| 9. `@nativedesktop/ui` (Accordion, ButtonGroup, DescriptionList, Form/FormField, HoverCard, OtpInput, Pagination, SearchableList, StatusBar, Stepper) | `nd-components` (3.11) | Ported with their pure helpers |
+| config pattern `settings.d` (apps.md item 19) | `config.d/*.toml` (11.3) | Kept |
 | 10. CLI, packaging, release, CPU baselines | `nd-cli` | Adds Windows installer, web, `nd check` |
 | 10. npm lockstep rule | Replaced | crates.io lockstep from one workspace version |
 | 11. harness, locators, MCP, drive gates | `nd-test`, `nd-mcp` | Drives become tier 1-3 tests; MCP `execute` stays JS |
@@ -897,11 +1101,15 @@ aligned commented commands; License. `<!-- nd: ... -->` placeholders fail `nd ch
 
 ### 15.4 Gates that fail bad output fast
 `nd check` (seconds): fmt, clippy with the framework lint table (`unwrap_used`, `expect_used`
-outside tests and `main`, `dbg_macro`, `todo`, `print_stdout` denied), and framework lints: `gpui`
+outside tests and `main`, `dbg_macro`, `todo`, `print_stdout` denied), and framework lints run
+by a `syn`-based checker inside `nd check` (stable toolchain, no dylint, file and line output);
+rules that need types run as tier 1 audits instead. Syntactic rules: `gpui`
 or objc2 named outside allowed places; `cfg(target_os)` outside native widget modules without a
 reason comment; colour literals outside theme files; `Instant::now`, `thread::sleep`,
 `smol::Timer` in UI code; inline SVG; hand-rolled scroll lists; floating elements not created
-through overlays; web-unavailable APIs without a `supports` check (`--target web`). Tier 1 audits:
+through overlays; web-unavailable APIs without a `supports` check and direct `std::time`,
+`std::thread` or `std::fs` (`--target web`); px margins or paddings placed beside
+`window_controls` (use `titlebar()` insets). `nd check` runs over `examples/` in CI. Tier 1 audits:
 every interactive node has a role and a name or test id; no overlay without modality. Golden drift
 fails until re-blessed with `ND_BLESS=1`; the diff image sits next to the test.
 
@@ -910,85 +1118,108 @@ fails until re-blessed with `ND_BLESS=1`; the diff image sits next to the test.
 `just gate mN` wraps `cargo nextest run --profile gate -E 'test(/^gate_mN::/)'` plus the tier 3
 tests listed. Lanes run as parallel subagents in separate worktrees.
 
-**M0 Skeleton, first mac window.** Workspace, cargo config with build-dir on the drive and mount
-guard, nix dev shell, CI (macOS + Linux), nextest profiles, `nd-core`, `nd-gpui`, `nd-ui` core
-(views, retained tree, reconciler, Taffy, `TestBackend`), `nd-backend-appkit` with NSWindow, layer
-and text primitives, one native `button`, traffic lights by coordinates, `examples/hello`.
-Gate on the macbook: tier 1 + tier 2 pass; `cargo run -p hello -- --nd-selftest resize` drives 50
-live-resize steps and fullscreen in/out, asserting frame size equals window size and traffic
-lights at the configured point after each.
-Lanes: workspace/CI/nix; `nd-ui` core; AppKit host.
+**M0 Skeleton, dispatch spike, first mac window.** Day one, before any lane forks: the backend
+seam spec (3.15) with `TestBackend`, and the dispatch spike (3.12: nd dispatch on `TestBackend`,
+`NdAppKitPlatform` with one window, a binding firing while a native `NSTextField` has focus, a
+toolbar item in the key view loop). Then: workspace, cargo config with build-dir on the drive and
+mount guard, nix dev shell (no SDKROOT on darwin), `swift-toolchain.toml`, CI (macOS + Linux),
+nextest profiles, `nd-core`, `nd-gpui` and the fork with its rebase gate, `nd-ui` core (views,
+retained tree, reconciler with call-site identity, Taffy, event queue), `nd-backend-appkit`
+(NSWindow, layer and text primitives, native button, `nd::build::app()` Swift aggregate with one
+hosted leaf), traffic lights by coordinates, `examples/hello`, a stub `nd` crate that type-checks
+every example in `docs/plan/examples`, and a raw `gpui-pre` window measured on e1504g (9.5
+baseline). LLVM and Cranelift dev builds are measured. Gate on the macbook: tier 1 + tier 2 green;
+`cargo check` of all examples against the stub; the dispatch spike tests; a real HID edge drag on
+`hello` (live resize entered) with every presented frame captured by SCStream and content edges
+matching the window edge, and traffic lights at the configured point after resize and fullscreen.
+Lanes after day one: workspace/CI/nix; `nd-ui` core; AppKit host; Swift build.
 
-**M1 Diagnostics and harness.** Frame clock, `nd-diag`, frame recorder, semantic tree export,
-`nd-automation`, `nd-test` locators in all tiers, `nd-mcp`, minimal `nd new/check/test`; move
-`docs/plan/examples` into `examples/`. Gate: forced panic in `hello` yields a seven-part bundle; a
+**M1 Diagnostics and harness.** Frame clock, `nd-diag` (bundles, retention, hang watchdog), frame
+recorder (macOS layout diffs, GPUI last frame), semantic tree export, `nd-automation`, `nd-test`
+locators in all tiers, `ndshell` machine lock, `nd-mcp`, minimal `nd new/check/test`, `subsecond`
+spike; examples move to `examples/` with a `required-features` list per example so each compiles
+only once its milestone ships its APIs. Gate: forced panic in `hello` yields a complete bundle; a
 tier 3 locator clicks the native button; MCP `snapshot` returns the tree; retention deletes bundle
-21. Lanes: diag; automation + test; CLI + MCP.
+21; two concurrent tier 3 runs queue on the lock. Lanes: diag; automation + test; CLI + MCP.
 
-**M2 GPUI backend on Linux and Windows, pacing, chrome.** `nd-backend-gpui`, `nd-os-linux`
-(xdg-decoration, `wm_capabilities`, Hyprland no controls), `nd-os-windows` (Mica, caption buttons,
-Snap Layouts, `WM_POINTER`), per-window display clocks everywhere, `drag_region`,
-`window_controls` (both placements), multi-window, resize gate on three OSes, headless Hyprland
-runner. Gate on macbook, g815 (240 + 144 Hz) and the Windows PC: resize gate; `nd diag pacing`
-shows each window at its display's Hz after a monitor move; no controls under Hyprland. Lanes:
-GPUI backend; Linux; Windows; pacing patches; Hyprland runner.
+**M2 GPUI backend on Linux and Windows, pacing, chrome.** `nd-backend-gpui` with the dispatch hook,
+`nd-os-linux` (xdg-decoration, `wm_capabilities`, Hyprland no controls), `nd-os-windows` (Mica,
+the caption-button spike, Snap Layouts, `WM_POINTER`), per-window display clocks and occlusion
+throttling everywhere, `drag_region`, `window_controls`, `titlebar()` insets, multi-window,
+headless Hyprland runner, the Windows `ndshell agent`. Gate on macbook, g815 and the Windows PC:
+the real-drag resize gate on three OSes; `nd diag pacing` shows each window at its display's Hz
+after a monitor move (g815 240 + 144 Hz; Windows on its real pair or the virtual pair); no
+controls under Hyprland; e1504g budgets (9.5) met with and without `nd-gpui/fast`, which decides
+the default. Lanes: GPUI backend; Linux; Windows; pacing patches; Hyprland runner.
 
-**M3 Theme, skins, patterns.** Tokens, presets, Fluent skin, materials, matugen watcher and
-template, appearance/accent, intents (scaffold, toolbar, sidebar, sheet, settings window, menu
-bar, alerts, pickers), override layers. Gate: tier 2 goldens of `examples/overrides` and the
-gallery per skin, light and dark; Fluent goldens within tolerance of WinUI Gallery references; a
+**M3 Theme, skins, patterns.** Tokens resolved from the OS, presets, Fluent skin, `glass()`,
+materials, matugen watcher and template, appearance/accent, intents (scaffold, toolbar, sidebar
+and inspector split items, sheet, settings window, menu bar, alerts, pickers), override layers.
+Gate: tier 2 goldens of `examples/overrides` and the gallery for the Linux and macOS looks, light
+and dark; Fluent goldens on the Windows host plus metric comparison with WinUI Gallery; a
 `theme.json` write recolours a running app within 100 ms. Lanes: tokens + matugen; mac chrome;
 Fluent skin; Linux chrome.
 
-**M4 Input.** Gestures on both backend kinds, haptics, focus and keyboard rules, overlays with
-promotion. Gate: tier 1 arbitration and momentum on the test clock; tier 3 overlay leak test over a
-native surface on three OSes; pinch and page swipe through `ndshell` on macOS. Lanes: gestures;
-overlays; focus.
+**M4 Input, overlays, native surfaces.** Gestures on both backend kinds, haptics, focus and
+keyboard rules, overlays (in-window top-most on macOS, promotion on GPUI), `NativeSurface` with a
+minimal WKWebView host and a minimal WebView2 composition host, a test GPU surface on Linux.
+Gate: tier 1 arbitration and momentum on the test clock; tier 3 overlay leak test over a native
+surface on three OSes; resize gate with a webview and a GPU surface present; pinch and page swipe
+through `ndshell` on macOS. Lanes: gestures; overlays; surfaces; focus.
 
-**M5 Virtualization.** `nd-virtual` model, NSTableView/NSOutlineView/NSCollectionView presenters,
-GPUI presenter. Gate: the shared conformance suite green on both presenters; 100k-row scroll
-within budget on e1504g (`nd diag scroll --rows 100000`, built on g815). Lanes: model; mac
-presenters; GPUI presenter.
+**M5 Virtualization.** `nd-virtual` model with the height tree, row cache and versions,
+NSTableView/NSOutlineView/NSCollectionView presenters, GPUI presenter. Gate: the conformance suite
+green on the GPUI presenter (tier 1) and on a real `NSTableView` (tier 2); 100k-row scroll within
+budget on e1504g (`nd diag scroll --rows 100000`, built on g815). Lanes: model; mac presenters;
+GPUI presenter.
 
-**M6 Components.** Parity widgets and the ranked app components (command palette, source list,
-toast/banner, dialogs and forms, tabs and panes, image pipeline, media transport, lyrics view,
-carousel, composer, inspector), each with AppKit and drawn impls. Gate: per component tier 1
-tests, tier 2 goldens per skin, role audit; `examples/gallery` covers all. Lanes: one per family.
+**M6 Components.** Parity widgets, the zig `ui` set and the ranked app components (command
+palette, source list, toast/banner, dialogs and forms, tabs and panes, image pipeline, media
+transport, lyrics view, carousel, composer, inspector), each with an AppKit or Swift impl where
+native and a drawn impl, plus the echo test and the reentrancy test per widget. Gate: per component
+a tier 1 behaviour test, a tier 2 AppKit mapping test, goldens per look, role audit;
+`examples/gallery` covers all. Lanes: one per family.
 
-**M7 Settings, config, system.** `nd-config`, `nd-settings` + `settings_form` + HM generator,
-`Store<T>`, `nd-system`, `nd-ipc`, `nd-data`, `Plugin` with a Discord RPC example. Gate: settings
-round-trip keeps comments; store-symlinked file shows read-only; `nix flake check` evaluates the
-generated module; system API tests per OS. Lanes: settings + Nix; system per OS; ipc/data/plugin.
+**M7 Settings, config, system.** `nd-config`, `nd-settings` + `settings_form` + `config.d` + HM
+generator, `Store<T>`, `nd-system` (incl. `clipboard.readImage`), `nd-ipc`, `nd-data`, `Plugin`
+with `[plugins.*]` sections and a Discord RPC example. Gate: settings round-trip keeps comments;
+store-symlinked file shows read-only; a plugin section never breaks the app's strict parse; `nix
+flake check` evaluates the generated module; system API tests per OS. Lanes: settings + Nix;
+system per OS; ipc/data/plugin.
 
-**M8 Native webviews.** `NativeSurface`, WKWebView, WebView2 composition, WPE spike then engine.
-Gate: ported webview suite; overlay leak test with a live page on three OSes; resize gate with a
-webview. Lanes: mac; Windows; Linux.
+**M8 Webviews.** Full WKWebView, WebView2 composition (input forwarding: `SendMouseInput`,
+`SendPointerInput`, drag-drop, `CursorChanged`, `AutomationProvider`), WPE spike then engine, the
+engine matrix (8). Gate: every M8 cell of the matrix; overlay leak test with a live page on three
+OSes; resize gate with a live page. Lanes: mac; Windows; Linux.
 
-**M9 CEF and terminal.** OSR, external begin frame, input/IME/select/menus/drag, Chrome-style
-mode, helper packaging, adblock; `nd-terminal`. Gate: page paces at display Hz on 240 + 144 Hz;
-per-item OSR tests; an app without CEF has zero Chromium bytes; terminal incl. remote session.
-Lanes: CEF core; CEF input; Chrome-style; terminal.
+**M9 CEF and terminal.** OSR with the IOSurface pool on macOS, external begin frame,
+input/IME/select/menus/drag, Chrome-style mode (XWayland on Hyprland), helper packaging, adblock;
+`nd-terminal`. Gate: page paces at display Hz on 240 + 144 Hz; every M9 cell of the matrix; an app
+without CEF has zero Chromium bytes; terminal incl. remote session. Lanes: CEF core; CEF input;
+Chrome-style; terminal.
 
-**M10 CLI, packaging, updates.** Full `nd new`, `nd dev` (Cranelift, relaunch with state restore,
-`subsecond` evaluation), `nd package` for three OSes with signing, `nd release`, `nd-update`,
-`mkApp`, README template. Gate: `nd new demo && cd demo && nd check && nd test && nd package` on
-each OS; signed delta update 0.1.0 to 0.1.1; tampered feed rejected; `nix build` works. Lanes: CLI;
-packaging per OS; updates; Nix.
+**M10 CLI, packaging, updates.** Full `nd new` (with `nd::build::app()` in every template),
+`nd dev` (relaunch with state restore, `subsecond`), `nd package` for three OSes with signing,
+`nd release` with publishers, `nd-update`, `mkApp` (darwin builds link the prebuilt Swift
+aggregate), README template. Gate: `nd new demo && cd demo && nd check && nd test && nd package`
+on each OS; signed delta update 0.1.0 to 0.1.1 from `nd release serve`; tampered feed rejected;
+`nix build` works; edit to visible change under 1.5 s in `nd dev` with view state kept. Lanes:
+CLI; packaging per OS; updates; Nix.
 
 **M11 Web backend.** wasm build of `nd-backend-gpui`, `nd-os-web`, drawn menus, file input and
 download, Clipboard API, localStorage settings, in-canvas windows, iframe webview, capability
-checks, `nd build --target web`. Gate: every crate in `examples/` builds for wasm32 unchanged; tier
-2 goldens of the plain web look in headless Chromium via `ndshell`; capability lint passes. Lanes: wasm
-backend; web services; capability checks.
+checks, `nd build --target web`. Gate: every crate in `examples/` builds for wasm32 unchanged and
+its tier 1 tests pass under `wasm-bindgen-test` in headless Chromium; goldens of the plain web look;
+capability lint passes. Lanes: wasm backend; web services; capability checks.
 
 **M12 Docs.** `nd-docs` site with four-tab embeds (live web, captured macOS/Linux/Windows) and
-view-source, gallery, docs app, agent docs. Gate: all examples compile for every target; site
-builds; every web embed loads; `nd docs shots --check` finds no capture older than its example;
-link check passes.
-Lanes: generator; docs app; content by section.
+view-source, gallery, docs app, agent docs, OS-release diff job. Gate: all examples compile for
+every target; `nd check` clean over `examples/`; site builds; every web embed loads; `nd docs
+shots --check` finds no capture older than its example; link check passes. Lanes: generator; docs
+app; content by section.
 
 **M13 messages port** (after M7, parallel with M8 to M12). **M14 youtubemusic port** (after M7;
-the daemon stays a process on `nd-ipc`). **M15 nativebrowser port** (after M9). Gate per port:
+the daemon stays a process on `nd-ipc`). **M15 nativebrowser port** (after M9; gate includes extensions and 1Password on Hyprland). Gate per port:
 the app's suite green on its OSes, its old feature list checked, and its hand-rolled theme, live
 theme, chrome, menus, single instance, trace, motion, toast and primitives deleted. Order:
 messages exercises lists, overlays, chrome and matugen without a webview; youtubemusic adds media,
@@ -1005,22 +1236,26 @@ thumbnails in `nd-system`, volumes and favourites as a source list, a path bread
 | --- | --- |
 | Two backend kinds double widget work | One public `NativeWidget` trait; drawn impls shared by Linux, Windows and web; AppKit impls only for controls where native feel matters; conformance suite per widget |
 | Layout disagreement between Taffy and AppKit containers | Taffy authority, containers as layout boundaries, measure cache, one transaction per frame (3.7); the old NDBoxView lessons |
-| Embedded GPUI surface on macOS needs a `PlatformWindow` patch | Used only for GPU-only content; CEF on macOS avoids it via CALayer contents; patch kept small and upstreamed |
+| Embedded GPUI surface on macOS needs a `PlatformWindow` patch | Used only for GPU-only content; one shared renderer per window; CEF on macOS uses our IOSurface pool instead; patch upstreamed |
+| nd owns dispatch and `NSApplication` (3.12): a large surface GPUI already solves on its own path | Spiked first in M0 before any lane starts; one dispatcher for all backends, tested on `TestBackend` |
+| Native callbacks re-entering app code | Event queue and row cache by rule (3.13); reentrancy test per widget |
 | Single Longbridge maintainer behind gpui-pre, gpui-fast, gpui-kit | `nd-gpui` facade; fork can publish snapshots; only `gpui-base` used; `fast` optional |
-| GPUI churn | Exact pins, weekly gated bump, small patch queue |
-| Fluent skin drifts from WinUI | Reference goldens from WinUI Gallery; `winui` seam reserved; re-evaluate `windows-reactor` when it leaves preview |
+| GPUI churn and a growing patch queue (2.1, about 14 patches) | Maintained fork from M0 with a rebase gate, each patch filed upstream with an owner |
+| Fluent skin drifts from WinUI | Goldens and metric comparison on the Windows host; `winui` seam reserved; re-evaluate `windows-reactor` when it leaves preview |
 | CEF size and OSR work | Opt-in, zero bytes by default; OSR items gated one by one; windowed mode for extensions |
 | WPE WebKit unproven in our stack | M8 spike first; CEF OSR or XWayland WebKitGTK fallback |
 | Wayland gesture gaps | Framework momentum and rubber band; pointer-gestures v3 bound ourselves; finger counts documented |
-| Windows pacing follows DWM | Per-window clock patch, proven on g815 first |
+| Windows pacing follows DWM | Per-window clock patch, proven on a real or virtual 240 + 144 Hz pair on Windows |
+| Windows tier 3 from ssh has no desktop; the PC is a gaming machine | `ndshell agent` in the user session, refuses real input over a fullscreen game, optional second session |
 | `gpui_web` experimental (one canvas, no menus) | Gaps filled in `nd-os-web`; web is a docs target first; capability checks |
 | objc2 releases trail Xcode | Pinned git rev; shim file for missing selectors |
-| Swift toolchain in the build (Command Line Tools, SDKROOT quirks, Swift runtime linking) | Isolated in `nd-backend-appkit`'s build script; `nd doctor` check; Nix dev shell provides it; Swift kept to hosted leaves and newest-API branches |
+| Swift toolchain in the build (Nix ships an older Swift and SDK, library build scripts cannot link) | System toolchain pinned by `swift-toolchain.toml` and `nd doctor`; system clang linker; one aggregate Swift build from the app's build script (3.9); Swift kept to hosted leaves |
 | Private APIs in tests break per macOS release | Isolated in `ndshell`; tiers 1-2 independent of them |
-| e1504g performance unknown | Measured from M2; view-render budget in the HUD |
+| e1504g performance unknown | Numeric budgets (9.5), baseline in M0, gates in M2, M5 and M13 |
 | Hyprland lacks `xdg-toplevel-drag` | Drop-to-new-window fallback |
 | External drive latency, APFS unreadable on Linux | Measured in M0; mount guard; g815 local NVMe |
-| Rust reload slower than Solid HMR | Fast relaunch with state restore, live theme/settings; `subsecond` evaluated in M10 |
+| Rust reload slower than Solid HMR | `subsecond` spiked in M1 and gated in M10; relaunch with state restore as the fallback |
+| nativebrowser on Hyprland needs XWayland for Chrome-style CEF | Same as the zig branch; fractional-scale blur under XWayland needs `force_zero_scaling`; gated in M15 |
 
 ### Decisions on the former open questions (2026-10-13)
 1. Update feed: static, self-hostable files (11.3) on any host; the ecosystem's own apps use Cloudflare R2

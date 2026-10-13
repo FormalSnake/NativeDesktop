@@ -32,8 +32,8 @@ impl Places {
         Self { places, list, center, zoom: 11.0 }
     }
 
-    fn row(&mut self, ix: &usize, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let place = &self.places[*ix];
+    fn row(&mut self, ix: usize, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let place = &self.places[ix];
         source_row(if place.visited { Icon::CircleCheck } else { Icon::MapPin }, place.name)
     }
 }
@@ -49,7 +49,7 @@ impl Render for Places {
                 sidebar().child(
                     v_flex()
                         .size_full()
-                        .child(source_list(&self.list, cx.processor(Self::row)).flex_1().on_select(cx.listener(
+                        .child(source_list("places", &self.list, cx.processor(Self::row)).flex_1().on_select(cx.listener(
                             |this, e: &SelectEvent<usize>, _window, cx| {
                                 this.center = this.places[e.key].at;
                                 cx.notify();
