@@ -14,6 +14,8 @@
 //!   control's own action, so the same report-and-emit path runs as for the user.
 
 mod choice;
+mod date;
+mod display;
 mod value;
 
 use std::any::TypeId;
@@ -82,6 +84,16 @@ pub(crate) fn create(kind: WidgetKind, p: &Props, cx: Ctx) -> Option<Box<dyn For
         Box::new(choice::SelectControl::new(cx, props(p)))
     } else if is::<SliderKind>(kind) {
         Box::new(value::SliderControl::new(cx, props(p)))
+    } else if is::<DatePickerKind>(kind) {
+        Box::new(date::DateControl::new(cx, props(p)))
+    } else if is::<ColorWellKind>(kind) {
+        Box::new(date::ColorWellControl::new(cx, props(p)))
+    } else if is::<ProgressKind>(kind) {
+        Box::new(display::ProgressControl::new(cx, props(p)))
+    } else if is::<LabelKind>(kind) {
+        Box::new(display::LabelControl::new(cx, props(p)))
+    } else if is::<LinkKind>(kind) {
+        Box::new(display::LinkControl::new(cx, props(p)))
     } else {
         return None;
     };
