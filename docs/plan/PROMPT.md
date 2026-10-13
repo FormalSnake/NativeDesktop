@@ -76,3 +76,5 @@ proceed
 - 2026-10-13: big structural elements use the highest-level system component (sidebar split item, NSToolbar, system caption buttons, system materials), never replicas, so new OS releases restyle apps automatically; an OS-release diff job enforces it.
 - 2026-10-13: first-class `glass()` element on system materials; the zig branch's macOS command palette is ported exactly.
 - 2026-10-13: update feed is static and self-hostable on any host (ecosystem uses R2 at updates.formalsnake.dev, bundle ids dev.formalsnake.*); macOS floor 14 with glass fallback below 26; git-only publishing; `zig` branch frozen at v0.5.10; signing decided at M10.
+- 2026-10-13: CEF on Hyprland prefers Wayland-native (off-screen); fall back to XWayland (with `force_zero_scaling`) only where Wayland would lose functionality, e.g. Chrome-style extensions and 1Password in nativebrowser (REVIEW finding 18).
+- 2026-10-13: the Windows PC drives the same 240 Hz + 144 Hz pair as g815, so the Windows pacing gate runs on real monitors (REVIEW finding 35).
