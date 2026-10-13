@@ -379,6 +379,13 @@ impl Backend for TestBackend {
         if self.probes.get(&node).and_then(|p| p.enabled) == Some(false) {
             return Err(ActionError::NotActionable(format!("{node:?} is disabled")));
         }
+        if let NodeKind::Widget(w) = n.kind
+            && let Some(response) = w.respond(&*n.props, action)
+        {
+            self.events.emitter(node).emit_boxed(response?);
+            self.performed.push((node, action.clone()));
+            return Ok(());
+        }
         let button = n.kind == NodeKind::Widget(crate::backend::WidgetKind::of::<Button>());
         let clicks = match action {
             SemanticAction::Click if button => 1,

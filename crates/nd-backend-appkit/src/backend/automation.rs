@@ -109,6 +109,9 @@ impl AppKitBackend {
             probe.enabled = Some(b.button.isEnabled());
             probe.name = Some(b.button.title().to_string());
         }
+        if let Native::Control(c) = native {
+            c.control.probe(&mut probe);
+        }
         probe
     }
 
@@ -157,7 +160,27 @@ impl AppKitBackend {
         Ok((id, Point { x: (r.origin.x + r.size.width / 2.) as f32, y: (r.origin.y + r.size.height / 2.) as f32 }))
     }
 
+    /// A forms control acts through its native control, or failing that answers the way its
+    /// props say the control would, through the event queue.
+    fn perform_control(&self, node: NodeId, action: &SemanticAction) -> Option<Result<(), ActionError>> {
+        let state = self.0.borrow();
+        let Some(Native::Control(c)) = state.nodes.get(&node) else { return None };
+        if let Some(result) = c.control.perform(action) {
+            return Some(result);
+        }
+        let response = c.kind.respond(&*c.props, action)?;
+        Some(response.map(|event| {
+            state.events.emitter(node).emit_boxed(event);
+            state.wake.wake();
+        }))
+    }
+
     pub(super) fn perform_action(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        if !matches!(action, SemanticAction::Focus)
+            && let Some(result) = self.perform_control(node, action)
+        {
+            return result;
+        }
         match action {
             SemanticAction::Click => self.press(node),
             SemanticAction::DoubleClick => {

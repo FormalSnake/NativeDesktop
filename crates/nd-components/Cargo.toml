@@ -6,7 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# `settings_form::<T>()` over nd-settings' schema.
+settings = ["dep:nd-settings", "dep:serde_json"]
+
 [dependencies]
+nd-settings = { path = "../nd-settings", optional = true }
+serde_json = { workspace = true, optional = true }
 nd-core.workspace = true
 nd-gpui.workspace = true
 nd-ui.workspace = true

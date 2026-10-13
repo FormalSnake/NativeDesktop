@@ -125,6 +125,10 @@ impl NativeButtonView {
                     b.setBezelStyle(NSBezelStyle::Glass);
                 }
                 Bezel::Borderless => b.setBordered(false),
+                Bezel::Toolbar => {
+                    b.setBordered(true);
+                    b.setBezelStyle(NSBezelStyle::Toolbar);
+                }
                 Bezel::Automatic | Bezel::Bordered | Bezel::Glass => {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Push);

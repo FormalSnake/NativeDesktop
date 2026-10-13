@@ -8,6 +8,7 @@ mod backend;
 mod budget;
 mod clock;
 mod drawn;
+mod forms;
 mod host;
 mod input;
 pub mod os;

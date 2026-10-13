@@ -23,7 +23,7 @@ pub use container::ContainerElement;
 pub use element::{
     AnyElement, Bezel, Button, ButtonProps, ButtonVariant, ClickEvent, DispatchProps, Div, DivProps,
     InteractiveElement, IntoElement, Key, NativeElement, ParentElement, RootProps, Scope, Text, TextProps,
-    WindowControls, WindowControlsProps, button, div, drag_region, h_flex, text, v_flex, window_controls,
+    WindowControls, WindowControlsProps, button, deferred, div, drag_region, h_flex, text, v_flex, window_controls,
 };
 pub use layout::with_titlebar_insets;
 pub use nd_core::semantic::{Role, SemanticNode, SemanticTree, SemanticWindow};
@@ -37,7 +37,7 @@ pub mod prelude {
     pub use crate::{
         AnyElement, AnyView, App, Button, ClickEvent, Context, Div, Entity, EntityId, FluentBuilder,
         InteractiveElement, IntoElement, NativeElement, ParentElement, Render, Styled, Subscription, Text, WeakEntity,
-        Window, WindowHandle, WindowOptions, button, div, drag_region, h_flex, text, v_flex, window_controls,
+        Window, WindowHandle, WindowOptions, button, deferred, div, drag_region, h_flex, text, v_flex, window_controls,
     };
     pub use nd_gpui::gpui::{
         AbsoluteLength, DefiniteLength, FontWeight, Hsla, Length, Pixels, Rems, Rgba, SharedString, hsla, point, px,

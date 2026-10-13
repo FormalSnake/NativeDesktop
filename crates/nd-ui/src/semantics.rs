@@ -6,6 +6,7 @@
 //! [`App::semantic_tree`](crate::App::semantic_tree); actions go through
 //! [`App::perform`](crate::App::perform) and [`App::synthesize`](crate::App::synthesize).
 
+use std::any::Any;
 use std::fmt;
 
 use nd_core::semantic::Role;
@@ -130,11 +131,75 @@ pub struct Capture {
     pub png: Vec<u8>,
 }
 
+/// What a widget's props say about it: role, name and the state a control holds. A backend's
+/// [`Probe`] of the live native object wins over each field it sets.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Semantics {
+    pub role: Option<Role>,
+    pub name: String,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub enabled: Option<bool>,
+    pub checked: Option<bool>,
+    pub selected: Option<bool>,
+    pub expanded: Option<bool>,
+}
+
+impl Semantics {
+    pub fn new(role: Role, name: impl Into<String>) -> Self {
+        Self { role: Some(role), name: name.into(), ..Self::default() }
+    }
+
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
+
+    pub fn placeholder(mut self, placeholder: Option<impl Into<String>>) -> Self {
+        self.placeholder = placeholder.map(Into::into);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+}
+
+/// A control's answer to a semantic action: the event its native control would emit, or why
+/// it cannot take the action.
+pub type Response = Result<Box<dyn Any>, ActionError>;
+
+/// Props of a widget that describe it to the semantic tree and automation. Kinds built with
+/// [`WidgetKind::described`](crate::backend::WidgetKind::described) use it.
+pub trait WidgetSemantics: crate::backend::AnyProps + Sized {
+    fn semantics(&self) -> Semantics;
+
+    /// The event the control emits when automation performs `action` on it, as the user doing
+    /// the same would (`SetValue("0.5")` on a slider is a `SliderChanged`). `None` when the
+    /// control does not take the action. Backends that draw the control themselves emit it;
+    /// AppKit drives the real control instead.
+    fn respond(&self, _action: &SemanticAction) -> Option<Response> {
+        None
+    }
+}
+
 /// What the retained tree says about a node from its kind and props alone.
 pub(crate) struct Described {
     pub role: Role,
     pub kind: String,
     pub name: String,
+    pub extra: Semantics,
 }
 
 /// The short type name of a widget kind: `nd_ui::element::Button` is `Button`.
@@ -144,6 +209,16 @@ fn short_name(name: &str) -> &str {
 }
 
 pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
+    if let NodeKind::Widget(w) = kind
+        && let Some(extra) = w.semantics(&**props)
+    {
+        return Described {
+            role: extra.role.unwrap_or(Role::Generic),
+            kind: short_name(w.name).to_owned(),
+            name: extra.name.clone(),
+            extra,
+        };
+    }
     let (role, kind_name, name) = match kind {
         NodeKind::Root => (Role::Window, "root".to_owned(), String::new()),
         NodeKind::View => (Role::Group, "view".to_owned(), String::new()),
@@ -162,5 +237,5 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
         }
         NodeKind::Widget(w) => (Role::Generic, short_name(w.name).to_owned(), String::new()),
     };
-    Described { role, kind: kind_name, name }
+    Described { role, kind: kind_name, name, extra: Semantics::default() }
 }

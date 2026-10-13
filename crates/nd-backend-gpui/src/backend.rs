@@ -54,6 +54,9 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// What a drawn control keeps between frames (a text field's caret and selection, a slider
+    /// mid-drag), by node; dropped when the node is released.
+    pub(crate) drawn: Rc<RefCell<HashMap<NodeId, Box<dyn std::any::Any>>>>,
 }
 
 impl Default for GpuiBackend {
@@ -88,6 +91,7 @@ impl GpuiBackend {
                 pending: Vec::new(),
             })),
             bounds: Rc::default(),
+            drawn: Rc::default(),
         }
     }
 
@@ -244,6 +248,7 @@ impl Backend for GpuiBackend {
     fn focus(&mut self, _node: Option<NodeId>) {}
 
     fn release(&mut self, node: NodeId) {
+        self.drawn.borrow_mut().remove(&node);
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {
@@ -306,6 +311,17 @@ impl Backend for GpuiBackend {
             let state = self.state.borrow();
             state.nodes.get(&node).map(|n| n.kind).ok_or_else(|| not_actionable(format!("{node:?} is not live")))?
         };
+        // A forms control answers the way its props say the drawn control would.
+        if !matches!(action, SemanticAction::RightClick | SemanticAction::Hover | SemanticAction::Focus) {
+            let state = self.state.borrow();
+            let n = state.nodes.get(&node).expect("checked live above");
+            if let NodeKind::Widget(w) = n.kind
+                && let Some(response) = w.respond(&*n.props, action)
+            {
+                state.events.emitter(node).emit_boxed(response?);
+                return Ok(());
+            }
+        }
         let press = |times: usize| {
             let events = self.state.borrow().events.clone();
             for _ in 0..times {

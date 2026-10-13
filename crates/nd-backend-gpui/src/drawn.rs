@@ -7,9 +7,9 @@ use std::any::TypeId;
 
 use nd_components::{
     Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane, PaneProps,
-    PaneRole, Scaffold, SelectChanged, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps,
-    SourceItem, SourceListKind, SourceListProps, SourceSelected, SystemItem, SystemItemProps, TabSelected, Titlebar,
-    TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
+    PaneRole, Scaffold, SeparatorKind, SeparatorProps, SourceItem, SourceListKind, SourceListProps, SourceSelected,
+    SystemItem, SystemItemProps, TabSelected, Titlebar, TitlebarInset, TitlebarProps, Toolbar, ToolbarItem,
+    ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
 };
 use nd_core::NodeId;
 use nd_gpui::gpui::{
@@ -47,6 +47,9 @@ impl Build<'_> {
     ) -> Option<AnyElement> {
         let children =
             |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
+        if let Some(control) = self.form_control(id, kind, node, window) {
+            return Some(control);
+        }
         let look = self.look;
         let element = if is::<Scaffold>(kind) {
             // Toolbar first as the title row, then the panes side by side.
@@ -144,40 +147,6 @@ impl Build<'_> {
             let p = props::<SeparatorProps>(node)?;
             let line = div().bg(look.border);
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
-        } else if is::<SelectKind>(kind) {
-            let p = props::<SelectProps>(node)?;
-            let emit = self.backend.state.borrow().events.emitter(id);
-            let mut row = styled(&p.style).flex().flex_row().rounded(px(6.)).border_1().border_color(look.border);
-            for (index, option) in p.options.iter().enumerate() {
-                let emit = emit.clone();
-                let wake = self.wake.clone();
-                let selected = index == p.selected;
-                row = row.child(
-                    div()
-                        .id(ElementId::Integer((id.0 << 8) | index as u64))
-                        .px_3()
-                        .py_1()
-                        .when_bg(selected, look.control_active)
-                        .hover(move |s| s.bg(look.control_hover))
-                        .child(option.clone())
-                        .on_click(move |_, _, cx| {
-                            emit.emit(SelectChanged { index });
-                            wake(cx);
-                        }),
-                );
-            }
-            row.into_any_element()
-        } else if is::<SliderKind>(kind) {
-            let p = props::<SliderProps>(node)?;
-            let span = (p.max - p.min).max(f32::EPSILON);
-            let fraction = ((p.value - p.min) / span).clamp(0., 1.);
-            styled(&p.style)
-                .min_w(px(120.))
-                .h(px(6.))
-                .rounded_full()
-                .bg(look.control)
-                .child(div().h_full().rounded_full().bg(look.text).w(gpui::relative(fraction)))
-                .into_any_element()
         } else if is::<SourceListKind>(kind) {
             let p = props::<SourceListProps>(node)?;
             let emit = self.backend.state.borrow().events.emitter(id);
@@ -273,7 +242,7 @@ fn flatten(items: &[SourceItem]) -> Vec<&SourceItem> {
 }
 
 /// A background only when `on`, for selected rows and segments.
-trait WhenBg: Styled + Sized {
+pub(crate) trait WhenBg: Styled + Sized {
     fn when_bg(self, on: bool, color: gpui::Hsla) -> Self {
         if on { self.bg(color) } else { self }
     }

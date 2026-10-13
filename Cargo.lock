@@ -4034,8 +4034,10 @@ version = "0.1.0"
 dependencies = [
  "nd-core",
  "nd-gpui",
+ "nd-settings",
  "nd-theme",
  "nd-ui",
+ "serde_json",
 ]
 
 [[package]]

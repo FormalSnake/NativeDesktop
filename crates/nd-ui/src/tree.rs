@@ -103,6 +103,7 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
             let (kind, key) = match &el.0 {
                 Element::Node(n) => (SlotKind::Node(n.kind), n.key.clone()),
                 Element::View(v) => (SlotKind::View(v.view_type()), Key::Entity(v.entity_id())),
+                Element::Deferred(_) => unreachable!("deferred elements are built before matching"),
             };
             let count = seen.entry((kind, key.clone())).or_default();
             let occurrence = *count;
@@ -300,7 +301,7 @@ impl Tree {
         let id = view.entity_id();
         app.dirty.remove(&id);
         *app.render_counts.entry(id).or_default() += 1;
-        view.render(window, app)
+        view.render(window, app).resolve(window, app)
     }
 
     fn mount(
@@ -315,6 +316,7 @@ impl Tree {
         match el.0 {
             Element::View(view) => self.mount_view(view, ident, parent, depth, window, app),
             Element::Node(node) => Slot::Node(self.mount_node(*node, ident, depth, window, app)),
+            Element::Deferred(_) => unreachable!("deferred elements are built before mounting"),
         }
     }
 
@@ -340,9 +342,10 @@ impl Tree {
                 boundary: None,
             },
         );
-        let idents = idents(&el.children);
+        let children: Vec<AnyElement> = el.children.into_iter().map(|c| c.resolve(window, app)).collect();
+        let idents = idents(&children);
         let slots =
-            el.children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
+            children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
         self.nodes.get_mut(&id).expect("node").slots = slots;
         id
     }
@@ -584,6 +587,7 @@ impl Tree {
         window: &mut Window,
         app: &mut App,
     ) {
+        let children: Vec<AnyElement> = children.into_iter().map(|c| c.resolve(window, app)).collect();
         let old = mem::take(&mut self.nodes.get_mut(&parent).expect("node").slots);
         if old.is_empty() && children.is_empty() {
             return;

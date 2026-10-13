@@ -42,6 +42,18 @@ pub enum Role {
     Toolbar,
     ScrollArea,
     WindowControls,
+    SearchField,
+    TextArea,
+    RadioButton,
+    RadioGroup,
+    PopUpButton,
+    ComboBox,
+    SegmentedControl,
+    /// A stepper's up/down arrows (`NSAccessibilityIncrementorRole`).
+    Incrementor,
+    DatePicker,
+    ColorWell,
+    Link,
     Generic,
 }
 
@@ -73,6 +85,17 @@ impl Role {
             Role::Toolbar => "toolbar",
             Role::ScrollArea => "scroll-area",
             Role::WindowControls => "window-controls",
+            Role::SearchField => "search-field",
+            Role::TextArea => "text-area",
+            Role::RadioButton => "radio-button",
+            Role::RadioGroup => "radio-group",
+            Role::PopUpButton => "pop-up-button",
+            Role::ComboBox => "combo-box",
+            Role::SegmentedControl => "segmented-control",
+            Role::Incrementor => "incrementor",
+            Role::DatePicker => "date-picker",
+            Role::ColorWell => "color-well",
+            Role::Link => "link",
             Role::Generic => "generic",
         }
     }
