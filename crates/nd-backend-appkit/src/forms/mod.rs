@@ -35,6 +35,11 @@ use crate::events::Wake;
 pub(crate) trait FormControl {
     /// The view its parent holds.
     fn view(&self) -> &NSView;
+    /// The view that takes first responder when nd focuses the node; a field inside a container
+    /// returns the field.
+    fn focus_view(&self) -> &NSView {
+        self.view()
+    }
     /// Applies `new` (inside `programmatic`). `false` when the control cannot show it and the
     /// backend must create a fresh one (a select switching between pop-up and segmented).
     fn update(&mut self, old: &Props, new: &Props) -> bool;

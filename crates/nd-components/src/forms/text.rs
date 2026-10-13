@@ -299,7 +299,7 @@ fn field(id: impl Into<SharedString>, style: FieldStyle) -> TextField {
         tooltip: None,
         style: StyleRefinement::default(),
     };
-    TextInput::new(NativeElement::described::<TextFieldKind>(Key::Id(id.into()), props))
+    TextInput::new(NativeElement::described::<TextFieldKind>(Key::Id(id.into()), props).focusable())
 }
 
 /// A single-line text field.
@@ -329,7 +329,7 @@ pub fn text_area(id: impl Into<SharedString>) -> TextArea {
         tooltip: None,
         style: StyleRefinement::default(),
     };
-    TextInput::new(NativeElement::described::<TextAreaKind>(Key::Id(id.into()), props))
+    TextInput::new(NativeElement::described::<TextAreaKind>(Key::Id(id.into()), props).focusable())
 }
 
 /// A text field with suggestions.
@@ -345,7 +345,7 @@ pub fn combo_box(id: impl Into<SharedString>, options: impl IntoIterator<Item = 
         tooltip: None,
         style: StyleRefinement::default(),
     };
-    TextInput::new(NativeElement::described::<ComboBoxKind>(Key::Id(id.into()), props))
+    TextInput::new(NativeElement::described::<ComboBoxKind>(Key::Id(id.into()), props).focusable())
 }
 
 impl<P: TextProps> TextInput<P> {

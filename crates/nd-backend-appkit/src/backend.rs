@@ -974,7 +974,10 @@ impl Backend for AppKitBackend {
         if let Some(Native::Layer(v)) = native {
             v.set_focusable();
         }
-        let view = native.and_then(Native::view).map(|v| v.retain());
+        let view = match native {
+            Some(Native::Control(c)) => Some(c.control.focus_view().retain()),
+            _ => native.and_then(Native::view).map(|v| v.retain()),
+        };
         drop(state);
         window.make_first_responder_from_nd(view.as_deref());
     }
