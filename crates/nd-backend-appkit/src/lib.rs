@@ -22,7 +22,7 @@ mod traffic_lights;
 mod views;
 mod window;
 
-pub use app_host::{AppHost, run};
+pub use app_host::{AppHost, AppJob, AppSender, run, run_with};
 pub use backend::AppKitBackend;
 pub use dispatch::AppKitDispatch;
 pub use frame_clock::{FrameClock, FrameTick};

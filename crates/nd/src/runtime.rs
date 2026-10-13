@@ -65,11 +65,18 @@ impl Application {
         #[cfg(target_os = "macos")]
         {
             use nd_backend_appkit::objc2_foundation::MainThreadMarker;
-            nd_backend_appkit::run(move |cx| {
-                let colors = nd_backend_appkit::system_colors(MainThreadMarker::new().expect("main thread"));
-                cx.set_global(Theme::from_system(colors));
-                init(cx);
-            })
+            nd_backend_appkit::run_with(
+                move |cx| {
+                    let colors = nd_backend_appkit::system_colors(MainThreadMarker::new().expect("main thread"));
+                    cx.set_global(Theme::from_system(colors));
+                    init(cx);
+                },
+                |sender| {
+                    if let Err(e) = nd_automation::start_from_env(move |job| sender.send(job)) {
+                        eprintln!("nd: automation socket: {e}");
+                    }
+                },
+            )
         }
         #[cfg(not(target_os = "macos"))]
         {
