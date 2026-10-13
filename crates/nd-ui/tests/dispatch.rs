@@ -217,3 +217,100 @@ fn focus_moves_reach_the_backend_through_one_transaction() {
         assert_eq!(backend.focused(), Some(expected));
     }
 }
+
+/// `key_context` and `on_action` set on elements reach the window's dispatch tree through the
+/// reconciler, on `TestApp`.
+mod elements {
+    use nd_ui::test_app::TestApp;
+    use nd_ui::*;
+
+    use super::{KeyDispatch, Ping, Save, key};
+
+    const WINDOW: Size = Size { width: 400., height: 300. };
+
+    struct Workspace {
+        label: &'static str,
+        handles_ping: bool,
+        log: Vec<String>,
+    }
+
+    impl Workspace {
+        fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
+            self.log.push(format!("save {}", self.label));
+            cx.notify();
+        }
+    }
+
+    impl Render for Workspace {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let this = cx.weak_entity();
+            v_flex()
+                .key_context("Workspace")
+                .on_action(cx.listener(Self::save))
+                .when(self.handles_ping, |d| {
+                    d.on_action(move |_: &Ping, _, cx| {
+                        this.update(cx, |w, _| w.log.push("ping first".into()));
+                        cx.propagate();
+                    })
+                    .on_action(cx.listener(|w, _: &Ping, _, _| w.log.push("ping second".into())))
+                })
+                .child(text("body"))
+        }
+    }
+
+    fn open(cx: &mut TestApp, bindings: Vec<KeyBinding>) -> WindowHandle<Workspace> {
+        cx.bind_keys(bindings);
+        cx.open_window(WINDOW, |_, cx| cx.new(|_| Workspace { label: "a", handles_ping: true, log: Vec::new() }))
+    }
+
+    fn log(cx: &TestApp, window: &WindowHandle<Workspace>) -> Vec<String> {
+        window.root().read(cx).log.clone()
+    }
+
+    #[test]
+    fn a_binding_in_the_elements_key_context_reaches_its_on_action() {
+        let mut cx = TestApp::new();
+        let window = open(&mut cx, vec![KeyBinding::new("secondary-s", Save, Some("Workspace"))]);
+        assert_eq!(cx.dispatch_keystroke(window.id(), &key("secondary-s")), KeyDispatch::Handled);
+        assert_eq!(log(&cx, &window), ["save a"]);
+    }
+
+    #[test]
+    fn a_binding_in_a_context_no_element_declares_stays_unhandled() {
+        let mut cx = TestApp::new();
+        let window = open(&mut cx, vec![KeyBinding::new("secondary-s", Save, Some("Editor"))]);
+        assert_eq!(cx.dispatch_keystroke(window.id(), &key("secondary-s")), KeyDispatch::Unhandled);
+        assert!(log(&cx, &window).is_empty());
+    }
+
+    #[test]
+    fn listeners_are_replaced_on_every_render_without_a_backend_op() {
+        let mut cx = TestApp::new();
+        let window = open(&mut cx, vec![KeyBinding::new("secondary-s", Save, None)]);
+        let ops = cx.backend().ops().count();
+        window.root().update(&mut cx, |w, cx| {
+            w.label = "b";
+            cx.notify();
+        });
+        cx.run_until_idle();
+        assert_eq!(cx.backend().ops().count(), ops, "swapping listeners sends nothing to the backend");
+        assert!(cx.dispatch_action(window.id(), &Save));
+        assert_eq!(log(&cx, &window), ["save b"]);
+    }
+
+    #[test]
+    fn propagate_continues_to_the_next_listener_and_a_dropped_listener_is_gone() {
+        let mut cx = TestApp::new();
+        let window = open(&mut cx, Vec::new());
+        assert!(cx.dispatch_action(window.id(), &Ping));
+        assert_eq!(log(&cx, &window), ["ping first", "ping second"]);
+
+        window.root().update(&mut cx, |w, cx| {
+            w.handles_ping = false;
+            cx.notify();
+        });
+        cx.run_until_idle();
+        assert!(!cx.dispatch_action(window.id(), &Ping));
+        assert_eq!(log(&cx, &window).len(), 2);
+    }
+}
