@@ -1,7 +1,8 @@
-//! The `nd` command line. M1 ships `new`, `check` and `test`; `dev`, `package` and `release`
+//! The `nd` command line. M1 ships `new`, `check`, `test` and `diagnose`; `dev`, `package` and `release`
 //! arrive in M10.
 
 pub mod check;
+pub mod diagnose;
 pub mod lints;
 pub mod new;
 pub mod testcmd;
@@ -26,6 +27,8 @@ pub enum Command {
     Check(check::CheckArgs),
     /// Run the test tiers through nextest.
     Test(testcmd::TestArgs),
+    /// Summarise the app's incident bundles: panics, crashes, hangs, reports.
+    Diagnose(diagnose::DiagnoseArgs),
 }
 
 pub fn run(cli: Cli) -> Result<ExitCode> {
@@ -33,5 +36,6 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         Command::New(args) => new::run(args).map(|()| ExitCode::SUCCESS),
         Command::Check(args) => check::run(args),
         Command::Test(args) => testcmd::run(args),
+        Command::Diagnose(args) => diagnose::run(args),
     }
 }

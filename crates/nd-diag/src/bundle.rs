@@ -141,6 +141,41 @@ fn is_bundle(name: &str) -> bool {
     name.len() > 24 && name.as_bytes()[..8].iter().all(u8::is_ascii_digit) && name.as_bytes()[8] == b'T'
 }
 
+/// A bundle on disk: `id` is the directory name, `<utc timestamp>-<kind>`.
+#[derive(Clone, Debug)]
+pub struct BundleInfo {
+    pub id: String,
+    pub path: PathBuf,
+    pub kind: String,
+    /// Time since the bundle was written, from its name. `None` for a name that does not parse.
+    pub age: Option<Duration>,
+}
+
+/// The bundles in `dir`, newest first. A missing directory has none.
+pub fn list_bundles(dir: &Path) -> io::Result<Vec<BundleInfo>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let now = chrono::Utc::now();
+    let mut found: Vec<BundleInfo> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| Some((e.file_name().into_string().ok()?, e.path())))
+        .filter(|(name, _)| is_bundle(name))
+        .map(|(id, path)| {
+            let (stamp, kind) = id.split_once('-').unwrap_or((&id, ""));
+            let age = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%S%.fZ")
+                .ok()
+                .and_then(|t| (now - t.and_utc()).to_std().ok());
+            BundleInfo { kind: kind.to_owned(), age, id, path }
+        })
+        .collect();
+    found.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(found)
+}
+
 /// Deletes bundles beyond the newest `max_bundles`, older than `max_age`, and the oldest while
 /// the total exceeds `max_bytes`. Returns what it deleted.
 pub fn enforce_retention(dir: &Path, policy: Retention) -> io::Result<Vec<PathBuf>> {

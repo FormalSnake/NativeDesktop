@@ -30,7 +30,7 @@ use nd_core::semantic::SemanticWindow;
 use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
-pub use bundle::{Kind, Retention, Snapshot, enforce_retention};
+pub use bundle::{BundleInfo, Kind, Retention, Snapshot, enforce_retention, list_bundles};
 pub use hang::{PostToMain, Watchdog};
 pub use record::{FrameRecord, InputRecord};
 
@@ -62,6 +62,11 @@ impl Config {
             crash_handler: std::env::var_os("ND_DIAG_CRASH_HANDLER").is_none_or(|v| v != "0"),
         }
     }
+}
+
+/// Where the app named `app` keeps its incident bundles: what [`Diag::new`] writes into.
+pub fn diagnostics_dir(app: &str) -> PathBuf {
+    nd_core::paths::app_data_dir(app).join("diagnostics")
 }
 
 pub(crate) struct Shared {
