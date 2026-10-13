@@ -76,22 +76,48 @@ impl Transaction {
 
     /// Applies the ops and invalidates `cache` for every node whose props changed or that was
     /// released. Frames are dropped for backends that lay out themselves.
-    pub fn commit(mut self, backend: &mut dyn Backend, cache: &mut MeasureCache) {
-        if self.ops.is_empty() {
+    pub fn commit(self, backend: &mut dyn Backend, cache: &mut MeasureCache) {
+        self.commit_with(backend, cache, false, |_, _| Vec::new());
+    }
+
+    /// Like [`Self::commit`], with layout inside the transaction: ops up to the update phase
+    /// apply first, then `layout` measures against the updated backend and returns the frame
+    /// ops, then focus and releases. `force` opens the transaction even with no ops pushed
+    /// (a resize that only moves frames).
+    pub fn commit_with(
+        mut self,
+        backend: &mut dyn Backend,
+        cache: &mut MeasureCache,
+        force: bool,
+        layout: impl FnOnce(&mut dyn Backend, &mut MeasureCache) -> Vec<Op>,
+    ) {
+        if self.ops.is_empty() && !force {
             return;
         }
         self.ops.sort_by_key(Op::phase);
         let frames = backend.retains_frames();
+        let split = self.ops.partition_point(|op| op.phase() < Phase::Frame);
+        let late = self.ops.split_off(split);
         backend.begin(self.window);
         for op in &self.ops {
-            match op {
-                Op::SetFrame { .. } if !frames => continue,
-                Op::Update { node, .. } | Op::Release { node } => cache.invalidate(*node),
-                _ => {}
-            }
-            op.apply(backend);
+            Self::apply(op, backend, cache, frames);
+        }
+        let mut late_ops = layout(backend, cache);
+        late_ops.extend(late);
+        late_ops.sort_by_key(Op::phase);
+        for op in &late_ops {
+            Self::apply(op, backend, cache, frames);
         }
         backend.commit(self.window);
+    }
+
+    fn apply(op: &Op, backend: &mut dyn Backend, cache: &mut MeasureCache, frames: bool) {
+        match op {
+            Op::SetFrame { .. } if !frames => return,
+            Op::Update { node, .. } | Op::Release { node } => cache.invalidate(*node),
+            _ => {}
+        }
+        op.apply(backend);
     }
 }
 
