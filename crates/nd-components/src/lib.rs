@@ -7,6 +7,7 @@
 pub mod controls;
 pub mod dialogs;
 pub mod form;
+pub mod fuzzy;
 pub mod glass;
 pub mod icon;
 pub mod menu;

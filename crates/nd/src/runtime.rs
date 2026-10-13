@@ -18,6 +18,7 @@ pub mod prelude {
 
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
+    pub use crate::chrome::fuzzy;
     pub use crate::chrome::{
         ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
         PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,

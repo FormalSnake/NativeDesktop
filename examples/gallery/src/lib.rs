@@ -146,14 +146,11 @@ impl Gallery {
         self.toasts.push(build(toast(format!("t{}", self.next_toast), title.to_owned())));
     }
 
-    /// The palette's rows: pages, then commands, filtered by the query. A page whose title
+    /// The palette's rows: pages, then commands, ranked by the query. A page whose title
     /// starts with the query offers itself as the inline completion.
     fn palette_items(&self) -> Vec<PaletteItem> {
         let q = self.query.to_lowercase();
-        let matches = |title: &str| q.is_empty() || title.to_lowercase().contains(&q);
-        let mut items: Vec<PaletteItem> = Page::ALL
-            .into_iter()
-            .filter(|p| matches(p.title()))
+        let mut items: Vec<PaletteItem> = fuzzy::rank(&self.query, Page::ALL, |p| p.title())
             .map(|p| {
                 let item = palette_item(format!("page:{}", p.id()), p.title()).icon(p.icon()).subtitle("Page");
                 let item = item.when(p == self.page, |i| i.hint("Showing"));
@@ -166,9 +163,7 @@ impl Gallery {
             ("cmd:sidebar", "Toggle the sidebar", Icon::PanelLeft),
         ];
         items.extend(
-            commands
-                .into_iter()
-                .filter(|(_, title, _)| matches(title))
+            fuzzy::rank(&self.query, commands, |c| c.1)
                 .map(|(id, title, icon)| palette_item(id, title).icon(icon).subtitle("Command")),
         );
         items
