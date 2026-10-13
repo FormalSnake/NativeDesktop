@@ -23,6 +23,7 @@ mod look;
 mod palette;
 mod platform;
 mod scaffold;
+mod scroll_view;
 mod services;
 mod source_list;
 mod swift;
@@ -32,6 +33,7 @@ mod toast;
 mod toolbar;
 mod traffic_lights;
 mod views;
+mod virtual_list;
 mod window;
 
 pub use app_host::{AppHost, AppJob, AppSender, defer_with_app, run, run_with};

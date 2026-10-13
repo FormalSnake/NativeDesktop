@@ -25,6 +25,7 @@ nd-automation = { path = "crates/nd-automation" }
 nd-test = { path = "crates/nd-test" }
 nd-theme = { path = "crates/nd-theme" }
 nd-components = { path = "crates/nd-components" }
+nd-virtual = { path = "crates/nd-virtual" }
 nd-os-windows = { path = "crates/nd-os-windows" }
 nd-update = { path = "crates/nd-update", default-features = false }
 nd-config = { path = "crates/nd-config" }

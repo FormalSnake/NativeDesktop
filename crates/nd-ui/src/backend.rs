@@ -160,6 +160,11 @@ pub trait Backend: Any {
     /// The size a native layout container (table row, split pane, toolbar item, scroll
     /// document) gives `node`, when `node` is the child of such a layout boundary.
     fn boundary_size(&self, node: NodeId) -> Option<Size>;
+    /// The width a native list gives `node`, a row it hosts: the row lays out at that width and
+    /// its content's height, and the backend reads the height back from the row's frame.
+    fn boundary_width(&self, _node: NodeId) -> Option<f32> {
+        None
+    }
     /// Inside that box, the edges the container keeps clear of content (a split pane under
     /// the toolbar): added to the node's padding, so its background still fills the box.
     fn boundary_insets(&self, _node: NodeId) -> BoundaryInsets {

@@ -51,6 +51,11 @@ impl Default for Gestures {
 }
 
 fn gestures_of(node: &Node) -> Option<&GestureSet> {
+    if let NodeKind::Widget(w) = node.kind
+        && w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>()
+    {
+        return node.props.downcast_ref::<nd_virtual::ListProps>().map(|l| &l.gestures);
+    }
     if node.kind != NodeKind::View {
         return None;
     }
@@ -186,6 +191,38 @@ impl Gestures {
             w.router.set_scroll_extent(node, set, viewport.size, extent);
         }
         w.router.scroll_offset(node)
+    }
+
+    /// A virtualized list's offset in the router as input and flings left it, `None` before the
+    /// list is registered.
+    pub fn list_offset(&self, window: WindowId, node: NodeId) -> Option<f32> {
+        let windows = self.windows.borrow();
+        windows.get(&window)?.router.scroller(node).map(|s| s.offset().y)
+    }
+
+    /// Puts the list's scroller on the model: registers the scrollable `range` the model reports,
+    /// then moves the scroller's coordinates so its in-range offset is the model's `position`,
+    /// keeping a fling or bounce running. Returns the offset after, rubber band included.
+    pub fn sync_list(
+        &self,
+        window: WindowId,
+        node: NodeId,
+        set: &GestureSet,
+        viewport: Size,
+        range: f32,
+        position: f32,
+    ) -> f32 {
+        let mut windows = self.windows.borrow_mut();
+        let w = windows.entry(window).or_default();
+        let content = Size { width: viewport.width, height: viewport.height + range.max(0.) };
+        w.router.set_scroll_extent(node, set, viewport, content);
+        let Some(s) = w.router.scroller_mut(node) else { return position };
+        let offset = s.offset().y;
+        let edge = offset.clamp(0., range.max(0.));
+        if (edge - position).abs() > 0.25 {
+            s.shift(Point { x: 0., y: position - edge });
+        }
+        s.offset().y
     }
 
     pub fn row_config(&self, window: WindowId, node: NodeId, set: &GestureSet, width: f32) {
