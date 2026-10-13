@@ -18,6 +18,9 @@ use nd_ui::prelude::*;
 use nd_ui::{ContainerElement, EntityId, Key, Scope, StyleRefinement};
 
 use crate::core::{Align, Alignment, Core, Follow, GridSpec, RowId};
+pub use nd_gesture::RowEdge;
+use nd_gesture::{RowSwipeEvent, TapEvent};
+use nd_ui::Action;
 
 /// What a list can be keyed by.
 pub trait RowKey: Clone + Eq + Hash + fmt::Debug + 'static {}
@@ -150,10 +153,32 @@ pub struct ListProps {
 /// Widget kind of the list container.
 pub struct ListWidget;
 
+/// What a presenter shows for one row action.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowActionSpec {
+    pub title: SharedString,
+    /// A Lucide icon name, mapped per platform (SF Symbols on macOS).
+    pub icon: Option<SharedString>,
+    pub destructive: bool,
+    pub tint: Option<Hsla>,
+}
+
+/// A row's actions as presenters see them: leading and trailing, in order from the row's edge.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RowActionsSpec {
+    pub leading: Vec<RowActionSpec>,
+    pub trailing: Vec<RowActionSpec>,
+    /// Swiping this edge all the way runs its first action.
+    pub full_swipe: Option<RowEdge>,
+}
+
 /// Hung on each rendered row's root by [`RowView`], so presenters know which row a child is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowTag {
     pub row: RowId,
+    /// The row's swipe actions, when the list has `row_actions`. On macOS they are the table's
+    /// own row actions; elsewhere the row draws them under nd-gesture's row swipe.
+    pub actions: Option<RowActionsSpec>,
     /// Tree rows: nesting depth, whether the row has children, whether they show.
     pub depth: u16,
     pub expandable: bool,
@@ -187,6 +212,113 @@ pub struct RowDisclosed {
     pub row: RowId,
     pub expanded: bool,
 }
+
+/// The user picked a row action through the native table: the `index`th action on `edge`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RowActionInvoked {
+    pub row: RowId,
+    pub edge: RowEdge,
+    pub index: usize,
+}
+
+type Run = Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// One swipe action on a list row.
+#[derive(Clone)]
+pub struct RowAction {
+    spec: RowActionSpec,
+    run: Option<Run>,
+}
+
+/// A row action titled `title`; `.dispatch(action)` or `.on_invoke(..)` says what it does.
+pub fn row_action(title: impl Into<SharedString>) -> RowAction {
+    RowAction { spec: RowActionSpec { title: title.into(), icon: None, destructive: false, tint: None }, run: None }
+}
+
+impl RowAction {
+    pub fn icon(mut self, lucide: impl Into<SharedString>) -> Self {
+        self.spec.icon = Some(lucide.into());
+        self
+    }
+
+    /// Shown in the platform's destructive style (red on macOS).
+    pub fn destructive(mut self) -> Self {
+        self.spec.destructive = true;
+        self
+    }
+
+    pub fn tint(mut self, color: impl Into<Hsla>) -> Self {
+        self.spec.tint = Some(color.into());
+        self
+    }
+
+    /// Dispatches `action` in the row's window, as a menu item or key binding would.
+    pub fn dispatch<A: Action>(mut self, action: A) -> Self {
+        self.run = Some(Rc::new(move |window, cx| {
+            cx.dispatch_action(window.id(), &action);
+        }));
+        self
+    }
+
+    pub fn on_invoke(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.run = Some(Rc::new(f));
+        self
+    }
+}
+
+/// A row's leading and trailing swipe actions.
+#[derive(Clone, Default)]
+pub struct RowActions {
+    leading: Vec<RowAction>,
+    trailing: Vec<RowAction>,
+    full_swipe: Option<RowEdge>,
+}
+
+impl RowActions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Revealed by swiping right (in left-to-right layouts), nearest the leading edge first.
+    pub fn leading(mut self, action: RowAction) -> Self {
+        self.leading.push(action);
+        self
+    }
+
+    /// Revealed by swiping left, nearest the trailing edge first.
+    pub fn trailing(mut self, action: RowAction) -> Self {
+        self.trailing.push(action);
+        self
+    }
+
+    /// Swiping this edge all the way runs its first action.
+    pub fn full_swipe(mut self, edge: RowEdge) -> Self {
+        self.full_swipe = Some(edge);
+        self
+    }
+
+    fn spec(&self) -> RowActionsSpec {
+        RowActionsSpec {
+            leading: self.leading.iter().map(|a| a.spec.clone()).collect(),
+            trailing: self.trailing.iter().map(|a| a.spec.clone()).collect(),
+            full_swipe: self.full_swipe,
+        }
+    }
+
+    fn get(&self, edge: RowEdge, index: usize) -> Option<&RowAction> {
+        match edge {
+            RowEdge::Leading => self.leading.get(index),
+            RowEdge::Trailing => self.trailing.get(index),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.leading.is_empty() && self.trailing.is_empty()
+    }
+}
+
+/// Width of one drawn row action, in points.
+pub const ROW_ACTION_WIDTH: f32 = 74.;
 
 /// The user resized a column (by index).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -230,6 +362,7 @@ pub struct TreeNode<K> {
     pub version: u64,
 }
 
+type ActionsFn<K> = Rc<dyn Fn(K, &App) -> RowActions>;
 type Handler<E> = Rc<dyn Fn(&E, &mut Window, &mut App)>;
 type RenderFn<K> = Rc<dyn Fn(K, &mut Window, &mut App) -> AnyElement>;
 type CellFn<K> = Rc<dyn Fn(K, usize, &mut Window, &mut App) -> AnyElement>;
@@ -259,6 +392,9 @@ struct Inner<K: RowKey> {
     window: Vec<RowId>,
     views: HashMap<RowId, Entity<RowView<K>>>,
     renderer: Option<Renderer<K>>,
+    row_actions: Option<ActionsFn<K>>,
+    /// Each rendered row's actions as its last render built them, to run when picked.
+    actions: HashMap<RowId, RowActions>,
     selected: Vec<K>,
     /// Tree: every node, and the keys whose children show.
     tree: Option<Vec<TreeNode<K>>>,
@@ -296,6 +432,8 @@ impl<K: RowKey> ListState<K> {
                 window: Vec::new(),
                 views: HashMap::new(),
                 renderer: None,
+                row_actions: None,
+                actions: HashMap::new(),
                 selected: Vec::new(),
                 tree: None,
                 expanded: HashSet::new(),
@@ -611,6 +749,7 @@ impl<K: RowKey> ListState<K> {
         }
         let keep: HashSet<RowId> = wanted.iter().copied().collect();
         inner.views.retain(|id, _| keep.contains(id));
+        inner.actions.retain(|id, _| keep.contains(id));
         let weak = Rc::downgrade(&self.inner);
         let missing: Vec<(RowId, K)> = wanted
             .iter()
@@ -622,7 +761,7 @@ impl<K: RowKey> ListState<K> {
         drop(inner);
         for (id, key) in missing {
             let list = weak.clone();
-            let view = cx.new(|_| RowView { key, row: id, list });
+            let view = cx.new(|_| RowView { key, row: id, list, swipe: 0. });
             self.inner.borrow_mut().views.insert(id, view);
         }
         cx.notify(owner);
@@ -636,6 +775,14 @@ impl<K: RowKey> ListState<K> {
         let (was_start, was_end) = inner.near;
         inner.near = (event.at_start, event.at_end);
         (event.at_start && !was_start, event.at_end && !was_end)
+    }
+
+    /// Runs the `index`th action on `edge` of `row`, as its last render built it.
+    pub fn invoke_action(&self, row: RowId, edge: RowEdge, index: usize, window: &mut Window, cx: &mut App) {
+        let run = self.inner.borrow().actions.get(&row).and_then(|a| a.get(edge, index)).and_then(|a| a.run.clone());
+        if let Some(run) = run {
+            run(window, cx);
+        }
     }
 
     fn props(&self, kind: ListKind, selection: Selection, style: StyleRefinement) -> ListProps {
@@ -661,20 +808,32 @@ pub struct RowView<K: RowKey> {
     key: K,
     row: RowId,
     list: Weak<RefCell<Inner<K>>>,
+    /// The row content's horizontal displacement while a swipe reveals its drawn actions.
+    swipe: f32,
 }
 
 impl<K: RowKey> Render for RowView<K> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(list) = self.list.upgrade() else { return div().into_any_element() };
-        let (renderer, meta, expanded) = {
+        let (renderer, meta, expanded, actions_fn) = {
             let inner = list.borrow();
             let meta = inner.meta.get(&self.row).copied().unwrap_or_default();
-            (inner.renderer.clone(), meta, inner.expanded.contains(&self.key))
+            (inner.renderer.clone(), meta, inner.expanded.contains(&self.key), inner.row_actions.clone())
         };
-        let tag = RowTag { row: self.row, depth: meta.depth, expandable: meta.expandable, expanded };
-        let row = div().scope(Scope::new(tag)).w_full().flex().flex_col();
+        let actions = actions_fn.map(|f| f(self.key.clone(), cx)).filter(|a| !a.is_empty());
+        let spec = actions.as_ref().map(RowActions::spec);
+        if let Some(actions) = actions.clone() {
+            list.borrow_mut().actions.insert(self.row, actions);
+        } else {
+            list.borrow_mut().actions.remove(&self.row);
+        }
+        let tag =
+            RowTag { row: self.row, actions: spec.clone(), depth: meta.depth, expandable: meta.expandable, expanded };
+        let swipe = self.swipe;
+        let this = cx.weak_entity();
+        let row = div().w_full().flex().flex_col();
         let app: &mut App = cx;
-        match renderer {
+        let content = match renderer {
             Some(Renderer::Row(render)) => row.child(render(self.key.clone(), window, app)),
             Some(Renderer::Cells(render, widths)) => {
                 let cells = widths.iter().enumerate().map(|(i, w)| {
@@ -690,8 +849,80 @@ impl<K: RowKey> Render for RowView<K> {
                 row.flex_row().children(cells.collect::<Vec<_>>())
             }
             None => row,
-        }
-        .into_any_element()
+        };
+        let (Some(spec), Some(actions)) = (spec, actions) else {
+            return content.scope(Scope::new(tag)).into_any_element();
+        };
+        // Without native row actions (every backend but AppKit) the row draws its actions under
+        // the content and follows nd-gesture's row swipe; AppKit never sends the swipe.
+        let width = |n: usize| n as f32 * ROW_ACTION_WIDTH;
+        let config = nd_gesture::RowSwipeConfig {
+            leading: width(spec.leading.len()),
+            trailing: width(spec.trailing.len()),
+            full_swipe: spec.full_swipe,
+        };
+        let row = self.row;
+        let list_weak = self.list.clone();
+        let wrapper = div().scope(Scope::new(tag)).relative().w_full().overflow_hidden().on_row_swipe(
+            config,
+            move |e: &RowSwipeEvent, window, cx| {
+                this.update(cx, |this: &mut RowView<K>, cx| {
+                    this.swipe = e.offset;
+                    cx.notify();
+                });
+                if e.full
+                    && e.phase == nd_gesture::GesturePhase::Ended
+                    && let Some(edge) = e.open
+                    && let Some(list) = list_weak.upgrade()
+                {
+                    let state = ListState { inner: list };
+                    state.invoke_action(row, edge, 0, window, cx);
+                }
+            },
+        );
+        let wrapper = if swipe == 0. {
+            wrapper
+        } else {
+            let button = |a: &RowAction, edge: RowEdge, index: usize| {
+                let list_weak = self.list.clone();
+                let bg = a.spec.tint.unwrap_or(if a.spec.destructive {
+                    hsla(0., 0.75, 0.5, 1.)
+                } else {
+                    hsla(0., 0., 0.55, 1.)
+                });
+                div()
+                    .w(px(ROW_ACTION_WIDTH))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(bg)
+                    .text_color(hsla(0., 0., 1., 1.))
+                    .child(text(a.spec.title.clone()))
+                    .on_tap(move |_: &TapEvent, window, cx| {
+                        if let Some(list) = list_weak.upgrade() {
+                            ListState { inner: list }.invoke_action(row, edge, index, window, cx);
+                        }
+                    })
+                    .into_any_element()
+            };
+            let leading: Vec<AnyElement> =
+                actions.leading.iter().enumerate().map(|(i, a)| button(a, RowEdge::Leading, i)).collect();
+            let trailing: Vec<AnyElement> =
+                actions.trailing.iter().enumerate().rev().map(|(i, a)| button(a, RowEdge::Trailing, i)).collect();
+            wrapper.child(
+                h_flex()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .justify_between()
+                    .child(h_flex().h_full().children(leading))
+                    .child(h_flex().h_full().children(trailing)),
+            )
+        };
+        let content = content.relative().left(px(swipe));
+        wrapper.child(content).into_any_element()
     }
 }
 
@@ -814,6 +1045,13 @@ impl<K: RowKey> List<K> {
         self
     }
 
+    /// Swipe actions per row. On macOS they are the table's own row actions; elsewhere the row
+    /// draws them and follows nd-gesture's row swipe.
+    pub fn row_actions(self, f: impl Fn(K, &App) -> RowActions + 'static) -> Self {
+        self.state.inner.borrow_mut().row_actions = Some(Rc::new(f));
+        self
+    }
+
     pub fn on_select(mut self, f: impl Fn(&SelectEvent<K>, &mut Window, &mut App) + 'static) -> Self {
         self.on_select = Some(Rc::new(f));
         if self.selection == Selection::None {
@@ -912,6 +1150,8 @@ impl<K: RowKey> IntoElement for List<K> {
                 f(&ExpandEvent { key, expanded: e.expanded }, window, cx);
             }
         });
+        let s = state.clone();
+        let el = el.on(move |e: &RowActionInvoked, window, cx| s.invoke_action(e.row, e.edge, e.index, window, cx));
         let on_resize = self.on_column_resize;
         let el = el.on(move |e: &ColumnResized, window, cx| {
             if let Some(f) = &on_resize {

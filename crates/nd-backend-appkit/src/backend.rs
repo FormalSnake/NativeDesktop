@@ -155,7 +155,7 @@ struct State {
     /// The size each form row's control was laid out at, which the form shows it at.
     form_sizes: HashMap<NodeId, (f64, f64)>,
     /// `nd-virtual` row roots and table cells, by the tag their div carries.
-    row_tags: HashMap<NodeId, nd_virtual::RowId>,
+    row_tags: HashMap<NodeId, nd_virtual::RowTag>,
     cell_tags: HashMap<NodeId, usize>,
     /// `overflow_*_scroll()` divs: the scroll view inside the div's layer view and the document
     /// their children go in.
@@ -274,9 +274,17 @@ impl AppKitBackend {
         out
     }
 
+    /// Titles of the native row actions the list shows for its `row`th row on one edge.
+    pub fn list_row_actions(&self, list: NodeId, row: usize, leading: bool) -> Vec<String> {
+        match self.0.borrow().nodes.get(&list) {
+            Some(Native::List(l)) => l.row_action_titles(row, leading),
+            _ => Vec::new(),
+        }
+    }
+
     /// The `nd-virtual` row a row root node shows.
     pub fn list_row(&self, node: NodeId) -> Option<nd_virtual::RowId> {
-        self.0.borrow().row_tags.get(&node).copied()
+        self.0.borrow().row_tags.get(&node).map(|t| t.row)
     }
 
     /// The view presenting the list (an `NSTableView`, `NSOutlineView` or `NSCollectionView`)
@@ -474,12 +482,13 @@ impl State {
     fn attach_to_list(&mut self, parent: NodeId, node: NodeId) -> bool {
         let Some(list) = self.list_of(parent) else { return false };
         let Some(view) = self.view(node).map(|v| v.retain()) else { return false };
-        let row = self.row_tags.get(&node).copied();
+        let row = self.row_tags.get(&node).cloned();
         let cell = self.cell_tags.get(&node).copied();
         let Some(Native::List(l)) = self.nodes.get_mut(&list) else { return false };
         if list == parent {
             if let Some(row) = row {
-                l.attach_row(node, row, &view);
+                l.attach_row(node, row.row, &view);
+                l.set_row_actions(row.row, row.actions);
                 return true;
             }
             return false;
@@ -950,7 +959,7 @@ impl Backend for AppKitBackend {
         };
         if let Some(scope) = p.downcast_ref::<DivProps>().and_then(|d| d.scope.as_ref()) {
             if let Some(tag) = scope.get::<nd_virtual::RowTag>() {
-                state.row_tags.insert(node, tag.row);
+                state.row_tags.insert(node, tag.clone());
             }
             if let Some(cell) = scope.get::<nd_virtual::CellTag>() {
                 state.cell_tags.insert(node, cell.0);
@@ -1063,6 +1072,17 @@ impl Backend for AppKitBackend {
         }
         if form_changed {
             state.mark_form(node);
+        }
+        let row_tag = patch.new.downcast_ref::<DivProps>().and_then(|d| d.scope.as_ref()?.get::<nd_virtual::RowTag>());
+        if let Some(tag) = row_tag {
+            let tag = tag.clone();
+            state.row_tags.insert(node, tag.clone());
+            if let Some(list) = state.parents.get(&node).copied()
+                && let Some(Native::List(l)) = state.nodes.get_mut(&list)
+                && l.is_row(node)
+            {
+                l.set_row_actions(tag.row, tag.actions);
+            }
         }
         if let (Some(axes), Some(Native::Layer(v))) = (scroll_axes, state.nodes.get(&node)) {
             let v = v.clone();

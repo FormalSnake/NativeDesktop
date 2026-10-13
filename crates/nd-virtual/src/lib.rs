@@ -13,6 +13,7 @@ pub mod conformance;
 pub use crate::core::{Align, Alignment, Core, Diff, Follow, GridSpec, Layout, Placed, RowId, RowMeta, diff_rows};
 pub use crate::list::{
     ActivateEvent, CellTag, Column, ColumnResized, ExpandEvent, List, ListHandle, ListKind, ListProps, ListState,
-    ListWidget, RowActivated, RowDisclosed, RowKey, RowTag, RowView, RowsSelected, SelectEvent, Selection, SortChanged,
-    SortDirection, TreeNode, ViewportChanged, column, grid, list, table, tree,
+    ListWidget, ROW_ACTION_WIDTH, RowAction, RowActionInvoked, RowActionSpec, RowActions, RowActionsSpec, RowActivated,
+    RowDisclosed, RowEdge, RowKey, RowTag, RowView, RowsSelected, SelectEvent, Selection, SortChanged, SortDirection,
+    TreeNode, ViewportChanged, column, grid, list, row_action, table, tree,
 };
