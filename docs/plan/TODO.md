@@ -77,3 +77,6 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 - [ ] M14 youtubemusic (after M7; daemon on `nd-ipc`)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
+
+## Known flakes
+- `gate_m3::matugen_live_recolour` failed once in 3 full runs on the macbook (2026-10-14) while other lanes were compiling; it passes alone. The 100 ms wall-clock budget is sensitive to CPU contention. Fix: measure from the watcher event to the presented frame on the frame clock, and run the wall-clock check only in `--profile gate`.
