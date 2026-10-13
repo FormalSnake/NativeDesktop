@@ -9,7 +9,26 @@ pub use chrome::{Scaffold, Toolbar, scaffold, toolbar};
 pub mod prelude {
     pub use nd_ui::prelude::*;
 
-    pub use crate::theme::{ActiveTheme, Theme};
+    // Named here, so they win over `nd_ui::prelude`'s `NativeElement` leaf struct.
+    pub use crate::native::NativeElement;
+    pub use nd_macros::IntoElement;
+
+    // GPUI's `actions!` and `#[derive(Action)]` expand to `gpui::` paths.
+    #[doc(hidden)]
+    pub use nd_gpui::gpui;
+    pub use nd_gpui::gpui::{Action, Bounds, Font, KeyBinding, Point, Size, actions};
+
+    pub use crate::chrome::{
+        ContextMenu, Glass, GlassVariant, Separator, Sidebar, SubtreeOverrides, Titlebar as TitlebarElement, glass,
+        separator, sidebar, titlebar,
+    };
+    pub use crate::controls::{
+        Bezel, ButtonExt, Canvas, DragMoveEvent, Gestures, Icon, ImageCache, ImageSource, ListState, Mapping,
+        OnPlatform, Painter, Processor, Select, SelectChanged, SelectEvent, Slider, SliderChanged, SourceList,
+        Titlebar, WindowControlsExt, WindowOptionsExt, WindowThemeExt, canvas, select, slider, source_list, source_row,
+    };
+    pub use crate::native::{ElementId, NativeStyled};
+    pub use crate::theme::{ActiveTheme, Appearance, Pattern, Patterns, Theme, ThemeOverride, ThemeRefinement};
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
 }
 
@@ -47,11 +66,26 @@ macro_rules! manifest {
 
 pub struct Application {
     manifest: Manifest,
+    theme: Option<crate::theme::ThemeOverride>,
+    patterns: crate::theme::Patterns,
 }
 
 impl Application {
     pub fn new(manifest: Manifest) -> Self {
-        Self { manifest }
+        Self { manifest, theme: None, patterns: crate::theme::Patterns::default() }
+    }
+
+    /// The app-level theme override, on top of the platform preset. Recorded until `nd-theme`.
+    pub fn theme(mut self, theme: crate::theme::ThemeOverride) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// App-level pattern choices, over `nativedesktop.toml` `[patterns]`. Recorded until
+    /// `nd-components`.
+    pub fn patterns(mut self, patterns: crate::theme::Patterns) -> Self {
+        self.patterns = patterns;
+        self
     }
 
     pub fn manifest(&self) -> &Manifest {

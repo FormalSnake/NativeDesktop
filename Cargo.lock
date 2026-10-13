@@ -3337,6 +3337,8 @@ dependencies = [
  "nd-automation",
  "nd-backend-appkit",
  "nd-core",
+ "nd-gpui",
+ "nd-macros",
  "nd-ui",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -3396,6 +3398,10 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
 ]
+
+[[package]]
+name = "nd-macros"
+version = "0.1.0"
 
 [[package]]
 name = "nd-test"
