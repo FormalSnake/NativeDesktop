@@ -308,6 +308,9 @@ impl Inner {
                     ..InputRecord::default()
                 });
             }
+            if inner.backend.drawn_claims_key(&event.keystroke, window) {
+                return;
+            }
             let Ok(mut app) = inner.app.try_borrow_mut() else { return };
             let result = app.dispatch_keystroke(id, &event.keystroke);
             drop(app);
@@ -500,6 +503,7 @@ impl Inner {
             window.request_animation_frame();
         }
         self.after_draw(id, started, window);
+        self.backend.prepare_drawn(id, window, cx);
 
         // Flings, springs and gesture timers advance on this window's frames.
         let (outputs, more) = self.backend.gestures.step(id);

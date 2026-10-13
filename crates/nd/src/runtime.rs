@@ -18,13 +18,21 @@ pub mod prelude {
 
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
+    pub use crate::chrome::fuzzy;
+    pub use crate::chrome::{
+        ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
+        PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,
+        SourceActivated, SourceCollapsed, SourceExpanded, SourceNode, SourceTree, Toast, ToastActionClicked,
+        ToastDismissed, ToastOverlay, banner, command_palette, palette_item, source_action, source_node,
+        source_section, source_tree, toast, toast_overlay,
+    };
     pub use crate::chrome::{
         Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, Mapping, Menu, MenuItem,
         MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select, SelectChanged,
-        Separator, Slider, SliderChanged, SourceItem, SourceList, SourceSelected, SubtreeOverrides, SystemItem,
-        TabSelected, Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group,
-        icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
-        system_item, titlebar, toolbar_sidebar_toggle,
+        Separator, Slider, SliderChanged, SourceItem, SourceSelected, SubtreeOverrides, SystemItem, TabSelected,
+        Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group, icon_button,
+        inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list, system_item,
+        titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::controls::{
         Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, ListState, Painter, Processor, canvas,

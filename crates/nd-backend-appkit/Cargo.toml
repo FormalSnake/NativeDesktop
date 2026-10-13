@@ -38,6 +38,10 @@ harness = false
 name = "app_dispatch"
 harness = false
 
+[[test]]
+name = "nav_components"
+harness = false
+
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]
