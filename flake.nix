@@ -65,9 +65,11 @@
                 cmake
                 wayland-scanner
                 mesa
-                # Headless parent compositor that lends each test's Hyprland a render node
-                # (ndshell::hyprland). Hyprland itself is the system's.
+                # Headless compositors for tier 3: labwc lends each test's Hyprland a render node
+                # (ndshell::hyprland; Hyprland itself is the system's), weston is the
+                # client-decorated case (ndshell::weston).
                 labwc
+                weston
               ]
               ++ gpuLibs
             );

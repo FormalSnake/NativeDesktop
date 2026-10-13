@@ -167,12 +167,17 @@ pub fn describe(state: &ChromeState, plan: &ChromePlan) -> String {
         format!("{}:{}", side(&plan.leading), side(&plan.trailing))
     };
     let c = state.capabilities;
-    let caps = [(c.maximize, "maximize"), (c.minimize, "minimize"), (c.fullscreen, "fullscreen"), (c.window_menu, "window_menu")]
-        .iter()
-        .filter(|(on, _)| *on)
-        .map(|(_, name)| *name)
-        .collect::<Vec<_>>()
-        .join(",");
+    let caps = [
+        (c.maximize, "maximize"),
+        (c.minimize, "minimize"),
+        (c.fullscreen, "fullscreen"),
+        (c.window_menu, "window_menu"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, name)| *name)
+    .collect::<Vec<_>>()
+    .join(",");
     format!(
         "decorations={decorations} controls={controls} caps={} fullscreen={} insets={},{}",
         if caps.is_empty() { "none" } else { &caps },

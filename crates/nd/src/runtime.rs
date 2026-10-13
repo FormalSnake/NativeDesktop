@@ -158,8 +158,12 @@ impl Application {
         let watched = files.clone();
         let app_theme = self.theme.unwrap_or_default();
         let patterns = self.patterns;
+        #[cfg(target_os = "linux")]
+        let hooks = nd_os_linux::LinuxHooks::new(self.manifest.name);
+        #[cfg(not(target_os = "linux"))]
+        let hooks = nd_backend_gpui::NoOsHooks;
         nd_backend_gpui::run_with(
-            nd_backend_gpui::NoOsHooks,
+            hooks,
             move |cx| {
                 let preset =
                     if cfg!(target_os = "macos") { nd_theme::Preset::Adwaita } else { nd_theme::Preset::current() };

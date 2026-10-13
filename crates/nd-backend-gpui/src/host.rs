@@ -10,6 +10,11 @@
 //!
 //! Keys reach nd dispatch first (3.12): a keystroke interceptor runs before GPUI's own dispatch,
 //! and stops it when an nd binding took the key.
+//!
+//! The resize gate's switches, as on AppKit: `ND_DEBUG_EXPOSE=1` paints magenta behind the app's
+//! tree, so area no node covers shows; `ND_DEBUG_DEFER_LIVE_LAYOUT=1` lays a resized window out
+//! at most every 300 ms, the late layout the gate must catch; `ND_DIAG_WINDOW=1` prints
+//! `nd: viewport WxH` per layout size and `nd: key <keystroke>` per key on stderr.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -20,6 +25,7 @@ use futures::StreamExt;
 use futures::channel::mpsc;
 use nd_core::{FrameTime, Point, Rect, Size, WindowId};
 use nd_diag::{FrameRecord, InputRecord, Watchdog};
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, AnyElement, AnyWindowHandle, AppContext, Bounds, Context, Decorations, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, TitlebarOptions, WindowBounds, div, px,
@@ -78,6 +84,27 @@ struct HostWindow {
     clock: DisplayClock,
     /// When the window last printed its pacing line.
     reported: Option<Instant>,
+    /// When the app last laid the window out at a new size.
+    resized: Option<Instant>,
+}
+
+/// The resize gate's environment switches (module docs).
+#[derive(Clone, Copy)]
+struct DebugFlags {
+    expose: bool,
+    defer_layout: bool,
+    diag: bool,
+}
+
+impl DebugFlags {
+    fn from_env() -> Self {
+        let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v == "1");
+        Self {
+            expose: flag("ND_DEBUG_EXPOSE"),
+            defer_layout: flag("ND_DEBUG_DEFER_LIVE_LAYOUT"),
+            diag: flag("ND_DIAG_WINDOW"),
+        }
+    }
 }
 
 struct Inner {
@@ -92,6 +119,7 @@ struct Inner {
     sender: AppSender,
     budget: RefCell<Budget>,
     pacing: bool,
+    debug: DebugFlags,
     subscriptions: RefCell<Vec<gpui::Subscription>>,
     tasks: RefCell<Vec<gpui::Task<()>>>,
     watchdog: RefCell<Option<Watchdog>>,
@@ -135,6 +163,7 @@ impl HostBuilder {
             sender: AppSender(tx),
             budget: RefCell::new(Budget::from_env()),
             pacing: std::env::var_os("ND_PACING").is_some_and(|v| v == "1"),
+            debug: DebugFlags::from_env(),
             subscriptions: RefCell::default(),
             tasks: RefCell::default(),
             watchdog: RefCell::default(),
@@ -149,6 +178,10 @@ impl HostBuilder {
             });
         });
         inner.backend.attach_app(cx.to_async(), wake);
+        if inner.debug.diag {
+            let keys = cx.observe_keystrokes(|event, _, _| eprintln!("nd: key {}", event.keystroke.unparse()));
+            inner.subscriptions.borrow_mut().push(keys);
+        }
         inner.listen(cx, rx);
         if let Some(diag) = nd_diag::global() {
             let sender = inner.sender.clone();
@@ -429,9 +462,16 @@ impl Inner {
     }
 
     fn open_window(self: &Rc<Self>, cx: &mut gpui::App, id: WindowId, title: SharedString, size: Size) {
-        self.windows
-            .borrow_mut()
-            .insert(id, HostWindow { view: None, handle: None, clock: DisplayClock::new(self.origin), reported: None });
+        self.windows.borrow_mut().insert(
+            id,
+            HostWindow {
+                view: None,
+                handle: None,
+                clock: DisplayClock::new(self.origin),
+                reported: None,
+                resized: None,
+            },
+        );
         let bounds = Bounds::centered(None, gpui::size(px(size.width), px(size.height)), cx);
         let mut options = gpui::WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -467,11 +507,30 @@ impl Inner {
         let size = Size { width: size.width.as_f32(), height: size.height.as_f32() };
         let insets = self.hooks.titlebar_insets(id, window).unwrap_or_else(|| default_insets(window));
         let animating = self.budget.borrow_mut().animating(started);
+        let mut laid_out = None;
         let (committed, needs_more) = match self.app.try_borrow_mut() {
             Ok(mut app) => {
                 if app.window(id).is_some_and(|w| w.viewport_size() != size) {
-                    app.resize_window(id, size);
+                    let deferred = self.debug.defer_layout
+                        && self
+                            .windows
+                            .borrow()
+                            .get(&id)
+                            .and_then(|w| w.resized)
+                            .is_some_and(|at| started.duration_since(at) < Duration::from_millis(300));
+                    if deferred {
+                        window.request_animation_frame();
+                    } else {
+                        app.resize_window(id, size);
+                        if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
+                            w.resized = Some(started);
+                        }
+                        if self.debug.diag {
+                            eprintln!("nd: viewport {}x{}", size.width, size.height);
+                        }
+                    }
                 }
+                laid_out = app.window(id).map(|w| w.viewport_size());
                 app.set_titlebar_insets(id, insets);
                 if animating {
                     app.refresh_window(id);
@@ -511,8 +570,10 @@ impl Inner {
         let element = build.node(root, window);
         drop(state);
         let origin = self.origin;
+        let expose = self.debug.expose;
         div()
             .size_full()
+            .when(expose, |d| d.bg(gpui::rgb(0xff00ff)))
             .capture_any_mouse_down(move |event, _, _| {
                 if let Some(diag) = nd_diag::global() {
                     diag.record_input(InputRecord {
@@ -524,7 +585,14 @@ impl Inner {
                     });
                 }
             })
-            .child(element)
+            .map(|d| match laid_out {
+                // The drawn tree flexes to the GPUI window, so the deferred layout's stale size
+                // is applied here, where the nd layout would have put it.
+                Some(size) if self.debug.defer_layout => {
+                    d.child(div().w(px(size.width)).h(px(size.height)).child(element))
+                }
+                _ => d.child(element),
+            })
             .into_any_element()
     }
 
@@ -533,7 +601,13 @@ impl Inner {
         let mut windows = self.windows.borrow_mut();
         let Some(w) = windows.get_mut(&id) else { return FrameTime::default() };
         w.clock.set_interval(window.refresh_interval(cx));
-        let request = FrameRequest { window: id, now: started, interval: w.clock.interval(), last: w.clock.last() };
+        let request = FrameRequest {
+            window: id,
+            now: started,
+            now_seconds: w.clock.seconds(started),
+            interval: w.clock.interval(),
+            last: w.clock.last(),
+        };
         let time = match self.hooks.frame_time(&request, window) {
             Some(measured) => {
                 let t = w.clock.seconds(started);

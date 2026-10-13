@@ -16,3 +16,5 @@ pub mod lock;
 pub mod preflight;
 #[cfg(target_os = "linux")]
 pub mod wayland;
+#[cfg(target_os = "linux")]
+pub mod weston;

@@ -68,10 +68,10 @@ mod gate_m2 {
     fn button_layout_skips_unknown_names_and_repeats() {
         let l = ButtonLayout::parse("appmenu,icon:spacer,close,close,maximize");
         assert_eq!(l, ButtonLayout { leading: vec![], trailing: vec![Control::Close, Control::Maximize] });
-        assert_eq!(ButtonLayout::parse("minimize,close"), ButtonLayout {
-            leading: vec![],
-            trailing: vec![Control::Minimize, Control::Close]
-        });
+        assert_eq!(
+            ButtonLayout::parse("minimize,close"),
+            ButtonLayout { leading: vec![], trailing: vec![Control::Minimize, Control::Close] }
+        );
     }
 
     #[test]

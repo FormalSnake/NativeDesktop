@@ -2168,8 +2168,6 @@ dependencies = [
 [[package]]
 name = "gpui-fast"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35cb4c01c92462871c34d560b4ef21b7287a355036afa1a1cafede9c13ce55a0"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2475,8 +2473,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre"
 version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34f61c1cfd36fc9c436af09308c963822ae27a45a84feb21a77ba5c9e051f1c0"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3960,6 +3956,7 @@ dependencies = [
  "nd-diag",
  "nd-gpui",
  "nd-macros",
+ "nd-os-linux",
  "nd-theme",
  "nd-ui",
  "toml 0.9.12+spec-1.1.0",
@@ -4139,6 +4136,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-os-linux"
+version = "0.1.0"
+dependencies = [
+ "nd-backend-gpui",
+ "nd-core",
+ "nd-gpui",
+ "nd-ui",
+ "ndshell",
+]
+
+[[package]]
 name = "nd-os-windows"
 version = "0.1.0"
 dependencies = [
@@ -4240,8 +4248,14 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "png 0.18.1",
+ "rustix",
  "serde_json",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
  "windows 0.62.2",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -7400,6 +7414,19 @@ dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 

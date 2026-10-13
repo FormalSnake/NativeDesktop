@@ -72,7 +72,7 @@ impl Hyprland {
     pub fn start(options: Options) -> Result<Self, String> {
         let runtime_dir = new_runtime_dir()?;
         let mut parent = start_parent(&runtime_dir)?;
-        let parent_display = match wait_socket(&runtime_dir, &mut parent) {
+        let parent_display = match wait_socket(&runtime_dir, &mut parent, "labwc") {
             Ok(display) => display,
             Err(why) => {
                 let _ = parent.kill();
@@ -264,7 +264,7 @@ impl Drop for Hyprland {
 /// `$XDG_RUNTIME_DIR/nd<pid in hex>-<n>`, mode 0700 as the Wayland spec asks of a runtime dir. The
 /// name stays short: Hyprland puts `hypr/<60-character signature>/.socket2.sock` under it, and a
 /// unix socket path is capped at 107 bytes.
-fn new_runtime_dir() -> Result<PathBuf, String> {
+pub(crate) fn new_runtime_dir() -> Result<PathBuf, String> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let base = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
     let dir = base.join(format!("nd{:x}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
@@ -311,12 +311,12 @@ fn start_parent(dir: &Path) -> Result<Child, String> {
 }
 
 /// The parent's Wayland socket name, once it listens.
-fn wait_socket(dir: &Path, parent: &mut Child) -> Result<String, String> {
+pub(crate) fn wait_socket(dir: &Path, parent: &mut Child, name: &str) -> Result<String, String> {
     let end = Instant::now() + Duration::from_secs(10);
     loop {
         if let Ok(Some(status)) = parent.try_wait() {
-            let log = fs::read_to_string(dir.join("labwc.log")).unwrap_or_default();
-            return Err(format!("labwc exited with {status}: {log}"));
+            let log = fs::read_to_string(dir.join(format!("{name}.log"))).unwrap_or_default();
+            return Err(format!("{name} exited with {status}: {log}"));
         }
         let socket = fs::read_dir(dir).ok().into_iter().flatten().flatten().find_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -329,7 +329,7 @@ fn wait_socket(dir: &Path, parent: &mut Child) -> Result<String, String> {
             return Ok(name);
         }
         if Instant::now() > end {
-            return Err("labwc did not open a Wayland socket in 10 s".into());
+            return Err(format!("{name} did not open a Wayland socket in 10 s"));
         }
         std::thread::sleep(Duration::from_millis(10));
     }

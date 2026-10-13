@@ -207,7 +207,8 @@ impl VirtualInput {
     pub fn drag(&mut self, from: (f64, f64), dx: f64, dy: f64, steps: u32, step: Duration) -> Result<(), String> {
         self.move_to(from.0, from.1);
         self.sync()?;
-        std::thread::sleep(step);
+        // Long enough for the app to take pointer focus before the press.
+        std::thread::sleep(step.max(Duration::from_millis(50)));
         self.button(true);
         self.sync()?;
         std::thread::sleep(Duration::from_millis(100));
@@ -414,12 +415,8 @@ impl Capture {
                 let manager: ext_image_copy_capture_manager_v1::ExtImageCopyCaptureManagerV1 =
                     bind(&globals, &qh, 1..=1)?;
                 let source = sources.create_source(&output, &qh, ());
-                let session = manager.create_session(
-                    &source,
-                    ext_image_copy_capture_manager_v1::Options::empty(),
-                    &qh,
-                    (),
-                );
+                let session =
+                    manager.create_session(&source, ext_image_copy_capture_manager_v1::Options::empty(), &qh, ());
                 let mut state = CaptureState::default();
                 let never = AtomicBool::new(false);
                 if !dispatch_until(&conn, &mut queue, &mut state, &never, Duration::from_secs(5), |s| s.constraints)? {
@@ -451,21 +448,16 @@ impl Capture {
                     request.capture();
                     request
                 };
-                let mut frame = CapturedFrame {
-                    width,
-                    height,
-                    stride,
-                    data: vec![0; len as usize],
-                    presented: None,
-                    sequence: 0,
-                };
+                let mut frame =
+                    CapturedFrame { width, height, stride, data: vec![0; len as usize], presented: None, sequence: 0 };
                 let mut count = 0u64;
                 let mut current = 0;
                 let mut request = capture_into(&buffers[current]);
                 while !state.stopped {
-                    let finished = dispatch_until(&conn, &mut queue, &mut state, &flag, Duration::from_secs(3600), |s| {
-                        s.result.is_some() || s.stopped
-                    })?;
+                    let finished =
+                        dispatch_until(&conn, &mut queue, &mut state, &flag, Duration::from_secs(3600), |s| {
+                            s.result.is_some() || s.stopped
+                        })?;
                     request.destroy();
                     let result = state.result.take();
                     let presented = state.presented.take();
