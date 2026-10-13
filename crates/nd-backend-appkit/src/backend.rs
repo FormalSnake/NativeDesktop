@@ -17,9 +17,9 @@ use std::rc::{Rc, Weak};
 
 use nd_components::{
     Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold, ScaffoldProps, SelectKind,
-    SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SubtreeScope, SystemItemProps, Titlebar,
-    TitlebarInset, TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps,
-    ToolbarSystemItem,
+    SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SourceListKind, SourceListProps, SubtreeScope,
+    SystemItemProps, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem,
+    ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_theme::{NativeTheme, Scheme, ThemeRefinement};
@@ -39,6 +39,7 @@ use crate::events::Wake;
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{TextLook, ViewLook};
 use crate::scaffold::{PaneNative, ScaffoldNative};
+use crate::source_list::SourceListNative;
 use crate::system_colors::appearance_for;
 use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative};
 use crate::traffic_lights::TrafficLights;
@@ -74,6 +75,7 @@ enum Native {
     Select(SelectNative),
     Slider(SliderNative),
     Separator(Retained<NSBox>, bool),
+    SourceList(SourceListNative),
 }
 
 impl Native {
@@ -93,6 +95,7 @@ impl Native {
             Native::Select(s) => Some(s.view()),
             Native::Slider(s) => Some(s.view()),
             Native::Separator(b, _) => Some(b),
+            Native::SourceList(s) => Some(s.view()),
             Native::Toolbar(_) | Native::SystemItem | Native::Inset(..) => None,
         }
     }
@@ -672,6 +675,12 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<SeparatorKind>(w) => {
                 Native::Separator(crate::controls::separator(mtm), props::<SeparatorProps>(p, "Separator").vertical)
             }
+            NodeKind::Widget(w) if is::<SourceListKind>(w) => Native::SourceList(SourceListNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<SourceListProps>(p, "SourceList"),
+            )),
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 panic!("the AppKit backend has no {kind:?} yet")
             }
@@ -754,6 +763,7 @@ impl Backend for AppKitBackend {
                 s.apply(p);
             }
             Native::Separator(_, vertical) => *vertical = props::<SeparatorProps>(&patch.new, "Separator").vertical,
+            Native::SourceList(s) => s.update(props(&patch.new, "SourceList")),
             Native::Root(_) | Native::External(_) | Native::Scaffold(_) => {}
         });
         if let Some(Native::ToolbarItem(_)) = state.nodes.get(&node)
@@ -826,7 +836,7 @@ impl Backend for AppKitBackend {
         state.node_window.remove(&node);
         state.scopes.remove(&node);
         state.system_items.remove(&node);
-        if let Some(Native::Scaffold(scaffold)) = &native
+        if let Some(Native::Scaffold(_)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {
             crate::scaffold::uninstall(&record.window, &record.root);

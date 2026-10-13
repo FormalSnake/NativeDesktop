@@ -11,6 +11,7 @@ pub mod menu;
 pub mod overrides;
 pub mod scaffold;
 pub mod services;
+pub mod source_list;
 pub mod titlebar;
 pub mod toolbar;
 
@@ -25,6 +26,9 @@ pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, Menu
 pub use overrides::{HasScope, OnPlatform, Pattern, Patterns, ScopedContainer, SubtreeOverrides, SubtreeScope};
 pub use scaffold::{Pane, PaneCollapsed, PaneProps, PaneRole, Scaffold, ScaffoldProps, inspector, scaffold, sidebar};
 pub use services::{Chrome, ChromeServices};
+pub use source_list::{
+    SourceItem, SourceList, SourceListKind, SourceListProps, SourceSection, SourceSelected, source_item, source_list,
+};
 pub use titlebar::{InsetEdge, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, titlebar};
 pub use toolbar::{
     SystemItem, SystemItemProps, Toolbar, ToolbarDisplay, ToolbarItem, ToolbarItemProps, ToolbarProps,

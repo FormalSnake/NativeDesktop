@@ -36,18 +36,20 @@ mod chrome {
     use nd::appkit::objc2::rc::Retained;
     use nd::appkit::objc2::{Message, msg_send};
     use nd::appkit::objc2_app_kit::{
-        NSApplication, NSSplitView, NSSplitViewController, NSSplitViewItemBehavior, NSView, NSWindow, NSWindowButton,
-        NSWindowToolbarStyle,
+        NSApplication, NSOutlineView, NSSplitView, NSSplitViewController, NSSplitViewItemBehavior, NSTableViewStyle,
+        NSView, NSWindow, NSWindowButton, NSWindowToolbarStyle,
     };
-    use nd::appkit::objc2_foundation::MainThreadMarker;
+    use nd::appkit::objc2_foundation::{MainThreadMarker, NSIndexSet};
     use nd::prelude::*;
 
     actions!(chrome_test, [NewThing]);
 
-    struct Shell;
+    struct Shell {
+        folder: SharedString,
+    }
 
     impl Render for Shell {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             scaffold()
                 .toolbar(
                     toolbar()
@@ -59,7 +61,22 @@ mod chrome {
                         .inspector_toggle(),
                 )
                 .sidebar(
-                    sidebar().min_w(px(180.)).child(v_flex().p_3().gap_1().child(text("Library")).child(text("Inbox"))),
+                    sidebar().min_w(px(180.)).child(
+                        source_list("folders")
+                            .section(
+                                "Library",
+                                [
+                                    source_item("inbox", "Inbox").icon(Icon::Inbox).badge("3"),
+                                    source_item("archive", "Archive").icon(Icon::Archive),
+                                ],
+                            )
+                            .section("Tags", [source_item("starred", "Starred").icon(Icon::Star)])
+                            .selected(self.folder.clone())
+                            .on_select(cx.listener(|this, e: &SourceSelected, _, cx| {
+                                this.folder = e.id.clone();
+                                cx.notify();
+                            })),
+                    ),
                 )
                 .content(
                     v_flex()
@@ -160,7 +177,7 @@ mod chrome {
             main =
                 Some(cx.open_window(
                     WindowOptions::main("chrome").title("Chrome").size(size(px(900.), px(560.))),
-                    |_, cx| cx.new(|_| Shell),
+                    |_, cx| cx.new(|_| Shell { folder: "inbox".into() }),
                 ));
         });
         let main = main.expect("main window");
@@ -197,11 +214,26 @@ mod chrome {
             r.size.width > 0. && r.origin.x > 150.
         });
         c.check(in_split, "content lays out inside the content pane, right of the sidebar");
-        let sidebar_label = label_view(&content, "Library");
+        // Source list.
+        let outline = find::<NSView>(&content, &mut |v| v.downcast_ref::<NSOutlineView>().is_some())
+            .and_then(|v| v.downcast::<NSOutlineView>().ok());
         c.check(
-            sidebar_label.as_ref().is_some_and(|l| l.frame().size.width > 0. && l.window().is_some()),
-            "sidebar content is laid out in the sidebar item",
+            outline.as_ref().is_some_and(|o| o.style() == NSTableViewStyle::SourceList),
+            "source_list() is an NSOutlineView in the source list style",
         );
+        if let Some(outline) = &outline {
+            c.check(
+                outline.numberOfRows() == 5,
+                &format!("two group rows and three items ({} rows)", outline.numberOfRows()),
+            );
+            c.check(outline.selectedRow() == 1, "the app's selection is the outline's");
+            // A user selection: AppKit's own selection change, reported once to the app.
+            outline.selectRowIndexes_byExtendingSelection(&NSIndexSet::indexSetWithIndex(4), false);
+            pump(&host, Duration::from_millis(200));
+            let folder = host.update(|cx| main.root().read(cx).folder.clone());
+            c.check(folder.as_ref() == "starred", &format!("a selection reaches the app as SourceSelected ({folder})"));
+            c.check(outline.selectedRow() == 4, "the app's echo of the selection sets nothing back");
+        }
         c.check(
             label_view(&content, "Inspector").is_some_and(|l| l.frame().size.width > 0.),
             "inspector content is laid out",

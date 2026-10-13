@@ -21,6 +21,7 @@ mod look;
 mod platform;
 mod scaffold;
 mod services;
+mod source_list;
 mod swift;
 mod system_colors;
 mod titlebar;
