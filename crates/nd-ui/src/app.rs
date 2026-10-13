@@ -404,6 +404,7 @@ impl App {
     ) -> R {
         let Some(mut tree) = self.windows.get_mut(&window).and_then(|w| w.tree.take()) else { return absent };
         let result = f(&mut tree.dispatch, self);
+        tree.push_focus_change();
         match self.windows.get_mut(&window) {
             Some(slot) => slot.tree = Some(tree),
             // A listener closed the window.
@@ -411,6 +412,32 @@ impl App {
         }
         self.flush_effects();
         result
+    }
+
+    /// Moves the window's focus to `node`. False when the node is not focusable. The backend
+    /// follows in the next frame.
+    pub fn focus(&mut self, window: WindowId, node: NodeId) -> bool {
+        self.with_dispatch(window, false, |tree, _| tree.focus(node))
+    }
+
+    pub fn blur(&mut self, window: WindowId) {
+        self.with_dispatch(window, (), |tree, _| tree.blur());
+    }
+
+    /// The window's focused node.
+    pub fn focused(&self, window: WindowId) -> Option<NodeId> {
+        self.windows.get(&window)?.tree.as_ref()?.dispatch.focused()
+    }
+
+    /// The window's Tab stops in traversal order.
+    pub fn focus_order(&self, window: WindowId) -> Vec<NodeId> {
+        self.windows.get(&window).and_then(|w| w.tree.as_ref()).map_or_else(Vec::new, |t| t.dispatch.focus_order())
+    }
+
+    /// Records a focus change the platform made itself (a click into a native view). Sends
+    /// nothing back to the backend. False when `node` is not focusable in the window.
+    pub fn platform_focused(&mut self, window: WindowId, node: Option<NodeId>) -> bool {
+        self.with_dispatch(window, false, |tree, _| tree.platform_focused(node))
     }
 
     /// Closes the window: releases its retained tree in one last transaction.

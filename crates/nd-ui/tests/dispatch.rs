@@ -313,4 +313,115 @@ mod elements {
         assert!(!cx.dispatch_action(window.id(), &Ping));
         assert_eq!(log(&cx, &window).len(), 2);
     }
+
+    /// Three focusable rows; `second_first` gives the middle one a lower `tab_index`.
+    struct Rows {
+        second_first: bool,
+        show_last: bool,
+        log: Vec<String>,
+    }
+
+    impl Render for Rows {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let row = |name: &'static str| div().id(name).focusable().child(text(name));
+            v_flex()
+                .key_context("Rows")
+                .child(row("one"))
+                .child(
+                    row("two")
+                        .key_context("Item")
+                        .when(self.second_first, |d| d.tab_index(-1))
+                        .on_action(cx.listener(|r, _: &Ping, _, _| r.log.push("item".into()))),
+                )
+                .when(self.show_last, |d| d.child(row("three")))
+                .child(div().id("plain").child(text("not focusable")))
+                .on_action(cx.listener(|r, _: &Ping, _, _| r.log.push("rows".into())))
+        }
+    }
+
+    fn row_node(cx: &TestApp, name: &str) -> NodeId {
+        let label = cx
+            .backend()
+            .find(|_, p| p.downcast_ref::<TextProps>().is_some_and(|t| t.text.as_ref() == name))
+            .first()
+            .copied()
+            .expect("row label");
+        cx.backend().parent(label).expect("row")
+    }
+
+    fn rows(cx: &mut TestApp) -> WindowHandle<Rows> {
+        cx.bind_keys([KeyBinding::new("secondary-k", Ping, None)]);
+        cx.open_window(WINDOW, |_, cx| cx.new(|_| Rows { second_first: false, show_last: true, log: Vec::new() }))
+    }
+
+    fn press(cx: &mut TestApp, window: &WindowHandle<Rows>, keystroke: &str) -> KeyDispatch {
+        let result = cx.dispatch_keystroke(window.id(), &key(keystroke));
+        cx.run_until_idle();
+        result
+    }
+
+    #[test]
+    fn tab_walks_focusable_elements_and_the_backend_follows() {
+        let mut cx = TestApp::new();
+        let window = rows(&mut cx);
+        let [one, two, three] = ["one", "two", "three"].map(|n| row_node(&cx, n));
+        assert_eq!(cx.focus_order(window.id()), [one, two, three], "only focusable elements, in tree order");
+
+        for expected in [one, two, three, one] {
+            assert_eq!(press(&mut cx, &window, "tab"), KeyDispatch::Handled);
+            assert_eq!(cx.focused(window.id()), Some(expected));
+            assert_eq!(cx.backend().focused(), Some(expected), "the focus op reached the backend");
+        }
+        assert_eq!(press(&mut cx, &window, "shift-tab"), KeyDispatch::Handled);
+        assert_eq!(cx.backend().focused(), Some(three));
+    }
+
+    #[test]
+    fn bindings_match_in_the_focused_elements_contexts() {
+        let mut cx = TestApp::new();
+        let window = rows(&mut cx);
+        let two = row_node(&cx, "two");
+        press(&mut cx, &window, "secondary-k");
+        assert!(cx.focus(window.id(), two));
+        press(&mut cx, &window, "secondary-k");
+        assert_eq!(window.root().read(&cx).log, ["rows", "item"]);
+        let plain = row_node(&cx, "not focusable");
+        assert!(!cx.focus(window.id(), plain), "a plain div takes no focus");
+    }
+
+    #[test]
+    fn tab_index_reorders_and_removing_the_focused_element_clears_focus() {
+        let mut cx = TestApp::new();
+        let window = rows(&mut cx);
+        let [one, two, three] = ["one", "two", "three"].map(|n| row_node(&cx, n));
+        window.root().update(&mut cx, |r, cx| {
+            r.second_first = true;
+            cx.notify();
+        });
+        cx.run_until_idle();
+        assert_eq!(cx.focus_order(window.id()), [two, one, three]);
+
+        cx.focus(window.id(), three);
+        cx.run_until_idle();
+        assert_eq!(cx.backend().focused(), Some(three));
+        window.root().update(&mut cx, |r, cx| {
+            r.show_last = false;
+            cx.notify();
+        });
+        cx.run_until_idle();
+        assert_eq!(cx.focused(window.id()), None);
+        assert_eq!(cx.backend().focused(), None);
+    }
+
+    #[test]
+    fn platform_focus_changes_are_mirrored_without_a_focus_op() {
+        let mut cx = TestApp::new();
+        let window = rows(&mut cx);
+        let two = row_node(&cx, "two");
+        cx.backend_mut().take_log();
+        assert!(cx.platform_focused(window.id(), Some(two)));
+        cx.run_until_idle();
+        assert_eq!(cx.focused(window.id()), Some(two));
+        assert!(!cx.backend().ops().any(|op| matches!(op, nd_ui::transaction::Op::Focus { .. })));
+    }
 }

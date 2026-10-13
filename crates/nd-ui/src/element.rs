@@ -15,7 +15,7 @@ use nd_gpui::gpui::{Action, KeyContext, SharedString, StyleRefinement, Styled};
 
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AnyProps, NodeKind, Props, WidgetKind};
-use crate::dispatch::DispatchTree;
+use crate::dispatch::{DispatchTree, Focusable};
 use crate::window::Window;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -42,12 +42,14 @@ pub(crate) type Handler = Rc<dyn Fn(&dyn Any, &mut Window, &mut App)>;
 /// Registers one `on_action` listener on the node's entry in its window's dispatch tree.
 pub(crate) type ActionRegistrar = Rc<dyn Fn(&mut DispatchTree<App>, NodeId, WindowId)>;
 
-/// What an element contributes to dispatch (ARCHITECTURE.md 3.12): its key context and action
-/// listeners. The retained tree hands them to the window's [`DispatchTree`] on every render.
+/// What an element contributes to dispatch (ARCHITECTURE.md 3.12): its key context, action
+/// listeners and focusability. The retained tree hands them to the window's [`DispatchTree`]
+/// on every render.
 #[derive(Clone, Default)]
 pub struct DispatchProps {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) actions: Vec<ActionRegistrar>,
+    pub(crate) focusable: Option<Focusable>,
 }
 
 /// Elements that take part in key dispatch: GPUI's `key_context` and `on_action`.
@@ -63,6 +65,25 @@ pub trait InteractiveElement: Sized {
     {
         let context = context.try_into().unwrap_or_else(|e| panic!("invalid key context: {e:?}"));
         self.dispatch_props().key_context = Some(context);
+        self
+    }
+
+    /// Makes the element a focus target: Tab reaches it in tree order, and bindings match in
+    /// its contexts while it has focus.
+    fn focusable(mut self) -> Self {
+        self.dispatch_props().focusable.get_or_insert_with(Focusable::default);
+        self
+    }
+
+    /// Focusable, ordered by `index` before tree order in Tab traversal (lower first).
+    fn tab_index(mut self, index: isize) -> Self {
+        self.dispatch_props().focusable.get_or_insert_with(Focusable::default).tab_index = index;
+        self
+    }
+
+    /// Focusable; `false` keeps it out of Tab traversal while `focus` can still reach it.
+    fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.dispatch_props().focusable.get_or_insert_with(Focusable::default).tab_stop = tab_stop;
         self
     }
 

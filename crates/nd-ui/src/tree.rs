@@ -80,6 +80,11 @@ pub(crate) struct Tree {
     taffy: TaffyTree<NodeId>,
     tx: Transaction,
     needs_layout: bool,
+    /// Views placed in this frame's output so far; a second placement is a render bug.
+    placed: HashSet<EntityId>,
+    /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
+    /// so a view that moved to a parent reconciled later is adopted there, not rebuilt.
+    orphans: Vec<EntityId>,
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
     pub(crate) dispatch: DispatchTree<App>,
@@ -147,7 +152,19 @@ impl Tree {
         );
         let mut dispatch = DispatchTree::new(bindings);
         dispatch.set_root(root);
-        Self { window, root, root_view, nodes, views: HashMap::new(), taffy, tx, needs_layout: true, dispatch }
+        Self {
+            window,
+            root,
+            root_view,
+            nodes,
+            views: HashMap::new(),
+            taffy,
+            tx,
+            needs_layout: true,
+            placed: HashSet::new(),
+            orphans: Vec::new(),
+            dispatch,
+        }
     }
 
     pub(crate) fn contains(&self, node: NodeId) -> bool {
@@ -177,12 +194,20 @@ impl Tree {
         let root = self.root;
         let slots = mem::take(&mut self.nodes.get_mut(&root).expect("root").slots);
         for slot in slots {
-            self.unmount(slot, app);
+            self.unmount(slot);
         }
+        self.release_orphans(app);
         self.sync_children(root);
         self.tx.push(Op::Release { node: root });
         let tx = mem::replace(&mut self.tx, Transaction::new(self.window));
         tx.commit(&mut *app.backend, &mut app.measure_cache);
+    }
+
+    /// Queues nd's latest focus change for the backend; the transaction applies it last.
+    pub(crate) fn push_focus_change(&mut self) {
+        if let Some(node) = self.dispatch.take_focus_change() {
+            self.tx.push(Op::Focus { node });
+        }
     }
 
     fn native_of(&self, slot: Slot) -> Option<NodeId> {
@@ -259,7 +284,11 @@ impl Tree {
         app: &mut App,
     ) -> Slot {
         let id = view.entity_id();
-        assert!(!self.views.contains_key(&id), "{id:?} is rendered in two places");
+        assert!(self.placed.insert(id), "{id:?} is rendered in two places");
+        if self.views.contains_key(&id) {
+            self.adopt(id, ident, parent, depth);
+            return Slot::View(id);
+        }
         app.view_windows.insert(id, self.window);
         self.views.insert(id, ViewSlot { view: view.clone(), ident, root: None, parent, depth });
         let el = self.render_view(&view, window, app);
@@ -269,27 +298,87 @@ impl Tree {
         Slot::View(id)
     }
 
+    /// Takes a mounted view to `parent`, keeping its native nodes: an orphan from earlier in
+    /// this frame, or one still under a parent that is reconciled later in it, which is
+    /// detached from there now.
+    fn adopt(&mut self, id: EntityId, ident: Ident, parent: NodeId, depth: u32) {
+        if let Some(i) = self.orphans.iter().position(|o| *o == id) {
+            self.orphans.swap_remove(i);
+        } else {
+            let old = self.views[&id].parent;
+            let slot = Slot::View(id);
+            let held = self.nodes.get(&old).is_some_and(|n| n.slots.contains(&slot));
+            // Not in its parent's slots: that parent is mid-reconcile and kept it this frame.
+            assert!(held, "{id:?} is rendered in two places");
+            self.nodes.get_mut(&old).expect("node").slots.retain(|s| *s != slot);
+            self.sync_children(old);
+        }
+        let view = self.views.get_mut(&id).expect("view");
+        let (old_depth, root) = (view.depth, view.root);
+        view.ident = ident;
+        view.parent = parent;
+        view.depth = depth;
+        if depth != old_depth
+            && let Some(root) = root
+        {
+            self.shift_depth(root, depth as i64 - old_depth as i64);
+        }
+    }
+
+    /// Moves the views under `slot` by `delta` levels, after the view above them moved.
+    fn shift_depth(&mut self, slot: Slot, delta: i64) {
+        match slot {
+            Slot::Node(n) => {
+                for s in self.nodes[&n].slots.clone() {
+                    self.shift_depth(s, delta);
+                }
+            }
+            Slot::View(e) => {
+                let view = self.views.get_mut(&e).expect("view");
+                view.depth = (view.depth as i64 + delta) as u32;
+                if let Some(root) = view.root {
+                    self.shift_depth(root, delta);
+                }
+            }
+        }
+    }
+
     /// Forgets a subtree. The backend gets a release per node; the remove of its top node comes
-    /// from the parent's `sync_children`.
-    fn unmount(&mut self, slot: Slot, app: &mut App) {
+    /// from the parent's `sync_children`. Views inside it become orphans until the frame ends.
+    fn unmount(&mut self, slot: Slot) {
         match slot {
             Slot::Node(n) => {
                 let node = self.nodes.remove(&n).expect("node");
                 let _ = self.taffy.remove(node.taffy);
+                self.tx.push(Op::Release { node: n });
+                for s in node.slots {
+                    if let Slot::View(e) = s {
+                        // Its parent is going, so its root is detached here rather than by a
+                        // parent's sync.
+                        if let Some(root) = self.native_of(s) {
+                            self.tx.push(Op::Remove { node: root });
+                            self.dispatch.detach(root);
+                        }
+                        self.orphans.push(e);
+                    } else {
+                        self.unmount(s);
+                    }
+                }
                 if self.dispatch.contains(n) {
                     self.dispatch.remove(n);
                 }
-                self.tx.push(Op::Release { node: n });
-                for s in node.slots {
-                    self.unmount(s, app);
-                }
             }
-            Slot::View(e) => {
-                let view = self.views.remove(&e).expect("view");
-                app.view_windows.remove(&e);
-                if let Some(root) = view.root {
-                    self.unmount(root, app);
-                }
+            Slot::View(e) => self.orphans.push(e),
+        }
+    }
+
+    /// Releases the views no parent adopted this frame, with everything under them.
+    fn release_orphans(&mut self, app: &mut App) {
+        while let Some(e) = self.orphans.pop() {
+            let view = self.views.remove(&e).expect("view");
+            app.view_windows.remove(&e);
+            if let Some(root) = view.root {
+                self.unmount(root);
             }
         }
     }
@@ -402,6 +491,7 @@ impl Tree {
         }
         let props = &self.nodes[&n].dispatch;
         self.dispatch.set_key_context(n, props.key_context.clone());
+        self.dispatch.set_focusable(n, props.focusable);
         self.dispatch.clear_listeners(n);
         for register in props.actions.clone() {
             register(&mut self.dispatch, n, self.window);
@@ -426,15 +516,18 @@ impl Tree {
         for (el, ident) in children.into_iter().zip(idents) {
             matched.push(match (by_ident.remove(&ident), el.0) {
                 (Some(slot @ Slot::Node(_)), Element::Node(desc)) => (Ok(slot), Some(desc)),
-                (Some(slot @ Slot::View(_)), Element::View(_)) => (Ok(slot), None),
+                (Some(slot @ Slot::View(e)), Element::View(_)) => {
+                    assert!(self.placed.insert(e), "{e:?} is rendered in two places");
+                    (Ok(slot), None)
+                }
                 (_, el) => (Err((AnyElement(el), ident)), None),
             });
         }
-        // Unmount before mounting, so a view that moved between keys is free to mount again.
+        // Unmount before mounting, so a view that moved between keys is adopted, not rebuilt.
         let gone: HashSet<Slot> = by_ident.into_values().collect();
         for slot in old {
             if gone.contains(&slot) {
-                self.unmount(slot, app);
+                self.unmount(slot);
             }
         }
         let mut slots = Vec::with_capacity(matched.len());
@@ -474,7 +567,7 @@ impl Tree {
         let new = self.mount(el, ident, parent, depth + 1, window, app);
         self.views.get_mut(&id).expect("view").root = Some(new);
         if let Some(old) = old {
-            self.unmount(old, app);
+            self.unmount(old);
         }
         self.sync_children(parent);
         self.sync_fresh(new);
@@ -526,7 +619,9 @@ impl App {
         let (Some(mut window), Some(mut tree)) = (slot.window.take(), slot.tree.take()) else {
             panic!("{id:?} drawn while leased");
         };
+        tree.placed.clear();
         let root_view = tree.root_view.clone();
+        tree.placed.insert(root_view.entity_id());
         if !tree.views.contains_key(&root_view.entity_id()) {
             let root = tree.root;
             let ident = Ident {
@@ -534,6 +629,7 @@ impl App {
                 key: Key::Entity(root_view.entity_id()),
                 occurrence: 0,
             };
+            tree.placed.remove(&root_view.entity_id());
             let slot = tree.mount_view(root_view, ident, root, 0, &mut window, self);
             tree.nodes.get_mut(&root).expect("root").slots = vec![slot];
             tree.sync_children(root);
@@ -546,7 +642,7 @@ impl App {
             let mut dirty: Vec<(u32, EntityId)> = self
                 .dirty
                 .iter()
-                .filter(|e| !rendered.contains(*e))
+                .filter(|e| !rendered.contains(*e) && !tree.orphans.contains(e))
                 .filter_map(|e| tree.views.get(e).map(|v| (v.depth, *e)))
                 .collect();
             if dirty.is_empty() {
@@ -555,11 +651,14 @@ impl App {
             dirty.sort();
             for (_, e) in dirty {
                 // A parent rendered earlier in this pass may have unmounted it or mounted it fresh.
-                if self.dirty.contains(&e) && tree.views.contains_key(&e) && rendered.insert(e) {
+                let live = tree.views.contains_key(&e) && !tree.orphans.contains(&e);
+                if self.dirty.contains(&e) && live && rendered.insert(e) {
                     tree.rerender_view(e, &mut window, self);
                 }
             }
         }
+        tree.release_orphans(self);
+        tree.push_focus_change();
         let target = tree.view_node(tree.root_view.entity_id());
         tree.dispatch.set_default_target(target);
         let tx = mem::replace(&mut tree.tx, Transaction::new(id));

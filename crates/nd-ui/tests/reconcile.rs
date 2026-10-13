@@ -470,3 +470,122 @@ fn closing_a_window_releases_every_node() {
     cx.close_window(window.id());
     assert_eq!(cx.backend().live_count(), 0);
 }
+
+/// One child view that hops between two panes. `left` decides which pane holds it; the panes
+/// are siblings, so one of them is reconciled before the other whichever way it moves.
+struct Panes {
+    child: Entity<Counter>,
+    left: bool,
+    /// Wraps the right pane's copy in an extra `div`, so a move out of it removes a native node
+    /// with the view still inside.
+    wrapped: bool,
+}
+
+impl Render for Panes {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let child = self.child.clone();
+        h_flex().child(div().id("left").when(self.left, |d| d.child(child.clone()))).child(div().id("right").when(
+            !self.left,
+            |d| {
+                if self.wrapped { d.child(div().id("wrap").child(child.clone())) } else { d.child(child.clone()) }
+            },
+        ))
+    }
+}
+
+fn panes(cx: &mut TestApp, left: bool, wrapped: bool) -> (Entity<Panes>, Entity<Counter>) {
+    let window = cx.open_window(WINDOW, |_, cx| {
+        let child = cx.new(|_| Counter { label: "c", count: 3 });
+        cx.new(|_| Panes { child, left, wrapped })
+    });
+    let root = window.root().clone();
+    let child = root.read(cx).child.clone();
+    (root, child)
+}
+
+fn set_left(cx: &mut TestApp, root: &Entity<Panes>, left: bool) {
+    root.update(cx, |p, cx| {
+        p.left = left;
+        cx.notify();
+    });
+    cx.run_until_idle();
+}
+
+#[test]
+fn a_view_moves_between_two_parents_in_one_render_and_keeps_its_node() {
+    for (from_left, wrapped) in [(false, false), (true, false), (false, true)] {
+        let mut cx = TestApp::new();
+        let (root, child) = panes(&mut cx, from_left, wrapped);
+        let node = cx.view_node(child.entity_id()).expect("mounted");
+        let parent = cx.backend().parent(node);
+        let live = cx.backend().live_count();
+        cx.backend_mut().take_log();
+
+        set_left(&mut cx, &root, !from_left);
+        let case = format!("from_left={from_left} wrapped={wrapped}");
+        assert_eq!(cx.view_node(child.entity_id()), Some(node), "{case}: the view keeps its native node");
+        assert!(find_text(&cx, "c 3").is_some_and(|n| n == node), "{case}");
+        assert_ne!(cx.backend().parent(node), parent, "{case}: it now hangs off the other pane");
+        assert!(
+            !ops(&cx).iter().any(|op| matches!(op, Op::Create { node: n, .. } | Op::Release { node: n } if *n == node))
+        );
+        assert_eq!(cx.render_count(child.entity_id()), 1, "{case}: moving does not re-render it");
+        let wrapper = usize::from(wrapped);
+        assert_eq!(cx.backend().live_count(), live - wrapper, "{case}: only the wrapper is released");
+
+        // It still renders where it went, and moves back.
+        bump(&mut cx, &child);
+        cx.run_until_idle();
+        assert!(find_text(&cx, "c 4").is_some_and(|n| n == node), "{case}");
+        set_left(&mut cx, &root, from_left);
+        assert_eq!(cx.view_node(child.entity_id()), Some(node), "{case}: and back");
+    }
+}
+
+/// A view whose root element changes kind keeps the child views inside it: the new root is
+/// mounted before the old one is unmounted, with the child view still under the old one.
+struct Shell {
+    child: Entity<Counter>,
+    column: bool,
+}
+
+impl Render for Shell {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        if self.column { v_flex().child(self.child.clone()) } else { h_flex().child(self.child.clone()) }
+    }
+}
+
+#[test]
+fn a_new_root_element_adopts_the_child_views_of_the_old_one() {
+    let mut cx = TestApp::new();
+    let window = cx.open_window(WINDOW, |_, cx| {
+        let child = cx.new(|_| Counter { label: "s", count: 0 });
+        cx.new(|_| Shell { child, column: false })
+    });
+    let root = window.root().clone();
+    let child = root.read(&cx).child.clone();
+    let node = cx.view_node(child.entity_id()).unwrap();
+    root.update(&mut cx, |s, cx| {
+        s.column = true;
+        cx.notify();
+    });
+    cx.run_until_idle();
+    assert_eq!(cx.view_node(child.entity_id()), Some(node));
+    assert_eq!(cx.render_count(child.entity_id()), 1);
+}
+
+#[test]
+#[should_panic(expected = "rendered in two places")]
+fn one_view_in_two_places_in_one_render_still_panics() {
+    struct Twice(Entity<Counter>);
+    impl Render for Twice {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            h_flex().child(div().child(self.0.clone())).child(div().child(self.0.clone()))
+        }
+    }
+    let mut cx = TestApp::new();
+    cx.open_window(WINDOW, |_, cx| {
+        let child = cx.new(|_| Counter { label: "t", count: 0 });
+        cx.new(|_| Twice(child))
+    });
+}
