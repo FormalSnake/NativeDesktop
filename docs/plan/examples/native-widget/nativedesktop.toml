@@ -1,0 +1,9 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "es.canarycoders.places"
+display_name = "Places"
+icon = "assets/icon.icon"
+
+[macos]
+minimum_system_version = "14.0"
+entitlements = ["network.client"]   # map tiles

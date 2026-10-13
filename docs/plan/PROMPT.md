@@ -70,3 +70,8 @@ proceed
 - Other repos (nativebrowser, FormalShell, nothingctl, meshtop, messages, youtubemusic) move once their Herdr panes are idle, followed by `git worktree repair`.
 - Rust build output (cargo target, sccache) lives on `/Volumes/Kyan Drive/dev-cache.noindex/`.
 - Old `main` renamed to `zig` (local only, origin untouched); new orphan `main` checked out at `~/Developer/ecosystem/nativedesktop`.
+- 2026-10-13: the "GPUI on every platform" decision is overridden. macOS uses real AppKit controls (called from Rust through objc2, Swift only for Swift-only/SwiftUI APIs), GPUI only for custom GPU content hosted inside the AppKit tree. Windows looks native (Fluent 2 / WinUI 3 feel) via a GPUI-drawn Fluent skin, with a seam for a later WinUI backend. Linux stays GPUI with matugen. Apps write one GPUI-shaped declarative vocabulary and never see the backend.
+- 2026-10-13: overrides at every layer (element, platform, mapping, theme, pattern); one `nd` crate for apps; app-defined native widgets on the same public trait the framework uses.
+- 2026-10-13: docs examples are full apps in `examples/`, compiled in CI; web target is a real GPUI backend on wasm with the plain GPUI look; docs embeds show a live web tab plus harness-captured macOS, Linux and Windows screenshots and recordings.
+- 2026-10-13: big structural elements use the highest-level system component (sidebar split item, NSToolbar, system caption buttons, system materials), never replicas, so new OS releases restyle apps automatically; an OS-release diff job enforces it.
+- 2026-10-13: first-class `glass()` element on system materials; the zig branch's macOS command palette is ported exactly.

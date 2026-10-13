@@ -1,0 +1,5 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "es.canarycoders.hello"
+display_name = "Hello"
+icon = "assets/icon.icon"

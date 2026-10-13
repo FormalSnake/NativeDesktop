@@ -1,0 +1,10 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "es.canarycoders.overrides"
+display_name = "Overrides"
+icon = "assets/icon.icon"
+
+# Project-wide pattern overrides. Code can override these again per app, window or element.
+[patterns]
+context_menu = "native"     # native | drawn
+settings_window = "sheet"   # window | sheet

@@ -1,0 +1,12 @@
+[package]
+name = "notes"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nd = { version = "0.1", features = ["settings-ui"] }
+serde = { version = "1", features = ["derive"] }
+jiff = { version = "0.2", features = ["serde"] }
+
+[dev-dependencies]
+nd = { version = "0.1", features = ["test"] }
