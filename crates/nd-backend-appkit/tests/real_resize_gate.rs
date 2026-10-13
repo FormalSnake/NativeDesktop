@@ -1,23 +1,25 @@
 //! M0 resize gate (ARCHITECTURE.md 5.2 and 16), tier 3. Launches `examples/hello` with its window
 //! background painted magenta (`ND_DEBUG_EXPOSE=1`), captures every frame the window server
 //! presents for that window through ScreenCaptureKit, and drags the window's edges with HID
-//! CGEvents, so AppKit runs a real live resize. Every captured frame must be free of magenta
-//! (content covered the window to its edge) and show the close button at the configured point.
-//! Then full screen is entered and left with the menu's key equivalent, and a last drag checks
-//! the lights again. A control run with `ND_DEBUG_DEFER_LIVE_LAYOUT=1` must fail the magenta
-//! check, which proves the detector sees a late layout.
+//! CGEvents (`ndshell::input`), so AppKit runs a real live resize. Every captured frame must be
+//! free of magenta (content covered the window to its edge). The close button is checked at the
+//! configured point in stills taken after the resize, after full screen (entered and left with
+//! the menu's key equivalent) and after a second resize. A control run with
+//! `ND_DEBUG_DEFER_LIVE_LAYOUT=1` must fail the magenta check, which proves the detector sees a
+//! late layout.
 //!
-//! Needs Screen Recording and Accessibility (post events) for the terminal running it, and a
-//! built `hello` (`cargo build -p hello`, or `ND_HELLO_BIN`). Prints `ND_M0_RESIZE_GATE_OK`.
-//! `ND_GATE_OUT=<dir>` keeps a mid-drag and a final frame as BMP.
+//! Needs Screen Recording and Accessibility (post events) for the terminal running it, no window
+//! manager that intercepts input (`ndshell::preflight` checks), and a built `hello`
+//! (`cargo build -p hello`, or `ND_HELLO_BIN`). Prints `ND_M0_RESIZE_GATE_OK`. `ND_GATE_OUT=<dir>`
+//! keeps an idle, a mid-drag and an after-full-screen frame as BMP.
 
 mod harness;
 
 fn main() {
     #[cfg(target_os = "macos")]
-    harness::main_real("real_gate_m0::resize_drag", gate::run);
+    harness::main_real("gate_m0::real_resize_drag", gate::run);
     #[cfg(not(target_os = "macos"))]
-    harness::main_real("real_gate_m0::resize_drag", || {});
+    harness::main_real("gate_m0::real_resize_drag", || {});
 }
 
 #[cfg(target_os = "macos")]
@@ -37,15 +39,15 @@ mod gate {
     use nd_backend_appkit::objc2_foundation::{
         MainThreadMarker, NSDate, NSError, NSObject, NSObjectProtocol, NSRunLoop,
     };
-    use objc2_core_foundation::CGPoint;
-    use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton};
+    use ndshell::input::{self, Modifier};
     use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight, CVPixelBufferGetWidth,
         CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
     };
     use objc2_screen_capture_kit::{
-        SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput, SCStreamOutputType,
+        SCContentFilter, SCScreenshotManager, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput,
+        SCStreamOutputType,
     };
 
     /// Where `examples/hello` pins its close button, in points from the window's top-left.
@@ -72,6 +74,8 @@ mod gate {
         frames: Vec<(&'static str, Frame)>,
         scale: f64,
         save: Option<PathBuf>,
+        /// Where to keep the 20th frame of the `drag` phase, which is mid-resize.
+        save_mid: Option<PathBuf>,
     }
 
     pub struct SinkIvars {
@@ -103,26 +107,38 @@ mod gate {
         }
 
         fn frame(&self, sample: &CMSampleBuffer) {
-            // Idle and blank frames carry no image.
-            let Some(image) = (unsafe { sample.image_buffer() }) else { return };
-            let mut state = self.ivars().state.lock().unwrap();
-            let Some(phase) = state.phase else { return };
-            unsafe { CVPixelBufferLockBaseAddress(&image, CVPixelBufferLockFlags::ReadOnly) };
-            let width = CVPixelBufferGetWidth(&image);
-            let height = CVPixelBufferGetHeight(&image);
-            let stride = CVPixelBufferGetBytesPerRow(&image);
-            let base = CVPixelBufferGetBaseAddress(&image).cast::<u8>();
-            let pixels = unsafe { std::slice::from_raw_parts(base, stride * height) };
-            let frame = analyze(pixels, width, height, stride, state.scale);
-            if frame.is_some()
-                && let Some(path) = state.save.take()
-            {
-                write_bmp(&path, pixels, width, height, stride);
-            }
-            unsafe { CVPixelBufferUnlockBaseAddress(&image, CVPixelBufferLockFlags::ReadOnly) };
-            if let Some(frame) = frame {
-                state.frames.push((phase, frame));
-            }
+            record(&self.ivars().state, sample);
+        }
+    }
+
+    /// Analyzes a captured frame and records it under the current phase.
+    fn record(state: &Mutex<State>, sample: &CMSampleBuffer) {
+        // Idle and blank frames carry no image.
+        let Some(image) = (unsafe { sample.image_buffer() }) else { return };
+        let mut state = state.lock().unwrap();
+        let Some(phase) = state.phase else { return };
+        unsafe { CVPixelBufferLockBaseAddress(&image, CVPixelBufferLockFlags::ReadOnly) };
+        let width = CVPixelBufferGetWidth(&image);
+        let height = CVPixelBufferGetHeight(&image);
+        let stride = CVPixelBufferGetBytesPerRow(&image);
+        let base = CVPixelBufferGetBaseAddress(&image).cast::<u8>();
+        let pixels = unsafe { std::slice::from_raw_parts(base, stride * height) };
+        let frame = analyze(pixels, width, height, stride, state.scale);
+        if frame.is_some()
+            && let Some(path) = state.save.take()
+        {
+            write_bmp(&path, pixels, width, height, stride);
+        }
+        if frame.is_some()
+            && phase == "drag"
+            && state.frames.iter().filter(|(p, _)| *p == "drag").count() == 20
+            && let Some(path) = state.save_mid.take()
+        {
+            write_bmp(&path, pixels, width, height, stride);
+        }
+        unsafe { CVPixelBufferUnlockBaseAddress(&image, CVPixelBufferLockFlags::ReadOnly) };
+        if let Some(frame) = frame {
+            state.frames.push((phase, frame));
         }
     }
 
@@ -262,37 +278,11 @@ mod gate {
         NSRunLoop::currentRunLoop().runUntilDate(&until);
     }
 
-    fn post_mouse(kind: CGEventType, x: f64, y: f64) {
-        let event = CGEvent::new_mouse_event(None, kind, CGPoint { x, y }, CGMouseButton::Left);
-        CGEvent::post(CGEventTapLocation::HIDEventTap, event.as_deref());
-    }
-
-    fn post_key(code: u16, flags: CGEventFlags) {
-        for down in [true, false] {
-            let event = CGEvent::new_keyboard_event(None, code, down);
-            CGEvent::set_flags(event.as_deref(), flags);
-            CGEvent::post(CGEventTapLocation::HIDEventTap, event.as_deref());
-            std::thread::sleep(Duration::from_millis(30));
-        }
-    }
-
-    /// Presses at `from`, drags by `(dx, dy)` in `steps` HID moves at about 80 Hz, releases.
-    fn drag(from: (f64, f64), dx: f64, dy: f64, steps: u32) {
-        post_mouse(CGEventType::MouseMoved, from.0, from.1);
-        std::thread::sleep(Duration::from_millis(150));
-        post_mouse(CGEventType::LeftMouseDown, from.0, from.1);
-        std::thread::sleep(Duration::from_millis(60));
-        for i in 1..=steps {
-            let t = f64::from(i) / f64::from(steps);
-            post_mouse(CGEventType::LeftMouseDragged, from.0 + dx * t, from.1 + dy * t);
-            std::thread::sleep(Duration::from_millis(12));
-        }
-        std::thread::sleep(Duration::from_millis(60));
-        post_mouse(CGEventType::LeftMouseUp, from.0 + dx, from.1 + dy);
-        std::thread::sleep(Duration::from_millis(300));
-    }
-
-    fn start_capture(window_number: u32, state: &Arc<Mutex<State>>, max: (f64, f64)) -> Retained<SCStream> {
+    /// The capture filter and configuration for `window_number` alone, every presented frame.
+    fn window_filter(
+        window_number: u32,
+        max: (f64, f64),
+    ) -> (Retained<SCContentFilter>, Retained<SCStreamConfiguration>) {
         let found: Arc<Mutex<Option<SendBox<Retained<SCShareableContent>>>>> = Arc::new(Mutex::new(None));
         let done = found.clone();
         let block = RcBlock::new(move |content: *mut SCShareableContent, _error: *mut NSError| {
@@ -324,6 +314,41 @@ mod gate {
             config.setIgnoreShadowsSingleWindow(true);
             config.setQueueDepth(8);
         }
+        (filter, config)
+    }
+
+    /// One screenshot of the window, recorded under `phase`. While a stream runs, macOS 26 and
+    /// later draw the window-sharing capsule over a captured window's traffic lights (display
+    /// captures too), so the lights are checked on a still taken with no stream running.
+    fn still(window_number: u32, state: &Arc<Mutex<State>>, max: (f64, f64), phase: &'static str) -> Option<Frame> {
+        let (filter, config) = window_filter(window_number, max);
+        set_phase(state, Some(phase));
+        let done = Arc::new(Mutex::new(false));
+        let flag = done.clone();
+        let sink = state.clone();
+        let block = RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
+            if let Some(sample) = unsafe { sample.as_ref() } {
+                record(&sink, sample);
+            }
+            *flag.lock().unwrap() = true;
+        });
+        unsafe {
+            SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
+                &filter,
+                &config,
+                Some(&block),
+            )
+        };
+        let end = Instant::now() + Duration::from_secs(10);
+        while !*done.lock().unwrap() && Instant::now() < end {
+            spin(Duration::from_millis(20));
+        }
+        set_phase(state, None);
+        phase_frames(state, phase).last().copied()
+    }
+
+    fn start_capture(window_number: u32, state: &Arc<Mutex<State>>, max: (f64, f64)) -> Retained<SCStream> {
+        let (filter, config) = window_filter(window_number, max);
         let stream =
             unsafe { SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None) };
         let sink = FrameSink::new(state.clone());
@@ -361,6 +386,19 @@ mod gate {
         stream
     }
 
+    /// Stops the stream and waits until macOS has taken the sharing capsule off the window.
+    fn stop_capture(stream: &SCStream) {
+        let stopped = Arc::new(Mutex::new(false));
+        let flag = stopped.clone();
+        let block = RcBlock::new(move |_error: *mut NSError| *flag.lock().unwrap() = true);
+        unsafe { stream.stopCaptureWithCompletionHandler(Some(&block)) };
+        let end = Instant::now() + Duration::from_secs(5);
+        while !*stopped.lock().unwrap() && Instant::now() < end {
+            spin(Duration::from_millis(20));
+        }
+        spin(Duration::from_millis(1000));
+    }
+
     struct Report {
         failures: Vec<String>,
     }
@@ -387,42 +425,16 @@ mod gate {
         let (x, y, w, h, _) = hello.frame().expect("hello reports its frame");
         let before = hello.count("live resize start");
         set_phase(state, Some(phase));
-        drag((x + w + 1., y + h / 2.), grow, 0., 50);
+        input::drag((x + w + 1., y + h / 2.), grow, 0., 50);
         if hello.count("live resize start") == before {
             // The resize zone sits inside the edge on some releases.
-            drag((x + w - 2., y + h / 2.), grow, 0., 50);
+            input::drag((x + w - 2., y + h / 2.), grow, 0., 50);
         }
-        drag((x + (w + grow) / 2., y + h + 1.), 0., grow * 0.6, 50);
+        input::drag((x + (w + grow) / 2., y + h + 1.), 0., grow * 0.6, 50);
         hello.wait_for("live resize end", before + 2, Duration::from_secs(2));
         std::thread::sleep(Duration::from_millis(200));
         set_phase(state, None);
         phase_frames(state, phase)
-    }
-
-    #[link(name = "ApplicationServices", kind = "framework")]
-    unsafe extern "C" {
-        fn AXUIElementCreateApplication(pid: i32) -> *mut std::ffi::c_void;
-        fn AXUIElementSetAttributeValue(
-            element: *mut std::ffi::c_void,
-            attribute: &objc2_core_foundation::CFString,
-            value: &objc2_core_foundation::CFType,
-        ) -> i32;
-    }
-
-    /// A launched-in-background app is not active (activation is cooperative), so key events
-    /// would go to whatever app is. Accessibility's frontmost attribute activates it, as a click
-    /// on it would.
-    fn activate(hello: &Hello) {
-        let attribute = objc2_core_foundation::CFString::from_static_str("AXFrontmost");
-        let yes = objc2_core_foundation::CFBoolean::new(true);
-        unsafe {
-            let app = AXUIElementCreateApplication(hello.child.id() as i32);
-            AXUIElementSetAttributeValue(app, &attribute, yes);
-            // The create rule: this call owns the element.
-            let owned = std::ptr::NonNull::new(app.cast::<objc2_core_foundation::CFType>());
-            drop(owned.map(|p| objc2_core_foundation::CFRetained::from_raw(p)));
-        }
-        spin(Duration::from_millis(400));
     }
 
     fn summarize(frames: &[Frame]) -> (usize, usize, usize, usize) {
@@ -466,6 +478,10 @@ mod gate {
         if let Some(out) = &out {
             let _ = std::fs::create_dir_all(out);
         }
+        if let Err(why) = ndshell::preflight::real_input() {
+            println!("ND_M0_RESIZE_GATE_FAILED preflight: {why}");
+            std::process::exit(1);
+        }
         let mut r = Report { failures: Vec::new() };
 
         let hello = Hello::launch(false);
@@ -475,13 +491,17 @@ mod gate {
         let stream = start_capture(number, &state, max);
 
         if let Some(out) = &out {
-            state.lock().unwrap().save = Some(out.join("before.bmp"));
+            let mut s = state.lock().unwrap();
+            s.save = Some(out.join("before.bmp"));
+            s.save_mid = Some(out.join("mid-drag.bmp"));
+            drop(s);
             set_phase(&state, Some("idle"));
-            post_mouse(CGEventType::MouseMoved, 10., 10.);
+            input::move_to((10., 10.));
             std::thread::sleep(Duration::from_millis(300));
         }
 
-        activate(&hello);
+        r.check(input::activate(hello.child.id()), "hello is the active app".into());
+        spin(Duration::from_millis(400));
         let frames = edge_drags(&hello, &state, "drag", 240.);
         let starts = hello.count("live resize start");
         r.check(starts >= 2, format!("HID edge drags put the window in live resize ({starts} live resizes)"));
@@ -494,13 +514,19 @@ mod gate {
             magenta == 0,
             format!("content reaches the window edge in every frame ({magenta} of {n} frames show background)"),
         );
-        r.check(lights == n, format!("close button at {LIGHTS:?} in {lights} of {n} frames during resize"));
+        println!("     close button visible in {lights} of {n} streamed frames (the sharing capsule covers it)");
+        stop_capture(&stream);
+        let rest = still(number, &state, max, "rest");
+        r.check(
+            rest.is_some_and(|f| f.lights_ok),
+            format!("close button at {LIGHTS:?} after the resize, in a still with no stream running"),
+        );
 
-        post_key(0x03, CGEventFlags::MaskCommand | CGEventFlags::MaskControl);
+        input::key(0x03, &[Modifier::Control, Modifier::Command]);
         let entered = hello.wait_for("full screen enter", 1, Duration::from_secs(5));
         r.check(entered, "ctrl-cmd-f enters full screen".into());
         std::thread::sleep(Duration::from_millis(800));
-        post_key(0x03, CGEventFlags::MaskCommand | CGEventFlags::MaskControl);
+        input::key(0x03, &[Modifier::Control, Modifier::Command]);
         let exited = hello.wait_for("full screen exit", 1, Duration::from_secs(5));
         r.check(exited, "ctrl-cmd-f leaves full screen".into());
         std::thread::sleep(Duration::from_millis(800));
@@ -513,13 +539,21 @@ mod gate {
         if let Some(out) = &out {
             state.lock().unwrap().save = Some(out.join("after-full-screen.bmp"));
         }
-        let frames = edge_drags(&hello, &state, "after", -120.);
-        let (n, _, magenta, lights) = summarize(&frames);
+        let back = still(number, &state, max, "back");
         r.check(
-            n >= 10 && magenta == 0 && lights == n,
-            format!("after full screen: {n} frames, {magenta} with background, close button placed in {lights}"),
+            back.is_some_and(|f| f.lights_ok),
+            format!("close button at {LIGHTS:?} after leaving full screen, in a still"),
         );
-        unsafe { stream.stopCaptureWithCompletionHandler(None) };
+        let stream = start_capture(number, &state, max);
+        let frames = edge_drags(&hello, &state, "after", -120.);
+        let (n, _, magenta, _) = summarize(&frames);
+        r.check(
+            n >= 10 && magenta == 0,
+            format!("after full screen: {n} frames of a second resize, {magenta} with background"),
+        );
+        stop_capture(&stream);
+        let last = still(number, &state, max, "last");
+        r.check(last.is_some_and(|f| f.lights_ok), format!("close button at {LIGHTS:?} after the second resize"));
         let ticks = hello.lines.lock().unwrap().iter().filter(|l| l.contains("frame clock")).count();
         drop(hello);
 

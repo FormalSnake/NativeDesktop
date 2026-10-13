@@ -1485,6 +1485,7 @@ dependencies = [
  "nd-core",
  "nd-gpui",
  "nd-ui",
+ "ndshell",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -1522,6 +1523,14 @@ dependencies = [
  "nd-gpui",
  "nd-ui",
  "taffy",
+]
+
+[[package]]
+name = "ndshell"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
 ]
 
 [[package]]

@@ -28,8 +28,8 @@ harness = false
 name = "backend_seam"
 harness = false
 
-# Tier 3: moves the real cursor. Named `real_*`, so only nextest's `real` and `gate` profiles
-# run it; plain `cargo test` skips it unless ND_REAL=1.
+# Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
+# and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]
 name = "real_resize_gate"
 harness = false
@@ -41,4 +41,5 @@ nd-gpui.workspace = true
 dispatch2 = "0.3.1"
 objc2-core-media = "0.3.2"
 objc2-core-video = "0.3.2"
+ndshell.workspace = true
 objc2-screen-capture-kit = "0.3.2"
