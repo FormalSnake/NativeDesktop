@@ -171,8 +171,11 @@ mod gate_m4_overlays {
         }
         input::move_to(over_web);
         let inside = sc.settled_page();
+        // Checked first: another app taking activation mid-test closes the popover (by design),
+        // and the presses after that rightly reach the page.
+        assert!(sc.status().contains("popover=open"), "the popover closed during the run: {}", sc.status());
         assert_eq!(inside, base, "input inside the popover reached the page under it");
-        assert!(sc.status().contains("under=1 ") && sc.status().contains("popover=open"), "{}", sc.status());
+        assert!(sc.status().contains("under=1 "), "{}", sc.status());
 
         // Outside, on the page below the popover: closes it and is consumed, release included.
         let outside = (web.x + 40., (pop.y + pop.h + 30.).min(web.y + web.h - 10.));

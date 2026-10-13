@@ -16,10 +16,11 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane,
-    PaneProps, PaneRole, Scaffold, ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind,
-    SliderProps, SourceListKind, SourceListProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset,
-    TitlebarInsetProps, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
+    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
+    FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
+    ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SourceTreeKind,
+    SourceTreeProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps,
+    ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
     ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
@@ -45,15 +46,20 @@ use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{TextLook, ViewLook};
 use crate::overlay::OverlayNative;
+use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
-use crate::source_list::SourceListNative;
+use crate::source_list::SourceTreeNative;
 use crate::surface::SurfaceNative;
 use crate::system_colors::appearance_for;
+use crate::toast::{BannerNative, ToastNative};
 use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative, ToolbarTabNative};
 use crate::traffic_lights::TrafficLights;
 use crate::views::{NdLayerView, NdRootView, NdTextView, ns_rect};
 
 mod automation;
+mod nav;
+
+pub use nav::{PaletteLayout, PaletteRowLayout};
 
 #[allow(clippy::large_enum_variant)]
 enum Native {
@@ -84,7 +90,10 @@ enum Native {
     Select(SelectNative),
     Slider(SliderNative),
     Separator(Retained<NSBox>, bool),
-    SourceList(SourceListNative),
+    SourceTree(SourceTreeNative),
+    Palette(PaletteNative),
+    Toasts(ToastNative),
+    Banner(BannerNative),
     Form(FormNative),
     /// Logical: the form draws sections and rows; these hold what goes in them.
     FormSection(FormSectionProps, Vec<NodeId>),
@@ -111,7 +120,10 @@ impl Native {
             Native::Select(s) => Some(s.view()),
             Native::Slider(s) => Some(s.view()),
             Native::Separator(b, _) => Some(b),
-            Native::SourceList(s) => Some(s.view()),
+            Native::SourceTree(s) => Some(s.view()),
+            Native::Palette(p) => Some(p.view()),
+            Native::Toasts(t) => Some(t.view()),
+            Native::Banner(b) => Some(b.view()),
             Native::Form(f) => Some(&f.outer),
             Native::Surface(s) => Some(s.view()),
             Native::FormSection(..) | Native::FormRow(..) | Native::Overlay(_) => None,
@@ -812,12 +824,27 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<SeparatorKind>(w) => {
                 Native::Separator(crate::controls::separator(mtm), props::<SeparatorProps>(p, "Separator").vertical)
             }
-            NodeKind::Widget(w) if is::<SourceListKind>(w) => Native::SourceList(SourceListNative::new(
+            NodeKind::Widget(w) if is::<SourceTreeKind>(w) => Native::SourceTree(SourceTreeNative::new(
                 mtm,
                 emit(),
                 state.wake.clone(),
-                props::<SourceListProps>(p, "SourceList"),
+                props::<SourceTreeProps>(p, "SourceTree"),
             )),
+            NodeKind::Widget(w) if is::<CommandPaletteKind>(w) => Native::Palette(PaletteNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<CommandPaletteProps>(p, "CommandPalette"),
+            )),
+            NodeKind::Widget(w) if is::<ToastOverlayKind>(w) => Native::Toasts(ToastNative::new(
+                mtm,
+                emit(),
+                state.wake.clone(),
+                props::<ToastOverlayProps>(p, "ToastOverlay"),
+            )),
+            NodeKind::Widget(w) if is::<BannerKind>(w) => {
+                Native::Banner(BannerNative::new(mtm, emit(), state.wake.clone(), props::<BannerProps>(p, "Banner")))
+            }
             NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
             NodeKind::Widget(w) if is::<Overlay>(w) => Native::Overlay(OverlayNative::new(
                 mtm,
@@ -925,7 +952,10 @@ impl Backend for AppKitBackend {
                 s.apply(p);
             }
             Native::Separator(_, vertical) => *vertical = props::<SeparatorProps>(&patch.new, "Separator").vertical,
-            Native::SourceList(s) => s.update(props(&patch.new, "SourceList")),
+            Native::SourceTree(s) => s.update(props(&patch.new, "SourceTree")),
+            Native::Palette(p) => p.update(props(&patch.new, "CommandPalette")),
+            Native::Toasts(t) => t.update(props(&patch.new, "ToastOverlay")),
+            Native::Banner(b) => b.update(props(&patch.new, "Banner")),
             Native::FormSection(p, _) => {
                 *p = props::<FormSectionProps>(&patch.new, "FormSection").clone();
                 form_changed = true;
@@ -1102,6 +1132,7 @@ impl Backend for AppKitBackend {
             Native::Button(b) => b.measure(),
             Native::Select(s) => s.measure(),
             Native::Slider(s) => s.measure(),
+            Native::Banner(b) => b.measure(),
             Native::Separator(b, vertical) => {
                 let s = b.fittingSize();
                 if *vertical {

@@ -12,7 +12,7 @@
 //!   `Passive` overlays (tooltips) take no input at all.
 //! - Every non-passive overlay is a focus scope (`crate::dispatch::FocusScope`): opening saves
 //!   focus, a modal one traps Tab inside, closing hands focus back, and an Escape no listener
-//!   took closes the innermost one (reported as [`DismissReason::Escape`]).
+//!   took closes the innermost one (reported as [`DismissCause::Escape`]).
 
 use std::panic::Location;
 use std::rc::Rc;
@@ -66,7 +66,7 @@ pub enum Placement {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DismissReason {
+pub enum DismissCause {
     Escape,
     /// A press outside the overlay, in any window of the app.
     OutsidePress,
@@ -77,7 +77,7 @@ pub enum DismissReason {
 /// The overlay asks to close. Delivered to its `on_dismiss` handler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dismissed {
-    pub reason: DismissReason,
+    pub reason: DismissCause,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,7 +140,7 @@ impl OverlayElement {
         let escape = handler.clone();
         let element = self.0.on(move |e: &Dismissed, window, cx| handler(e, window, cx));
         OverlayElement(element.on(move |_: &DismissRequested, window, cx| {
-            escape(&Dismissed { reason: DismissReason::Escape }, window, cx)
+            escape(&Dismissed { reason: DismissCause::Escape }, window, cx)
         }))
     }
 }

@@ -18,7 +18,7 @@ use crate::backend::Backend;
 use crate::dispatch::{DispatchTree, KeyDispatch};
 use crate::element::{AnyElement, IntoElement};
 use crate::events::EventQueue;
-use crate::overlay::{DismissReason, Dismissed, Modality};
+use crate::overlay::{DismissCause, Dismissed, Modality};
 use crate::transaction::MeasureCache;
 use crate::tree::Tree;
 use crate::window::{Window, WindowHandle, WindowOptions};
@@ -425,7 +425,7 @@ impl App {
             .flat_map(|t| t.open_overlays().filter(|(_, m)| *m == Modality::LightDismiss).map(|(n, _)| n))
             .collect();
         for node in nodes {
-            self.events.push(node, Box::new(Dismissed { reason: DismissReason::Deactivated }));
+            self.events.push(node, Box::new(Dismissed { reason: DismissCause::Deactivated }));
         }
         self.drain_events();
     }

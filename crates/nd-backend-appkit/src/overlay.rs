@@ -23,13 +23,14 @@ use std::cell::{Cell, RefCell};
 use block2::RcBlock;
 use nd_core::{NodeId, Rect};
 use nd_ui::events::Emit;
-use nd_ui::{DismissReason, Dismissed, Modality, OverlayKind, OverlayProps, Placement};
+use nd_ui::{DismissCause, Dismissed, Modality, OverlayKind, OverlayProps, Placement};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadOnly, Message};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventType, NSPanel, NSPopover, NSPopoverBehavior, NSView,
-    NSViewController, NSWindow, NSWindowOrderingMode, NSWindowStyleMask,
+    NSAppearanceCustomization, NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType,
+    NSPanel, NSPopover, NSPopoverBehavior, NSResponder, NSView, NSViewController, NSWindow, NSWindowOrderingMode,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSRectEdge, NSSize};
 
@@ -189,6 +190,7 @@ impl OverlayNative {
                     }
                 };
                 panel.setFrame_display(frame, true);
+                panel.setAppearance(owner.appearance().as_deref());
                 if panel.parentWindow().is_none() {
                     unsafe { owner.addChildWindow_ordered(panel, NSWindowOrderingMode::Above) };
                 }
@@ -347,7 +349,7 @@ fn consume(event: &NSEvent) -> bool {
             let Some(entry) = open.entries.iter().rev().find(|e| e.modality != Modality::Passive) else {
                 return false;
             };
-            entry.emit.emit(Dismissed { reason: DismissReason::Escape });
+            entry.emit.emit(Dismissed { reason: DismissCause::Escape });
             entry.wake.wake();
             return true;
         }
@@ -356,7 +358,7 @@ fn consume(event: &NSEvent) -> bool {
         for entry in &open.entries[above..] {
             match entry.modality {
                 Modality::LightDismiss => {
-                    entry.emit.emit(Dismissed { reason: DismissReason::OutsidePress });
+                    entry.emit.emit(Dismissed { reason: DismissCause::OutsidePress });
                     entry.wake.wake();
                     blocked = true;
                 }
@@ -377,4 +379,144 @@ fn consume(event: &NSEvent) -> bool {
 pub(crate) fn screen_rect(view: &NSView) -> Option<NSRect> {
     let window = view.window()?;
     Some(window.convertRectToScreen(view.convertRect_toView(view.bounds(), None)))
+}
+
+#[derive(Default)]
+pub struct LayerPanelIvars {
+    /// Takes key status (a panel with a text field); otherwise the owner stays key.
+    key: Cell<bool>,
+    owner: RefCell<Option<objc2::rc::Weak<NdWindow>>>,
+}
+
+define_class!(
+    /// The panel a [`WindowLayer`] draws in. A key one hands the shortcuts its own views did not
+    /// take to its owner's nd dispatch, so menu accelerators and app bindings keep working while
+    /// a field in it has focus; the main menu still gets what nd leaves.
+    // SAFETY: NSPanel has no subclassing requirements beyond calling super; no Drop.
+    #[unsafe(super(NSPanel, NSWindow, NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = LayerPanelIvars]
+    pub struct NdLayerPanel;
+
+    impl NdLayerPanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key(&self) -> bool {
+            self.ivars().key.get()
+        }
+
+        #[unsafe(method(canBecomeMainWindow))]
+        fn can_become_main(&self) -> bool {
+            false
+        }
+
+        #[unsafe(method(performKeyEquivalent:))]
+        fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
+            let mine: bool = unsafe { msg_send![super(self), performKeyEquivalent: event] };
+            // Only shortcuts: plain keys, and secondary-Return, belong to the panel's own field.
+            let flags = event.modifierFlags();
+            let shortcut = (flags.contains(NSEventModifierFlags::Command) || flags.contains(NSEventModifierFlags::Control))
+                && !matches!(event.keyCode(), 36 | 76);
+            let owner = self.ivars().owner.borrow().as_ref().and_then(objc2::rc::Weak::load);
+            mine || (shortcut && owner.is_some_and(|o| o.route_key_from_overlay(event)))
+        }
+    }
+);
+
+/// A borderless child panel over the whole of a window, title bar included, kept on the owner's
+/// frame as it moves and resizes: where framework panels (the command palette, toasts) draw, so
+/// they sit above every view in the window, native surfaces included, and take their input from
+/// the window server. Clicks on its transparent areas pass through to the owner.
+pub(crate) struct WindowLayer {
+    panel: Retained<NdLayerPanel>,
+    owner: Retained<NSWindow>,
+    observers: Vec<Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>>>,
+}
+
+impl WindowLayer {
+    pub fn new(mtm: MainThreadMarker, owner: &NSWindow, key: bool) -> Self {
+        let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+        let panel = NdLayerPanel::alloc(mtm).set_ivars(LayerPanelIvars::default());
+        let panel: Retained<NdLayerPanel> = unsafe {
+            msg_send![
+                super(panel),
+                initWithContentRect: owner.frame(),
+                styleMask: style,
+                backing: NSBackingStoreType::Buffered,
+                defer: false
+            ]
+        };
+        panel.ivars().key.set(key);
+        let nd_owner = {
+            let any: &AnyObject = owner.as_ref();
+            any.downcast_ref::<NdWindow>().map(objc2::rc::Weak::from)
+        };
+        *panel.ivars().owner.borrow_mut() = nd_owner;
+        unsafe { panel.setReleasedWhenClosed(false) };
+        panel.setOpaque(false);
+        panel.setBackgroundColor(Some(&NSColor::clearColor()));
+        panel.setHasShadow(false);
+        panel.setHidesOnDeactivate(false);
+        panel.setFrame_display(owner.frame(), false);
+        panel.setAppearance(owner.appearance().as_deref());
+        unsafe { owner.addChildWindow_ordered(&panel, NSWindowOrderingMode::Above) };
+        let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+        let mut observers = Vec::new();
+        for name in
+            unsafe { [objc2_app_kit::NSWindowDidResizeNotification, objc2_app_kit::NSWindowDidMoveNotification] }
+        {
+            let (weak_panel, weak_owner) =
+                (objc2::rc::Weak::from_retained(&panel), objc2::rc::Weak::from_retained(&owner.retain()));
+            let block = RcBlock::new(move |_n: std::ptr::NonNull<objc2_foundation::NSNotification>| {
+                if let (Some(panel), Some(owner)) = (weak_panel.load(), weak_owner.load()) {
+                    panel.setFrame_display(owner.frame(), true);
+                }
+            });
+            let any: &AnyObject = owner.as_ref();
+            observers.push(unsafe {
+                center.addObserverForName_object_queue_usingBlock(Some(name), Some(any), None, &block)
+            });
+        }
+        Self { panel, owner: owner.retain(), observers }
+    }
+
+    /// The flipped-or-not view to add content to, the size of the owner's frame.
+    pub fn host(&self) -> Retained<NSView> {
+        self.panel.contentView().expect("panel content view")
+    }
+
+    pub fn owner(&self) -> &NSWindow {
+        &self.owner
+    }
+
+    pub fn window(&self) -> &NSWindow {
+        &self.panel
+    }
+
+    /// Shows the panel; a key one takes key status, so its field gets the keyboard. It takes the
+    /// owner's appearance (a window-level theme override), so materials and labels in it
+    /// resolve as they would in the window.
+    pub fn show(&self) {
+        self.panel.setAppearance(self.owner.appearance().as_deref());
+        if self.panel.ivars().key.get() {
+            self.panel.makeKeyAndOrderFront(None);
+        } else {
+            self.panel.orderFront(None);
+        }
+    }
+}
+
+impl Drop for WindowLayer {
+    fn drop(&mut self) {
+        let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+        for observer in &self.observers {
+            let any: &AnyObject = observer.as_ref();
+            unsafe { center.removeObserver(any) };
+        }
+        let was_key = self.panel.isKeyWindow();
+        self.owner.removeChildWindow(&self.panel);
+        self.panel.orderOut(None);
+        if was_key {
+            self.owner.makeKeyWindow();
+        }
+    }
 }

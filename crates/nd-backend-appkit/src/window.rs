@@ -105,6 +105,14 @@ impl NdWindow {
         *self.ivars().router.borrow_mut() = router;
     }
 
+    /// A key event an overlay window's own views left: offered to nd dispatch as if this window
+    /// had it, then to the main menu, so accelerators hold while an overlay field has focus.
+    pub(crate) fn route_key_from_overlay(&self, event: &NSEvent) -> bool {
+        let menu = || objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
+        event.r#type() == NSEventType::KeyDown
+            && (self.route_key(event) || menu().is_some_and(|m| m.performKeyEquivalent(event)))
+    }
+
     /// The backend's focus op: moves AppKit's first responder to `view` (the window itself for
     /// `None`) without reporting it back to nd as a platform focus change.
     pub(crate) fn make_first_responder_from_nd(&self, view: Option<&NSView>) {

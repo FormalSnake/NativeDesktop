@@ -64,6 +64,8 @@ pub struct GpuiBackend {
     pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
     /// Gesture recognition and scroll physics per window.
     pub(crate) gestures: crate::gestures::Gestures,
+    /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
+    pub(crate) drawn: crate::nav::DrawnMap,
 }
 
 impl Default for GpuiBackend {
@@ -103,6 +105,7 @@ impl GpuiBackend {
             bounds: Rc::default(),
             surface_counts: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
+            drawn: Rc::default(),
         }
     }
 
@@ -169,7 +172,7 @@ impl GpuiBackend {
         self.state.borrow().nodes.get(&node).map_or_else(Vec::new, |n| n.children.clone())
     }
 
-    fn window_of(&self, node: NodeId) -> Option<WindowId> {
+    pub(crate) fn window_of(&self, node: NodeId) -> Option<WindowId> {
         let state = self.state.borrow();
         let mut at = node;
         loop {
@@ -275,6 +278,7 @@ impl Backend for GpuiBackend {
         drop(state);
         self.bounds.borrow_mut().remove(&node);
         self.surface_counts.borrow_mut().remove(&node);
+        self.drawn.borrow_mut().remove(&node);
     }
 
     fn commit(&mut self, window: WindowId) {
@@ -312,6 +316,7 @@ impl Backend for GpuiBackend {
         {
             probe.value = Some(self.surface_counts.borrow().get(&node).copied().unwrap_or_default().to_string());
         }
+        self.probe_nav(node, &mut probe);
         probe
     }
 

@@ -27,10 +27,17 @@ use nd_gpui::gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent,
     StatefulInteractiveElement, Styled, anchored, canvas, deferred, div, fill, hsla, point, px,
 };
-use nd_ui::{DismissReason, Dismissed, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
+use nd_ui::{DismissCause, Dismissed, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
 
 use crate::backend::{GpuiBackend, Node};
 use crate::render::{Build, Tracked};
+
+/// Stacking inside GPUI's deferred layer, one order for every overlay kind: toasts lowest (they
+/// never block), framework panels (the command palette) and overlays above them, nested overlays
+/// above their parents, the context menu on top.
+pub(crate) const TOAST_PRIORITY: usize = 1;
+pub(crate) const PANEL_PRIORITY: usize = 10;
+const MENU_PRIORITY: usize = usize::MAX;
 
 /// The gap between an anchor and what it anchors.
 const GAP: f32 = 4.;
@@ -124,14 +131,14 @@ impl Build<'_> {
                     cx.stop_propagation();
                     backend.swallow_release(window_id);
                     if light {
-                        emit.emit(Dismissed { reason: DismissReason::OutsidePress });
+                        emit.emit(Dismissed { reason: DismissCause::OutsidePress });
                         wake(cx);
                     }
                 })
                 .child(positioned);
             anchored().position(point(px(0.), px(0.))).child(backdrop).into_any_element()
         };
-        deferred(layer).with_priority(1 + self.overlay_depth(id)).into_any_element()
+        deferred(layer).with_priority(PANEL_PRIORITY + 1 + self.overlay_depth(id)).into_any_element()
     }
 
     /// A native surface. The GPU test pattern draws stripes and counts the pointer input that
@@ -255,7 +262,7 @@ impl Build<'_> {
                 anchored().position(point(px(menu.at.x), px(menu.at.y))).snap_to_window_with_margin(px(8.)).child(list),
             );
         deferred(anchored().position(point(px(0.), px(0.))).child(backdrop))
-            .with_priority(usize::MAX)
+            .with_priority(MENU_PRIORITY)
             .into_any_element()
     }
 }

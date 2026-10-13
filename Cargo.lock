@@ -2002,6 +2002,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gallery"
+version = "0.1.0"
+dependencies = [
+ "nd",
+ "ndshell",
+ "png 0.17.16",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4014,6 +4023,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-theme",
  "nd-ui",
 ]
 

@@ -313,6 +313,9 @@ impl Inner {
                 (inner.wake())(cx);
                 return;
             }
+            if inner.backend.drawn_claims_key(&event.keystroke, window) {
+                return;
+            }
             let Ok(mut app) = inner.app.try_borrow_mut() else { return };
             let result = app.dispatch_keystroke(id, &event.keystroke);
             drop(app);
@@ -541,6 +544,7 @@ impl Inner {
             window.request_animation_frame();
         }
         self.after_draw(id, started, window);
+        self.backend.prepare_drawn(id, window, cx);
 
         // Flings, springs and gesture timers advance on this window's frames.
         let (outputs, more) = self.backend.gestures.step(id);
@@ -683,9 +687,12 @@ impl Inner {
         cx: &mut gpui::App,
         f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
     ) {
+        if self.backend.palette_covers(id) {
+            return;
+        }
         let outputs = {
             let state = self.backend.state.borrow();
-            // An open context menu's backdrop takes every press.
+            // An open context menu's or palette's backdrop takes every press.
             if state.menus.contains_key(&id) {
                 return;
             }

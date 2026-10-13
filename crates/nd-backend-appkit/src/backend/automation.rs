@@ -99,14 +99,16 @@ impl AppKitBackend {
         let Ok(state) = self.0.try_borrow() else { return Probe::default() };
         let Some(native) = state.nodes.get(&node) else { return Probe::default() };
         let mut probe = Probe::default();
+        let mut content = None;
         let view = match native {
             Native::Overlay(o) => Some(&*o.content as &NSView),
             _ => native.view(),
         };
         if let Some(view) = view {
             if let Some(record) = state.record_of_view(view) {
-                let content = record.root.content();
-                probe.bounds = Some(rect(content.convertRect_fromView(view.bounds(), Some(view))));
+                let root = record.root.content();
+                probe.bounds = Some(rect(root.convertRect_fromView(view.bounds(), Some(view))));
+                content = Some(root);
             } else if let Some(record) = state.node_window.get(&node).and_then(|w| state.windows.get(w))
                 && let Some(screen) = crate::overlay::screen_rect(view)
             {
@@ -118,6 +120,7 @@ impl AppKitBackend {
         if let Native::Surface(s) = native {
             probe.value = s.value();
         }
+        state.probe_nav(native, content.map(|c| &**c), &mut probe);
         if let Native::Button(b) = native {
             probe.enabled = Some(b.button.isEnabled());
             probe.name = Some(b.button.title().to_string());
@@ -171,6 +174,9 @@ impl AppKitBackend {
     }
 
     pub(super) fn perform_action(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        if let Some(result) = self.perform_nav(node, action) {
+            return result;
+        }
         match action {
             SemanticAction::Click => self.press(node),
             SemanticAction::DoubleClick => {
