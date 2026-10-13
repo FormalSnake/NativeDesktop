@@ -1,5 +1,5 @@
-//! Tier 2: the seam contract on a real window. Ops go through `nd_ui::transaction::Transaction`
-//! exactly as the reconciler sends them, and every check reads AppKit's own state back.
+//! Tier 2: an `nd-ui` app on the AppKit backend and a real window. The reconciler drives the
+//! seam exactly as `nd::Application::run` does; every check reads AppKit's own state back.
 //! Prints `ND_BACKEND_SEAM_OK`.
 
 mod harness;
@@ -13,24 +13,35 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 mod seam {
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use std::time::Duration;
 
-    use nd_backend_appkit::objc2_app_kit::{NSButton, NSView};
-    use nd_backend_appkit::objc2_foundation::MainThreadMarker;
-    use nd_backend_appkit::props::{ButtonProps, Color, NativeButton, TextProps, ViewProps};
-    use nd_backend_appkit::{AppKitBackend, HostOptions, NativeEventKind, NdAppKitPlatform, WindowHost};
-    use nd_ui::backend::{AvailableSpace, Constraint, NodeKind, Props, PropsPatch, WidgetKind};
-    use nd_ui::transaction::{MeasureCache, Op, Transaction};
-    use nd_ui::{NodeId, Rect, WindowId};
+    use nd_backend_appkit::objc2::Message;
+    use nd_backend_appkit::objc2_app_kit::{NSAccessibility, NSButton, NSView};
+    use nd_backend_appkit::objc2_foundation::{MainThreadMarker, NSString};
+    use nd_backend_appkit::{AppKitBackend, NdAppKitPlatform, WindowHost};
+    use nd_ui::prelude::*;
+    use nd_ui::{App, Size, WindowId};
 
-    const W: WindowId = WindowId(7);
-    const ROOT: NodeId = NodeId(1);
-    const BOX: NodeId = NodeId(2);
-    const LABEL: NodeId = NodeId(3);
-    const BUTTON: NodeId = NodeId(4);
-    const OTHER: NodeId = NodeId(5);
+    struct Counter {
+        count: u32,
+        wide: bool,
+    }
+
+    impl Render for Counter {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .size_full()
+                .p(px(10.25))
+                .gap_2()
+                .child(text(if self.wide { "A much longer label for nd" } else { "Hello from nd" }).w(px(100.)))
+                .child(text(self.count.to_string()).tabular_nums())
+                .child(button("add", "Add one").on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    this.count += 1;
+                    cx.notify();
+                })))
+                .child(div().id("box").w(px(120.)).h(px(40.)).rounded(px(8.)).bg(rgb(0x3366ff)))
+        }
+    }
 
     struct Checks(u32);
 
@@ -43,119 +54,72 @@ mod seam {
         }
     }
 
-    fn props<T: std::fmt::Debug + PartialEq + 'static>(p: T) -> Props {
-        Rc::new(p)
+    fn subviews(view: &NSView) -> Vec<String> {
+        view.subviews().iter().map(|v| v.class().name().to_str().unwrap_or("?").to_owned()).collect()
     }
 
-    fn subviews(view: &NSView) -> Vec<*const NSView> {
-        view.subviews().iter().map(|v| &*v as *const NSView).collect()
+    fn content_root(window: &NSView) -> nd_backend_appkit::objc2::rc::Retained<NSView> {
+        window.subviews().iter().next().expect("root content view")
     }
 
     pub fn run() -> ! {
         let mtm = MainThreadMarker::new().expect("main thread");
         let platform = NdAppKitPlatform::new(mtm);
+        let backend = AppKitBackend::new(mtm);
+        let mut app = App::with_backend(Box::new(backend.clone()));
+        let handle =
+            app.open_window(WindowOptions::main("seam"), |_, cx| cx.new(|_| Counter { count: 0, wide: false }));
+        let id: WindowId = handle.id();
         let window = platform.open_window("Seam", 400., 300.);
-        let backend = Rc::new(RefCell::new(AppKitBackend::new(mtm)));
-        let _host = WindowHost::new(&backend, W, &window, HostOptions::default());
-        let mut cache = MeasureCache::default();
+        let _host = WindowHost::new(&backend, id, &window);
         let mut c = Checks(0);
 
-        let label = TextProps::new("Hello from nd");
-        let mut tx = Transaction::new(W);
-        tx.push(Op::Create { node: ROOT, kind: NodeKind::Root, props: props(()) });
-        tx.push(Op::Create {
-            node: BOX,
-            kind: NodeKind::View,
-            props: props(ViewProps { background: Some(Color::Accent), corner_radius: 8., ..Default::default() }),
-        });
-        tx.push(Op::Create { node: LABEL, kind: NodeKind::Text, props: props(label.clone()) });
-        tx.push(Op::Create {
-            node: BUTTON,
-            kind: NodeKind::Widget(WidgetKind::of::<NativeButton>()),
-            props: props(ButtonProps::new("Press")),
-        });
-        tx.push(Op::Insert { parent: ROOT, node: BOX, before: None });
-        tx.push(Op::Insert { parent: BOX, node: LABEL, before: None });
-        tx.push(Op::Insert { parent: BOX, node: BUTTON, before: Some(LABEL) });
-        tx.push(Op::SetFrame { node: BOX, frame: Rect::new(10.25, 20., 200., 100.) });
-        tx.push(Op::SetFrame { node: LABEL, frame: Rect::new(4., 4., 150., 20.) });
-        tx.push(Op::SetFrame { node: BUTTON, frame: Rect::new(4., 40., 100., 32.) });
-        tx.commit(&mut *backend.borrow_mut(), &mut cache);
-
-        let b = backend.borrow();
-        let root = window.contentView().unwrap();
-        let box_view = b.view(BOX).unwrap();
-        let label_view = b.view(LABEL).unwrap();
-        let button_view = b.view(BUTTON).unwrap();
-        c.check(subviews(&root) == vec![&*box_view as *const NSView], "root holds the box");
+        app.resize_window(id, Size { width: 400., height: 300. });
+        app.frame();
+        let root = content_root(&window.contentView().unwrap());
+        let column = root.subviews().iter().next().expect("the view's column");
+        let kinds = subviews(&column);
+        let expected = ["NdTextView", "NdTextView", "NSButton", "NdLayerView"];
         c.check(
-            subviews(&box_view) == vec![&*button_view as *const NSView, &*label_view as *const NSView],
-            "insert before a sibling orders subviews",
+            kinds.len() == expected.len() && kinds.iter().zip(expected).all(|(k, e)| k.contains(e)),
+            &format!("the tree mounts as AppKit views in order ({kinds:?})"),
         );
-        c.check(button_view.downcast_ref::<NSButton>().is_some(), "the button node is AppKit's NSButton");
-        let f = box_view.frame();
+        let label = column.subviews().iter().next().unwrap();
+        let f = label.frame();
         c.check(
-            f.origin.y == 20. && f.size.height == 100. && f.origin.x <= 10.25 && f.origin.x * 2. == (f.origin.x * 2.).round(),
-            "frames are top-down and rounded outward onto the backing grid",
+            f.origin.x <= 10.25 && (f.origin.x * 2.).fract() == 0. && f.size.height > 12.,
+            &format!("frames are top-down, measured with CoreText, rounded outward ({f:?})"),
         );
-        drop(b);
+        let narrow = f.size.height;
 
-        let measured = cache.measure(
-            &mut *backend.borrow_mut(),
-            LABEL,
-            Constraint { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-        );
-        c.check(measured.width > 40. && measured.height >= 12., &format!("text measures with CoreText ({measured:?})"));
-        let button_size = cache.measure(
-            &mut *backend.borrow_mut(),
-            BUTTON,
-            Constraint { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-        );
-        c.check(button_size.height > 15., &format!("the button reports its own fitting size ({button_size:?})"));
-
-        let mut tx = Transaction::new(W);
-        tx.push(Op::Update {
-            node: LABEL,
-            patch: PropsPatch { old: props(label.clone()), new: props(TextProps::new("A much longer label for nd")) },
-        });
-        tx.commit(&mut *backend.borrow_mut(), &mut cache);
-        let wider = cache.measure(
-            &mut *backend.borrow_mut(),
-            LABEL,
-            Constraint { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-        );
-        c.check(wider.width > measured.width, "an update drops the cached measurement");
-
-        backend.borrow().events().set_waker(|| {});
-        unsafe { button_view.downcast_ref::<NSButton>().unwrap().performClick(None) };
+        let count_label = column.subviews().iter().nth(1).unwrap();
+        let button = column.subviews().iter().nth(2).unwrap();
+        let button = button.downcast_ref::<NSButton>().expect("NSButton").retain();
+        backend.on_wake(|| {});
+        unsafe { button.performClick(None) };
         platform.pump(Duration::from_millis(50), Duration::from_secs(1));
-        let events = backend.borrow().events().drain();
+        app.drain_events();
+        app.frame();
+        let value = count_label.accessibilityValue().and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string());
         c.check(
-            events.len() == 1 && events[0].node == BUTTON && events[0].kind == NativeEventKind::Click,
-            "a click reaches the event queue with the node id",
+            value.as_deref() == Some("1"),
+            &format!("a native click runs the handler and the label re-renders ({value:?})"),
         );
 
-        let mut tx = Transaction::new(W);
-        tx.push(Op::Create { node: OTHER, kind: NodeKind::View, props: props(ViewProps::default()) });
-        tx.push(Op::Insert { parent: ROOT, node: OTHER, before: None });
-        tx.push(Op::Move { node: LABEL, parent: OTHER, before: None });
-        tx.commit(&mut *backend.borrow_mut(), &mut cache);
-        let other_view = backend.borrow().view(OTHER).unwrap();
+        handle.root().update(&mut app, |this, cx| {
+            this.wide = true;
+            cx.notify();
+        });
+        app.frame();
+        let taller = column.subviews().iter().next().unwrap().frame().size.height;
+        c.check(taller > narrow, &format!("an update re-measures the text: it wraps ({narrow} -> {taller} pt)"));
         c.check(
-            backend.borrow().view(LABEL).is_some_and(|v| std::ptr::eq(&*v, &*label_view))
-                && subviews(&other_view) == vec![&*label_view as *const NSView],
-            "move keeps the same NSView under its new parent",
+            column.subviews().iter().next().is_some_and(|v| std::ptr::eq(&*v, &*label)),
+            "the label keeps its NSView across updates",
         );
 
-        let mut tx = Transaction::new(W);
-        tx.push(Op::Remove { node: BOX });
-        tx.push(Op::Release { node: BOX });
-        tx.push(Op::Release { node: BUTTON });
-        tx.commit(&mut *backend.borrow_mut(), &mut cache);
-        c.check(
-            unsafe { box_view.superview() }.is_none() && backend.borrow().view(BOX).is_none(),
-            "remove detaches, release drops the node",
-        );
+        app.close_window(id);
+        c.check(root.subviews().is_empty(), "closing the window removes every view");
 
         window.close();
         if c.0 == 0 {

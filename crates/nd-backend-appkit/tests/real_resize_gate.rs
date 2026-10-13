@@ -15,7 +15,7 @@ mod harness;
 
 fn main() {
     #[cfg(target_os = "macos")]
-    harness::main_real("real_gate_m0::resize_drag", || gate::run());
+    harness::main_real("real_gate_m0::resize_drag", gate::run);
     #[cfg(not(target_os = "macos"))]
     harness::main_real("real_gate_m0::resize_drag", || {});
 }
@@ -49,7 +49,7 @@ mod gate {
     };
 
     /// Where `examples/hello` pins its close button, in points from the window's top-left.
-    const LIGHTS: (f64, f64) = (20., 20.);
+    const LIGHTS: (f64, f64) = (16., 10.);
     const BUTTON: f64 = 14.;
     const BGRA: u32 = u32::from_be_bytes(*b"BGRA");
 
@@ -156,7 +156,8 @@ mod gate {
                 magenta += u32::from(is_magenta(px(p, stride, x, y)));
             }
         }
-        for y in (0..bottom).step_by(6) {
+        // The title bar band is the OS's, not content; it shows the window background.
+        for y in (corner..bottom).step_by(6) {
             for x in (0..right).step_by(6) {
                 magenta += u32::from(is_magenta(px(p, stride, x, y)));
             }
@@ -194,9 +195,9 @@ mod gate {
 
     impl Hello {
         fn launch(defer_layout: bool) -> Self {
-            let bin = std::env::var_os("ND_HELLO_BIN").map(PathBuf::from).unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/hello")
-            });
+            let bin = std::env::var_os("ND_HELLO_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/hello"));
             assert!(bin.exists(), "build hello first (cargo build -p hello) or set ND_HELLO_BIN; looked at {bin:?}");
             let mut child = Command::new(bin)
                 .env("ND_DIAG_WINDOW", "1")
@@ -279,7 +280,6 @@ mod gate {
     fn drag(from: (f64, f64), dx: f64, dy: f64, steps: u32) {
         post_mouse(CGEventType::MouseMoved, from.0, from.1);
         std::thread::sleep(Duration::from_millis(150));
-        eprintln!("debug: drag from {from:?}, cursor now {:?}", nd_backend_appkit::objc2_app_kit::NSEvent::mouseLocation());
         post_mouse(CGEventType::LeftMouseDown, from.0, from.1);
         std::thread::sleep(Duration::from_millis(60));
         for i in 1..=steps {
@@ -309,10 +309,8 @@ mod gate {
             spin(Duration::from_millis(20));
         };
         let windows = unsafe { content.windows() };
-        let window = windows
-            .iter()
-            .find(|w| unsafe { w.windowID() } == window_number)
-            .expect("hello's window is shareable");
+        let window =
+            windows.iter().find(|w| unsafe { w.windowID() } == window_number).expect("hello's window is shareable");
         let filter = unsafe { SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window) };
         let config = unsafe { SCStreamConfiguration::new() };
         unsafe {
@@ -326,7 +324,8 @@ mod gate {
             config.setIgnoreShadowsSingleWindow(true);
             config.setQueueDepth(8);
         }
-        let stream = unsafe { SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None) };
+        let stream =
+            unsafe { SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None) };
         let sink = FrameSink::new(state.clone());
         let queue = DispatchQueue::new("nd.gate.frames", None);
         unsafe {
@@ -400,16 +399,29 @@ mod gate {
         phase_frames(state, phase)
     }
 
-    /// A launched-in-background app is not active (activation is cooperative); a real click on
-    /// an empty part of its window makes it so, like a user would.
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXUIElementCreateApplication(pid: i32) -> *mut std::ffi::c_void;
+        fn AXUIElementSetAttributeValue(
+            element: *mut std::ffi::c_void,
+            attribute: &objc2_core_foundation::CFString,
+            value: &objc2_core_foundation::CFType,
+        ) -> i32;
+    }
+
+    /// A launched-in-background app is not active (activation is cooperative), so key events
+    /// would go to whatever app is. Accessibility's frontmost attribute activates it, as a click
+    /// on it would.
     fn activate(hello: &Hello) {
-        let (x, y, w, h, _) = hello.frame().expect("hello reports its frame");
-        let at = (x + w / 2., y + h - 30.);
-        post_mouse(CGEventType::MouseMoved, at.0, at.1);
-        std::thread::sleep(Duration::from_millis(100));
-        post_mouse(CGEventType::LeftMouseDown, at.0, at.1);
-        std::thread::sleep(Duration::from_millis(50));
-        post_mouse(CGEventType::LeftMouseUp, at.0, at.1);
+        let attribute = objc2_core_foundation::CFString::from_static_str("AXFrontmost");
+        let yes = objc2_core_foundation::CFBoolean::new(true);
+        unsafe {
+            let app = AXUIElementCreateApplication(hello.child.id() as i32);
+            AXUIElementSetAttributeValue(app, &attribute, yes);
+            // The create rule: this call owns the element.
+            let owned = std::ptr::NonNull::new(app.cast::<objc2_core_foundation::CFType>());
+            drop(owned.map(|p| objc2_core_foundation::CFRetained::from_raw(p)));
+        }
         spin(Duration::from_millis(400));
     }
 
@@ -474,8 +486,14 @@ mod gate {
         let starts = hello.count("live resize start");
         r.check(starts >= 2, format!("HID edge drags put the window in live resize ({starts} live resizes)"));
         let (n, widths, magenta, lights) = summarize(&frames);
-        r.check(n >= 30 && widths >= 10, format!("SCStream captured {n} presented frames at {widths} distinct window sizes"));
-        r.check(magenta == 0, format!("content reaches the window edge in every frame ({magenta} of {n} frames show background)"));
+        r.check(
+            n >= 30 && widths >= 10,
+            format!("SCStream captured {n} presented frames at {widths} distinct window sizes"),
+        );
+        r.check(
+            magenta == 0,
+            format!("content reaches the window edge in every frame ({magenta} of {n} frames show background)"),
+        );
         r.check(lights == n, format!("close button at {LIGHTS:?} in {lights} of {n} frames during resize"));
 
         post_key(0x03, CGEventFlags::MaskCommand | CGEventFlags::MaskControl);

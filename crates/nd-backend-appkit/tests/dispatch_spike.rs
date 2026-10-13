@@ -24,12 +24,10 @@ mod spike {
         NSWindow,
     };
     use nd_backend_appkit::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
-    use nd_backend_appkit::{AppKitBackend, AppKitDispatch, HostOptions, NdAppKitPlatform, ToolbarHost, WindowHost};
+    use nd_backend_appkit::{AppKitBackend, AppKitDispatch, NdAppKitPlatform, ToolbarHost, WindowHost};
     use nd_gpui::gpui;
     use nd_ui::dispatch::{DispatchTree, Focusable};
     use nd_ui::{KeyBinding, KeyContext, NodeId, WindowId};
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     gpui::actions!(spike, [Ping]);
 
@@ -115,9 +113,9 @@ mod spike {
         let mtm = MainThreadMarker::new().expect("the spike runs on the main thread");
         let platform = NdAppKitPlatform::new(mtm);
         let window = platform.open_window("Dispatch spike", 640., 300.);
-        let backend = Rc::new(RefCell::new(AppKitBackend::new(mtm)));
+        let backend = AppKitBackend::new(mtm);
         // Content is the host's flipped root, so field frames below are top-down.
-        let _host = WindowHost::new(&backend, WINDOW, &window, HostOptions::default());
+        let _host = WindowHost::new(&backend, WINDOW, &window);
 
         let search = NSSearchToolbarItem::initWithItemIdentifier(
             NSSearchToolbarItem::alloc(mtm),

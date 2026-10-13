@@ -9,9 +9,9 @@ pub mod build;
 #[cfg(feature = "runtime")]
 mod chrome;
 #[cfg(feature = "runtime")]
-pub mod theme;
-#[cfg(feature = "runtime")]
 mod runtime;
+#[cfg(feature = "runtime")]
+pub mod theme;
 #[cfg(feature = "runtime")]
 pub use runtime::*;
 

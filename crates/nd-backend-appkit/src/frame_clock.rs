@@ -102,7 +102,7 @@ impl FrameClock {
     pub fn set_animating(&self, on: bool) {
         let link = self.inner.link.borrow();
         let Some(link) = link.as_ref() else { return };
-        if on == !link.isPaused() {
+        if on != link.isPaused() {
             return;
         }
         if on {

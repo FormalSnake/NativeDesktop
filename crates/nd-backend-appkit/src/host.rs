@@ -11,52 +11,35 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use nd_core::{Point, Size, WindowId};
+use nd_core::{Size, WindowId};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{
-    NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindowDelegate, NSWindowTitleVisibility,
-};
+use objc2_app_kit::{NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindowDelegate};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol};
 
-use crate::backend::AppKitBackend;
+use crate::NdWindow;
+use crate::backend::{AppKitBackend, WindowRecord};
 use crate::frame_clock::FrameClock;
 use crate::traffic_lights::{self, TrafficLights};
 use crate::views::NdRootView;
-use crate::NdWindow;
-
-#[derive(Clone, Debug, Default)]
-pub struct HostOptions {
-    /// Pins the traffic lights' close button top-left at this point, in points from the
-    /// window's top-left. `None` keeps AppKit's placement.
-    pub traffic_lights: Option<Point>,
-}
 
 struct Inner {
     id: WindowId,
     window: Retained<NdWindow>,
     root: Retained<NdRootView>,
-    backend: Rc<RefCell<AppKitBackend>>,
-    lights: TrafficLights,
+    backend: AppKitBackend,
+    lights: Rc<TrafficLights>,
     clock: FrameClock,
     diag: bool,
     defer_live_layout: bool,
     live_layouts: Cell<Option<u32>>,
-    last_lights: Cell<Option<Point>>,
     delegate: RefCell<Option<Retained<NdWindowDelegate>>>,
 }
 
 impl Inner {
     fn place_lights(&self) {
-        let placed = self.lights.apply(&self.window);
-        if self.diag && placed.is_some() && placed != self.last_lights.get() {
-            let p = placed.unwrap();
-            eprintln!("nd: traffic lights close={},{}", p.x, p.y);
-        }
-        if placed.is_some() {
-            self.last_lights.set(placed);
-        }
+        self.lights.apply(&self.window);
     }
 
     fn diag(&self, what: &str) {
@@ -186,12 +169,7 @@ pub struct WindowHost {
 }
 
 impl WindowHost {
-    pub fn new(
-        backend: &Rc<RefCell<AppKitBackend>>,
-        id: WindowId,
-        window: &NdWindow,
-        options: HostOptions,
-    ) -> Self {
+    pub fn new(backend: &AppKitBackend, id: WindowId, window: &NdWindow) -> Self {
         use objc2::Message;
         let mtm = MainThreadMarker::from(window);
         let diag = env_flag("ND_DIAG_WINDOW");
@@ -201,30 +179,24 @@ impl WindowHost {
             window.setBackgroundColor(Some(&NSColor::magentaColor()));
         }
         let clock = FrameClock::new(mtm, &root, diag);
-        backend.borrow_mut().add_window(id, window, &root);
+        let lights = Rc::new(TrafficLights::new(diag));
+        backend.add_window(id, WindowRecord { window: window.retain(), root: root.clone(), lights: lights.clone() });
         let inner = Rc::new(Inner {
             id,
             window: window.retain(),
             root,
             backend: backend.clone(),
-            lights: TrafficLights::new(options.traffic_lights),
+            lights,
             clock,
             diag,
             defer_live_layout: env_flag("ND_DEBUG_DEFER_LIVE_LAYOUT"),
             live_layouts: Cell::new(None),
-            last_lights: Cell::new(None),
             delegate: RefCell::new(None),
         });
         let delegate = NdWindowDelegate::alloc(mtm).set_ivars(DelegateIvars { host: Rc::downgrade(&inner) });
         let delegate: Retained<NdWindowDelegate> = unsafe { msg_send![super(delegate), init] };
         window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        if options.traffic_lights.is_some()
-            && let Some(buttons) = traffic_lights::buttons(window)
-        {
-            // Pinned lights mean the app draws its own title row (`titlebar()`), so the stock
-            // title and title bar material would sit under and beside the moved buttons.
-            window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
-            window.setTitlebarAppearsTransparent(true);
+        if let Some(buttons) = traffic_lights::buttons(window) {
             let center = NSNotificationCenter::defaultCenter();
             for button in &buttons {
                 button.setPostsFrameChangedNotifications(true);
@@ -286,8 +258,6 @@ impl Drop for WindowHost {
         if let Some(delegate) = self.inner.delegate.borrow().as_ref() {
             unsafe { NSNotificationCenter::defaultCenter().removeObserver(delegate) };
         }
-        if let Ok(mut backend) = self.inner.backend.try_borrow_mut() {
-            backend.remove_window(self.inner.id);
-        }
+        self.inner.backend.remove_window(self.inner.id);
     }
 }

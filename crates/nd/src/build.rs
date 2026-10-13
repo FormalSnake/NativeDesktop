@@ -168,7 +168,8 @@ fn collect_packages(manifest_dir: &Path) -> Result<Vec<(String, PathBuf)>, Strin
 fn write_aggregate(dir: &Path, packages: &[(String, PathBuf)]) -> Result<(), String> {
     let sources = dir.join("Sources/NDAggregate");
     fs::create_dir_all(&sources).map_err(|e| e.to_string())?;
-    let dependencies: String = packages.iter().map(|(_, p)| format!("        .package(path: \"{}\"),\n", p.display())).collect();
+    let dependencies: String =
+        packages.iter().map(|(_, p)| format!("        .package(path: \"{}\"),\n", p.display())).collect();
     let products: String = packages
         .iter()
         .map(|(name, _)| {

@@ -41,7 +41,8 @@ pub fn main(name: &str, run: fn()) {
             !a.starts_with('-')
         })
         .collect();
-    let selected = filters.is_empty() || filters.iter().any(|f| if exact { *f == name } else { name.contains(f.as_str()) });
+    let selected =
+        filters.is_empty() || filters.iter().any(|f| if exact { *f == name } else { name.contains(f.as_str()) });
     if ignored_only || !selected || !cfg!(target_os = "macos") {
         return;
     }

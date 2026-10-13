@@ -1,72 +1,53 @@
-//! The per-backend native event queue (ARCHITECTURE.md 3.13 rule 1). Native callbacks only push
-//! here; the queue's waker runs on a later main run loop turn, outside the callback and outside
-//! any transaction, and that is where app code sees the events.
+//! Native callbacks push onto `nd-ui`'s event queue (ARCHITECTURE.md 3.13 rule 1) and then wake
+//! the host, which drains the queue on a later main run loop turn: outside the callback, outside
+//! any transaction and outside every entity lease.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 use block2::RcBlock;
-use nd_core::NodeId;
 use objc2_foundation::{NSArray, NSRunLoop, NSRunLoopCommonModes};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NativeEventKind {
-    /// A native button's action fired.
-    Click,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeEvent {
-    pub node: NodeId,
-    pub kind: NativeEventKind,
-}
 
 #[derive(Default)]
 struct Inner {
-    events: RefCell<VecDeque<NativeEvent>>,
-    waker: RefCell<Option<Rc<dyn Fn()>>>,
+    callback: RefCell<Option<Rc<dyn Fn()>>>,
     scheduled: Cell<bool>,
-    programmatic: Cell<bool>,
 }
 
+/// Runs the host's callback once per main run loop turn in which something woke it.
 #[derive(Clone, Default)]
-pub struct EventQueue(Rc<Inner>);
+pub struct Wake(Rc<Inner>);
 
-impl EventQueue {
-    /// Called once per main run loop turn that has events waiting.
-    pub fn set_waker(&self, waker: impl Fn() + 'static) {
-        *self.0.waker.borrow_mut() = Some(Rc::new(waker));
+impl Wake {
+    pub fn set_callback(&self, callback: impl Fn() + 'static) {
+        *self.0.callback.borrow_mut() = Some(Rc::new(callback));
     }
 
-    pub fn drain(&self) -> Vec<NativeEvent> {
-        self.0.events.borrow_mut().drain(..).collect()
-    }
-
-    pub(crate) fn push(&self, event: NativeEvent) {
-        // An event fired by a setter nd itself ran is an echo of nd's own write.
-        if self.0.programmatic.get() {
-            return;
-        }
-        self.0.events.borrow_mut().push_back(event);
+    pub fn wake(&self) {
         if self.0.scheduled.replace(true) {
             return;
         }
         let inner = Rc::downgrade(&self.0);
-        let block = RcBlock::new(move || {
+        defer(move || {
             let Some(inner) = inner.upgrade() else { return };
             inner.scheduled.set(false);
-            let waker = inner.waker.borrow().clone();
-            if let Some(waker) = waker {
-                waker();
+            let callback = inner.callback.borrow().clone();
+            if let Some(callback) = callback {
+                callback();
             }
         });
-        // Common modes, so a click inside a nested tracking loop is still delivered.
-        let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
-        unsafe { NSRunLoop::mainRunLoop().performInModes_block(&modes, &block) };
     }
+}
 
-    pub(crate) fn set_programmatic(&self, on: bool) {
-        self.0.programmatic.set(on);
-    }
+/// Runs `f` on a later main run loop turn, in common modes so a nested tracking loop (a
+/// button press, a live resize) still runs it.
+pub(crate) fn defer(f: impl FnOnce() + 'static) {
+    let f = Cell::new(Some(f));
+    let block = RcBlock::new(move || {
+        if let Some(f) = f.take() {
+            f();
+        }
+    });
+    let modes = NSArray::from_slice(&[unsafe { NSRunLoopCommonModes }]);
+    unsafe { NSRunLoop::mainRunLoop().performInModes_block(&modes, &block) };
 }

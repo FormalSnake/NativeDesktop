@@ -1,6 +1,8 @@
 use std::fmt;
 
 use crate::chrome;
+#[cfg(target_os = "macos")]
+use crate::theme::Theme;
 
 pub use chrome::{Scaffold, Toolbar, scaffold, toolbar};
 
@@ -56,10 +58,23 @@ impl Application {
         &self.manifest
     }
 
-    /// Runs the app on the platform host. Until a host is linked this returns
-    /// [`Error::NoBackend`] without calling `init`.
+    /// Runs the app on the platform host and returns when it quits. Where no host is linked
+    /// yet (everything but macOS until M2) this returns [`Error::NoBackend`] without calling
+    /// `init`.
     pub fn run<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
-        let _ = init;
-        Err(Error::NoBackend)
+        #[cfg(target_os = "macos")]
+        {
+            use nd_backend_appkit::objc2_foundation::MainThreadMarker;
+            nd_backend_appkit::run(move |cx| {
+                let colors = nd_backend_appkit::system_colors(MainThreadMarker::new().expect("main thread"));
+                cx.set_global(Theme::from_system(colors));
+                init(cx);
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = init;
+            Err(Error::NoBackend)
+        }
     }
 }

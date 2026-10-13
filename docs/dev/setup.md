@@ -9,10 +9,11 @@ git clone <repo> nativedesktop && cd nativedesktop
 git add -N .                      # flakes only see tracked files; repeat after adding files
 nix develop                       # or: direnv allow, if .envrc exists
 rustup show                       # installs the toolchain pinned in rust-toolchain.toml
-cargo nextest run --workspace --exclude nd-backend-appkit   # tiers 1 and 2
-cargo test -p nd-backend-appkit   # harness = false binaries, nextest cannot list them
-cargo test --workspace            # also runs the harness = false AppKit binaries
+cargo nextest run --workspace     # tiers 1 and 2
+cargo build -p hello && cargo nextest run --profile real -p nd-backend-appkit   # tier 3, moves the cursor
 ```
+
+The AppKit test binaries own the main thread (`harness = false`) and answer nextest's `--list` and `--exact` themselves (`crates/nd-backend-appkit/tests/harness`), one test per binary.
 
 A cold build takes about 5 minutes (longer while other builds run). Intermediate artifacts go to `/Volumes/Kyan Drive/dev-cache.noindex/cargo-target/nativedesktop/` through `build.build-dir`; `scripts/rustc-guard` fails the build when the drive is missing. Without the drive: `CARGO_BUILD_BUILD_DIR=$PWD/target/build ND_ALLOW_LOCAL_BUILD=1 cargo ...`.
 
@@ -27,7 +28,7 @@ git clone <repo> nativedesktop && cd nativedesktop
 git add -N .
 nix develop
 rustup show
-cargo nextest run --workspace --exclude nd-backend-appkit
+cargo nextest run --workspace
 ```
 
 The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libraries GPUI loads, mold as linker, and mesa's lavapipe as `VK_ICD_FILENAMES` for headless rendering. Do not build on e1504g; build on g815 and push the closure.

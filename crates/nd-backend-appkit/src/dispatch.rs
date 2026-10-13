@@ -18,7 +18,7 @@ use crate::{AppKitBackend, KeyRouter, NdWindow};
 pub struct AppKitDispatch<C> {
     tree: RefCell<DispatchTree<C>>,
     cx: RefCell<C>,
-    backend: Rc<RefCell<AppKitBackend>>,
+    backend: AppKitBackend,
     window_id: WindowId,
     window: Weak<NdWindow>,
     /// The `nextKeyView` chain nd last wrote. AppKit re-links it on its own (installing an
@@ -33,7 +33,7 @@ impl<C: 'static> AppKitDispatch<C> {
     pub fn install(
         window: &NdWindow,
         window_id: WindowId,
-        backend: &Rc<RefCell<AppKitBackend>>,
+        backend: &AppKitBackend,
         tree: DispatchTree<C>,
         cx: C,
     ) -> Rc<Self> {
@@ -53,7 +53,7 @@ impl<C: 'static> AppKitDispatch<C> {
     /// Names a view nd did not create through the seam (a toolbar item's field), so focus ops
     /// and the key view loop can reach it.
     pub fn register_view(&self, node: NodeId, view: &NSView) {
-        self.backend.borrow_mut().register_external(node, view);
+        self.backend.register_external(node, view);
     }
 
     pub fn tree(&self) -> std::cell::Ref<'_, DispatchTree<C>> {
@@ -80,10 +80,7 @@ impl<C: 'static> AppKitDispatch<C> {
     /// the chain like any other node's view.
     pub fn sync_key_view_loop(&self) {
         let order = self.tree.borrow().focus_order();
-        let chain: Vec<Retained<NSView>> = {
-            let backend = self.backend.borrow();
-            order.iter().filter_map(|n| backend.view(*n)).collect()
-        };
+        let chain: Vec<Retained<NSView>> = order.iter().filter_map(|n| self.backend.view(*n)).collect();
         for (i, view) in chain.iter().enumerate() {
             let next = &chain[(i + 1) % chain.len()];
             unsafe { view.setNextKeyView(Some(next)) };
@@ -110,17 +107,15 @@ impl<C: 'static> AppKitDispatch<C> {
     fn apply_focus(&self) {
         let Some(change) = self.tree.borrow_mut().take_focus_change() else { return };
         let mut tx = Transaction::new(self.window_id);
-        tx.push(Op::Focus { node: change });
-        // A focus-only transaction invalidates no measurement.
-        tx.commit(&mut *self.backend.borrow_mut(), &mut MeasureCache::default());
+        tx.push(Op::Focus { node: change }); // A focus-only transaction invalidates no measurement.
+        tx.commit(&mut self.backend.clone(), &mut MeasureCache::default());
     }
 
     /// The nd node behind AppKit's first responder: `Some(None)` when the window itself holds
     /// it, `None` when it is a view nd does not know (nd focus then stays where it was).
     fn node_for_responder(&self, responder: Option<&NSResponder>) -> Option<Option<NodeId>> {
         let Some(responder) = responder else { return Some(None) };
-        let backend = self.backend.try_borrow().ok()?;
-        let find = |object: *const AnyObject| backend.node_for_view(object.cast());
+        let find = |object: *const AnyObject| self.backend.node_for_view(object.cast());
         let any: &AnyObject = responder;
         // A focused NSTextField hands first responder to the window's shared field editor,
         // whose delegate is the field.

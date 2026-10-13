@@ -30,6 +30,22 @@ static DEFAULT: LazyLock<Theme> = LazyLock::new(|| Theme {
     accent: hsla(211. / 360., 1., 0.5, 1.),
 });
 
+impl Theme {
+    /// The macOS preset: tokens read from `NSColor` semantic colours at launch.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn from_system(c: nd_backend_appkit::SystemColors) -> Self {
+        Theme {
+            text: TextTokens {
+                primary: c.label,
+                secondary: c.secondary_label,
+                tertiary: c.tertiary_label,
+                on_accent: hsla(0., 0., 1., 1.),
+            },
+            accent: c.accent,
+        }
+    }
+}
+
 pub trait ActiveTheme {
     fn theme(&self) -> &Theme;
 }

@@ -2,7 +2,7 @@
 //! [`NdLayerView`] (`div`) and [`NdTextView`] (`text`). All are flipped, so frames from `nd-ui`
 //! (top-left origin) apply unchanged.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 
 use nd_core::Size;
@@ -10,20 +10,19 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSAccessibilityStaticTextRole, NSAttributedStringNSExtendedStringDrawing, NSFont, NSFontAttributeName, NSFontWeightRegular, NSForegroundColorAttributeName,
-    NSResponder, NSStringDrawingOptions, NSView, NSViewLayerContentsRedrawPolicy,
+    NSAccessibilityStaticTextRole, NSAttributedStringNSExtendedStringDrawing, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSResponder, NSStringDrawingOptions, NSView, NSViewLayerContentsRedrawPolicy,
 };
-use objc2_foundation::{
-    MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSRect, NSSize, NSString,
-};
+use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
-use crate::props::{TextProps, ViewProps};
+use crate::look::{TextLook, ViewLook};
 
 pub(crate) type LayoutHook = Rc<dyn Fn(Size)>;
 
 #[derive(Default)]
 pub struct RootIvars {
     on_layout: RefCell<Option<LayoutHook>>,
+    content: OnceCell<Retained<NdLayerView>>,
 }
 
 define_class!(
@@ -52,10 +51,14 @@ define_class!(
         #[unsafe(method(layout))]
         fn layout(&self) {
             let _: () = unsafe { msg_send![super(self), layout] };
+            let safe = self.safe_rect();
+            let content = self.ivars().content.get().expect("content view");
+            if content.frame() != safe {
+                content.setFrame(safe);
+            }
             let hook = self.ivars().on_layout.borrow().clone();
             if let Some(hook) = hook {
-                let b = self.bounds();
-                hook(Size { width: b.size.width as f32, height: b.size.height as f32 });
+                hook(Size { width: safe.size.width as f32, height: safe.size.height as f32 });
             }
         }
     }
@@ -66,7 +69,25 @@ impl NdRootView {
         let this = Self::alloc(mtm).set_ivars(RootIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         this.setWantsLayer(true);
+        let content = NdLayerView::new(mtm, &ViewLook::default());
+        this.addSubview(&content);
+        let _ = this.ivars().content.set(content);
         this
+    }
+
+    /// The view the window's root node is: the content view minus the title bar band, so
+    /// app content never sits under the OS title bar.
+    pub(crate) fn content(&self) -> &NdLayerView {
+        self.ivars().content.get().expect("content view")
+    }
+
+    /// The window's `contentLayoutRect` in this (full-size, flipped) view.
+    fn safe_rect(&self) -> NSRect {
+        let bounds = self.bounds();
+        let Some(window) = self.window() else { return bounds };
+        let layout = window.contentLayoutRect();
+        let top = (bounds.size.height - (layout.origin.y + layout.size.height)).max(0.);
+        NSRect::new(NSPoint::new(0., top), NSSize::new(bounds.size.width, (bounds.size.height - top).max(0.)))
     }
 
     pub(crate) fn set_layout_hook(&self, hook: Option<LayoutHook>) {
@@ -77,7 +98,7 @@ impl NdRootView {
 
 #[derive(Default)]
 pub struct LayerIvars {
-    props: RefCell<ViewProps>,
+    props: RefCell<ViewLook>,
 }
 
 define_class!(
@@ -119,7 +140,7 @@ define_class!(
 );
 
 impl NdLayerView {
-    pub(crate) fn new(mtm: MainThreadMarker, props: &ViewProps) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, props: &ViewLook) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(LayerIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         this.setWantsLayer(true);
@@ -128,7 +149,7 @@ impl NdLayerView {
         this
     }
 
-    pub(crate) fn set_props(&self, props: &ViewProps) {
+    pub(crate) fn set_props(&self, props: &ViewLook) {
         self.setAlphaValue(props.opacity.into());
         *self.ivars().props.borrow_mut() = props.clone();
         self.setNeedsDisplay(true);
@@ -137,7 +158,7 @@ impl NdLayerView {
 
 #[derive(Default)]
 pub struct TextIvars {
-    props: RefCell<Option<TextProps>>,
+    props: RefCell<Option<TextLook>>,
 }
 
 define_class!(
@@ -179,7 +200,7 @@ define_class!(
 );
 
 impl NdTextView {
-    pub(crate) fn new(mtm: MainThreadMarker, props: &TextProps) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, props: &TextLook) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(TextIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         this.setWantsLayer(true);
@@ -188,7 +209,7 @@ impl NdTextView {
         this
     }
 
-    pub(crate) fn set_props(&self, props: &TextProps) {
+    pub(crate) fn set_props(&self, props: &TextLook) {
         self.setAlphaValue(props.opacity.into());
         *self.ivars().props.borrow_mut() = Some(props.clone());
         self.setNeedsDisplay(true);
@@ -202,7 +223,7 @@ impl NdTextView {
     }
 }
 
-pub(crate) fn measure_text(props: &TextProps, width: Option<f32>) -> Size {
+pub(crate) fn measure_text(props: &TextLook, width: Option<f32>) -> Size {
     let bound = NSSize::new(width.map_or(f64::MAX, f64::from), f64::MAX);
     let rect = attributed(props).boundingRectWithSize_options_context(bound, draw_options(), None);
     Size { width: rect.size.width.ceil() as f32, height: rect.size.height.ceil() as f32 }
@@ -212,12 +233,12 @@ fn draw_options() -> NSStringDrawingOptions {
     NSStringDrawingOptions::UsesLineFragmentOrigin | NSStringDrawingOptions::UsesFontLeading
 }
 
-fn attributed(props: &TextProps) -> Retained<NSAttributedString> {
+fn attributed(props: &TextLook) -> Retained<NSAttributedString> {
     let size = props.size.map_or_else(NSFont::systemFontSize, f64::from);
     let font = if props.tabular_nums {
-        NSFont::monospacedDigitSystemFontOfSize_weight(size, unsafe { NSFontWeightRegular })
+        NSFont::monospacedDigitSystemFontOfSize_weight(size, props.ns_weight())
     } else {
-        NSFont::systemFontOfSize(size)
+        NSFont::systemFontOfSize_weight(size, props.ns_weight())
     };
     let color = props.color.ns_color();
     let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };

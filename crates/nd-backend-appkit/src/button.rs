@@ -1,17 +1,18 @@
-//! The native push button: AppKit's own `NSButton`, with its action routed into the event queue.
+//! The native push button: AppKit's own `NSButton`, its action routed into the event queue.
 
-use nd_core::{NodeId, Size};
+use nd_core::Size;
+use nd_ui::events::Emit;
+use nd_ui::{ButtonProps, ClickEvent};
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSBezelStyle, NSButton};
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 
-use crate::events::{EventQueue, NativeEvent, NativeEventKind};
-use crate::props::ButtonProps;
+use crate::events::Wake;
 
 pub struct TargetIvars {
-    node: NodeId,
-    queue: EventQueue,
+    emit: Emit,
+    wake: Wake,
 }
 
 define_class!(
@@ -26,36 +27,37 @@ define_class!(
     impl NdButtonTarget {
         #[unsafe(method(press:))]
         fn press(&self, _sender: &NSButton) {
-            let ivars = self.ivars();
-            ivars.queue.push(NativeEvent { node: ivars.node, kind: NativeEventKind::Click });
+            self.ivars().emit.emit(ClickEvent);
+            self.ivars().wake.wake();
         }
     }
 );
 
-/// An `NSButton` and the target it holds weakly (AppKit targets are unretained).
+/// An `NSButton` and its target, which AppKit holds weakly.
 pub(crate) struct NativeButtonView {
     pub button: Retained<NSButton>,
     _target: Retained<NdButtonTarget>,
 }
 
 impl NativeButtonView {
-    pub fn new(mtm: MainThreadMarker, node: NodeId, queue: EventQueue, props: &ButtonProps) -> Self {
-        let target = NdButtonTarget::alloc(mtm).set_ivars(TargetIvars { node, queue });
+    pub fn new(mtm: MainThreadMarker, emit: Emit, wake: Wake, props: &ButtonProps) -> Self {
+        let target = NdButtonTarget::alloc(mtm).set_ivars(TargetIvars { emit, wake });
         let target: Retained<NdButtonTarget> = unsafe { msg_send![super(target), init] };
         let button = unsafe {
-            NSButton::buttonWithTitle_target_action(&NSString::from_str(&props.title), Some(&target), Some(sel!(press:)), mtm)
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str(&props.label),
+                Some(&target),
+                Some(sel!(press:)),
+                mtm,
+            )
         };
         button.setBezelStyle(NSBezelStyle::Push);
-        button.setEnabled(props.enabled);
         Self { button, _target: target }
     }
 
     pub fn update(&self, old: &ButtonProps, new: &ButtonProps) {
-        if old.title != new.title {
-            self.button.setTitle(&NSString::from_str(&new.title));
-        }
-        if old.enabled != new.enabled {
-            self.button.setEnabled(new.enabled);
+        if old.label != new.label {
+            self.button.setTitle(&NSString::from_str(&new.label));
         }
     }
 

@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 
 use nd_core::Point;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSButton, NSView, NSWindow, NSWindowButton, NSWindowStyleMask};
+use objc2_app_kit::{NSButton, NSView, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindowTitleVisibility};
 use objc2_foundation::{NSPoint, NSRect};
 
 const KINDS: [NSWindowButton; 3] =
@@ -22,9 +22,11 @@ struct Stock {
 
 pub(crate) struct TrafficLights {
     /// Top-left of the close button, in points from the window's top-left corner.
-    at: Option<Point>,
+    at: Cell<Option<Point>>,
     stock: RefCell<Option<Stock>>,
     applying: Cell<bool>,
+    diag: bool,
+    reported: Cell<Option<Point>>,
 }
 
 pub(crate) fn buttons(window: &NSWindow) -> Option<[Retained<NSButton>; 3]> {
@@ -33,8 +35,41 @@ pub(crate) fn buttons(window: &NSWindow) -> Option<[Retained<NSButton>; 3]> {
 }
 
 impl TrafficLights {
-    pub fn new(at: Option<Point>) -> Self {
-        Self { at, stock: RefCell::new(None), applying: Cell::new(false) }
+    pub fn new(diag: bool) -> Self {
+        Self {
+            at: Cell::new(None),
+            stock: RefCell::new(None),
+            applying: Cell::new(false),
+            diag,
+            reported: Cell::new(None),
+        }
+    }
+
+    /// From the window's `window_controls()` node. Pinned lights mean the app draws its own
+    /// title row, so the stock title and title bar material would sit beside the moved buttons.
+    pub fn set_at(&self, window: &NSWindow, at: Option<Point>) {
+        if self.at.replace(at) == at {
+            return;
+        }
+        let pinned = at.is_some();
+        window.setTitleVisibility(if pinned {
+            NSWindowTitleVisibility::Hidden
+        } else {
+            NSWindowTitleVisibility::Visible
+        });
+        window.setTitlebarAppearsTransparent(pinned);
+        if !pinned && let (Some(stock), Some(buttons)) = (self.stock.borrow().as_ref(), buttons(window)) {
+            if let Some(container) = unsafe { buttons[0].superview().and_then(|s| s.superview()) } {
+                let mut frame = container.frame();
+                frame.size.height = stock.container.size.height;
+                frame.origin.y = window.frame().size.height - stock.container.size.height;
+                container.setFrame(frame);
+            }
+            for (button, frame) in buttons.iter().zip(&stock.buttons) {
+                button.setFrameOrigin(frame.origin);
+            }
+        }
+        self.apply(window);
     }
 
     fn stock(&self, buttons: &[Retained<NSButton>; 3], container: &NSView) -> bool {
@@ -54,12 +89,19 @@ impl TrafficLights {
     /// Re-asserts the placement. Returns the close button's top-left in window coordinates from
     /// the top-left when the buttons sit where configured.
     pub fn apply(&self, window: &NSWindow) -> Option<Point> {
-        let at = self.at?;
+        let at = self.at.get()?;
         if self.applying.replace(true) {
             return None;
         }
         let placed = self.place(window, at);
         self.applying.set(false);
+        if self.diag
+            && let Some(p) = placed
+            && placed != self.reported.get()
+        {
+            eprintln!("nd: traffic lights close={},{}", p.x, p.y);
+            self.reported.set(placed);
+        }
         placed
     }
 

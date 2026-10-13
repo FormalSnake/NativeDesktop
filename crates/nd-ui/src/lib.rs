@@ -19,7 +19,8 @@ mod window;
 pub use app::{AnyView, App, Context, Entity, EntityId, Render, Subscription, WeakEntity};
 pub use element::{
     AnyElement, Button, ButtonProps, ClickEvent, Div, DivProps, IntoElement, Key, NativeElement, ParentElement,
-    RootProps, Text, TextProps, button, div, h_flex, text, v_flex,
+    RootProps, Text, TextProps, WindowControls, WindowControlsProps, button, div, h_flex, text, v_flex,
+    window_controls,
 };
 pub use nd_core::{NodeId, Point, Rect, Size, WindowId};
 pub use nd_gpui::gpui::prelude::FluentBuilder;
@@ -31,7 +32,7 @@ pub mod prelude {
     pub use crate::{
         AnyElement, AnyView, App, Button, ClickEvent, Context, Div, Entity, EntityId, FluentBuilder, IntoElement,
         NativeElement, ParentElement, Render, Styled, Subscription, Text, WeakEntity, Window, WindowHandle,
-        WindowOptions, button, div, h_flex, text, v_flex,
+        WindowOptions, button, div, h_flex, text, v_flex, window_controls,
     };
     pub use nd_gpui::gpui::{
         AbsoluteLength, DefiniteLength, FontWeight, Hsla, Length, Pixels, Rems, Rgba, SharedString, hsla, point, px,

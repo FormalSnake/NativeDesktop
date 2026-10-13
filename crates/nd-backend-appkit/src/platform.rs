@@ -5,8 +5,7 @@ use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventMask, NSEventModifierFlags, NSMenu,
-    NSMenuItem,
-    NSWindowStyleMask,
+    NSMenuItem, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
