@@ -103,6 +103,9 @@ pub struct DispatchTree<C> {
     root: Option<NodeId>,
     keymap: Keymap,
     focused: Option<NodeId>,
+    /// Where dispatch starts while nothing is focused; the root when unset. The retained tree
+    /// points it at the root view's node, as GPUI dispatches from the root view's element.
+    default_target: Option<NodeId>,
     /// Set when nd focus changed and the platform has not been told yet.
     focus_change: Option<Option<NodeId>>,
     pending: Vec<Keystroke>,
@@ -113,7 +116,15 @@ impl<C: 'static> DispatchTree<C> {
     pub fn new(bindings: impl IntoIterator<Item = KeyBinding>) -> Self {
         let mut keymap = Keymap::new(crate::actions::standard_bindings());
         keymap.add_bindings(bindings);
-        Self { nodes: HashMap::new(), root: None, keymap, focused: None, focus_change: None, pending: Vec::new() }
+        Self {
+            nodes: HashMap::new(),
+            root: None,
+            keymap,
+            focused: None,
+            default_target: None,
+            focus_change: None,
+            pending: Vec::new(),
+        }
     }
 
     pub fn keymap_mut(&mut self) -> &mut Keymap {
@@ -137,6 +148,36 @@ impl<C: 'static> DispatchTree<C> {
         self.nodes.insert(node, Node::new(Some(parent)));
     }
 
+    /// Puts `node` under `parent`, before `before` or last. A node already in the tree moves
+    /// with its subtree, listeners and context; an unknown one is added.
+    pub fn place(&mut self, parent: NodeId, node: NodeId, before: Option<NodeId>) {
+        if !self.nodes.contains_key(&node) {
+            self.insert(parent, node, before);
+            return;
+        }
+        self.detach(node);
+        let Some(p) = self.nodes.get_mut(&parent) else {
+            panic!("parent {parent:?} is not in the dispatch tree");
+        };
+        let at = before.and_then(|b| p.children.iter().position(|c| *c == b)).unwrap_or(p.children.len());
+        p.children.insert(at, node);
+        self.node_mut(node).parent = Some(parent);
+    }
+
+    /// Takes `node` out of its parent's children, keeping its subtree, until it is placed again
+    /// or removed.
+    pub fn detach(&mut self, node: NodeId) {
+        let Some(parent) = self.nodes.get_mut(&node).and_then(|n| n.parent.take()) else { return };
+        if let Some(p) = self.nodes.get_mut(&parent) {
+            p.children.retain(|c| *c != node);
+        }
+    }
+
+    /// Where dispatch starts while nothing is focused.
+    pub fn set_default_target(&mut self, node: Option<NodeId>) {
+        self.default_target = node;
+    }
+
     /// Removes `node` and its subtree. Focus inside it is cleared.
     pub fn remove(&mut self, node: NodeId) {
         if let Some(parent) = self.nodes.get(&node).and_then(|n| n.parent)
@@ -151,6 +192,9 @@ impl<C: 'static> DispatchTree<C> {
             }
             if self.focused == Some(n) {
                 self.set_focus(None);
+            }
+            if self.default_target == Some(n) {
+                self.default_target = None;
             }
         }
     }
@@ -285,10 +329,11 @@ impl<C: 'static> DispatchTree<C> {
         }
     }
 
-    /// Focused node up to the root; just the root when nothing has focus.
+    /// Focused node up to the root; from the default target, or just the root, when nothing
+    /// has focus.
     fn dispatch_path(&self) -> Vec<NodeId> {
         let mut path = Vec::new();
-        let mut cursor = self.focused.or(self.root);
+        let mut cursor = self.focused.or(self.default_target).or(self.root);
         while let Some(n) = cursor {
             path.push(n);
             cursor = self.nodes.get(&n).and_then(|n| n.parent);

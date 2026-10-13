@@ -11,7 +11,10 @@ nix develop                       # or: direnv allow, if .envrc exists
 rustup show                       # installs the toolchain pinned in rust-toolchain.toml
 cargo nextest run --workspace     # tiers 1 and 2
 cargo build -p hello && cargo nextest run --profile real -p nd-backend-appkit   # tier 3, moves the cursor
+just gate m0                      # a milestone's gate: builds the examples, runs every gate_m0:: test
 ```
+
+Tier 3 posts real HID events through `crates/ndshell`. Its preflight fails the test, naming the culprit, when a window manager that intercepts synthetic input runs (OmniWM, yabai, AeroSpace, Amethyst) or the process may not post events, and releases modifier keys a crashed run left held. TCC checks the responsible process, the terminal or `/usr/libexec/sshd-keygen-wrapper` over ssh: with SIP off, `cargo run -p ndshell -- grant <that binary>` writes its Accessibility, PostEvent and Screen Recording rows.
 
 The AppKit test binaries own the main thread (`harness = false`) and answer nextest's `--list` and `--exact` themselves (`crates/nd-backend-appkit/tests/harness`), one test per binary.
 
@@ -39,11 +42,11 @@ The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libra
 
 | Profile | Runs |
 | --- | --- |
-| `default` | tiers 1 and 2, everything except tests named `real_*` or in a `real` test binary |
+| `default` | tiers 1 and 2, everything except tests whose last path segment starts with `real_` or that sit in a `real` module |
 | `fast` | same, stops at the first failure |
 | `ci` | same, no retries, JUnit output |
 | `real` | tier 3 only, one at a time (`real-window` group) |
-| `gate` | everything, the `real-window` group still serialized; used as `cargo nextest run --profile gate -E 'test(/^gate_mN::/)'` |
+| `gate` | everything, the `real-window` group (plus the dispatch spike, which needs its window key) still serialized; `just gate mN` runs it as `cargo nextest run --profile gate -E 'test(/^gate_mN::/)'` |
 
 ## CI
 

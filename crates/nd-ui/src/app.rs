@@ -12,8 +12,10 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 
 use nd_core::{NodeId, Size, WindowId};
+use nd_gpui::gpui::{Action, KeyBinding, Keystroke};
 
 use crate::backend::Backend;
+use crate::dispatch::{DispatchTree, KeyDispatch};
 use crate::element::{AnyElement, IntoElement};
 use crate::events::EventQueue;
 use crate::transaction::MeasureCache;
@@ -207,6 +209,9 @@ pub struct App {
     pub(crate) backend: Box<dyn Backend>,
     pub(crate) measure_cache: MeasureCache,
     events: EventQueue,
+    bindings: Vec<KeyBinding>,
+    /// Set by [`App::propagate`] inside an `on_action` listener.
+    pub(crate) propagate_action: bool,
 }
 
 impl App {
@@ -229,6 +234,8 @@ impl App {
             backend,
             measure_cache: MeasureCache::default(),
             events,
+            bindings: Vec::new(),
+            propagate_action: false,
         }
     }
 
@@ -353,10 +360,57 @@ impl App {
         let mut window = Window::new(id, &options);
         let root = self.alloc_node();
         let entity = build(&mut window, self);
-        let tree = Tree::new(id, root, window.viewport_size(), entity.clone().into());
+        let tree = Tree::new(id, root, window.viewport_size(), entity.clone().into(), self.bindings.clone());
         self.dirty.insert(entity.entity_id());
         self.windows.insert(id, WindowSlot { window: Some(window), tree: Some(tree) });
         WindowHandle::new(id, entity)
+    }
+
+    /// Adds key bindings for every window, open or opened later.
+    pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
+        let bindings: Vec<KeyBinding> = bindings.into_iter().collect();
+        for slot in self.windows.values_mut() {
+            if let Some(tree) = slot.tree.as_mut() {
+                tree.dispatch.keymap_mut().add_bindings(bindings.iter().cloned());
+            }
+        }
+        self.bindings.extend(bindings);
+    }
+
+    /// Inside an `on_action` listener: lets the action continue towards the root.
+    pub fn propagate(&mut self) {
+        self.propagate_action = true;
+    }
+
+    /// Matches `keystroke` in the window's focused context and dispatches the bound action to
+    /// the elements' `on_action` listeners. Platforms call it before their own text handling.
+    pub fn dispatch_keystroke(&mut self, window: WindowId, keystroke: &Keystroke) -> KeyDispatch {
+        self.with_dispatch(window, KeyDispatch::Unhandled, |tree, app| tree.dispatch_key(keystroke, app))
+    }
+
+    /// Bubbles `action` from the window's focused node to its root. Menus and toolbar items
+    /// dispatch through here. Returns whether a listener handled it.
+    pub fn dispatch_action(&mut self, window: WindowId, action: &dyn Action) -> bool {
+        self.with_dispatch(window, false, |tree, app| tree.dispatch_action(action, app))
+    }
+
+    /// Runs `f` on the window's dispatch tree with the tree leased out of its slot, so listeners
+    /// get the whole app; effects flush afterwards.
+    fn with_dispatch<R>(
+        &mut self,
+        window: WindowId,
+        absent: R,
+        f: impl FnOnce(&mut DispatchTree<App>, &mut App) -> R,
+    ) -> R {
+        let Some(mut tree) = self.windows.get_mut(&window).and_then(|w| w.tree.take()) else { return absent };
+        let result = f(&mut tree.dispatch, self);
+        match self.windows.get_mut(&window) {
+            Some(slot) => slot.tree = Some(tree),
+            // A listener closed the window.
+            None => tree.close(self),
+        }
+        self.flush_effects();
+        result
     }
 
     /// Closes the window: releases its retained tree in one last transaction.

@@ -12,13 +12,14 @@ use std::mem;
 use std::rc::Rc;
 
 use nd_core::{NodeId, Rect, Size, WindowId};
-use nd_gpui::gpui::StyleRefinement;
+use nd_gpui::gpui::{KeyBinding, StyleRefinement};
 use taffy::TaffyTree;
 use taffy::prelude::TaffyMaxContent;
 
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch};
-use crate::element::{AnyElement, Element, Handler, Key, NodeElement, RootProps};
+use crate::dispatch::DispatchTree;
+use crate::element::{AnyElement, DispatchProps, Element, Handler, Key, NodeElement, RootProps};
 use crate::layout::to_taffy;
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::Window;
@@ -53,6 +54,7 @@ struct RNode {
     /// Native children as the backend has them: `slots` with views flattened to their roots.
     native: Vec<NodeId>,
     handlers: Vec<(TypeId, Handler)>,
+    dispatch: DispatchProps,
     taffy: taffy::NodeId,
     frame: Option<Rect>,
     /// Created this frame; its own children are not inserted yet.
@@ -78,6 +80,9 @@ pub(crate) struct Tree {
     taffy: TaffyTree<NodeId>,
     tx: Transaction,
     needs_layout: bool,
+    /// Mirrors the native nodes as the backend has them, with each node's key context and
+    /// action listeners.
+    pub(crate) dispatch: DispatchTree<App>,
 }
 
 fn idents(elements: &[AnyElement]) -> Vec<Ident> {
@@ -110,7 +115,13 @@ fn root_style(size: Size) -> taffy::Style {
 }
 
 impl Tree {
-    pub(crate) fn new(window: WindowId, root: NodeId, size: Size, root_view: AnyView) -> Self {
+    pub(crate) fn new(
+        window: WindowId,
+        root: NodeId,
+        size: Size,
+        root_view: AnyView,
+        bindings: Vec<KeyBinding>,
+    ) -> Self {
         let mut taffy = TaffyTree::new();
         taffy.disable_rounding();
         let root_taffy = taffy.new_leaf(root_style(size)).expect("taffy root");
@@ -128,12 +139,15 @@ impl Tree {
                 slots: Vec::new(),
                 native: Vec::new(),
                 handlers: Vec::new(),
+                dispatch: DispatchProps::default(),
                 taffy: root_taffy,
                 frame: None,
                 fresh: false,
             },
         );
-        Self { window, root, root_view, nodes, views: HashMap::new(), taffy, tx, needs_layout: true }
+        let mut dispatch = DispatchTree::new(bindings);
+        dispatch.set_root(root);
+        Self { window, root, root_view, nodes, views: HashMap::new(), taffy, tx, needs_layout: true, dispatch }
     }
 
     pub(crate) fn contains(&self, node: NodeId) -> bool {
@@ -222,6 +236,7 @@ impl Tree {
                 slots: Vec::new(),
                 native: Vec::new(),
                 handlers: el.handlers,
+                dispatch: el.dispatch,
                 taffy: taffy.expect("taffy node"),
                 frame: None,
                 fresh: true,
@@ -261,6 +276,9 @@ impl Tree {
             Slot::Node(n) => {
                 let node = self.nodes.remove(&n).expect("node");
                 let _ = self.taffy.remove(node.taffy);
+                if self.dispatch.contains(n) {
+                    self.dispatch.remove(n);
+                }
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {
                     self.unmount(s, app);
@@ -298,6 +316,7 @@ impl Tree {
         for n in &list {
             if !keep.contains(n) {
                 self.tx.push(Op::Remove { node: *n });
+                self.dispatch.detach(*n);
             }
         }
         list.retain(|n| keep.contains(n));
@@ -308,11 +327,17 @@ impl Tree {
                 None => {
                     list.insert(at(&list), n);
                     self.tx.push(Op::Insert { parent, node: n, before });
+                    let fresh = !self.dispatch.contains(n);
+                    self.dispatch.place(parent, n, before);
+                    if fresh {
+                        self.bind_dispatch(n);
+                    }
                 }
                 Some(i) if list.get(i + 1).copied() != before => {
                     list.remove(i);
                     list.insert(at(&list), n);
                     self.tx.push(Op::Move { node: n, parent, before });
+                    self.dispatch.place(parent, n, before);
                 }
                 Some(_) => {}
             }
@@ -364,7 +389,23 @@ impl Tree {
             self.needs_layout = true;
         }
         node.handlers = el.handlers;
+        node.dispatch = el.dispatch;
+        self.bind_dispatch(n);
         self.reconcile_children(n, el.children, depth, window, app);
+    }
+
+    /// Hands the node's key context and action listeners to the dispatch tree, replacing the
+    /// previous render's, without a backend call.
+    fn bind_dispatch(&mut self, n: NodeId) {
+        if !self.dispatch.contains(n) {
+            return;
+        }
+        let props = &self.nodes[&n].dispatch;
+        self.dispatch.set_key_context(n, props.key_context.clone());
+        self.dispatch.clear_listeners(n);
+        for register in props.actions.clone() {
+            register(&mut self.dispatch, n, self.window);
+        }
     }
 
     fn reconcile_children(
@@ -519,6 +560,8 @@ impl App {
                 }
             }
         }
+        let target = tree.view_node(tree.root_view.entity_id());
+        tree.dispatch.set_default_target(target);
         let tx = mem::replace(&mut tree.tx, Transaction::new(id));
         let force = tree.needs_layout;
         tx.commit_with(&mut *self.backend, &mut self.measure_cache, force, |backend, cache| {

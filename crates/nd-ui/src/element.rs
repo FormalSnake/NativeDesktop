@@ -9,11 +9,13 @@ use std::any::{Any, TypeId};
 use std::panic::Location;
 use std::rc::Rc;
 
+use nd_core::{NodeId, WindowId};
 use nd_gpui::gpui::prelude::FluentBuilder;
-use nd_gpui::gpui::{SharedString, StyleRefinement, Styled};
+use nd_gpui::gpui::{Action, KeyContext, SharedString, StyleRefinement, Styled};
 
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AnyProps, NodeKind, Props, WidgetKind};
+use crate::dispatch::DispatchTree;
 use crate::window::Window;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,6 +39,60 @@ impl From<&'static str> for Key {
 
 pub(crate) type Handler = Rc<dyn Fn(&dyn Any, &mut Window, &mut App)>;
 
+/// Registers one `on_action` listener on the node's entry in its window's dispatch tree.
+pub(crate) type ActionRegistrar = Rc<dyn Fn(&mut DispatchTree<App>, NodeId, WindowId)>;
+
+/// What an element contributes to dispatch (ARCHITECTURE.md 3.12): its key context and action
+/// listeners. The retained tree hands them to the window's [`DispatchTree`] on every render.
+#[derive(Clone, Default)]
+pub struct DispatchProps {
+    pub(crate) key_context: Option<KeyContext>,
+    pub(crate) actions: Vec<ActionRegistrar>,
+}
+
+/// Elements that take part in key dispatch: GPUI's `key_context` and `on_action`.
+pub trait InteractiveElement: Sized {
+    fn dispatch_props(&mut self) -> &mut DispatchProps;
+
+    /// Names the context bindings match against while focus is in this element's subtree.
+    /// Panics on a context that does not parse, like a malformed binding would.
+    fn key_context<C, E>(mut self, context: C) -> Self
+    where
+        C: TryInto<KeyContext, Error = E>,
+        E: std::fmt::Debug,
+    {
+        let context = context.try_into().unwrap_or_else(|e| panic!("invalid key context: {e:?}"));
+        self.dispatch_props().key_context = Some(context);
+        self
+    }
+
+    /// Handles `A` when it bubbles through this element from the focused node. The action stops
+    /// here unless the listener calls [`App::propagate`].
+    fn on_action<A: Action>(mut self, listener: impl Fn(&A, &mut Window, &mut App) + 'static) -> Self {
+        let listener = Rc::new(listener);
+        let registrar: ActionRegistrar = Rc::new(move |tree, node, window_id| {
+            let listener = listener.clone();
+            tree.on_action(node, move |action: &A, acx| {
+                let app = &mut *acx.cx;
+                let Some(mut window) = app.windows.get_mut(&window_id).and_then(|w| w.window.take()) else {
+                    acx.propagate();
+                    return;
+                };
+                app.propagate_action = false;
+                listener(action, &mut window, app);
+                if let Some(slot) = app.windows.get_mut(&window_id) {
+                    slot.window = Some(window);
+                }
+                if std::mem::take(&mut app.propagate_action) {
+                    acx.propagate();
+                }
+            });
+        });
+        self.dispatch_props().actions.push(registrar);
+        self
+    }
+}
+
 pub(crate) struct NodeElement {
     pub kind: NodeKind,
     pub key: Key,
@@ -46,6 +102,7 @@ pub(crate) struct NodeElement {
     pub measured: bool,
     pub children: Vec<AnyElement>,
     pub handlers: Vec<(TypeId, Handler)>,
+    pub dispatch: DispatchProps,
 }
 
 pub(crate) enum Element {
@@ -125,31 +182,36 @@ pub struct Div {
     key: Key,
     style: StyleRefinement,
     children: Vec<AnyElement>,
+    dispatch: DispatchProps,
 }
 
 #[track_caller]
 pub fn div() -> Div {
-    Div { key: Key::Site(Location::caller()), style: StyleRefinement::default(), children: Vec::new() }
+    Div::at(Location::caller())
 }
 
 /// A row: flex, items centered.
 #[track_caller]
 pub fn h_flex() -> Div {
-    let site = Location::caller();
-    Div { key: Key::Site(site), style: StyleRefinement::default(), children: Vec::new() }
-        .flex()
-        .flex_row()
-        .items_center()
+    Div::at(Location::caller()).flex().flex_row().items_center()
 }
 
 /// A column.
 #[track_caller]
 pub fn v_flex() -> Div {
-    let site = Location::caller();
-    Div { key: Key::Site(site), style: StyleRefinement::default(), children: Vec::new() }.flex().flex_col()
+    Div::at(Location::caller()).flex().flex_col()
 }
 
 impl Div {
+    fn at(site: &'static Location<'static>) -> Self {
+        Div {
+            key: Key::Site(site),
+            style: StyleRefinement::default(),
+            children: Vec::new(),
+            dispatch: DispatchProps::default(),
+        }
+    }
+
     /// Keys the element explicitly, for siblings whose order or presence changes.
     pub fn id(mut self, id: impl Into<SharedString>) -> Self {
         self.key = Key::Id(id.into());
@@ -171,6 +233,12 @@ impl ParentElement for Div {
 
 impl FluentBuilder for Div {}
 
+impl InteractiveElement for Div {
+    fn dispatch_props(&mut self) -> &mut DispatchProps {
+        &mut self.dispatch
+    }
+}
+
 impl IntoElement for Div {
     fn into_any_element(self) -> AnyElement {
         AnyElement::node(NodeElement {
@@ -181,6 +249,7 @@ impl IntoElement for Div {
             measured: false,
             children: self.children,
             handlers: Vec::new(),
+            dispatch: self.dispatch,
         })
     }
 }
@@ -237,6 +306,7 @@ impl IntoElement for Text {
             measured: true,
             children: Vec::new(),
             handlers: Vec::new(),
+            dispatch: DispatchProps::default(),
         })
     }
 }
@@ -249,6 +319,7 @@ pub struct NativeElement<P> {
     props: P,
     style: StyleRefinement,
     handlers: Vec<(TypeId, Handler)>,
+    dispatch: DispatchProps,
 }
 
 impl<P: AnyProps> NativeElement<P> {
@@ -259,6 +330,7 @@ impl<P: AnyProps> NativeElement<P> {
             props,
             style: StyleRefinement::default(),
             handlers: Vec::new(),
+            dispatch: DispatchProps::default(),
         }
     }
 
@@ -287,6 +359,12 @@ impl<P> Styled for NativeElement<P> {
 
 impl<P> FluentBuilder for NativeElement<P> {}
 
+impl<P> InteractiveElement for NativeElement<P> {
+    fn dispatch_props(&mut self) -> &mut DispatchProps {
+        &mut self.dispatch
+    }
+}
+
 impl<P: AnyProps> IntoElement for NativeElement<P> {
     fn into_any_element(self) -> AnyElement {
         AnyElement::node(NodeElement {
@@ -297,6 +375,7 @@ impl<P: AnyProps> IntoElement for NativeElement<P> {
             measured: true,
             children: Vec::new(),
             handlers: self.handlers,
+            dispatch: self.dispatch,
         })
     }
 }
@@ -330,6 +409,12 @@ impl Styled for Button {
 }
 
 impl FluentBuilder for Button {}
+
+impl InteractiveElement for Button {
+    fn dispatch_props(&mut self) -> &mut DispatchProps {
+        self.0.dispatch_props()
+    }
+}
 
 impl IntoElement for Button {
     fn into_any_element(self) -> AnyElement {
