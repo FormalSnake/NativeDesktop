@@ -746,7 +746,9 @@ impl Backend for AppKitBackend {
                 crate::events::defer(move || crate::scaffold::install(&controller, &host, &window, &root));
                 Native::Scaffold(scaffold)
             }
-            NodeKind::Widget(w) if is::<Pane>(w) => Native::Pane(PaneNative::new(mtm, props::<PaneProps>(p, "Pane"))),
+            NodeKind::Widget(w) if is::<Pane>(w) => {
+                Native::Pane(PaneNative::new(mtm, props::<PaneProps>(p, "Pane"), state.expose))
+            }
             NodeKind::Widget(w) if is::<Toolbar>(w) => {
                 let id = format!("nd.toolbar.{}", window.0);
                 Native::Toolbar(ToolbarNative::new(mtm, props::<ToolbarProps>(p, "Toolbar"), &id))
@@ -934,8 +936,17 @@ impl Backend for AppKitBackend {
         }
         let state = self.0.borrow();
         match state.nodes.get(&node) {
-            // The split view places panes; an overlay fills the scaffold by its autoresizing.
-            Some(Native::Pane(_)) => return,
+            // The split view places a pane's host; nd frames the content inside it. An overlay
+            // fills the scaffold by its autoresizing.
+            Some(Native::Pane(p)) => {
+                if p.role != PaneRole::Overlay {
+                    let rect = ns_rect(frame);
+                    if p.content.frame() != rect {
+                        p.content.setFrame(rect);
+                    }
+                }
+                return;
+            }
             Some(Native::ToolbarItem(item)) => {
                 item.host.set_size(objc2_foundation::NSSize::new(frame.size.width.into(), frame.size.height.into()));
                 return;
@@ -1034,6 +1045,13 @@ impl Backend for AppKitBackend {
         match self.0.try_borrow().ok()?.nodes.get(&node)? {
             Native::Pane(p) if p.role != PaneRole::Overlay => Some(p.boundary()),
             _ => None,
+        }
+    }
+
+    fn boundary_insets(&self, node: NodeId) -> nd_ui::backend::BoundaryInsets {
+        match self.0.try_borrow().ok().as_ref().and_then(|s| s.nodes.get(&node)) {
+            Some(Native::Pane(p)) if p.role != PaneRole::Overlay => p.insets(),
+            _ => nd_ui::backend::BoundaryInsets::default(),
         }
     }
 

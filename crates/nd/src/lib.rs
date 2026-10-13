@@ -1,8 +1,8 @@
 //! The one crate apps depend on: `use nd::prelude::*;`.
 //!
-//! The vocabulary, retained tree and layout are `nd-ui`'s; the theme is `nd-theme`'s; the chrome
-//! intents, `glass()`, menus and dialogs are `nd-components`'. `Application::run` hosts the app
-//! on AppKit on macOS; the GPUI backends land in M2.
+//! The vocabulary, retained tree and layout are `nd-ui`'s, on AppKit (macOS) and GPUI
+//! (elsewhere, and on macOS with the `gpui` feature and `ND_BACKEND=gpui`); the theme is
+//! `nd-theme`'s; the chrome intents, `glass()`, menus and dialogs are `nd-components`'.
 
 #[cfg(feature = "build")]
 pub mod build;

@@ -1,0 +1,371 @@
+//! The GPUI side of the backend seam (ARCHITECTURE.md 3.15). Seam ops only edit a retained copy of
+//! each window's tree; nothing here touches GPUI. A commit marks the window for a redraw, and the
+//! window's GPUI view builds elements from the copy when GPUI draws it ([`crate::render`]). GPUI
+//! lays out with its own Taffy, so frames and measures never reach this backend.
+
+use std::any::TypeId;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
+
+use nd_core::{NodeId, Point, Rect, Size, WindowId};
+use nd_gpui::gpui::{self, AnyWindowHandle, AsyncApp};
+use nd_ui::backend::{Backend, Constraint, NodeKind, Props, PropsPatch, SurfaceOp};
+use nd_ui::events::EventQueue;
+use nd_ui::semantics::{ActionError, Capture, Probe, SemanticAction, SyntheticInput, WindowState};
+use nd_ui::{Button, ButtonProps, ClickEvent};
+
+pub(crate) struct Node {
+    pub kind: NodeKind,
+    pub props: Props,
+    pub parent: Option<NodeId>,
+    pub children: Vec<NodeId>,
+}
+
+#[derive(Default)]
+pub(crate) struct WindowRecord {
+    pub root: Option<NodeId>,
+    pub handle: Option<AnyWindowHandle>,
+    /// The window as of its last frame, for reads that arrive while GPUI is drawing.
+    pub state: WindowState,
+}
+
+/// Called from a native callback with GPUI's app, to schedule the host's pump on the next turn.
+pub(crate) type Wake = Rc<dyn Fn(&mut gpui::App)>;
+
+pub(crate) struct State {
+    pub nodes: HashMap<NodeId, Node>,
+    pub windows: HashMap<WindowId, WindowRecord>,
+    open: Option<WindowId>,
+    pub events: EventQueue,
+    /// Windows whose retained tree changed since GPUI last drew them.
+    pub dirty: BTreeSet<WindowId>,
+    pub app: Option<AsyncApp>,
+    pub wake: Option<Wake>,
+    /// Synthetic input waiting for the host's next pump, which dispatches it with the app free.
+    pending: Vec<(WindowId, gpui::PlatformInput)>,
+}
+
+/// The GPUI backend. A cheap handle: `nd-ui`'s `App` owns one clone as its `Box<dyn Backend>`, the
+/// host and every window view keep others.
+#[derive(Clone)]
+pub struct GpuiBackend {
+    pub(crate) state: Rc<RefCell<State>>,
+    /// Each node's bounds in window coordinates as of the last paint, written by the elements
+    /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
+    pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+}
+
+impl Default for GpuiBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn props<'a, T: 'static>(props: &'a Props, kind: &str) -> &'a T {
+    props.downcast_ref::<T>().unwrap_or_else(|| panic!("{kind} node needs {} props", std::any::type_name::<T>()))
+}
+
+pub(crate) fn is_button(kind: NodeKind) -> bool {
+    matches!(kind, NodeKind::Widget(w) if w.type_id == TypeId::of::<Button>())
+}
+
+fn not_actionable(why: impl Into<String>) -> ActionError {
+    ActionError::NotActionable(why.into())
+}
+
+impl GpuiBackend {
+    pub fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(State {
+                nodes: HashMap::new(),
+                windows: HashMap::new(),
+                open: None,
+                events: EventQueue::default(),
+                dirty: BTreeSet::new(),
+                app: None,
+                wake: None,
+                pending: Vec::new(),
+            })),
+            bounds: Rc::default(),
+        }
+    }
+
+    pub(crate) fn attach_app(&self, app: AsyncApp, wake: Wake) {
+        let mut state = self.state.borrow_mut();
+        state.app = Some(app);
+        state.wake = Some(wake);
+    }
+
+    pub(crate) fn set_window_handle(&self, window: WindowId, handle: AnyWindowHandle) {
+        self.state.borrow_mut().windows.entry(window).or_default().handle = Some(handle);
+    }
+
+    pub(crate) fn set_window_state(&self, window: WindowId, window_state: WindowState) {
+        if let Some(record) = self.state.borrow_mut().windows.get_mut(&window) {
+            record.state = window_state;
+        }
+    }
+
+    pub(crate) fn forget_window(&self, window: WindowId) {
+        let mut state = self.state.borrow_mut();
+        state.windows.remove(&window);
+        state.dirty.remove(&window);
+    }
+
+    pub(crate) fn take_pending(&self) -> Vec<(WindowId, gpui::PlatformInput)> {
+        std::mem::take(&mut self.state.borrow_mut().pending)
+    }
+
+    pub(crate) fn wake_fn(&self) -> Option<Wake> {
+        self.state.borrow().wake.clone()
+    }
+
+    /// Windows committed since they were last drawn; clears the set.
+    pub(crate) fn take_dirty(&self) -> BTreeSet<WindowId> {
+        std::mem::take(&mut self.state.borrow_mut().dirty)
+    }
+
+    pub fn window_handle(&self, window: WindowId) -> Option<AnyWindowHandle> {
+        self.state.borrow().windows.get(&window)?.handle
+    }
+
+    /// The nd window a GPUI window shows.
+    pub fn window_for(&self, handle: AnyWindowHandle) -> Option<WindowId> {
+        self.state.borrow().windows.iter().find(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id)
+    }
+
+    /// The node's bounds in window coordinates, as GPUI last laid it out.
+    pub fn bounds(&self, node: NodeId) -> Option<Rect> {
+        self.bounds.borrow().get(&node).copied()
+    }
+
+    pub fn is_live(&self, node: NodeId) -> bool {
+        self.state.borrow().nodes.contains_key(&node)
+    }
+
+    /// Live nodes, for tests asserting the backend's copy matches the reconciler.
+    pub fn live_count(&self) -> usize {
+        self.state.borrow().nodes.len()
+    }
+
+    pub fn children(&self, node: NodeId) -> Vec<NodeId> {
+        self.state.borrow().nodes.get(&node).map_or_else(Vec::new, |n| n.children.clone())
+    }
+
+    fn window_of(&self, node: NodeId) -> Option<WindowId> {
+        let state = self.state.borrow();
+        let mut at = node;
+        loop {
+            let n = state.nodes.get(&at)?;
+            match n.parent {
+                Some(p) => at = p,
+                None => return state.windows.iter().find(|(_, r)| r.root == Some(at)).map(|(id, _)| *id),
+            }
+        }
+    }
+
+    /// Runs `f` on the GPUI window when GPUI's app is free (not drawing, not dispatching).
+    fn with_window<R>(
+        &self,
+        window: WindowId,
+        f: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> R,
+    ) -> Result<R, ActionError> {
+        let (app, handle) = {
+            let state = self.state.borrow();
+            let handle = state.windows.get(&window).and_then(|r| r.handle).ok_or(ActionError::WindowGone)?;
+            (state.app.clone().ok_or_else(|| not_actionable("no GPUI app"))?, handle)
+        };
+        let mut app = app;
+        gpui::AppContext::update_window(&mut app, handle, |_, window, cx| f(window, cx))
+            .map_err(|e| not_actionable(format!("GPUI window busy or gone: {e}")))
+    }
+
+    fn center(&self, node: NodeId) -> Result<(WindowId, Point), ActionError> {
+        let window = self.window_of(node).ok_or_else(|| not_actionable(format!("{node:?} is not in a window")))?;
+        let b = self.bounds(node).ok_or_else(|| not_actionable(format!("{node:?} has not been laid out")))?;
+        Ok((window, Point { x: b.origin.x + b.size.width / 2., y: b.origin.y + b.size.height / 2. }))
+    }
+}
+
+impl Backend for GpuiBackend {
+    fn set_event_queue(&mut self, events: EventQueue) {
+        self.state.borrow_mut().events = events;
+    }
+
+    fn begin(&mut self, window: WindowId) {
+        let mut state = self.state.borrow_mut();
+        assert!(state.open.is_none(), "transactions do not nest");
+        state.open = Some(window);
+        state.windows.entry(window).or_default();
+    }
+
+    fn create(&mut self, node: NodeId, kind: NodeKind, props: &Props) {
+        let mut state = self.state.borrow_mut();
+        if kind == NodeKind::Root {
+            let window = state.open.expect("seam ops arrive inside begin/commit");
+            state.windows.entry(window).or_default().root = Some(node);
+        }
+        state.nodes.insert(node, Node { kind, props: props.clone(), parent: None, children: Vec::new() });
+    }
+
+    fn insert(&mut self, parent: NodeId, node: NodeId, before: Option<NodeId>) {
+        let mut state = self.state.borrow_mut();
+        let siblings = &mut state.nodes.get_mut(&parent).expect("live parent").children;
+        let at = before.and_then(|b| siblings.iter().position(|c| *c == b)).unwrap_or(siblings.len());
+        siblings.insert(at, node);
+        state.nodes.get_mut(&node).expect("live node").parent = Some(parent);
+    }
+
+    fn move_node(&mut self, node: NodeId, parent: NodeId, before: Option<NodeId>) {
+        self.remove(node);
+        self.insert(parent, node, before);
+    }
+
+    fn remove(&mut self, node: NodeId) {
+        let mut state = self.state.borrow_mut();
+        let Some(parent) = state.nodes.get_mut(&node).and_then(|n| n.parent.take()) else { return };
+        if let Some(p) = state.nodes.get_mut(&parent) {
+            p.children.retain(|c| *c != node);
+        }
+    }
+
+    fn update(&mut self, node: NodeId, patch: &PropsPatch) {
+        let mut state = self.state.borrow_mut();
+        state.nodes.get_mut(&node).expect("live node").props = patch.new.clone();
+    }
+
+    fn set_frame(&mut self, _node: NodeId, _frame: Rect) {}
+
+    fn surface(&mut self, _node: NodeId, _op: &SurfaceOp) {}
+
+    /// nd owns focus (3.12); drawn nodes have no platform focus to mirror. The window repaints so
+    /// focus styling follows.
+    fn focus(&mut self, _node: Option<NodeId>) {}
+
+    fn release(&mut self, node: NodeId) {
+        let mut state = self.state.borrow_mut();
+        if let Some(n) = state.nodes.remove(&node) {
+            if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {
+                p.children.retain(|c| *c != node);
+            }
+            for c in n.children {
+                if let Some(child) = state.nodes.get_mut(&c) {
+                    child.parent = None;
+                }
+            }
+        }
+        drop(state);
+        self.bounds.borrow_mut().remove(&node);
+    }
+
+    fn commit(&mut self, window: WindowId) {
+        let mut state = self.state.borrow_mut();
+        assert_eq!(state.open, Some(window), "commit closes the open transaction");
+        state.open = None;
+        state.dirty.insert(window);
+    }
+
+    /// Never asked: GPUI lays out with its own Taffy (`retains_frames` is false).
+    fn measure(&mut self, _node: NodeId, _constraint: Constraint) -> Size {
+        Size::default()
+    }
+
+    fn boundary_size(&self, _node: NodeId) -> Option<Size> {
+        None
+    }
+
+    fn retains_frames(&self) -> bool {
+        false
+    }
+
+    fn probe(&self, node: NodeId) -> Probe {
+        let mut probe = Probe { bounds: self.bounds(node), ..Probe::default() };
+        if let Ok(state) = self.state.try_borrow()
+            && let Some(n) = state.nodes.get(&node)
+            && is_button(n.kind)
+        {
+            probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
+            probe.enabled = Some(true);
+        }
+        probe
+    }
+
+    fn window_state(&self, window: WindowId) -> Option<WindowState> {
+        if let Ok(fresh) = self.with_window(window, |w, _| crate::host::window_state(w)) {
+            return Some(fresh);
+        }
+        Some(self.state.try_borrow().ok()?.windows.get(&window)?.state.clone())
+    }
+
+    /// A button's click is the same `ClickEvent` its pointer handler emits, without moving a
+    /// pointer: the drawn equivalent of an accessibility press. Pointer-shaped actions go through
+    /// [`Backend::synthesize`] at the node's center. The host drains the events after the job.
+    fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        let kind = {
+            let state = self.state.borrow();
+            state.nodes.get(&node).map(|n| n.kind).ok_or_else(|| not_actionable(format!("{node:?} is not live")))?
+        };
+        let press = |times: usize| {
+            let events = self.state.borrow().events.clone();
+            for _ in 0..times {
+                events.emitter(node).emit(ClickEvent);
+            }
+        };
+        match action {
+            SemanticAction::Click if is_button(kind) => press(1),
+            SemanticAction::DoubleClick if is_button(kind) => press(2),
+            SemanticAction::RightClick | SemanticAction::Hover => {
+                use nd_ui::semantics::{MouseButton, PointerPhase};
+                let (window, at) = self.center(node)?;
+                let phases: &[PointerPhase] = match action {
+                    SemanticAction::Hover => &[PointerPhase::Move],
+                    _ => &[PointerPhase::Down, PointerPhase::Up],
+                };
+                for phase in phases {
+                    let input =
+                        SyntheticInput::Pointer { phase: *phase, at, button: MouseButton::Right, click_count: 1 };
+                    self.synthesize(window, &input)?;
+                }
+            }
+            _ => return Err(ActionError::Unsupported(format!("{action:?} on {kind:?}"))),
+        }
+        Ok(())
+    }
+
+    /// Queues the input for the GPUI window's own event path, as the platform would deliver it.
+    /// The host dispatches it on its next pump, after the job that posted it returned (the input
+    /// reaches nd dispatch, which needs the app the job holds).
+    fn synthesize(&mut self, window: WindowId, input: &SyntheticInput) -> Result<(), ActionError> {
+        let mut state = self.state.borrow_mut();
+        if state.windows.get(&window).and_then(|r| r.handle).is_none() {
+            return Err(ActionError::WindowGone);
+        }
+        state.pending.extend(crate::input::platform_inputs(input).into_iter().map(|e| (window, e)));
+        Ok(())
+    }
+
+    /// The scene GPUI last drew, rendered offscreen. Needs the `capture` feature (GPUI's
+    /// `render_to_image`); Linux windows other than headless ones have no readback yet.
+    fn capture(&mut self, window: WindowId) -> Result<Capture, ActionError> {
+        #[cfg(feature = "capture")]
+        {
+            let image = self
+                .with_window(window, |w, _| w.render_to_image())?
+                .map_err(|e| ActionError::Unsupported(format!("capture: {e}")))?;
+            crate::input::png(&image).map_err(|e| not_actionable(format!("PNG encoding: {e}")))
+        }
+        #[cfg(not(feature = "capture"))]
+        {
+            let _ = window;
+            Err(ActionError::Unsupported("capture needs nd-backend-gpui's `capture` feature".into()))
+        }
+    }
+}
+
+impl GpuiBackend {
+    /// The props of a live node, for the element builder.
+    pub(crate) fn button_label(props: &Props) -> &ButtonProps {
+        self::props(props, "Button")
+    }
+}

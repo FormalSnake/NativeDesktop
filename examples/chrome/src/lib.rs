@@ -16,10 +16,8 @@ pub struct Mail {
 impl Mail {
     fn delete(&mut self, _: &DeleteMessage, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
-        let alert = Alert::new("Delete this message?")
-            .message("It moves to the Trash.")
-            .destructive("Delete")
-            .cancel("Cancel");
+        let alert =
+            Alert::new("Delete this message?").message("It moves to the Trash.").destructive("Delete").cancel("Cancel");
         window.alert(cx, alert, move |answer, cx| {
             let _ = this.update(cx, |this, cx| {
                 this.status = if answer.0 == 0 { "Deleted".into() } else { "Kept".into() };
@@ -120,26 +118,22 @@ impl Render for Settings {
             form().child(
                 form_section()
                     .title("Reading")
-                    .child(
-                        form_row("Density").child(
-                            select("density", ["Comfortable", "Compact"])
-                                .selected(self.density)
-                                .on_change(cx.listener(|this, e: &SelectChanged, _, cx| {
-                                    this.density = e.index;
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                    .child(
-                        form_row("Text size").help("Applies to the message list").child(
-                            slider("size", self.size).range(11.0..=24.0).w(px(180.)).on_change(cx.listener(
-                                |this, e: &SliderChanged, _, cx| {
-                                    this.size = e.value;
-                                    cx.notify();
-                                },
-                            )),
-                        ),
-                    ),
+                    .child(form_row("Density").child(
+                        select("density", ["Comfortable", "Compact"]).selected(self.density).on_change(cx.listener(
+                            |this, e: &SelectChanged, _, cx| {
+                                this.density = e.index;
+                                cx.notify();
+                            },
+                        )),
+                    ))
+                    .child(form_row("Text size").help("Applies to the message list").child(
+                        slider("size", self.size).range(11.0..=24.0).w(px(180.)).on_change(cx.listener(
+                            |this, e: &SliderChanged, _, cx| {
+                                this.size = e.value;
+                                cx.notify();
+                            },
+                        )),
+                    )),
             )
         } else {
             form().child(
@@ -186,10 +180,8 @@ pub fn init(cx: &mut App) -> WindowHandle<Mail> {
         cx,
         [
             Menu::app([MenuItem::action("Settings…", OpenSettings)]),
-            Menu::new("File").items([
-                MenuItem::action("New Message", NewMessage),
-                MenuItem::action("Attach File…", OpenFile),
-            ]),
+            Menu::new("File")
+                .items([MenuItem::action("New Message", NewMessage), MenuItem::action("Attach File…", OpenFile)]),
             Menu::new("Message").items([MenuItem::action("Delete", DeleteMessage).destructive()]),
             Menu::new("View").items([MenuItem::action("Show Inspector", ToggleInspector)]),
         ],

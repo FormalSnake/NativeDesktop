@@ -493,6 +493,31 @@ impl App {
         }
     }
 
+    /// The backend's report of where the OS window controls sit. Elements padded by
+    /// `titlebar_insets()` lay out again and the window's root view renders again, so a view
+    /// reading [`Window::titlebar_insets`] sees the change.
+    pub fn set_titlebar_insets(&mut self, id: WindowId, insets: crate::TitlebarInsets) {
+        let Some(slot) = self.windows.get_mut(&id) else { return };
+        if slot.window.as_ref().is_some_and(|w| w.titlebar_insets() == insets) {
+            return;
+        }
+        if let Some(window) = slot.window.as_mut() {
+            window.set_titlebar_insets(insets);
+        }
+        if let Some(tree) = slot.tree.as_mut() {
+            tree.set_titlebar_insets(insets);
+            let root = tree.root_view_id();
+            self.dirty.insert(root);
+        }
+    }
+
+    /// Renders the window's root view again in the next frame, as if it were notified.
+    pub fn refresh_window(&mut self, id: WindowId) {
+        if let Some(root) = self.windows.get(&id).and_then(|w| w.tree.as_ref()).map(|t| t.root_view_id()) {
+            self.dirty.insert(root);
+        }
+    }
+
     /// The window's display clock ticked: the next frame of that window renders for `time`.
     pub fn tick_window(&mut self, id: WindowId, time: FrameTime) {
         if let Some(window) = self.windows.get_mut(&id).and_then(|w| w.window.as_mut()) {

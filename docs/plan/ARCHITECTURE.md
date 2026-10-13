@@ -85,21 +85,23 @@ and swap chain, the per-window AccessKit adapter), so protocol work happens insi
 it. `nativedesktop/zed` (branch `nd/<snapshot>`) is therefore a maintained fork from M0, consumed
 with `[patch.crates-io]` on the `gpui-pre-*` crates, with a rebase gate: each weekly bump rebases
 the queue and must pass tiers 1-2 before it merges. `nd-os-*` crates consume the patched APIs; they
-own no protocol objects. nd semantics reach AccessKit through GPUI's own integration (element
+own no protocol objects, and plug into `nd-backend-gpui` through its `OsHooks` trait (window
+options before open, setup after open, titlebar insets, drawn controls, measured frame times).
+The queue is applied to the matching gpui-fast crates too, so `nd-gpui/fast` carries it. nd semantics reach AccessKit through GPUI's own integration (element
 roles and labels from the semantic tree), never a second adapter.
 
 | Patch | Lane | Upstream |
 | --- | --- | --- |
-| Raw key and IME event hook so nd dispatch runs instead of GPUI's per-frame tree (3.12) | M0 dispatch | to file |
+| Raw IME event hook so nd dispatch runs instead of GPUI's per-frame tree (3.12). Keys need none: `App::intercept_keystrokes` runs before GPUI's dispatch tree and nd stops it when a binding took the key | M6 (text inputs) | to file |
 | Embedded-surface `PlatformWindow` for macOS, one shared renderer and atlas per window (3.8) | M0/M6 | to file |
 | `deferred`/`anchored` overlays from embedded surfaces routed to nd's overlay layer | M6 | to file |
 | Frame clock injection for animations and springs | M1 | to file |
 | `momentumPhase` forwarding; rotate and smart-magnify events (macOS) | M4 | to file |
 | Wayland `pointer-gestures` swipe and hold, `wp_presentation`, `xdg-toplevel-drag`, KDE blur, `xdg_popup` for nd menus | M2/M4 | to file |
-| X11 refresh re-query on output change | M2 | to file |
+| X11 refresh of the window's own CRTC, re-queried when it moves (`0001`) | M2 | to file |
 | Windows per-monitor pacing; `WM_POINTER` pen and touch; Acrylic backdrop; caption variant from the M2 spike (5.4) | M2 | to file |
-| Occlusion-based throttling instead of the inactive-window cap (5.3) | M2 | to file |
-| Remove the GL path when Vulkan wins (youtubemusic's local patch) | M2 | zed #63313 (open) |
+| Occlusion-based throttling instead of the inactive-window cap (5.3): no patch. gpui-pre 0.3.9 stops frames for hidden windows (`occlusionState`, xdg `suspended`, X11 `VisibilityNotify`) and the cap is a per-window option nd turns off (`inactive_frame_interval: None`). Covered windows on Windows go with the Windows pacing patch (`DXGI_STATUS_OCCLUDED`) | M2 | none |
+| Remove the GL path when Vulkan wins (youtubemusic's local patch, `0002`) | M2 | zed #63313 (open) |
 | Window composition: native surface between GPUI base and overlay layers | M4 | zed #62379 (open), shipped in gpui-fast |
 | Alpha-preserving content over glass | M3 | zed #58833 (open) |
 | Linux headless rendering, only if `gpui-pre 0.3.9` lacks it (checked in M0) | M0 | zed #64718 (merged) |

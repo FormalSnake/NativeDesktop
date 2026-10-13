@@ -1,0 +1,30 @@
+[package]
+name = "nd-backend-gpui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `Backend::capture` through GPUI's `render_to_image` (its test-support surface). Tier 2 tests and
+# automation-heavy dev builds turn it on; release apps leave it off.
+capture = ["nd-gpui/test-support", "dep:image"]
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+nd-diag.workspace = true
+nd-components.workspace = true
+nd-gpui = { workspace = true, features = ["platform"] }
+futures = "0.3.34"
+image = { version = "0.25.10", default-features = false, features = ["png"], optional = true }
+
+[dev-dependencies]
+nd-gpui = { workspace = true, features = ["platform", "test-support"] }
+nd-backend-gpui = { path = ".", features = ["capture"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[[test]]
+name = "headless"
+harness = false

@@ -196,6 +196,12 @@ pub struct DivProps {
     /// What a layer above `nd-ui` attached to this container (a subtree theme override, a
     /// context menu marker), for the backends that read it.
     pub scope: Option<Scope>,
+    /// Pointer-down moves the window (ARCHITECTURE.md 5.4). Interactive children opt out by
+    /// hit-test: a button inside never starts a move.
+    pub drag_region: bool,
+    /// Padded by the window's [`TitlebarInsets`](crate::TitlebarInsets), so content never sits
+    /// under the OS window controls.
+    pub titlebar_insets: bool,
 }
 
 /// Type-erased props a layer above `nd-ui` hangs on a `div`, compared by value.
@@ -229,6 +235,8 @@ pub struct Div {
     dispatch: DispatchProps,
     scope: Option<Scope>,
     handlers: Vec<(TypeId, Handler)>,
+    drag_region: bool,
+    titlebar_insets: bool,
 }
 
 #[track_caller]
@@ -248,6 +256,16 @@ pub fn v_flex() -> Div {
     Div::at(Location::caller()).flex().flex_col()
 }
 
+/// A container whose background moves the window: pointer-down starts the OS move, a double
+/// click follows the platform (zoom on macOS, maximize elsewhere). Buttons and other interactive
+/// children inside it keep their clicks.
+#[track_caller]
+pub fn drag_region() -> Div {
+    let mut div = Div::at(Location::caller());
+    div.drag_region = true;
+    div
+}
+
 impl Div {
     fn at(site: &'static Location<'static>) -> Self {
         Div {
@@ -257,7 +275,17 @@ impl Div {
             dispatch: DispatchProps::default(),
             scope: None,
             handlers: Vec::new(),
+            drag_region: false,
+            titlebar_insets: false,
         }
+    }
+
+    /// Pads the element by the window's titlebar insets: the leading and trailing space the OS
+    /// window controls take, and their height as a minimum. A custom title row uses it so no
+    /// margin past the controls is tuned by hand.
+    pub fn titlebar_insets(mut self) -> Self {
+        self.titlebar_insets = true;
+        self
     }
 
     /// Keys the element explicitly, for siblings whose order or presence changes.
@@ -315,7 +343,12 @@ impl IntoElement for Div {
         AnyElement::node(NodeElement {
             kind: NodeKind::View,
             key: self.key,
-            props: Rc::new(DivProps { style: self.style.clone(), scope: self.scope }),
+            props: Rc::new(DivProps {
+                style: self.style.clone(),
+                scope: self.scope,
+                drag_region: self.drag_region,
+                titlebar_insets: self.titlebar_insets,
+            }),
             layout: self.style,
             measured: false,
             children: self.children,

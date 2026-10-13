@@ -76,6 +76,18 @@ impl WindowOptions {
     }
 }
 
+/// The room the OS window controls take in the window's top row, in logical points (5.4):
+/// traffic lights leading on macOS, caption buttons trailing on Windows, either side under a
+/// client-decorated Linux window, nothing under server decorations (Hyprland). The backend
+/// reports them; [`Div::titlebar_insets`](crate::Div::titlebar_insets) pads by them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TitlebarInsets {
+    pub leading: f32,
+    pub trailing: f32,
+    /// The height of the controls' row; a padded element is at least this tall.
+    pub height: f32,
+}
+
 /// Per-window state handed to `render` and to handlers.
 pub struct Window {
     id: WindowId,
@@ -83,6 +95,7 @@ pub struct Window {
     viewport: Size,
     clock: FrameTime,
     options: WindowOptions,
+    insets: TitlebarInsets,
 }
 
 impl Window {
@@ -97,6 +110,7 @@ impl Window {
             viewport,
             clock: FrameTime::default(),
             options: options.clone(),
+            insets: TitlebarInsets::default(),
         }
     }
 
@@ -120,6 +134,15 @@ impl Window {
 
     pub(crate) fn set_viewport_size(&mut self, size: Size) {
         self.viewport = size;
+    }
+
+    /// Where the OS window controls sit, as the backend last reported them.
+    pub fn titlebar_insets(&self) -> TitlebarInsets {
+        self.insets
+    }
+
+    pub(crate) fn set_titlebar_insets(&mut self, insets: TitlebarInsets) {
+        self.insets = insets;
     }
 
     /// The window's frame clock: its display's refresh on a real host, the test clock in tests.

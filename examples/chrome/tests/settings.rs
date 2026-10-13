@@ -13,7 +13,9 @@ fn main() {
         return;
     }
     let filters: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
-    if args.iter().any(|a| a == "--ignored") || !(filters.is_empty() || filters.iter().any(|f| name.contains(f.as_str()))) {
+    if args.iter().any(|a| a == "--ignored")
+        || !(filters.is_empty() || filters.iter().any(|f| name.contains(f.as_str())))
+    {
         return;
     }
     #[cfg(target_os = "macos")]
@@ -24,10 +26,10 @@ fn main() {
 mod settings {
     use std::time::{Duration, Instant};
 
+    use nd::appkit::AppHost;
     use nd::appkit::objc2::Message;
     use nd::appkit::objc2::rc::Retained;
     use nd::appkit::objc2_app_kit::{NSPopUpButton, NSView, NSWindow, NSWindowToolbarStyle};
-    use nd::appkit::AppHost;
 
     struct Checks(u32);
 

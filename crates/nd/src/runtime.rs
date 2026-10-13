@@ -22,10 +22,9 @@ pub mod prelude {
         Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, Mapping, Menu, MenuItem,
         MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select, SelectChanged,
         Separator, Slider, SliderChanged, SourceItem, SourceList, SourceSelected, SubtreeOverrides, SystemItem,
-        TabSelected, form, form_row, form_section,
-        Titlebar as TitlebarElement, WindowChromeExt, glass, glass_group, icon_button, inspector, open_settings,
-        select, separator, set_menus, sidebar, slider, source_item, source_list, system_item, titlebar,
-        toolbar_sidebar_toggle,
+        TabSelected, Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group,
+        icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
+        system_item, titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::controls::{
         Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, ListState, Painter, Processor, canvas,
@@ -114,7 +113,8 @@ impl Application {
             init(cx);
             crate::theme::sync(cx);
         });
-        mac::watch_theme_files(&watched, host.sender());
+        let sender = host.sender();
+        sources::watch(&watched, move |job| sender.send(job));
         host
     }
 
@@ -123,6 +123,10 @@ impl Application {
     /// `init`. Diagnostics (logs, incident bundles, crash and hang capture) start first; in the
     /// copy of the executable launched as the crash helper this never returns.
     pub fn run<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
+        #[cfg(all(target_os = "macos", feature = "gpui"))]
+        if std::env::var_os("ND_BACKEND").is_some_and(|v| v == "gpui") {
+            return self.run_gpui(init);
+        }
         #[cfg(target_os = "macos")]
         {
             nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "appkit"));
@@ -139,34 +143,55 @@ impl Application {
                     if let Err(e) = nd_automation::start_from_env(move |job| jobs.send(job)) {
                         eprintln!("nd: automation socket: {e}");
                     }
-                    mac::watch_theme_files(&watched, sender);
+                    sources::watch(&watched, move |job| sender.send(job));
                 },
             )
         }
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = init;
-            Err(Error::NoBackend)
-        }
+        self.run_gpui(init)
+    }
+
+    #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
+    fn run_gpui<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
+        nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "gpui"));
+        let files = crate::theme::ThemeFiles::for_app(self.manifest.name);
+        let watched = files.clone();
+        let app_theme = self.theme.unwrap_or_default();
+        let patterns = self.patterns;
+        nd_backend_gpui::run_with(
+            nd_backend_gpui::NoOsHooks,
+            move |cx| {
+                let preset =
+                    if cfg!(target_os = "macos") { nd_theme::Preset::Adwaita } else { nd_theme::Preset::current() };
+                let mut registry = nd_theme::ThemeRegistry::new(preset);
+                registry.set_app_override(app_theme);
+                sources::load(&mut registry, &files);
+                cx.set_global(crate::theme::ThemeState(registry));
+                cx.set_global(patterns);
+                init(cx);
+                crate::theme::sync(cx);
+            },
+            move |sender| {
+                let jobs = sender.clone();
+                if let Err(e) = nd_automation::start_from_env(move |job| jobs.send(job)) {
+                    eprintln!("nd: automation socket: {e}");
+                }
+                sources::watch(&watched, move |job| sender.send(job));
+            },
+        );
+        Ok(())
     }
 }
 
-#[cfg(target_os = "macos")]
-mod mac {
-    use std::rc::Rc;
-
-    use nd_backend_appkit::objc2_foundation::MainThreadMarker;
-    use nd_backend_appkit::{AppKitBackend, AppKitChrome, AppSender, AppearanceObserver, os_theme};
-    use nd_theme::{MatugenTheme, Preset, ThemeFileWatcher, ThemeFiles, ThemeRefinement, ThemeRegistry, theme_toml};
+/// The palette sources every backend shares: the app's `theme.toml` and matugen `theme.json`,
+/// read at launch and watched for live reload.
+mod sources {
+    use nd_theme::{MatugenTheme, ThemeFileWatcher, ThemeFiles, ThemeRegistry, theme_toml};
     use nd_ui::App;
 
-    use crate::chrome::{Chrome, Patterns};
-    use crate::theme::{ThemeState, update_registry};
+    use crate::theme::update_registry;
 
-    /// Keeps the appearance observer and the file watchers alive with the app.
-    struct ThemeSources {
-        _observer: AppearanceObserver,
-    }
+    pub type Job = Box<dyn FnOnce(&mut App) + Send>;
 
     struct Watchers(#[allow(dead_code)] Vec<ThemeFileWatcher>);
 
@@ -179,6 +204,53 @@ mod mac {
         parse(&text).map_err(|e| eprintln!("nd: {}: {e}", path.display())).ok()
     }
 
+    /// Loads both files into `registry` once.
+    pub fn load(registry: &mut ThemeRegistry, files: &ThemeFiles) {
+        if let Some(user) = read(files.toml.as_deref(), theme_toml::parse) {
+            registry.set_user(user);
+        }
+        registry.set_matugen(read(files.matugen.as_deref(), MatugenTheme::parse));
+    }
+
+    /// `theme.toml` and `theme.json` reload live: each new parseable version reaches the app on
+    /// the main thread through `send` and recolours it in the next frame.
+    pub fn watch(files: &ThemeFiles, send: impl Fn(Job) + Clone + Send + 'static) {
+        let mut watchers = Vec::new();
+        if let Some(path) = &files.toml {
+            let send = send.clone();
+            let watcher = ThemeFileWatcher::spawn(path, theme_toml::parse, move |theme| {
+                send(Box::new(move |app| update_registry(app, |r| r.set_user(theme))));
+            });
+            watchers.extend(watcher.map_err(|e| eprintln!("nd: watching {}: {e}", path.display())).ok());
+        }
+        if let Some(path) = &files.matugen {
+            let send = send.clone();
+            let watcher = ThemeFileWatcher::spawn(path, MatugenTheme::parse, move |theme| {
+                send(Box::new(move |app| update_registry(app, |r| r.set_matugen(Some(theme)))));
+            });
+            watchers.extend(watcher.map_err(|e| eprintln!("nd: watching {}: {e}", path.display())).ok());
+        }
+        send(Box::new(move |app| app.set_global(Watchers(watchers))));
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::rc::Rc;
+
+    use nd_backend_appkit::objc2_foundation::MainThreadMarker;
+    use nd_backend_appkit::{AppKitBackend, AppKitChrome, AppearanceObserver, os_theme};
+    use nd_theme::{Preset, ThemeFiles, ThemeRefinement, ThemeRegistry};
+    use nd_ui::App;
+
+    use crate::chrome::{Chrome, Patterns};
+    use crate::theme::{ThemeState, update_registry};
+
+    /// Keeps the appearance observer and the file watchers alive with the app.
+    struct ThemeSources {
+        _observer: AppearanceObserver,
+    }
+
     /// The theme registry from the OS and the app's files, the chrome services, the default
     /// menu bar, and the observer that re-reads the OS on an appearance or accent change.
     pub fn install(cx: &mut App, files: &ThemeFiles, app_theme: ThemeRefinement, patterns: Patterns) {
@@ -186,10 +258,7 @@ mod mac {
         let mut registry = ThemeRegistry::new(Preset::MacOs);
         registry.set_os(os_theme(mtm));
         registry.set_app_override(app_theme);
-        if let Some(user) = read(files.toml.as_deref(), theme_toml::parse) {
-            registry.set_user(user);
-        }
-        registry.set_matugen(read(files.matugen.as_deref(), MatugenTheme::parse));
+        super::sources::load(&mut registry, files);
         cx.set_global(ThemeState(registry));
         if let Some(backend) = cx.backend_as::<AppKitBackend>() {
             cx.set_global(Chrome(Rc::new(AppKitChrome::new(backend.clone()))));
@@ -200,26 +269,5 @@ mod mac {
             nd_backend_appkit::defer_with_app(move |app| update_registry(app, |r| r.set_os(os_theme(mtm))));
         });
         cx.set_global(ThemeSources { _observer: observer });
-    }
-
-    /// `theme.toml` and `theme.json` reload live: each new parseable version reaches the app on
-    /// the main thread and recolours it in the next frame.
-    pub fn watch_theme_files(files: &ThemeFiles, sender: AppSender) {
-        let mut watchers = Vec::new();
-        if let Some(path) = &files.toml {
-            let send = sender.clone();
-            let watcher = ThemeFileWatcher::spawn(path, theme_toml::parse, move |theme| {
-                send.send(Box::new(move |app| update_registry(app, |r| r.set_user(theme))));
-            });
-            watchers.extend(watcher.map_err(|e| eprintln!("nd: watching {}: {e}", path.display())).ok());
-        }
-        if let Some(path) = &files.matugen {
-            let send = sender.clone();
-            let watcher = ThemeFileWatcher::spawn(path, MatugenTheme::parse, move |theme| {
-                send.send(Box::new(move |app| update_registry(app, |r| r.set_matugen(Some(theme)))));
-            });
-            watchers.extend(watcher.map_err(|e| eprintln!("nd: watching {}: {e}", path.display())).ok());
-        }
-        sender.send(Box::new(move |app| app.set_global(Watchers(watchers))));
     }
 }

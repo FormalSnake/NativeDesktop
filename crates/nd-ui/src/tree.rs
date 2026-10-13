@@ -13,16 +13,15 @@ use std::rc::Rc;
 
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_gpui::gpui::{KeyBinding, StyleRefinement};
-use taffy::TaffyTree;
-use taffy::prelude::TaffyMaxContent;
+use nd_gpui::taffy::{self, TaffyTree, prelude::TaffyMaxContent};
 
 use crate::app::{AnyView, App, EntityId};
-use crate::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch};
+use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKind, Props, PropsPatch};
 use crate::dispatch::DispatchTree;
-use crate::element::{AnyElement, DispatchProps, Element, Handler, Key, NodeElement, RootProps};
-use crate::layout::to_taffy;
+use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
+use crate::layout::{to_taffy, with_titlebar_insets};
 use crate::transaction::{MeasureCache, Op, Transaction};
-use crate::window::Window;
+use crate::window::{TitlebarInsets, Window};
 
 mod semantic_walk;
 
@@ -63,7 +62,7 @@ struct RNode {
     fresh: bool,
     /// The size a native layout container gives this node (3.15 layout boundaries); its own
     /// style's position and size are replaced by it.
-    boundary: Option<Size>,
+    boundary: Option<(Size, BoundaryInsets)>,
 }
 
 struct ViewSlot {
@@ -85,6 +84,7 @@ pub(crate) struct Tree {
     taffy: TaffyTree<NodeId>,
     tx: Transaction,
     needs_layout: bool,
+    insets: TitlebarInsets,
     /// Views placed in this frame's output so far; a second placement is a render bug.
     placed: HashSet<EntityId>,
     /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
@@ -114,9 +114,18 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
 
 /// The node's own style, or, inside a native layout container, that style pinned to the box
 /// the container gives it.
-fn boundary_style(layout: &StyleRefinement, boundary: Option<Size>) -> taffy::Style {
-    let mut style = to_taffy(layout);
-    if let Some(size) = boundary {
+fn pin_to_boundary(mut style: taffy::Style, boundary: Option<(Size, BoundaryInsets)>) -> taffy::Style {
+    if let Some((size, insets)) = boundary {
+        let add = |p: taffy::LengthPercentage, by: f32| match p.into_raw().tag() {
+            taffy::CompactLength::LENGTH_TAG => taffy::LengthPercentage::length(p.into_raw().value() + by),
+            _ => taffy::LengthPercentage::length(by),
+        };
+        style.padding = taffy::Rect {
+            top: add(style.padding.top, insets.top),
+            right: add(style.padding.right, insets.right),
+            bottom: add(style.padding.bottom, insets.bottom),
+            left: add(style.padding.left, insets.left),
+        };
         style.position = taffy::Position::Absolute;
         style.inset = taffy::Rect {
             left: taffy::LengthPercentageAuto::length(0.),
@@ -131,6 +140,10 @@ fn boundary_style(layout: &StyleRefinement, boundary: Option<Size>) -> taffy::St
         style.max_size = taffy::Size::auto();
     }
     style
+}
+
+fn pads(props: &Props) -> bool {
+    props.downcast_ref::<DivProps>().is_some_and(|p| p.titlebar_insets)
 }
 
 fn root_style(size: Size) -> taffy::Style {
@@ -188,6 +201,7 @@ impl Tree {
             taffy,
             tx,
             needs_layout: true,
+            insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
             dispatch,
@@ -214,6 +228,37 @@ impl Tree {
         let root = self.nodes[&self.root].taffy;
         self.taffy.set_style(root, root_style(size)).expect("taffy root");
         self.needs_layout = true;
+    }
+
+    pub(crate) fn root_view_id(&self) -> EntityId {
+        self.root_view.entity_id()
+    }
+
+    /// Re-lays out the elements padded by the titlebar insets.
+    pub(crate) fn set_titlebar_insets(&mut self, insets: TitlebarInsets) {
+        if self.insets == insets {
+            return;
+        }
+        self.insets = insets;
+        let padded: Vec<NodeId> = self.nodes.iter().filter(|(_, n)| pads(&n.props)).map(|(id, _)| *id).collect();
+        for id in padded {
+            let node = &self.nodes[&id];
+            let style = self.taffy_style(&node.layout, &node.props, node.boundary);
+            self.taffy.set_style(self.nodes[&id].taffy, style).expect("taffy node");
+        }
+        self.needs_layout = true;
+    }
+
+    /// The node's Taffy style: padded by the titlebar insets when it asks for them, pinned to
+    /// the box a native layout container gives it.
+    fn taffy_style(
+        &self,
+        layout: &StyleRefinement,
+        props: &Props,
+        boundary: Option<(Size, BoundaryInsets)>,
+    ) -> taffy::Style {
+        let style = if pads(props) { to_taffy(&with_titlebar_insets(layout, self.insets)) } else { to_taffy(layout) };
+        pin_to_boundary(style, boundary)
     }
 
     /// Releases every node in one last transaction.
@@ -276,7 +321,7 @@ impl Tree {
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
         self.tx.push(Op::Create { node: id, kind: el.kind, props: el.props.clone() });
-        let style = to_taffy(&el.layout);
+        let style = self.taffy_style(&el.layout, &el.props, None);
         let taffy = if el.measured { self.taffy.new_leaf_with_context(style, id) } else { self.taffy.new_leaf(style) };
         self.nodes.insert(
             id,
@@ -492,7 +537,9 @@ impl Tree {
 
     fn reconcile_node(&mut self, n: NodeId, el: NodeElement, depth: u32, window: &mut Window, app: &mut App) {
         let node = self.nodes.get_mut(&n).expect("node");
+        let mut restyle = false;
         if !node.props.props_eq(&*el.props) {
+            restyle = pads(&node.props) || pads(&el.props);
             let patch = PropsPatch { old: mem::replace(&mut node.props, el.props), new: node.props.clone() };
             self.tx.push(Op::Update { node: n, patch });
             if node.measured {
@@ -500,11 +547,14 @@ impl Tree {
                 self.needs_layout = true;
             }
         }
-        if node.layout != el.layout {
-            self.taffy.set_style(node.taffy, boundary_style(&el.layout, node.boundary)).expect("taffy node");
+        if node.layout != el.layout || restyle {
             node.layout = el.layout;
+            let node = &self.nodes[&n];
+            let style = self.taffy_style(&node.layout, &node.props, node.boundary);
+            self.taffy.set_style(self.nodes[&n].taffy, style).expect("taffy node");
             self.needs_layout = true;
         }
+        let node = self.nodes.get_mut(&n).expect("node");
         node.handlers = el.handlers;
         node.dispatch = el.dispatch;
         self.bind_dispatch(n);
@@ -606,13 +656,21 @@ impl Tree {
             return Vec::new();
         }
         self.needs_layout = false;
+        // A backend that lays out itself (GPUI) would drop the frames; measuring for them is
+        // wasted work every resize.
+        if !backend.retains_frames() {
+            return Vec::new();
+        }
         // Children of native layout containers (split panes, toolbar items) take the size the
         // container gives them; Taffy lays out inside that box.
-        for (id, node) in &mut self.nodes {
-            let boundary = backend.boundary_size(*id);
-            if boundary != node.boundary {
-                node.boundary = boundary;
-                self.taffy.set_style(node.taffy, boundary_style(&node.layout, boundary)).expect("taffy node");
+        let ids: Vec<NodeId> = self.nodes.keys().copied().collect();
+        for id in ids {
+            let boundary = backend.boundary_size(id).map(|size| (size, backend.boundary_insets(id)));
+            if boundary != self.nodes[&id].boundary {
+                self.nodes.get_mut(&id).expect("node").boundary = boundary;
+                let node = &self.nodes[&id];
+                let style = self.taffy_style(&node.layout, &node.props, boundary);
+                self.taffy.set_style(node.taffy, style).expect("taffy node");
             }
         }
         let root = self.nodes[&self.root].taffy;
@@ -621,8 +679,11 @@ impl Tree {
             taffy::AvailableSpace::MinContent => AvailableSpace::MinContent,
             taffy::AvailableSpace::MaxContent => AvailableSpace::MaxContent,
         };
-        self.taffy
-            .compute_layout_with_measure(root, taffy::Size::MAX_CONTENT, |known, available, _, node, _| {
+        nd_gpui::layout::compute_with_measure(
+            &mut self.taffy,
+            root,
+            taffy::Size::MAX_CONTENT,
+            |known, available, node| {
                 let Some(node) = node else { return taffy::Size::ZERO };
                 let constraint = Constraint {
                     width: known.width.map_or(space(available.width), AvailableSpace::Definite),
@@ -630,8 +691,9 @@ impl Tree {
                 };
                 let size = cache.measure(backend, *node, constraint);
                 taffy::Size { width: known.width.unwrap_or(size.width), height: known.height.unwrap_or(size.height) }
-            })
-            .expect("taffy layout");
+            },
+        )
+        .expect("taffy layout");
         let mut ops = Vec::new();
         let mut stack = self.nodes[&self.root].native.clone();
         while let Some(n) = stack.pop() {

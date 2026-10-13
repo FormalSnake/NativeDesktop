@@ -56,7 +56,7 @@ fn a_binding_fires_in_its_context_and_only_there() {
 
 #[test]
 fn actions_bubble_from_focus_to_root_and_stop_unless_propagated() {
-    let mut tree = tree(vec![KeyBinding::new("secondary-s", Save, None)]);
+    let mut tree = tree(vec![KeyBinding::new("alt-s", Save, None)]);
     tree.on_action(LIST, |_: &Save, cx| {
         cx.cx.log.push("list");
         cx.propagate();
@@ -65,7 +65,7 @@ fn actions_bubble_from_focus_to_root_and_stop_unless_propagated() {
     tree.on_action(ROOT, |_: &Save, cx| cx.cx.log.push("root"));
     let mut app = App::default();
     tree.focus(LIST);
-    assert_eq!(tree.dispatch_key(&key("secondary-s"), &mut app), KeyDispatch::Handled);
+    assert_eq!(tree.dispatch_key(&key("alt-s"), &mut app), KeyDispatch::Handled);
     assert_eq!(app.log, ["list", "sidebar"]);
 }
 
@@ -95,8 +95,7 @@ fn a_bound_action_nobody_handles_leaves_the_key_to_the_platform() {
 
 #[test]
 fn multi_stroke_bindings_hold_the_prefix() {
-    let mut tree =
-        tree(vec![KeyBinding::new("ctrl-x ctrl-s", Chord, None), KeyBinding::new("secondary-s", Save, None)]);
+    let mut tree = tree(vec![KeyBinding::new("ctrl-x ctrl-s", Chord, None), KeyBinding::new("alt-s", Save, None)]);
     tree.on_action(ROOT, |_: &Chord, cx| cx.cx.log.push("chord"));
     tree.on_action(ROOT, |_: &Save, cx| cx.cx.log.push("save"));
     let mut app = App::default();
@@ -105,7 +104,7 @@ fn multi_stroke_bindings_hold_the_prefix() {
     assert_eq!(tree.dispatch_key(&key("ctrl-s"), &mut app), KeyDispatch::Handled);
     // A prefix followed by an unrelated binding drops the prefix and runs the binding.
     assert_eq!(tree.dispatch_key(&key("ctrl-x"), &mut app), KeyDispatch::Pending);
-    assert_eq!(tree.dispatch_key(&key("secondary-s"), &mut app), KeyDispatch::Handled);
+    assert_eq!(tree.dispatch_key(&key("alt-s"), &mut app), KeyDispatch::Handled);
     assert_eq!(app.log, ["chord", "save"]);
 }
 
@@ -286,7 +285,7 @@ mod elements {
     #[test]
     fn listeners_are_replaced_on_every_render_without_a_backend_op() {
         let mut cx = TestApp::new();
-        let window = open(&mut cx, vec![KeyBinding::new("secondary-s", Save, None)]);
+        let window = open(&mut cx, vec![KeyBinding::new("alt-s", Save, None)]);
         let ops = cx.backend().ops().count();
         window.root().update(&mut cx, |w, cx| {
             w.label = "b";

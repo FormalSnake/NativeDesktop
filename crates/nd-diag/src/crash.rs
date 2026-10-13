@@ -62,8 +62,7 @@ impl CrashClient {
         let handler = CrashHandler::attach(unsafe {
             crash_handler::make_crash_event(move |cx: &crash_handler::CrashContext| {
                 let dumped = dumper.request_dump(cx).is_ok();
-                if cx.exception.is_some() {
-                    // A real exception; simulated ones (panics, hangs) carry none.
+                if is_real_crash(cx) {
                     libc::_exit(CRASH_EXIT);
                 }
                 CrashEventResult::Handled(dumped)
@@ -81,8 +80,30 @@ impl CrashClient {
             return false;
         }
         // The server answers pings in order, so the path has landed before the dump request.
-        self.client.ping().is_ok() && self.handler.simulate_exception(None)
+        self.client.ping().is_ok() && simulate(&self.handler)
     }
+}
+
+/// A real exception, as opposed to the simulated ones panics and hangs dump through.
+#[cfg(target_os = "macos")]
+fn is_real_crash(cx: &crash_handler::CrashContext) -> bool {
+    cx.exception.is_some()
+}
+
+/// A real signal; a simulated one is sent by the process itself (`SI_USER`).
+#[cfg(target_os = "linux")]
+fn is_real_crash(cx: &crash_handler::CrashContext) -> bool {
+    cx.siginfo.ssi_code != 0
+}
+
+#[cfg(target_os = "macos")]
+fn simulate(handler: &CrashHandler) -> bool {
+    handler.simulate_exception(None)
+}
+
+#[cfg(target_os = "linux")]
+fn simulate(handler: &CrashHandler) -> bool {
+    matches!(handler.simulate_signal(libc::SIGUSR1 as u32), CrashEventResult::Handled(true))
 }
 
 struct Handler {
