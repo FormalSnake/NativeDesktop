@@ -14,6 +14,7 @@ mod host;
 mod keys;
 mod platform;
 pub mod props;
+mod swift;
 mod toolbar;
 mod traffic_lights;
 mod views;
@@ -26,6 +27,7 @@ pub use frame_clock::{FrameClock, FrameTick};
 pub use host::{HostOptions, WindowHost};
 pub use keys::keystroke;
 pub use platform::NdAppKitPlatform;
+pub use swift::SwiftGauge;
 pub use toolbar::ToolbarHost;
 pub use window::{KeyRouter, NdWindow};
 
