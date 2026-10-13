@@ -11,10 +11,12 @@ mod drawn;
 mod host;
 mod input;
 pub mod os;
+mod overlay;
 pub mod render;
 
 pub use backend::GpuiBackend;
 pub use clock::{DisplayClock, Pacing};
 pub use host::{AppJob, AppSender, GpuiHost, HostBuilder, NdView, run, run_with};
 pub use os::{ChromeContext, FrameRequest, NoOsHooks, OsHooks};
+pub use overlay::GpuiChrome;
 pub use render::Look;

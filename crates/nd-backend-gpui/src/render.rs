@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use nd_components::{ContextMenuRequested, SubtreeScope};
 use nd_core::{NodeId, Rect};
 use nd_gpui::gpui::{
     self, AnyElement, App, Bounds, Decorations, ElementId, FontFeatures, GlobalElementId, Hsla, InspectorElementId,
@@ -17,6 +18,8 @@ use nd_gpui::gpui::{
     StatefulInteractiveElement, Styled, WindowAppearance, WindowControlArea, div, hsla, px,
 };
 use nd_ui::backend::NodeKind;
+use nd_ui::overlay::Overlay;
+use nd_ui::surface::NativeSurface;
 use nd_ui::{
     ClickEvent, DivProps, TextProps, TitlebarInsets, WindowControls, WindowControlsProps, with_titlebar_insets,
 };
@@ -29,6 +32,12 @@ pub(crate) struct Tracked {
     node: NodeId,
     inner: AnyElement,
     bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+}
+
+impl Tracked {
+    pub(crate) fn new(node: NodeId, inner: AnyElement, bounds: Rc<RefCell<HashMap<NodeId, Rect>>>) -> Self {
+        Self { node, inner, bounds }
+    }
 }
 
 impl IntoElement for Tracked {
@@ -173,6 +182,11 @@ impl Build<'_> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Overlay>() => {
+                // Tracked by its content, which the overlay layer places.
+                return self.overlay(id, node, window);
+            }
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<NativeSurface>() => self.surface(id, node),
             NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
@@ -185,9 +199,21 @@ impl Build<'_> {
     fn view(&self, id: NodeId, props: &DivProps, children: Vec<AnyElement>, window: &mut gpui::Window) -> AnyElement {
         let style =
             if props.titlebar_insets { with_titlebar_insets(&props.style, self.insets) } else { props.style.clone() };
+        let menu = props.scope.as_ref().and_then(|s| s.get::<SubtreeScope>()).is_some_and(|s| s.context_menu);
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);
+            if menu {
+                let emit = self.backend.state.borrow().events.emitter(id);
+                let (wake, bounds) = (self.wake.clone(), self.backend.bounds.clone());
+                d = d.on_mouse_down(MouseButton::Right, move |event: &MouseDownEvent, _, cx| {
+                    let origin = bounds.borrow().get(&id).map_or(nd_core::Point::default(), |b| b.origin);
+                    let (x, y) = (event.position.x.as_f32() - origin.x, event.position.y.as_f32() - origin.y);
+                    emit.emit(ContextMenuRequested { node: id, x, y });
+                    wake(cx);
+                    cx.stop_propagation();
+                });
+            }
             return d.children(children).into_any_element();
         }
         let mut d = div().id(ElementId::Integer(id.0));

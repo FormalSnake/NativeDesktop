@@ -99,11 +99,24 @@ impl AppKitBackend {
         let Ok(state) = self.0.try_borrow() else { return Probe::default() };
         let Some(native) = state.nodes.get(&node) else { return Probe::default() };
         let mut probe = Probe::default();
-        if let Some(view) = native.view()
-            && let Some(record) = state.record_of_view(view)
-        {
-            let content = record.root.content();
-            probe.bounds = Some(rect(content.convertRect_fromView(view.bounds(), Some(view))));
+        let view = match native {
+            Native::Overlay(o) => Some(&*o.content as &NSView),
+            _ => native.view(),
+        };
+        if let Some(view) = view {
+            if let Some(record) = state.record_of_view(view) {
+                let content = record.root.content();
+                probe.bounds = Some(rect(content.convertRect_fromView(view.bounds(), Some(view))));
+            } else if let Some(record) = state.node_window.get(&node).and_then(|w| state.windows.get(w))
+                && let Some(screen) = crate::overlay::screen_rect(view)
+            {
+                // In an overlay's own window: through the screen into the owner's content.
+                let in_window = record.window.convertRectFromScreen(screen);
+                probe.bounds = Some(rect(record.root.content().convertRect_fromView(in_window, None)));
+            }
+        }
+        if let Native::Surface(s) = native {
+            probe.value = s.value();
         }
         if let Native::Button(b) = native {
             probe.enabled = Some(b.button.isEnabled());

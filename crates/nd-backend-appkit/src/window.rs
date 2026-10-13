@@ -46,9 +46,14 @@ define_class!(
             unsafe { msg_send![super(self), sendEvent: event] }
         }
 
+        // Declared accelerators pre-empt embedded views (ARCHITECTURE.md 6.2): AppKit asks the
+        // window's views before the main menu, and a WKWebView claims every key equivalent to
+        // offer it to the page first, handing unclaimed ones back to the menu late or not at all.
         #[unsafe(method(performKeyEquivalent:))]
         fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
-            if event.r#type() == NSEventType::KeyDown && self.route_key(event) {
+            let key = event.r#type() == NSEventType::KeyDown;
+            let menu = || objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
+            if key && (self.route_key(event) || menu().is_some_and(|m| m.performKeyEquivalent(event))) {
                 true
             } else {
                 unsafe { msg_send![super(self), performKeyEquivalent: event] }

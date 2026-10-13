@@ -18,6 +18,7 @@ use crate::backend::Backend;
 use crate::dispatch::{DispatchTree, KeyDispatch};
 use crate::element::{AnyElement, IntoElement};
 use crate::events::EventQueue;
+use crate::overlay::{DismissReason, Dismissed, Modality};
 use crate::transaction::MeasureCache;
 use crate::tree::Tree;
 use crate::window::{Window, WindowHandle, WindowOptions};
@@ -405,8 +406,44 @@ impl App {
 
     /// Matches `keystroke` in the window's focused context and dispatches the bound action to
     /// the elements' `on_action` listeners. Platforms call it before their own text handling.
+    /// Esc first closes the window's innermost overlay that takes input (6.3), before any binding.
     pub fn dispatch_keystroke(&mut self, window: WindowId, keystroke: &Keystroke) -> KeyDispatch {
+        let plain = !keystroke.modifiers.modified();
+        if plain && keystroke.key == "escape" && self.dismiss_overlay(window, DismissReason::Escape) {
+            return KeyDispatch::Handled;
+        }
         self.with_dispatch(window, KeyDispatch::Unhandled, |tree, app| tree.dispatch_key(keystroke, app))
+    }
+
+    /// Asks the window's innermost non-passive overlay to close and delivers the request. False
+    /// when no such overlay is open.
+    pub fn dismiss_overlay(&mut self, window: WindowId, reason: DismissReason) -> bool {
+        let Some(node) = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.innermost_overlay())
+        else {
+            return false;
+        };
+        self.events.push(node, Box::new(Dismissed { reason }));
+        self.drain_events();
+        true
+    }
+
+    /// The app lost activation: every light-dismiss overlay in every window is asked to close.
+    pub fn app_deactivated(&mut self) {
+        let nodes: Vec<NodeId> = self
+            .windows
+            .values()
+            .filter_map(|w| w.tree.as_ref())
+            .flat_map(|t| t.open_overlays().filter(|(_, m)| *m == Modality::LightDismiss).map(|(n, _)| n))
+            .collect();
+        for node in nodes {
+            self.events.push(node, Box::new(Dismissed { reason: DismissReason::Deactivated }));
+        }
+        self.drain_events();
+    }
+
+    /// Open overlays in the window, oldest first, with their modality.
+    pub fn open_overlays(&self, window: WindowId) -> Vec<(NodeId, Modality)> {
+        self.windows.get(&window).and_then(|w| w.tree.as_ref()).map_or_else(Vec::new, |t| t.open_overlays().collect())
     }
 
     /// Bubbles `action` from the window's focused node to its root. Menus and toolbar items

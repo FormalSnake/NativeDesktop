@@ -168,6 +168,10 @@ impl Application {
                 sources::load(&mut registry, &files);
                 cx.set_global(crate::theme::ThemeState(registry));
                 cx.set_global(patterns);
+                if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>() {
+                    let chrome = nd_backend_gpui::GpuiChrome::new(backend.clone());
+                    cx.set_global(nd_components::Chrome(chrome));
+                }
                 init(cx);
                 crate::theme::sync(cx);
             },

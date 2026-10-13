@@ -20,6 +20,7 @@ use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKi
 use crate::dispatch::DispatchTree;
 use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
 use crate::layout::{to_taffy, with_titlebar_insets};
+use crate::overlay::{Modality, OverlayProps, is_overlay};
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::{TitlebarInsets, Window};
 
@@ -93,6 +94,10 @@ pub(crate) struct Tree {
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
     pub(crate) dispatch: DispatchTree<App>,
+    /// Open overlays, oldest first, each with the node focused when it opened.
+    overlays: Vec<(NodeId, Option<NodeId>)>,
+    /// Focus to hand back once this frame's overlay removals are done.
+    restore_focus: Vec<Option<NodeId>>,
 }
 
 fn idents(elements: &[AnyElement]) -> Vec<Ident> {
@@ -205,6 +210,8 @@ impl Tree {
             placed: HashSet::new(),
             orphans: Vec::new(),
             dispatch,
+            overlays: Vec::new(),
+            restore_focus: Vec::new(),
         }
     }
 
@@ -214,6 +221,33 @@ impl Tree {
 
     pub(crate) fn handler(&self, node: NodeId, event: TypeId) -> Option<Handler> {
         self.nodes.get(&node)?.handlers.iter().find(|(t, _)| *t == event).map(|(_, h)| h.clone())
+    }
+
+    /// The innermost open overlay that takes input, for Esc.
+    pub(crate) fn innermost_overlay(&self) -> Option<NodeId> {
+        self.overlays.iter().rev().map(|(n, _)| *n).find(|n| self.overlay_modality(*n) != Some(Modality::Passive))
+    }
+
+    /// Open overlays, oldest first.
+    pub(crate) fn open_overlays(&self) -> impl Iterator<Item = (NodeId, Modality)> + '_ {
+        self.overlays.iter().filter_map(|(n, _)| Some((*n, self.overlay_modality(*n)?)))
+    }
+
+    fn overlay_modality(&self, node: NodeId) -> Option<Modality> {
+        self.nodes.get(&node)?.props.downcast_ref::<OverlayProps>().map(|p| p.modality)
+    }
+
+    /// Hands focus back to what had it before overlays closed this frame, when focus went with
+    /// them (it was inside) or nothing has it.
+    fn restore_overlay_focus(&mut self) {
+        for before in std::mem::take(&mut self.restore_focus).into_iter().rev() {
+            if self.dispatch.focused().is_none()
+                && let Some(node) = before
+                && self.dispatch.contains(node)
+            {
+                self.dispatch.focus(node);
+            }
+        }
     }
 
     pub(crate) fn needs_frame(&self) -> bool {
@@ -320,6 +354,9 @@ impl Tree {
 
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
+        if is_overlay(el.kind) {
+            self.overlays.push((id, self.dispatch.focused()));
+        }
         self.tx.push(Op::Create { node: id, kind: el.kind, props: el.props.clone() });
         let style = self.taffy_style(&el.layout, &el.props, None);
         let taffy = if el.measured { self.taffy.new_leaf_with_context(style, id) } else { self.taffy.new_leaf(style) };
@@ -423,6 +460,10 @@ impl Tree {
             Slot::Node(n) => {
                 let node = self.nodes.remove(&n).expect("node");
                 let _ = self.taffy.remove(node.taffy);
+                if let Some(i) = self.overlays.iter().position(|(o, _)| *o == n) {
+                    let (_, before) = self.overlays.remove(i);
+                    self.restore_focus.push(before);
+                }
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {
                     if let Slot::View(e) = s {
@@ -758,6 +799,7 @@ impl App {
             }
         }
         tree.release_orphans(self);
+        tree.restore_overlay_focus();
         tree.push_focus_change();
         let target = tree.view_node(tree.root_view.entity_id());
         tree.dispatch.set_default_target(target);

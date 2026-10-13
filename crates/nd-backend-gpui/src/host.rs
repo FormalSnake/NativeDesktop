@@ -304,6 +304,11 @@ impl Inner {
                     ..InputRecord::default()
                 });
             }
+            if event.keystroke.key == "escape" && inner.backend.close_menu(id) {
+                cx.stop_propagation();
+                (inner.wake())(cx);
+                return;
+            }
             let Ok(mut app) = inner.app.try_borrow_mut() else { return };
             let result = app.dispatch_keystroke(id, &event.keystroke);
             drop(app);
@@ -341,6 +346,14 @@ impl Inner {
     }
 
     fn pump(self: &Rc<Self>, cx: &mut gpui::App) {
+        let actions = self.backend.take_actions();
+        if !actions.is_empty()
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            for (window, action) in actions {
+                app.dispatch_action(window, &*action);
+            }
+        }
         for (id, event) in self.backend.take_pending() {
             if let Some(handle) = self.backend.window_handle(id) {
                 self.budget.borrow_mut().input(Instant::now());
@@ -358,6 +371,10 @@ impl Inner {
         self.sync_windows(cx);
         if needs_frame {
             self.frame_now(cx);
+        } else {
+            // A context menu opened or closed without a frame.
+            let dirty = self.backend.take_dirty();
+            self.notify(cx, dirty.into_iter());
         }
     }
 
@@ -450,8 +467,32 @@ impl Inner {
         };
         let any: AnyWindowHandle = handle.into();
         self.backend.set_window_handle(id, any);
+        let weak = Rc::downgrade(self);
         let view = handle.update(cx, |_, window, cx| {
             self.hooks.window_opened(id, window, cx);
+            // Light-dismiss overlays close when the app loses activation, checked a turn later so
+            // a key change between the app's own windows does not count.
+            let activation = cx.observe_window_activation(window, move |_, window, cx| {
+                if window.is_window_active() {
+                    return;
+                }
+                let weak = weak.clone();
+                cx.defer(move |cx| {
+                    let Some(inner) = weak.upgrade() else { return };
+                    let active =
+                        cx.windows().iter().any(|w| w.update(cx, |_, w, _| w.is_window_active()).unwrap_or(false));
+                    if !active {
+                        for window in inner.windows.borrow().keys() {
+                            inner.backend.close_menu(*window);
+                        }
+                        if let Ok(mut app) = inner.app.try_borrow_mut() {
+                            app.app_deactivated();
+                        }
+                        inner.pump(cx);
+                    }
+                });
+            });
+            self.subscriptions.borrow_mut().push(activation);
             cx.entity()
         });
         if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
@@ -509,10 +550,17 @@ impl Inner {
             window_id: id,
         };
         let element = build.node(root, window);
+        let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         drop(state);
         let origin = self.origin;
+        let backend = self.backend.clone();
         div()
             .size_full()
+            .capture_any_mouse_up(move |_, _, cx| {
+                if backend.take_swallow(id) {
+                    cx.stop_propagation();
+                }
+            })
             .capture_any_mouse_down(move |event, _, _| {
                 if let Some(diag) = nd_diag::global() {
                     diag.record_input(InputRecord {
@@ -525,6 +573,7 @@ impl Inner {
                 }
             })
             .child(element)
+            .children(menu)
             .into_any_element()
     }
 

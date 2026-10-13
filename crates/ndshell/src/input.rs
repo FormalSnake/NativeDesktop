@@ -14,7 +14,7 @@ use std::time::Duration;
 use objc2_core_foundation::{CFBoolean, CFRetained, CFString, CFType, CGPoint};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventType,
-    CGMouseButton,
+    CGMouseButton, CGScrollEventUnit,
 };
 
 /// A modifier key: its flag and the virtual key code of its left-hand key.
@@ -87,6 +87,44 @@ pub fn mouse(kind: CGEventType, at: (f64, f64)) {
 
 pub fn move_to(at: (f64, f64)) {
     mouse(CGEventType::MouseMoved, at);
+}
+
+/// Moves to `at`, then presses and releases the left button there.
+pub fn click(at: (f64, f64)) {
+    move_to(at);
+    std::thread::sleep(Duration::from_millis(80));
+    mouse(CGEventType::LeftMouseDown, at);
+    std::thread::sleep(Duration::from_millis(40));
+    mouse(CGEventType::LeftMouseUp, at);
+    std::thread::sleep(Duration::from_millis(150));
+}
+
+/// Moves to `at`, then presses and releases the right button there.
+pub fn right_click(at: (f64, f64)) {
+    move_to(at);
+    std::thread::sleep(Duration::from_millis(80));
+    for kind in [CGEventType::RightMouseDown, CGEventType::RightMouseUp] {
+        let event = CGEvent::new_mouse_event(None, kind, CGPoint { x: at.0, y: at.1 }, CGMouseButton::Right);
+        CGEvent::set_flags(event.as_deref(), CGEventFlags::empty());
+        CGEvent::set_integer_value_field(event.as_deref(), CGEventField::MouseEventClickState, 1);
+        post(event);
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    std::thread::sleep(Duration::from_millis(150));
+}
+
+/// Scrolls `dy` pixels (positive moves content down) with the pointer at `at`, in `steps` events.
+pub fn scroll(at: (f64, f64), dy: i32, steps: u32) {
+    move_to(at);
+    std::thread::sleep(Duration::from_millis(60));
+    for _ in 0..steps.max(1) {
+        let event = CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 1, dy / steps.max(1) as i32, 0, 0);
+        CGEvent::set_location(event.as_deref(), CGPoint { x: at.0, y: at.1 });
+        CGEvent::set_flags(event.as_deref(), CGEventFlags::empty());
+        post(event);
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    std::thread::sleep(Duration::from_millis(120));
 }
 
 /// Presses at `from`, drags by `(dx, dy)` in `steps` moves at about 80 Hz, releases. The gaps
