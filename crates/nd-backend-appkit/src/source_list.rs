@@ -499,7 +499,10 @@ impl NdSourceCell {
             NSColor::secondaryLabelColor()
         };
         iv.caption.setTextColor(Some(&secondary));
-        iv.badge.setTextColor(Some(&secondary));
+        // secondaryLabelColor badges are 3.95:1 on a light sidebar and 2.3:1 on an unemphasized
+        // selection, under WCAG AA for text this size.
+        let badge = if style == NSBackgroundStyle::Emphasized { secondary } else { NSColor::labelColor() };
+        iv.badge.setTextColor(Some(&badge));
     }
 
     /// The row's constraints for what it shows now. Hidden views still constrain, so every

@@ -13,5 +13,13 @@ gpui = ["nd/gpui"]
 [dependencies]
 nd = { path = "../../crates/nd" }
 
+[dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
+
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+# Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
+[[test]]
+name = "appearance"
+harness = false

@@ -23,9 +23,10 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 
 # Tier 2 AppKit tests that need their own window to stay key (posted key events, active-state
 # goldens) take it from each other, so they queue too; so does the matugen recolour timing,
-# which a loaded machine would push past its 100 ms budget.
+# which a loaded machine would push past its 100 ms budget. The appearance audits open AppKit
+# windows that would take key from them.
 [[profile.default.overrides]]
-filter = "binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/)"
+filter = "binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/)"
 test-group = "real-window"
 
 # Tiers 1 and 2 only, what `just test` and CI's first step run.

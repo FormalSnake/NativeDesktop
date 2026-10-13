@@ -40,7 +40,7 @@ use crate::controls::{SelectNative, SliderNative};
 use crate::events::Wake;
 use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
-use crate::look::{TextLook, ViewLook};
+use crate::look::{Color, TextLook, ViewLook};
 use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
 use crate::source_list::SourceTreeNative;
@@ -803,12 +803,19 @@ impl State {
             let theme = self.effective(node, &mut memo);
             let forced: Option<&ThemeRefinement> = self.scopes.get(&node).and_then(|s| s.theme.as_ref());
             let appearance = forced.and_then(|r| r.appearance).map(|_| theme.appearance.and_then(appearance_for));
+            let outer = match self.parents.get(&node) {
+                Some(parent) => self.effective(*parent, &mut memo),
+                None => theme.clone(),
+            };
+            let flips =
+                theme.appearance.unwrap_or(self.system_scheme) != outer.appearance.unwrap_or(self.system_scheme);
             match self.nodes.get_mut(&node) {
                 Some(Native::Layer(v) | Native::Root(v) | Native::Titlebar(v)) => {
                     v.set_radius_scale(theme.radius_scale);
                     if let Some(a) = appearance {
                         v.setAppearance(a.as_deref());
                     }
+                    v.set_surface(flips.then_some(Color::WindowBackground));
                 }
                 Some(Native::Pane(p)) => p.content.set_radius_scale(theme.radius_scale),
                 Some(Native::Glass(g)) => {
@@ -1358,5 +1365,9 @@ impl Backend for AppKitBackend {
 
     fn capture(&mut self, window: WindowId) -> Result<nd_ui::semantics::Capture, nd_ui::semantics::ActionError> {
         self.capture_window(window)
+    }
+
+    fn paints(&self, window: WindowId) -> Result<Vec<nd_ui::semantics::Paint>, nd_ui::semantics::ActionError> {
+        self.paints_of(window)
     }
 }

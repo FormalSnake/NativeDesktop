@@ -66,6 +66,12 @@ pub(crate) fn sync(cx: &mut App) {
             }
         }
     }
+    #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
+    if let Some(state) = cx.try_global::<ThemeState>()
+        && let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>()
+    {
+        backend.set_theme(state.0.clone());
+    }
     cx.refresh_windows();
 }
 

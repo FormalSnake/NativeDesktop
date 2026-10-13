@@ -4176,6 +4176,7 @@ dependencies = [
 name = "nd"
 version = "0.1.0"
 dependencies = [
+ "nd",
  "nd-automation",
  "nd-backend-appkit",
  "nd-backend-gpui",

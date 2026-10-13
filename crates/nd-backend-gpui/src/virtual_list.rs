@@ -392,9 +392,16 @@ fn paint_disclosure(window: &mut gpui::Window, b: Bounds<Pixels>, expanded: bool
 }
 
 /// A table's header: column titles, clicking a sortable one reports `SortChanged`.
-pub(crate) fn header(columns: &[nd_virtual::Column], look: &crate::render::Look, emit: Emit, wake: Wake) -> AnyElement {
+pub(crate) fn header(
+    columns: &[nd_virtual::Column],
+    look: &crate::render::Look,
+    text: gpui::Hsla,
+    emit: Emit,
+    wake: Wake,
+) -> AnyElement {
     use gpui::{InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, div};
-    let mut row = div().flex().flex_row().h(px(HEADER)).w_full().border_b_1().border_color(look.border);
+    let mut row =
+        div().flex().flex_row().h(px(HEADER)).w_full().border_b_1().border_color(look.border).text_color(text);
     for (i, c) in columns.iter().enumerate() {
         let (emit, wake) = (emit.clone(), wake.clone());
         let (id, sortable, sort) = (c.id.clone(), c.sortable, c.sort);

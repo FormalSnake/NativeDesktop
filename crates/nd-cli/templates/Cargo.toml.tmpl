@@ -13,6 +13,11 @@ nd = {{nd_dev_dep}}
 [build-dependencies]
 nd = {{nd_build_dep}}
 
+# The appearance audit owns the main thread (AppKit), so libtest's harness is off.
+[[test]]
+name = "appearance"
+harness = false
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

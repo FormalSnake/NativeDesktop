@@ -22,7 +22,21 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSDictionary, NSPoint, NSProcessInfo, NSString};
 
+use std::cell::Cell;
+use std::collections::HashMap;
+
+use block2::RcBlock;
+use nd_theme::color::{over, with_alpha};
+use nd_ui::Scope;
+use nd_ui::prelude::Hsla;
+use nd_ui::semantics::{Paint, PaintKind};
+use objc2_app_kit::{
+    NSAppearance, NSBackgroundStyle, NSColor, NSColorType, NSControl, NSFont, NSTableRowView, NSTableView, NSTextField,
+};
+
 use super::{AppKitBackend, Native, State, WindowRecord};
+use crate::system_colors::hsla;
+use crate::views::{NdLayerView, NdTextView};
 
 fn rect(r: objc2_foundation::NSRect) -> Rect {
     Rect::new(r.origin.x as f32, r.origin.y as f32, r.size.width as f32, r.size.height as f32)
@@ -343,5 +357,147 @@ impl AppKitBackend {
         let data = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }
             .ok_or_else(|| not_actionable("PNG encoding failed"))?;
         Ok(Capture { width: width as u32, height: height as u32, png: data.to_vec() })
+    }
+
+    /// Walks the window's views as AppKit draws them: nd's layer fills and text, and the text
+    /// fields inside nd's native intents (form and source list labels), each colour resolved
+    /// under the view's effective appearance. Bezel controls (buttons, pop-ups, editable
+    /// fields) draw their own text with system colours and are left out. Native materials
+    /// (sidebar, glass, toolbar) count as the window background, which is what they tint.
+    pub(super) fn paints_of(&self, window: WindowId) -> Result<Vec<Paint>, ActionError> {
+        let state = self.0.borrow();
+        let record = state.record(window)?;
+        // From the window's frame view: a scaffold moves the root under a split view, and the
+        // palette and toasts sit above the content view.
+        let content = record.window.contentView().ok_or_else(|| not_actionable("window has no content view"))?;
+        let content = unsafe { content.superview() }.unwrap_or(content);
+        let mut owners = HashMap::new();
+        for (id, native) in &state.nodes {
+            if state.node_window.get(id) == Some(&window)
+                && let Some(view) = native.view()
+            {
+                owners.insert(view as *const NSView, *id);
+            }
+        }
+        let background = resolve(&record.window.backgroundColor(), &record.window.effectiveAppearance())
+            .ok_or_else(|| not_actionable("window background has no sRGB value"))?;
+        let mut walk = Walk { state: &state, owners, paints: Vec::new() };
+        walk.view(&content, None, background);
+        Ok(walk.paints)
+    }
+}
+
+/// `color` as it draws under `appearance`.
+fn resolve(color: &NSColor, appearance: &NSAppearance) -> Option<Hsla> {
+    let out = Cell::new(None);
+    let block = RcBlock::new(|| out.set(hsla(color.retain())));
+    appearance.performAsCurrentDrawingAppearance(&block);
+    out.take()
+}
+
+struct Walk<'a> {
+    state: &'a State,
+    owners: HashMap<*const NSView, NodeId>,
+    paints: Vec<Paint>,
+}
+
+impl Walk<'_> {
+    /// The subtree scopes from the window root down to `node`.
+    fn scopes(&self, node: Option<NodeId>) -> Vec<Scope> {
+        let mut out = Vec::new();
+        let mut at = node;
+        while let Some(id) = at {
+            if let Some(scope) = self.state.scopes.get(&id) {
+                out.push(Scope::new(scope.clone()));
+            }
+            at = self.state.parents.get(&id).copied();
+        }
+        out.reverse();
+        out
+    }
+
+    fn push(&mut self, node: Option<NodeId>, kind: PaintKind, color: Hsla, background: Hsla, label: String) {
+        let scopes = self.scopes(node);
+        self.paints.push(Paint { node, kind, color, background, scopes, label });
+    }
+
+    fn view(&mut self, view: &NSView, node: Option<NodeId>, mut background: Hsla) {
+        if view.isHidden() || view.alphaValue() <= 0. {
+            return;
+        }
+        // The title bar is the window server's: its title and buttons follow the OS.
+        // KVO subclasses the class at runtime, so the name can carry a prefix.
+        if view.class().name().to_str().is_ok_and(|n| n.contains("NSTitlebar")) {
+            return;
+        }
+        let node = self.owners.get(&(view as *const NSView)).copied().or(node);
+        let appearance = view.effectiveAppearance();
+        let alpha = view.alphaValue() as f32;
+        if let Some(layer) = view.downcast_ref::<NdLayerView>()
+            && let Some(fill) = layer.look().background
+            && let Some(color) = resolve(&fill.ns_color(), &appearance).filter(|c| c.a > 0.)
+        {
+            self.push(node, PaintKind::Fill, color, background, "view".into());
+            background = over(color, background);
+        }
+        // A selected table row draws its selection behind the cells; the row view is AppKit's.
+        if let Some(row) = view.downcast_ref::<NSTableRowView>()
+            && row.isSelected()
+        {
+            let selection = if row.isEmphasized() {
+                NSColor::selectedContentBackgroundColor()
+            } else {
+                NSColor::unemphasizedSelectedContentBackgroundColor()
+            };
+            if let Some(fill) = resolve(&selection, &appearance) {
+                background = over(fill, background);
+            }
+        }
+        if let Some(text) = view.downcast_ref::<NdTextView>() {
+            if let Some(look) = text.look()
+                && let Some(color) = resolve(&look.color.ns_color(), &appearance)
+            {
+                let size = look.size.unwrap_or(NSFont::systemFontSize() as f32);
+                let weight = look.weight.map_or(400., |w| w.0);
+                let color = with_alpha(color, color.a * alpha);
+                self.push(node, PaintKind::Text { size, weight }, color, background, look.text);
+            }
+            return;
+        }
+        if let Some(field) = view.downcast_ref::<NSTextField>() {
+            if field.isEditable() || field.isBezeled() {
+                return;
+            }
+            let own = field.drawsBackground().then(|| field.backgroundColor()).flatten();
+            let under = match own.and_then(|c| resolve(&c, &appearance)).filter(|c| c.a > 0.) {
+                Some(fill) => over(fill, background),
+                None => background,
+            };
+            // On an emphasized selection a field in a cell draws its system label colour as the
+            // selected-text colour; a colour the app chose stays.
+            let emphasized = field.cell().is_some_and(|c| c.backgroundStyle() == NSBackgroundStyle::Emphasized);
+            let drawn = field.textColor().map(|c| {
+                if emphasized && c.r#type() == NSColorType::Catalog {
+                    NSColor::alternateSelectedControlTextColor()
+                } else {
+                    c
+                }
+            });
+            if let Some(color) = drawn.and_then(|c| resolve(&c, &appearance)) {
+                let size = field.font().map_or(NSFont::systemFontSize(), |f| f.pointSize()) as f32;
+                let text = field.stringValue().to_string();
+                if !text.is_empty() {
+                    self.push(node, PaintKind::Text { size, weight: 400. }, color, under, text);
+                }
+            }
+            return;
+        }
+        // Tables and outlines are controls too, but their rows are views with labels in them.
+        if view.downcast_ref::<NSControl>().is_some() && view.downcast_ref::<NSTableView>().is_none() {
+            return;
+        }
+        for child in view.subviews().iter() {
+            self.view(&child, node, background);
+        }
     }
 }

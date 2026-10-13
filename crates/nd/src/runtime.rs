@@ -131,8 +131,8 @@ pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
 
 pub struct Application {
     manifest: Manifest,
-    theme: Option<crate::theme::ThemeOverride>,
-    patterns: crate::chrome::Patterns,
+    pub(crate) theme: Option<crate::theme::ThemeOverride>,
+    pub(crate) patterns: crate::chrome::Patterns,
 }
 
 impl Application {
@@ -222,13 +222,7 @@ impl Application {
         nd_backend_gpui::run_with(
             hooks,
             move |cx| {
-                let preset =
-                    if cfg!(target_os = "macos") { nd_theme::Preset::Adwaita } else { nd_theme::Preset::current() };
-                let mut registry = nd_theme::ThemeRegistry::new(preset);
-                registry.set_app_override(app_theme);
-                sources::load(&mut registry, &files);
-                cx.set_global(crate::theme::ThemeState(registry));
-                cx.set_global(patterns);
+                gpui_host::install(cx, &files, app_theme, patterns);
                 init(cx);
                 crate::theme::sync(cx);
             },
@@ -241,6 +235,34 @@ impl Application {
             },
         );
         Ok(())
+    }
+}
+
+/// The theme registry and services of an app on the GPUI backend.
+#[cfg(any(not(target_os = "macos"), feature = "gpui"))]
+pub(crate) mod gpui_host {
+    use nd_backend_gpui::GpuiBackend;
+    use nd_theme::{OsTheme, Preset, ThemeFiles, ThemeRefinement, ThemeRegistry};
+    use nd_ui::App;
+
+    use crate::chrome::Patterns;
+    use crate::theme::{ThemeState, update_registry};
+
+    /// The registry from the platform's light or dark setting and the app's files, kept
+    /// following the platform as it changes.
+    pub fn install(cx: &mut App, files: &ThemeFiles, app_theme: ThemeRefinement, patterns: Patterns) {
+        let preset = if cfg!(target_os = "macos") { Preset::Adwaita } else { Preset::current() };
+        let mut registry = ThemeRegistry::new(preset);
+        if let Some(backend) = cx.backend_as::<GpuiBackend>() {
+            registry.set_os(OsTheme { scheme: backend.platform_scheme(), ..OsTheme::default() });
+            backend.on_platform_scheme(|app, scheme| {
+                update_registry(app, |r| r.set_os(OsTheme { scheme: Some(scheme), ..r.os().clone() }));
+            });
+        }
+        registry.set_app_override(app_theme);
+        super::sources::load(&mut registry, files);
+        cx.set_global(ThemeState(registry));
+        cx.set_global(patterns);
     }
 }
 
