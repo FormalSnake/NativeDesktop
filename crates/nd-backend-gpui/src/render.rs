@@ -197,9 +197,30 @@ impl Build<'_> {
     }
 
     fn view(&self, id: NodeId, props: &DivProps, children: Vec<AnyElement>, window: &mut gpui::Window) -> AnyElement {
-        let style =
+        let mut style =
             if props.titlebar_insets { with_titlebar_insets(&props.style, self.insets) } else { props.style.clone() };
         let menu = props.scope.as_ref().and_then(|s| s.get::<SubtreeScope>()).is_some_and(|s| s.context_menu);
+        let gestures = &self.backend.gestures;
+        let last_bounds = self.backend.bounds.borrow().get(&id).copied();
+        if let Some(row) = props.gestures.row_swipe.map(|_| last_bounds.map_or(0., |b| b.size.width)) {
+            gestures.row_config(self.window_id, id, &props.gestures, row);
+        }
+        let children = if props.gestures.scroll.any() {
+            // nd scrolls it (momentum, rubber band); GPUI only clips.
+            let offset = gestures.scroll_offset(self.window_id, id, &props.gestures, last_bounds);
+            gestures.clear_content(id);
+            for (axis, scrolls) in [
+                (&mut style.overflow.x, props.gestures.scroll.horizontal),
+                (&mut style.overflow.y, props.gestures.scroll.vertical),
+            ] {
+                if scrolls {
+                    *axis = Some(gpui::Overflow::Hidden);
+                }
+            }
+            children.into_iter().map(|c| gestures.shifted(id, offset, c)).collect()
+        } else {
+            children
+        };
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);

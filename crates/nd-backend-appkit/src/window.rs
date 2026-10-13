@@ -16,6 +16,8 @@ pub trait KeyRouter {
     fn responder_changed(&self, window: &NdWindow);
     /// AppKit's per-event `update` pass: the window may have re-linked views behind nd's back.
     fn window_updated(&self, _window: &NdWindow) {}
+    /// A primary press anywhere in the window: focus rings hide until the keyboard moves focus.
+    fn pointer_down(&self) {}
 }
 
 #[derive(Default)]
@@ -42,6 +44,9 @@ define_class!(
             crate::diag::record_event(self, event);
             if event.r#type() == NSEventType::KeyDown && self.route_key(event) {
                 return;
+            }
+            if event.r#type() == NSEventType::LeftMouseDown && let Some(router) = self.router() {
+                router.pointer_down();
             }
             unsafe { msg_send![super(self), sendEvent: event] }
         }

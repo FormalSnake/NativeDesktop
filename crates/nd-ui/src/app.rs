@@ -399,6 +399,12 @@ impl App {
         self.dirty.extend(views);
     }
 
+    /// Plays a trackpad haptic, timed to land with the next drawn frame (`Alignment` when a value
+    /// snaps, `LevelChange` when a threshold is crossed). A no-op off macOS.
+    pub fn haptic(&mut self, haptic: nd_gesture::Haptic) {
+        self.backend.haptic(haptic);
+    }
+
     /// Inside an `on_action` listener: lets the action continue towards the root.
     pub fn propagate(&mut self) {
         self.propagate_action = true;
@@ -406,25 +412,8 @@ impl App {
 
     /// Matches `keystroke` in the window's focused context and dispatches the bound action to
     /// the elements' `on_action` listeners. Platforms call it before their own text handling.
-    /// Esc first closes the window's innermost overlay that takes input (6.3), before any binding.
     pub fn dispatch_keystroke(&mut self, window: WindowId, keystroke: &Keystroke) -> KeyDispatch {
-        let plain = !keystroke.modifiers.modified();
-        if plain && keystroke.key == "escape" && self.dismiss_overlay(window, DismissReason::Escape) {
-            return KeyDispatch::Handled;
-        }
         self.with_dispatch(window, KeyDispatch::Unhandled, |tree, app| tree.dispatch_key(keystroke, app))
-    }
-
-    /// Asks the window's innermost non-passive overlay to close and delivers the request. False
-    /// when no such overlay is open.
-    pub fn dismiss_overlay(&mut self, window: WindowId, reason: DismissReason) -> bool {
-        let Some(node) = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.innermost_overlay())
-        else {
-            return false;
-        };
-        self.events.push(node, Box::new(Dismissed { reason }));
-        self.drain_events();
-        true
     }
 
     /// The app lost activation: every light-dismiss overlay in every window is asked to close.
@@ -462,9 +451,20 @@ impl App {
     ) -> R {
         let Some(mut tree) = self.windows.get_mut(&window).and_then(|w| w.tree.take()) else { return absent };
         let outer = self.current_window.replace(window);
+        let ring_before = tree.dispatch.focus_visible();
         let result = f(&mut tree.dispatch, self);
         self.current_window = outer;
         tree.push_focus_change();
+        if tree.dispatch.focus_visible() != ring_before {
+            // Drawn focus rings read `focus_visible` when they render.
+            self.dirty.insert(tree.root_view_id());
+        }
+        if let Some(button) = tree.dispatch.take_activation() {
+            self.events.emitter(button).emit(crate::ClickEvent);
+        }
+        if let Some(scope) = tree.dispatch.take_dismissal() {
+            self.events.emitter(scope).emit(crate::dispatch::DismissRequested);
+        }
         match self.windows.get_mut(&window) {
             Some(slot) => slot.tree = Some(tree),
             // A listener closed the window.
@@ -482,6 +482,17 @@ impl App {
 
     pub fn blur(&mut self, window: WindowId) {
         self.with_dispatch(window, (), |tree, _| tree.blur());
+    }
+
+    /// A press reached the window: focus rings hide until the keyboard moves focus again.
+    /// Backends call it on every primary pointer-down.
+    pub fn pointer_down(&mut self, window: WindowId) {
+        self.with_dispatch(window, (), |tree, _| tree.set_modality(crate::dispatch::InputModality::Pointer));
+    }
+
+    /// Whether the window's focused node shows its focus ring: the keyboard moved last.
+    pub fn focus_visible(&self, window: WindowId) -> bool {
+        self.windows.get(&window).and_then(|w| w.tree.as_ref()).is_some_and(|t| t.dispatch.focus_visible())
     }
 
     /// The window's focused node.

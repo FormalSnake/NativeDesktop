@@ -25,6 +25,7 @@ struct Scene {
     panel: bool,
     under: u32,
     chosen: u32,
+    taps: u32,
     log: Rc<RefCell<Vec<String>>>,
 }
 
@@ -60,6 +61,10 @@ impl Render for Scene {
                     .child(
                         div()
                             .id("menu-zone")
+                            .on_tap(cx.listener(|this, _: &TapEvent, _, cx| {
+                                this.taps += 1;
+                                cx.notify();
+                            }))
                             .context_menu(|menu, _, _| menu.item("Choose", Chosen).separator().item("Again", Chosen))
                             .child(
                                 native_surface("surface", SurfaceSource::TestPattern)
@@ -143,6 +148,10 @@ fn center(host: &GpuiHost, window: WindowId, test_id: &str) -> nd_ui::Point {
 fn counts(host: &GpuiHost, window: WindowId) -> InputCounts {
     let value = by_test_id(host, window, "surface").and_then(|n| n.value).expect("surface counts");
     InputCounts::parse(&value).expect("counts")
+}
+
+fn taps(o: &Opened) -> u32 {
+    o.host.read(|app| o.scene.read(app).taps)
 }
 
 fn under(o: &Opened) -> u32 {
@@ -233,6 +242,7 @@ mod gate_m4_overlays {
             post(&mut o, wiggle_and_scroll(at));
         }
         assert_eq!(under(&o), 0, "the button under the popover was clicked");
+        assert_eq!(taps(&o), 0, "a tap recognizer under the popover fired");
         assert_eq!(counts(&o.host, o.window), InputCounts::default(), "input reached the surface under the popover");
         assert!(log(&o).is_empty(), "a press inside closed the popover: {:?}", log(&o));
 
@@ -245,9 +255,12 @@ mod gate_m4_overlays {
         let after = counts(&o.host, o.window);
         assert_eq!((after.down, after.up), (0, 0), "the dismissing press passed through: {after}");
 
-        // With it gone, the same press reaches the surface and the button again.
+        assert_eq!(taps(&o), 0, "the dismissing press reached a tap recognizer");
+
+        // With it gone, the same press reaches the surface, its tap recognizer and the button.
         post(&mut o, click(outside, GpuiButton::Left));
         assert_eq!(counts(&o.host, o.window).down, 1);
+        assert_eq!(taps(&o), 1);
         post(&mut o, click(button, GpuiButton::Left));
         assert_eq!(under(&o), 1);
     }

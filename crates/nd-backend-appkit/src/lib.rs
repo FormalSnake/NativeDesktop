@@ -14,6 +14,7 @@ mod dispatch;
 mod events;
 mod form;
 mod frame_clock;
+mod gestures;
 mod glass;
 mod host;
 mod icons;

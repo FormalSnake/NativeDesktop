@@ -39,7 +39,7 @@ use crate::look::ViewLook;
 use crate::views::NdLayerView;
 
 /// The gap between an anchor and a tooltip.
-const TOOLTIP_GAP: f64 = 6.;
+const TOOLTIP_GAP: f64 = 6.; // nd-lint: allow, AppKit has no tooltip offset to read
 /// A panel's top edge sits this far down the owner's content, as a fraction of its height.
 const PANEL_TOP: f64 = 0.18;
 
@@ -83,13 +83,7 @@ impl OverlayNative {
                 if props.kind == OverlayKind::Tooltip {
                     panel.setIgnoresMouseEvents(true);
                 }
-                if props.style.background.is_none() {
-                    content.set_props(&ViewLook {
-                        background: Some(crate::look::Color::WindowBackground),
-                        corner_radius: 10.,
-                        ..ViewLook::from_style(&props.style, false)
-                    });
-                }
+                content.set_props(&panel_look(props));
                 Presenter::Panel(panel)
             }
         };
@@ -110,11 +104,10 @@ impl OverlayNative {
 
     pub fn update(&mut self, props: &OverlayProps) {
         if props.style != self.props.style {
-            let mut look = ViewLook::from_style(&props.style, false);
-            if self.props.kind != OverlayKind::Popover && look.background.is_none() {
-                look.background = Some(crate::look::Color::WindowBackground);
-                look.corner_radius = 10.;
-            }
+            let look = match props.kind {
+                OverlayKind::Popover => ViewLook::from_style(&props.style, false),
+                OverlayKind::Panel | OverlayKind::Tooltip => panel_look(props),
+            };
             self.content.set_props(&look);
         }
         let moved = props.placement != self.props.placement;
@@ -229,11 +222,19 @@ impl Drop for OverlayNative {
     }
 }
 
+/// A panel draws what the app styled, on the window background when the app set none: unlike a
+/// popover it has no system material of its own.
+fn panel_look(props: &OverlayProps) -> ViewLook {
+    let mut look = ViewLook::from_style(&props.style, false);
+    look.background.get_or_insert(crate::look::Color::WindowBackground);
+    look
+}
+
 fn new_panel(mtm: MainThreadMarker) -> Retained<NSPanel> {
     let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
     let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
         NSPanel::alloc(mtm),
-        NSRect::new(NSPoint::ZERO, NSSize::new(1., 1.)),
+        NSRect::new(NSPoint::ZERO, NSSize::new(1., 1.)), // nd-lint: allow, placeholder until the first layout
         style,
         NSBackingStoreType::Buffered,
         false,

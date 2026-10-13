@@ -10,10 +10,12 @@
 //! - A press outside a `LightDismiss` overlay closes it and is consumed, on every OS: the element
 //!   under the pointer sees nothing. `Modal` overlays consume outside presses and stay open.
 //!   `Passive` overlays (tooltips) take no input at all.
-//! - Esc closes the innermost non-passive overlay before any key binding sees it.
-//! - Closing hands focus back to the node that had it when the overlay opened.
+//! - Every non-passive overlay is a focus scope (`crate::dispatch::FocusScope`): opening saves
+//!   focus, a modal one traps Tab inside, closing hands focus back, and an Escape no listener
+//!   took closes the innermost one (reported as [`DismissReason::Escape`]).
 
 use std::panic::Location;
+use std::rc::Rc;
 
 use nd_gpui::gpui::prelude::FluentBuilder;
 use nd_gpui::gpui::{SharedString, StyleRefinement, Styled};
@@ -21,6 +23,7 @@ use nd_gpui::gpui::{SharedString, StyleRefinement, Styled};
 use crate::app::App;
 use crate::backend::{NodeKind, WidgetKind};
 use crate::container::ContainerElement;
+use crate::dispatch::{DismissRequested, FocusScope};
 use crate::element::{AnyElement, DispatchProps, InteractiveElement, IntoElement, Key, ParentElement};
 use crate::window::Window;
 
@@ -133,7 +136,12 @@ impl OverlayElement {
     }
 
     pub fn on_dismiss(self, handler: impl Fn(&Dismissed, &mut Window, &mut App) + 'static) -> Self {
-        OverlayElement(self.0.on(handler))
+        let handler = Rc::new(handler);
+        let escape = handler.clone();
+        let element = self.0.on(move |e: &Dismissed, window, cx| handler(e, window, cx));
+        OverlayElement(element.on(move |_: &DismissRequested, window, cx| {
+            escape(&Dismissed { reason: DismissReason::Escape }, window, cx)
+        }))
     }
 }
 
@@ -161,6 +169,11 @@ impl IntoElement for OverlayElement {
     fn into_any_element(mut self) -> AnyElement {
         let style = self.0.style().clone();
         self.0.props_mut().style = style;
+        let modality = self.0.props().modality;
+        if modality != Modality::Passive {
+            let scope = FocusScope { trap: modality == Modality::Modal, dismiss_on_escape: true };
+            self.0.dispatch_props().focus_scope = Some(scope);
+        }
         self.0.into_any_element()
     }
 }

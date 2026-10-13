@@ -1,17 +1,17 @@
 //! Overlay rules on `TestBackend` (ARCHITECTURE.md 6.3): an overlay takes no room in its
-//! anchor's layout, Esc closes the innermost overlay that takes input before any binding, the app
-//! losing activation closes light-dismiss overlays only, and closing hands focus back.
+//! anchor's layout, Escape closes the innermost overlay that takes input (through the dispatch
+//! tree's focus scopes), the app losing activation closes light-dismiss overlays only, and closing
+//! hands focus back.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use nd_gpui::gpui::{self, px};
+use nd_gpui::gpui::px;
 use nd_ui::backend::Props;
+use nd_ui::dispatch::KeyDispatch;
 use nd_ui::test_app::TestApp;
 use nd_ui::test_backend::TestBackend;
 use nd_ui::*;
-
-gpui::actions!(test, [Cancel]);
 
 const WINDOW: Size = Size { width: 600., height: 400. };
 
@@ -47,10 +47,7 @@ struct Screen {
 
 impl Render for Screen {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let log = self.log.clone();
         v_flex()
-            .key_context("Screen")
-            .on_action(move |_: &Cancel, _, _| log.borrow_mut().push("binding".into()))
             .child(div().id("field").focusable().w(px(200.)).h(px(20.)))
             .child(
                 div()
@@ -95,7 +92,6 @@ impl Render for Screen {
 
 fn open() -> (TestApp, WindowHandle<Screen>) {
     let mut cx = TestApp::with_backend(backend());
-    cx.bind_keys([KeyBinding::new("escape", Cancel, Some("Screen"))]);
     let window = cx.open_window(WINDOW, |_, cx| cx.new(|_| Screen::default()));
     (cx, window)
 }
@@ -135,27 +131,22 @@ mod gate_m4_overlays {
     }
 
     #[test]
-    fn escape_closes_the_innermost_overlay_before_bindings() {
+    fn escape_closes_the_innermost_overlay() {
         let (mut cx, window) = open();
         let id = window.id();
-        assert_eq!(cx.dispatch_keystroke(id, &escape()), nd_ui::dispatch::KeyDispatch::Handled);
-        assert_eq!(log(&cx, &window), ["binding"], "with no overlay open, Esc reaches the binding");
-
         set(&mut cx, &window, |s| {
             s.popover = true;
             s.nested = true;
             s.tooltip = true;
         });
+        assert_eq!(cx.dispatch_keystroke(id, &escape()), KeyDispatch::Handled);
+        cx.run_until_idle();
+        assert_eq!(log(&cx, &window), ["nested Escape"]);
         cx.dispatch_keystroke(id, &escape());
         cx.run_until_idle();
-        assert_eq!(log(&cx, &window)[1..], ["nested Escape"]);
-        cx.dispatch_keystroke(id, &escape());
-        cx.run_until_idle();
-        assert_eq!(log(&cx, &window)[2..], ["popover Escape"], "the tooltip is passive, so the popover is next");
+        assert_eq!(log(&cx, &window)[1..], ["popover Escape"], "the tooltip is passive, so the popover is next");
         assert!(overlay_node(&cx, OverlayKind::Popover).is_none());
-        cx.dispatch_keystroke(id, &escape());
-        cx.run_until_idle();
-        assert_eq!(log(&cx, &window)[3..], ["binding"], "only the passive tooltip is left, so the binding runs");
+        assert_eq!(cx.dispatch_keystroke(id, &escape()), KeyDispatch::Unhandled, "a passive tooltip takes no Escape");
     }
 
     #[test]

@@ -147,14 +147,23 @@ impl KeyRouter for AppRouter {
         let Some(host) = self.host.upgrade() else { return KeyDispatch::Unhandled };
         let Ok(mut app) = host.app.try_borrow_mut() else { return KeyDispatch::Unhandled };
         let result = app.dispatch_keystroke(self.window, keystroke);
-        // A listener's focus move reaches AppKit now, so the next key in the same event batch
-        // already goes to the new first responder.
+        // What the key queued (Return's click on the default button, Escape's dismissal) runs
+        // now, and a listener's focus move reaches AppKit now, so the next key in the same event
+        // batch already goes to the new first responder.
+        app.drain_events();
         if app.needs_frame() {
             app.frame();
         }
         drop(app);
         host.after_frame();
         result
+    }
+
+    fn pointer_down(&self) {
+        let Some(host) = self.host.upgrade() else { return };
+        if let Ok(mut app) = host.app.try_borrow_mut() {
+            app.pointer_down(self.window);
+        }
     }
 
     fn responder_changed(&self, window: &NdWindow) {
