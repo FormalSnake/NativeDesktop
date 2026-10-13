@@ -24,6 +24,7 @@ use nd_gpui::gpui::{
     self, AnyElement, AnyWindowHandle, AppContext, Bounds, Context, Decorations, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, TitlebarOptions, WindowBounds, div, px,
 };
+use nd_theme::Scheme;
 use nd_ui::dispatch::KeyDispatch;
 use nd_ui::semantics::{MouseButton, PointerPhase, SyntheticInput, WindowState};
 use nd_ui::{App, TitlebarInsets};
@@ -32,7 +33,7 @@ use crate::backend::{GpuiBackend, Wake, is_button};
 use crate::budget::Budget;
 use crate::clock::{DisplayClock, Pacing};
 use crate::os::{FrameRequest, NoOsHooks, OsHooks};
-use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH, Look};
+use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH};
 
 /// Work for the main thread that needs the app, sent from any thread.
 pub type AppJob = Box<dyn FnOnce(&mut App) + Send>;
@@ -120,6 +121,7 @@ impl HostBuilder {
     /// them.
     pub fn start(self, cx: &mut gpui::App, init: impl FnOnce(&mut App)) -> GpuiHost {
         let backend = GpuiBackend::new();
+        backend.set_platform_scheme(scheme_of(cx.window_appearance()));
         let mut app = App::with_backend(Box::new(backend.clone()));
         init(&mut app);
         let (tx, rx) = mpsc::unbounded();
@@ -242,6 +244,13 @@ pub(crate) fn window_state(window: &gpui::Window) -> WindowState {
     }
 }
 
+fn scheme_of(appearance: gpui::WindowAppearance) -> Scheme {
+    match appearance {
+        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => Scheme::Dark,
+        gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight => Scheme::Light,
+    }
+}
+
 /// Where the OS controls sit when no OS crate says otherwise.
 fn default_insets(window: &gpui::Window) -> TitlebarInsets {
     if cfg!(target_os = "macos") {
@@ -330,6 +339,25 @@ impl Inner {
             inner.pump(cx);
         });
         self.subscriptions.borrow_mut().extend([keys, closed]);
+    }
+
+    /// The platform switched light and dark: the backend's own theme follows, then the app's
+    /// listener (`nd` feeds its registry), and every window redraws.
+    fn platform_appearance(self: &Rc<Self>, cx: &mut gpui::App) {
+        let scheme = scheme_of(cx.window_appearance());
+        if !self.backend.set_platform_scheme(scheme) {
+            return;
+        }
+        let listener = self.backend.state.borrow().scheme_listener.clone();
+        if let Some(listener) = listener
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            listener(&mut app, scheme);
+            app.flush_effects();
+        }
+        let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
+        self.notify(cx, all.into_iter());
+        self.pump(cx);
     }
 
     fn closed(&self, id: WindowId) {
@@ -450,8 +478,15 @@ impl Inner {
         };
         let any: AnyWindowHandle = handle.into();
         self.backend.set_window_handle(id, any);
+        let weak = Rc::downgrade(self);
         let view = handle.update(cx, |_, window, cx| {
             self.hooks.window_opened(id, window, cx);
+            let appearance = window.observe_window_appearance(move |_, cx| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.platform_appearance(cx);
+                }
+            });
+            self.subscriptions.borrow_mut().push(appearance);
             cx.entity()
         });
         if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
@@ -499,17 +534,11 @@ impl Inner {
 
         let state = self.backend.state.borrow();
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
-        let build = Build {
-            backend: &self.backend,
-            nodes: &state.nodes,
-            insets,
-            look: Look::of(window.appearance()),
-            wake: self.wake(),
-            hooks: &self.hooks,
-            window_id: id,
-        };
+        let build = Build::new(&self.backend, &state.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
         let element = build.node(root, window);
+        let paints = build.take_paints();
         drop(state);
+        self.backend.state.borrow_mut().paints.insert(id, paints);
         let origin = self.origin;
         div()
             .size_full()

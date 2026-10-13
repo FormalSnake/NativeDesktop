@@ -4011,6 +4011,7 @@ dependencies = [
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-theme",
  "nd-ui",
 ]
 

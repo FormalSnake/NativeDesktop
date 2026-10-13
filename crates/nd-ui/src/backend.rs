@@ -205,4 +205,10 @@ pub trait Backend: Any {
     fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {
         Err(crate::semantics::ActionError::Unsupported("capture".into()))
     }
+
+    /// Every text run and fill the window last painted at rest, with the colour each was given
+    /// and what it sits on.
+    fn paints(&self, _window: WindowId) -> Result<Vec<crate::semantics::Paint>, crate::semantics::ActionError> {
+        Err(crate::semantics::ActionError::Unsupported("paints".into()))
+    }
 }

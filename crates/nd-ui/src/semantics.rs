@@ -9,11 +9,11 @@
 use std::fmt;
 
 use nd_core::semantic::Role;
-use nd_core::{Point, Rect};
-use nd_gpui::gpui::Keystroke;
+use nd_core::{NodeId, Point, Rect};
+use nd_gpui::gpui::{Hsla, Keystroke};
 
 use crate::backend::{NodeKind, Props};
-use crate::element::{ButtonProps, TextProps};
+use crate::element::{ButtonProps, Scope, TextProps};
 use crate::{Button, WindowControls};
 
 /// What a backend reads from a node's native object, overriding what the retained tree says.
@@ -128,6 +128,33 @@ pub struct Capture {
     pub width: u32,
     pub height: u32,
     pub png: Vec<u8>,
+}
+
+/// One colour a backend painted at rest, read back by the appearance audit.
+#[derive(Clone, Debug)]
+pub struct Paint {
+    /// The node it belongs to, when the painted object maps to one.
+    pub node: Option<NodeId>,
+    pub kind: PaintKind,
+    /// As handed to the renderer, alpha included.
+    pub color: Hsla,
+    /// What it is painted over, composited down to opaque.
+    pub background: Hsla,
+    /// The subtree scopes in effect, outermost first, so a reader can resolve the theme the
+    /// colour should come from.
+    pub scopes: Vec<Scope>,
+    /// The text, or what the fill is for.
+    pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PaintKind {
+    /// A text run at `size` points and CSS `weight`.
+    Text {
+        size: f32,
+        weight: f32,
+    },
+    Fill,
 }
 
 /// What the retained tree says about a node from its kind and props alone.

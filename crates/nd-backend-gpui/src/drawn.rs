@@ -20,7 +20,7 @@ use nd_ui::backend::WidgetKind;
 use nd_ui::with_titlebar_insets;
 
 use crate::backend::Node;
-use crate::render::Build;
+use crate::render::{Build, Run};
 
 fn is<W: 'static>(kind: WidgetKind) -> bool {
     kind.type_id == TypeId::of::<W>()
@@ -47,7 +47,9 @@ impl Build<'_> {
     ) -> Option<AnyElement> {
         let children =
             |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
-        let look = self.look;
+        let look = self.look();
+        let theme = self.theme();
+        let ink = self.ink_text();
         let element = if is::<Scaffold>(kind) {
             // Toolbar first as the title row, then the panes side by side.
             let (bars, panes): (Vec<NodeId>, Vec<NodeId>) =
@@ -72,12 +74,13 @@ impl Build<'_> {
                 return Some(div().into_any_element());
             }
             let pane = styled(&p.style);
-            let pane = match p.role {
-                PaneRole::Sidebar => pane.border_r_1().border_color(look.border).bg(look.control),
-                PaneRole::Inspector => pane.border_l_1().border_color(look.border).bg(look.control),
-                PaneRole::Content | PaneRole::Overlay => pane,
+            let sidebar = theme.surface.sidebar;
+            let (pane, fill) = match p.role {
+                PaneRole::Sidebar => (pane.border_r_1().border_color(look.border).bg(sidebar), Some(sidebar)),
+                PaneRole::Inspector => (pane.border_l_1().border_color(look.border).bg(sidebar), Some(sidebar)),
+                PaneRole::Content | PaneRole::Overlay => (pane, None),
             };
-            pane.children(children(window)).into_any_element()
+            self.painted(id, fill, None, "pane", || pane.children(children(window)).into_any_element())
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
             // The window's title row: it moves the window and keeps clear of the OS controls.
             let base = props::<TitlebarProps>(node).map(|p| p.style.clone()).unwrap_or_default();
@@ -118,11 +121,13 @@ impl Build<'_> {
             let toolbar = node.parent?;
             let emit = self.backend.state.borrow().events.emitter(toolbar);
             let wake = self.wake.clone();
+            let color = self.text_run(id, &p.label, Run::BODY, None, None);
             div()
                 .id(ElementId::Integer(id.0))
                 .px_2()
                 .py_1()
                 .rounded(px(6.))
+                .text_color(color)
                 .hover(move |s| s.bg(look.control_hover))
                 .occlude()
                 .child(p.label.clone())
@@ -135,13 +140,14 @@ impl Build<'_> {
             div().into_any_element()
         } else if is::<Glass>(kind) {
             let p = props::<GlassProps>(node)?;
-            let mut glass = styled(&p.style).border_1().border_color(look.border);
-            glass = glass.bg(p.tint.unwrap_or(look.control));
-            glass.children(children(window)).into_any_element()
+            let fill = p.tint.unwrap_or(look.control);
+            let glass = styled(&p.style).border_1().border_color(look.border).bg(fill).text_color(ink);
+            self.painted(id, Some(fill), None, "glass", || glass.children(children(window)).into_any_element())
         } else if is::<GlassGroup>(kind) {
             div().flex().children(children(window)).into_any_element()
         } else if is::<SeparatorKind>(kind) {
             let p = props::<SeparatorProps>(node)?;
+            self.painted(id, Some(look.border), None, "separator", || ());
             let line = div().bg(look.border);
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
         } else if is::<SelectKind>(kind) {
@@ -152,11 +158,14 @@ impl Build<'_> {
                 let emit = emit.clone();
                 let wake = self.wake.clone();
                 let selected = index == p.selected;
+                let fill = selected.then_some(look.control_active);
+                let color = self.text_run(id, option, Run::BODY, None, fill);
                 row = row.child(
                     div()
                         .id(ElementId::Integer((id.0 << 8) | index as u64))
                         .px_3()
                         .py_1()
+                        .text_color(color)
                         .when_bg(selected, look.control_active)
                         .hover(move |s| s.bg(look.control_hover))
                         .child(option.clone())
@@ -171,12 +180,15 @@ impl Build<'_> {
             let p = props::<SliderProps>(node)?;
             let span = (p.max - p.min).max(f32::EPSILON);
             let fraction = ((p.value - p.min) / span).clamp(0., 1.);
+            self.painted(id, Some(look.control), None, "slider track", || {
+                self.painted(id, Some(theme.accent), None, "slider value", || ())
+            });
             styled(&p.style)
                 .min_w(px(120.))
                 .h(px(6.))
                 .rounded_full()
                 .bg(look.control)
-                .child(div().h_full().rounded_full().bg(look.text).w(gpui::relative(fraction)))
+                .child(div().h_full().rounded_full().bg(theme.accent).w(gpui::relative(fraction)))
                 .into_any_element()
         } else if is::<SourceListKind>(kind) {
             let p = props::<SourceListProps>(node)?;
@@ -184,14 +196,29 @@ impl Build<'_> {
             let mut list = styled(&p.style).flex().flex_col().gap_1().p_2();
             for section in &p.sections {
                 if let Some(title) = &section.title {
-                    list = list
-                        .child(div().pt_2().px_2().text_xs().font_weight(FontWeight::SEMIBOLD).child(title.clone()));
+                    let heading = Run::sized(12.).weight(FontWeight::SEMIBOLD);
+                    let color = self.text_run(id, title, heading, Some(theme.text.secondary), None);
+                    list = list.child(
+                        div()
+                            .pt_2()
+                            .px_2()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(color)
+                            .child(title.clone()),
+                    );
                 }
                 for item in flatten(&section.items) {
                     let emit = emit.clone();
                     let wake = self.wake.clone();
                     let selected = p.selected.as_ref() == Some(&item.id);
                     let key = item.id.clone();
+                    let fill = selected.then_some(look.control_active);
+                    let color = self.text_run(id, &item.title, Run::BODY, None, fill);
+                    let badge = item.badge.as_ref().map(|b| {
+                        let color = self.text_run(id, b, Run::BODY, Some(theme.text.secondary), fill);
+                        div().text_color(color).child(b.clone())
+                    });
                     list = list.child(
                         div()
                             .id(ElementId::Name(item.id.clone()))
@@ -200,10 +227,11 @@ impl Build<'_> {
                             .px_2()
                             .py_1()
                             .rounded(px(6.))
+                            .text_color(color)
                             .when_bg(selected, look.control_active)
                             .hover(move |s| s.bg(look.control_hover))
                             .child(div().flex_1().child(item.title.clone()))
-                            .children(item.badge.clone())
+                            .children(badge)
                             .on_click(move |_, _, cx| {
                                 emit.emit(SourceSelected { id: key.clone() });
                                 wake(cx);
@@ -216,25 +244,33 @@ impl Build<'_> {
             div().size_full().flex().flex_col().gap_4().p_4().children(children(window)).into_any_element()
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .children(p.title.clone().map(|t| div().font_weight(FontWeight::SEMIBOLD).child(t)))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(look.border)
-                        .bg(look.control)
-                        .children(children(window)),
-                )
-                .children(p.footer.clone().map(|t| div().text_sm().child(t)))
-                .into_any_element()
+            let secondary = theme.text.secondary;
+            let title = p.title.clone().map(|t| {
+                self.text_run(id, &t, Run::BODY.weight(FontWeight::SEMIBOLD), Some(secondary), None);
+                div().font_weight(FontWeight::SEMIBOLD).text_color(secondary).child(t)
+            });
+            let rows = self.painted(id, Some(look.control), None, "form section", || {
+                div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(look.border)
+                    .bg(look.control)
+                    .children(children(window))
+            });
+            let footer = p.footer.clone().map(|t| {
+                self.text_run(id, &t, Run::sized(14.), Some(secondary), None);
+                div().text_sm().text_color(secondary).child(t)
+            });
+            div().flex().flex_col().gap_1().children(title).child(rows).children(footer).into_any_element()
         } else if is::<FormRow>(kind) {
             let p = props::<FormRowProps>(node)?;
+            let label = self.text_run(id, &p.label, Run::BODY, None, None);
+            let help = p.help.clone().map(|h| {
+                let color = self.text_run(id, &h, Run::sized(14.), Some(theme.text.secondary), None);
+                div().text_sm().text_color(color).child(h)
+            });
             div()
                 .flex()
                 .flex_row()
@@ -247,8 +283,8 @@ impl Build<'_> {
                         .flex_1()
                         .flex()
                         .flex_col()
-                        .child(p.label.clone())
-                        .children(p.help.clone().map(|h| div().text_sm().child(h))),
+                        .child(div().text_color(label).child(p.label.clone()))
+                        .children(help),
                 )
                 .children(children(window))
                 .into_any_element()
