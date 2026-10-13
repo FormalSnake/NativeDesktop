@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "The `nd` command: new, check, test."
+description = "The `nd` command: new, check, test, package, release."
 
 [lib]
 name = "nd_cli"
@@ -16,6 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+nd-config.workspace = true
+nd-update.workspace = true
+rusty-s3 = "0.10"
+tiny_http = "0.12"
+ureq = "3.4"
+url = "2"
 nd-core.workspace = true
 nd-diag.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
@@ -24,4 +31,5 @@ serde_json = "1"
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 
 [dev-dependencies]
+nd-test.workspace = true
 tempfile = "3"
