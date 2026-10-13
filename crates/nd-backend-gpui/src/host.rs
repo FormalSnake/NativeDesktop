@@ -344,13 +344,27 @@ impl Inner {
         for (id, event) in self.backend.take_pending() {
             if let Some(handle) = self.backend.window_handle(id) {
                 self.budget.borrow_mut().input(Instant::now());
-                let _ = handle.update(cx, |_, window, cx| {
-                    window.dispatch_event(event, cx);
+                let _ = handle.update(cx, |_, window, cx| match event {
+                    // As the platform does: the key goes through dispatch, and text no binding or
+                    // key listener took goes to the focused input handler.
+                    gpui::PlatformInput::KeyDown(down) => {
+                        window.dispatch_keystroke(down.keystroke, cx);
+                    }
+                    event => {
+                        window.dispatch_event(event, cx);
+                    }
                 });
             }
         }
         let needs_frame = {
             let Ok(mut app) = self.app.try_borrow_mut() else { return };
+            // A drawn control the app did not make focusable still takes nd focus off the
+            // node that had it, so bindings stop matching in that node's contexts.
+            for (window, node) in std::mem::take(&mut *self.backend.platform_focus.borrow_mut()) {
+                if !app.platform_focused(window, node) {
+                    app.platform_focused(window, None);
+                }
+            }
             app.flush_effects();
             app.drain_events();
             app.needs_frame()
@@ -467,6 +481,7 @@ impl Inner {
         let size = Size { width: size.width.as_f32(), height: size.height.as_f32() };
         let insets = self.hooks.titlebar_insets(id, window).unwrap_or_else(|| default_insets(window));
         let animating = self.budget.borrow_mut().animating(started);
+        let mut frame_time = None;
         let (committed, needs_more) = match self.app.try_borrow_mut() {
             Ok(mut app) => {
                 if app.window(id).is_some_and(|w| w.viewport_size() != size) {
@@ -477,6 +492,7 @@ impl Inner {
                     app.refresh_window(id);
                 }
                 let time = self.tick(id, started, window, cx);
+                frame_time = Some(time.target);
                 if app.needs_frame() {
                     app.tick_window(id, time);
                     app.frame();
@@ -499,17 +515,24 @@ impl Inner {
 
         let state = self.backend.state.borrow();
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
+        let appearance = self.hooks.appearance(id, window).unwrap_or_else(|| window.appearance());
         let build = Build {
             backend: &self.backend,
             nodes: &state.nodes,
             insets,
-            look: Look::of(window.appearance()),
+            look: Look::of(appearance),
             wake: self.wake(),
             hooks: &self.hooks,
             window_id: id,
+            time: frame_time.unwrap_or_else(|| self.origin.elapsed().as_secs_f64()),
         };
-        let element = build.node(root, window);
+        let element = build.node(root, window, cx);
         drop(state);
+        // Building gave a drawn target GPUI focus; a request left over means nd focus is
+        // somewhere no drawn control is.
+        if self.backend.focus_requests.borrow_mut().remove(&id).is_some() {
+            window.blur(cx);
+        }
         let origin = self.origin;
         div()
             .size_full()

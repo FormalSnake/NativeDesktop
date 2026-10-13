@@ -4021,6 +4021,7 @@ dependencies = [
  "nd-diag",
  "nd-gpui",
  "nd-ui",
+ "unicode-segmentation",
 ]
 
 [[package]]
