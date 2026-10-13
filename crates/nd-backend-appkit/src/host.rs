@@ -13,7 +13,9 @@ use nd_core::{Point, Size, WindowId};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindowDelegate};
+use objc2_app_kit::{
+    NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindowDelegate, NSWindowTitleVisibility,
+};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol};
 
 use crate::backend::AppKitBackend;
@@ -210,6 +212,10 @@ impl WindowHost {
         if options.traffic_lights.is_some()
             && let Some(buttons) = traffic_lights::buttons(window)
         {
+            // Pinned lights mean the app draws its own title row (`titlebar()`), so the stock
+            // title and title bar material would sit under and beside the moved buttons.
+            window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+            window.setTitlebarAppearsTransparent(true);
             let center = NSNotificationCenter::defaultCenter();
             for button in &buttons {
                 button.setPostsFrameChangedNotifications(true);
