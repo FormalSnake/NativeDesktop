@@ -20,7 +20,7 @@ Status legend: `[ ]` open, `[~]` in progress, `[x]` done and verified.
 
 ## Phase 2: architecture
 - [x] `docs/plan/ARCHITECTURE.md` drafted (AppKit on macOS, GPUI on Linux, GPUI Fluent skin on Windows, GPUI on web; one GPUI-shaped vocabulary)
-- [x] Design-target example apps in `docs/plan/examples/` (hello, notes, native-widget, overrides)
+- [x] Design-target example apps in `examples/` (hello, notes, native-widget, overrides)
 - [x] Adversarial review (`docs/plan/REVIEW.md`, 35 findings) resolved into ARCHITECTURE.md and the examples; see the Resolution section there
 - [x] Open questions answered (ARCHITECTURE.md section 17), except signing (decided at M10)
 

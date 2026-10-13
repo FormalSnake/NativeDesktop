@@ -3,7 +3,7 @@
 Status: draft, revised 2026-10-13 after the adversarial review in `docs/plan/REVIEW.md`. Inputs: `docs/plan/PROMPT.md` (requirements and
 kickoff decisions, including the 2026-10-13 correction), `docs/research/*.md` (evidence),
 `docs/parity/zig.md` and `docs/parity/apps.md` (what must survive). Example apps that use the API
-defined here live in `docs/plan/examples/`. "Old repo" means `~/Developer/NativeDesktop`, branch `zig`.
+defined here live in `examples/`. "Old repo" means `~/Developer/NativeDesktop`, branch `zig`.
 
 ## 1. Goals and non-goals
 
@@ -121,7 +121,7 @@ element resolves to.
 ### 3.2 A full screen
 Sidebar, toolbar with the traffic light slot, a virtual list with custom-drawn rows, a context
 menu, swipe and pinch, and a settings sheet, in one file. This is a condensed form of
-`docs/plan/examples/notes/`, which splits the same screen into sidebar, list, editor and settings
+`examples/notes/`, which splits the same screen into sidebar, list, editor and settings
 views and adds the command palette and tests.
 ```rust
 use nd::prelude::*;
@@ -270,7 +270,7 @@ the main thread marker, `emitter()` (an `Emit` that queues, never calls app code
 `programmatic(..)`, `request_layout()` and the objc2 re-exports under `nd::native::appkit`. An
 event type with no events is `std::convert::Infallible`. A widget written in
 Swift registers with `Backends::swift(..)` instead (3.9). Worked example:
-`docs/plan/examples/native-widget/` (an `MKMapView` through objc2 and a SwiftUI `Gauge` through
+`examples/native-widget/` (an `MKMapView` through objc2 and a SwiftUI `Gauge` through
 Swift on macOS, drawn fallbacks elsewhere).
 
 ### 3.6 Native patterns and overrides
@@ -306,7 +306,7 @@ Overrides, every layer, no fork needed:
   built with the `titlebar()` intent, which reserves the OS controls' side and size as leading and
   trailing insets (traffic lights left on macOS, caption buttons right on Windows, GNOME's
   `button-layout` either side, nothing on Hyprland), updated on fullscreen and RTL, so content never
-  hand-tunes a margin past the controls. See `docs/plan/examples/overrides/`.
+  hand-tunes a margin past the controls. See `examples/overrides/`.
 
 ### 3.7 How backends satisfy the model (and stay fast)
 Invalidation is per view, as in GPUI. `cx.notify()` on a view re-runs that view's `render` only;
@@ -920,7 +920,7 @@ reference app's equivalent changed is flagged as a hand-drawn replica and fails 
 
 ### 11.1 `nativedesktop.toml`
 One file per app beside `Cargo.toml`; name and version come from Cargo. The CLI emits a JSON Schema
-for editors. Full examples: `docs/plan/examples/*/nativedesktop.toml`. Tables: `[app]` (id,
+for editors. Full examples: `examples/*/nativedesktop.toml`. Tables: `[app]` (id,
 display name, icon, categories, URL schemes, `[[app.file_associations]]`), `[patterns]`,
 `[webview]` and `[webview.cef]` (`enabled`, `style`), `[updates]` (feed, channels, ed25519 public
 key), `[diagnostics]` (retention overrides, Sentry DSN), `[macos]` (minimum version, signing
@@ -997,13 +997,12 @@ unchanged; app code has no `cfg`.
 
 ## 13. Docs site and docs app
 
-- The design-target apps are in `docs/plan/examples/`: `hello` (smallest app), `notes` (multi-file
+- The design-target apps are in `examples/`: `hello` (smallest app), `notes` (multi-file
   app with sidebar, toolbar, virtual list, palette, gestures, settings, tests), `native-widget`
   (objc2 MapKit view and a Swift-hosted SwiftUI gauge with drawn fallbacks), `overrides` (every
   override layer).
 - Every docs page carries runnable example code with "view source" linking the full example app
-  it comes from. Examples live in the repo's `examples/` directory (the `docs/plan/examples/` apps
-  move there in M1) and are compiled for every target in CI, so docs code cannot rot; page
+  it comes from. Examples live in the repo's `examples/` directory and are compiled for every target in CI, so docs code cannot rot; page
   snippets are extracted from those files by anchor comments, never pasted.
 - `nd-docs` generates static HTML from Markdown, styled from `nd-theme` tokens. Built in CI and
   hosted on Cloudflare Pages. Every page also ships as raw Markdown and in `llms.txt`.

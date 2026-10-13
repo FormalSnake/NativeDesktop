@@ -13,6 +13,10 @@ default = ["runtime"]
 # features = ["build"]`, which keeps gpui out of the host build.
 runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-backend-appkit"]
 build = ["dep:toml"]
+# Placeholders for APIs later milestones ship; the examples that need them gate on their own
+# milestone feature.
+settings-ui = []
+test = []
 
 [dependencies]
 nd-core = { workspace = true, optional = true }
@@ -21,15 +25,3 @@ toml = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
-
-# The design-target examples type-check against this crate until they move to `examples/`
-# (M1): `cargo check -p nd --examples --features build`.
-[[example]]
-name = "hello"
-path = "../../docs/plan/examples/hello/src/main.rs"
-required-features = ["runtime"]
-
-[[example]]
-name = "hello-build"
-path = "../../docs/plan/examples/hello/build.rs"
-required-features = ["build"]
