@@ -274,9 +274,9 @@ impl Config {
             return Err("app.id is required".into());
         }
         let well_formed = id.split('.').count() >= 2
-            && id.split('.').all(|part| {
-                !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-            });
+            && id
+                .split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
         if !well_formed {
             return Err(format!("app.id `{id}` is not reverse-DNS (for example dev.example.app)"));
         }
@@ -289,7 +289,9 @@ impl Config {
             return Err(format!("app.url_schemes entry `{scheme}` must be the bare scheme"));
         }
         if self.updates.feed.is_some() != self.updates.public_key.is_some() {
-            return Err("updates.feed and updates.public_key go together: a feed without a key cannot be verified".into());
+            return Err(
+                "updates.feed and updates.public_key go together: a feed without a key cannot be verified".into()
+            );
         }
         Ok(())
     }
