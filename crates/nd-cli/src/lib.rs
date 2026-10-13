@@ -2,6 +2,7 @@
 //! arrive in M10.
 
 pub mod check;
+pub mod diag;
 pub mod diagnose;
 pub mod lints;
 pub mod new;
@@ -29,6 +30,8 @@ pub enum Command {
     Test(testcmd::TestArgs),
     /// Summarise the app's incident bundles: panics, crashes, hangs, reports.
     Diagnose(diagnose::DiagnoseArgs),
+    /// Measure framework budgets: `nd diag scroll --rows 100000`.
+    Diag(diag::DiagArgs),
 }
 
 pub fn run(cli: Cli) -> Result<ExitCode> {
@@ -37,5 +40,6 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         Command::Check(args) => check::run(args),
         Command::Test(args) => testcmd::run(args),
         Command::Diagnose(args) => diagnose::run(args),
+        Command::Diag(args) => diag::run(args),
     }
 }

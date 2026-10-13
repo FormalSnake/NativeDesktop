@@ -26,14 +26,16 @@ pub mod prelude {
         icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
         system_item, titlebar, toolbar_sidebar_toggle,
     };
-    pub use crate::controls::{
-        Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, ListState, Painter, Processor, canvas,
-    };
+    pub use crate::controls::{Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas};
     pub use crate::native::{ElementId, NativeStyled};
     pub use crate::theme::{
         ActiveTheme, Appearance, GlassVariant, Material, Theme, ThemeOverride, ThemeRefinement, WindowThemeExt,
     };
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
+    pub use nd_virtual::{
+        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, SelectEvent, Selection,
+        SortChanged, SortDirection, TreeNode, column, grid, list, table, tree,
+    };
 }
 
 #[derive(Debug)]

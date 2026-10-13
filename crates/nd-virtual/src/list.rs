@@ -535,6 +535,11 @@ impl<K: RowKey> ListState<K> {
         cx.notify(self.inner.borrow().owner);
     }
 
+    /// The viewport shows the end of the list.
+    pub fn at_end(&self) -> bool {
+        self.core().borrow().at_end()
+    }
+
     pub fn is_following_tail(&self) -> bool {
         self.core().borrow().following()
     }

@@ -3962,6 +3962,7 @@ dependencies = [
  "nd-macros",
  "nd-theme",
  "nd-ui",
+ "nd-virtual",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -6113,6 +6114,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ab8598aa408498679922eff7fa985c25d58a90771bd6be794434c5277eab1a6"
 dependencies = [
  "scroll_derive",
+]
+
+[[package]]
+name = "scroll-bench"
+version = "0.1.0"
+dependencies = [
+ "nd",
 ]
 
 [[package]]
