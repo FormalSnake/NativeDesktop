@@ -297,6 +297,12 @@ impl Backend for TestBackend {
         self.applied(node);
     }
 
+    fn reaffirm(&mut self, node: NodeId) {
+        self.enter(Phase::Update, "reaffirm");
+        self.node(node, "reaffirm");
+        self.log.push(Recorded::Op(Op::Reaffirm { node }));
+    }
+
     fn set_frame(&mut self, node: NodeId, frame: Rect) {
         self.enter(Phase::Frame, "set_frame");
         assert!(self.retains_frames, "TestBackend: set_frame on a backend that lays out itself");

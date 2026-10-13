@@ -192,6 +192,10 @@ pub trait Backend: Any {
     /// Structural: detaches a node (and with it its subtree). The native object stays alive.
     fn remove(&mut self, node: NodeId);
     fn update(&mut self, node: NodeId, patch: &PropsPatch);
+    /// The node emitted an event since the last frame and its props may be unchanged (the app
+    /// refused the change). A controlled native object re-applies its current props, so it
+    /// shows the app's value again; a no-op where the backend draws from props each frame.
+    fn reaffirm(&mut self, _node: NodeId) {}
     /// Retained backends only (see [`Backend::retains_frames`]); frames are relative to the
     /// parent and rounded by the backend to its pixel grid.
     fn set_frame(&mut self, node: NodeId, frame: Rect);

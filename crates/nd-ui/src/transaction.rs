@@ -8,15 +8,47 @@ use crate::backend::{Backend, Constraint, NodeKind, Phase, Props, PropsPatch, Su
 
 #[derive(Clone, Debug)]
 pub enum Op {
-    Create { node: NodeId, kind: NodeKind, props: Props },
-    Insert { parent: NodeId, node: NodeId, before: Option<NodeId> },
-    Move { node: NodeId, parent: NodeId, before: Option<NodeId> },
-    Remove { node: NodeId },
-    Update { node: NodeId, patch: PropsPatch },
-    SetFrame { node: NodeId, frame: Rect },
-    Surface { node: NodeId, op: SurfaceOp },
-    Focus { node: Option<NodeId> },
-    Release { node: NodeId },
+    Create {
+        node: NodeId,
+        kind: NodeKind,
+        props: Props,
+    },
+    Insert {
+        parent: NodeId,
+        node: NodeId,
+        before: Option<NodeId>,
+    },
+    Move {
+        node: NodeId,
+        parent: NodeId,
+        before: Option<NodeId>,
+    },
+    Remove {
+        node: NodeId,
+    },
+    Update {
+        node: NodeId,
+        patch: PropsPatch,
+    },
+    /// The node emitted an event since the last frame: its native object takes its current
+    /// props again, so a change the app refused (props unchanged) does not stay on screen.
+    Reaffirm {
+        node: NodeId,
+    },
+    SetFrame {
+        node: NodeId,
+        frame: Rect,
+    },
+    Surface {
+        node: NodeId,
+        op: SurfaceOp,
+    },
+    Focus {
+        node: Option<NodeId>,
+    },
+    Release {
+        node: NodeId,
+    },
 }
 
 impl Op {
@@ -24,7 +56,7 @@ impl Op {
         match self {
             Op::Create { .. } => Phase::Create,
             Op::Insert { .. } | Op::Move { .. } | Op::Remove { .. } => Phase::Structure,
-            Op::Update { .. } | Op::Surface { .. } => Phase::Update,
+            Op::Update { .. } | Op::Reaffirm { .. } | Op::Surface { .. } => Phase::Update,
             Op::SetFrame { .. } => Phase::Frame,
             Op::Focus { .. } => Phase::Focus,
             Op::Release { .. } => Phase::Release,
@@ -38,6 +70,7 @@ impl Op {
             Op::Move { node, parent, before } => backend.move_node(*node, *parent, *before),
             Op::Remove { node } => backend.remove(*node),
             Op::Update { node, patch } => backend.update(*node, patch),
+            Op::Reaffirm { node } => backend.reaffirm(*node),
             Op::SetFrame { node, frame } => backend.set_frame(*node, *frame),
             Op::Surface { node, op } => backend.surface(*node, op),
             Op::Focus { node } => backend.focus(*node),

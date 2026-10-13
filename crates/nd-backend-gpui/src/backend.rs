@@ -239,6 +239,20 @@ impl Backend for GpuiBackend {
         state.nodes.get_mut(&node).expect("live node").props = patch.new.clone();
     }
 
+    /// Drawn controls show their props every frame; the window repaints so a refused change
+    /// (props unchanged) replaces what the control showed during the gesture.
+    fn reaffirm(&mut self, node: NodeId) {
+        let mut state = self.state.borrow_mut();
+        let mut at = node;
+        while let Some(parent) = state.nodes.get(&at).and_then(|n| n.parent) {
+            at = parent;
+        }
+        let window = state.windows.iter().find(|(_, r)| r.root == Some(at)).map(|(id, _)| *id);
+        if let Some(window) = window {
+            state.dirty.insert(window);
+        }
+    }
+
     fn set_frame(&mut self, _node: NodeId, _frame: Rect) {}
 
     fn surface(&mut self, _node: NodeId, _op: &SurfaceOp) {}

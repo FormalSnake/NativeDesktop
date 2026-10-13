@@ -577,6 +577,9 @@ impl App {
             self.current_window = outer;
             if let Some(slot) = self.windows.get_mut(&window_id) {
                 slot.window = Some(window);
+                if let Some(tree) = slot.tree.as_mut() {
+                    tree.reaffirm.insert(event.node);
+                }
             }
             self.flush_effects();
         }

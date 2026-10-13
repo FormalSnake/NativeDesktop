@@ -92,6 +92,8 @@ pub(crate) struct Tree {
     orphans: Vec<EntityId>,
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
+    /// Nodes that emitted an event since the last frame (see [`Op::Reaffirm`]).
+    pub(crate) reaffirm: HashSet<NodeId>,
     pub(crate) dispatch: DispatchTree<App>,
 }
 
@@ -205,6 +207,7 @@ impl Tree {
             insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
+            reaffirm: HashSet::new(),
             dispatch,
         }
     }
@@ -218,7 +221,7 @@ impl Tree {
     }
 
     pub(crate) fn needs_frame(&self) -> bool {
-        self.needs_layout || !self.tx.is_empty()
+        self.needs_layout || !self.tx.is_empty() || !self.reaffirm.is_empty()
     }
 
     pub(crate) fn view_node(&self, view: EntityId) -> Option<NodeId> {
@@ -344,8 +347,7 @@ impl Tree {
         );
         let children: Vec<AnyElement> = el.children.into_iter().map(|c| c.resolve(window, app)).collect();
         let idents = idents(&children);
-        let slots =
-            children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
+        let slots = children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
         self.nodes.get_mut(&id).expect("node").slots = slots;
         id
     }
@@ -763,6 +765,11 @@ impl App {
         }
         tree.release_orphans(self);
         tree.push_focus_change();
+        let mut reaffirm: Vec<NodeId> = tree.reaffirm.drain().filter(|n| tree.nodes.contains_key(n)).collect();
+        reaffirm.sort();
+        for node in reaffirm {
+            tree.tx.push(Op::Reaffirm { node });
+        }
         let target = tree.view_node(tree.root_view.entity_id());
         tree.dispatch.set_default_target(target);
         let tx = mem::replace(&mut tree.tx, Transaction::new(id));

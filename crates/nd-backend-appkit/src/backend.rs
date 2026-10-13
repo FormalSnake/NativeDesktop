@@ -919,6 +919,17 @@ impl Backend for AppKitBackend {
         }
     }
 
+    fn reaffirm(&mut self, node: NodeId) {
+        let mut state = self.0.borrow_mut();
+        let events = state.events.clone();
+        if let Some(Native::Control(c)) = state.nodes.get_mut(&node) {
+            let props = c.props.clone();
+            // Old and new are the same props: only controlled values whose native side drifted
+            // from them are set again.
+            events.programmatic(|| c.control.update(&props, &props));
+        }
+    }
+
     fn set_frame(&mut self, node: NodeId, frame: Rect) {
         // The form places its rows' controls, at the size nd laid them out at.
         {
