@@ -63,3 +63,9 @@ The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libra
   For a silent night also close the session apps, turn Hyprland animations, blur and shadows off
   (`hyprctl eval` with `hl.config`) and power the displays off with
   `hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })'`; render only in headless Hyprland.
+
+## Shell commands in unattended runs
+
+Never `rm`, `mv` or `find -delete` a path built from a shell variable (`rm -f $OUT/*`): the
+permission guard stops for a manual approval on each one. Use a literal absolute path, let the
+program clean its own temp files (`tempfile` in tests), or at minimum write `"${OUT:?}"/*`.
