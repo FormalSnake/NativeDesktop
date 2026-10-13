@@ -157,6 +157,9 @@ struct State {
     /// `nd-virtual` row roots and table cells, by the tag their div carries.
     row_tags: HashMap<NodeId, nd_virtual::RowId>,
     cell_tags: HashMap<NodeId, usize>,
+    /// `overflow_*_scroll()` divs: the scroll view inside the div's layer view and the document
+    /// their children go in.
+    scrolls: HashMap<NodeId, crate::scroll_view::ScrollBox>,
     weak: Weak<RefCell<State>>,
 }
 
@@ -217,6 +220,7 @@ impl AppKitBackend {
                 form_sizes: HashMap::new(),
                 row_tags: HashMap::new(),
                 cell_tags: HashMap::new(),
+                scrolls: HashMap::new(),
                 weak: weak.clone(),
             })
         });
@@ -260,6 +264,14 @@ impl AppKitBackend {
             state.nodes.iter().filter(|(_, n)| matches!(n, Native::List(_))).map(|(id, _)| *id).collect();
         lists.sort();
         lists
+    }
+
+    /// The scroll views of `overflow_*_scroll()` divs, by node, oldest first.
+    pub fn scroll_views(&self) -> Vec<(NodeId, Retained<objc2_app_kit::NSScrollView>)> {
+        let state = self.0.borrow();
+        let mut out: Vec<_> = state.scrolls.iter().map(|(n, s)| (*n, s.scroll.clone())).collect();
+        out.sort_by_key(|(n, _)| *n);
+        out
     }
 
     /// The `nd-virtual` row a row root node shows.
@@ -584,7 +596,12 @@ impl State {
             }
             _ => {}
         }
-        let (Some(container), Some(view)) = (self.native(parent).container(), self.view(node)) else { return };
+        let scroll_doc = self.scrolls.get(&parent).map(|s| Retained::into_super(s.document.clone()));
+        let (Some(container), Some(view)) =
+            (scroll_doc.as_deref().or_else(|| self.native(parent).container()), self.view(node))
+        else {
+            return;
+        };
         match before.and_then(|b| self.view(b)) {
             Some(sibling) if unsafe { sibling.superview() }.is_some_and(|s| std::ptr::eq(&*s, container)) => {
                 container.addSubview_positioned_relativeTo(view, NSWindowOrderingMode::Below, Some(sibling))
@@ -841,6 +858,9 @@ impl Backend for AppKitBackend {
                 let div = props::<DivProps>(p, "View");
                 let view = NdLayerView::new(mtm, &ViewLook::from_style(&div.style, state.expose));
                 view.set_gestures(gesture_host(div, emit(), &state.wake));
+                if div.gestures.scroll.any() {
+                    state.scrolls.insert(node, crate::scroll_view::ScrollBox::new(mtm, &view, div.gestures.scroll));
+                }
                 Native::Layer(view)
             }
             NodeKind::Text => Native::Text(NdTextView::new(mtm, &TextLook::from_props(props(p, "Text")))),
@@ -976,12 +996,14 @@ impl Backend for AppKitBackend {
         let mut place: Option<(WindowId, WindowControlsProps)> = None;
         let mut recreate_select = None;
         let mut form_changed = false;
+        let mut scroll_axes = None;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Layer(v) => {
                 let div = props::<DivProps>(&patch.new, "View");
                 v.set_props(&ViewLook::from_style(&div.style, expose));
                 if props::<DivProps>(&patch.old, "View").gestures != div.gestures {
                     v.set_gestures(gesture_host(div, events.emitter(node), &wake));
+                    scroll_axes = Some(div.gestures.scroll);
                 }
             }
             Native::Titlebar(v) => {
@@ -1041,6 +1063,22 @@ impl Backend for AppKitBackend {
         }
         if form_changed {
             state.mark_form(node);
+        }
+        if let (Some(axes), Some(Native::Layer(v))) = (scroll_axes, state.nodes.get(&node)) {
+            let v = v.clone();
+            match (state.scrolls.get(&node), axes.any()) {
+                (Some(s), true) => s.set_axes(axes),
+                (Some(_), false) => {
+                    if let Some(s) = state.scrolls.remove(&node) {
+                        s.dissolve(&v);
+                    }
+                }
+                (None, true) => {
+                    let mtm = state.mtm;
+                    state.scrolls.insert(node, crate::scroll_view::ScrollBox::adopt(mtm, &v, axes));
+                }
+                (None, false) => {}
+            }
         }
         if let Some((w, wc)) = place {
             state.place_lights(w, &wc);
@@ -1152,6 +1190,7 @@ impl Backend for AppKitBackend {
         state.form_sizes.remove(&node);
         state.row_tags.remove(&node);
         state.cell_tags.remove(&node);
+        state.scrolls.remove(&node);
         if let Some(Native::Scaffold(_)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {
@@ -1168,6 +1207,11 @@ impl Backend for AppKitBackend {
         state.rebuild_toolbars();
         state.rebuild_forms();
         state.commit_lists(window);
+        for (node, scroll) in &state.scrolls {
+            if state.node_window.get(node) == Some(&window) {
+                scroll.fit_document();
+            }
+        }
         state.place_embedded_lights(window);
         state.apply_dirty_themes();
         CATransaction::commit();

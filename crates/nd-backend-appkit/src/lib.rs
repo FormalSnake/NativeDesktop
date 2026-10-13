@@ -22,6 +22,7 @@ mod keys;
 mod look;
 mod platform;
 mod scaffold;
+mod scroll_view;
 mod services;
 mod source_list;
 mod swift;

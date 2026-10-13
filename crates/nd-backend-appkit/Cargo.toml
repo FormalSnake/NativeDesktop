@@ -49,6 +49,10 @@ harness = false
 name = "virtual_list"
 harness = false
 
+[[test]]
+name = "scroll_view"
+harness = false
+
 # Tier 3: a pinch and a page swipe through ndshell. `gate_m4::real_pinch_and_page_swipe`.
 [[test]]
 name = "real_gestures_gate"
