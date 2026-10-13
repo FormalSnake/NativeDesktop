@@ -14,7 +14,7 @@ struct NDGaugeBody: View {
             Text(value, format: .number.precision(.fractionLength(0)))
         }
         .gaugeStyle(.accessoryCircularCapacity)
-        .padding(8)
+        .padding()
     }
 }
 

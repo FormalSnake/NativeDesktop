@@ -810,6 +810,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "chrome"
+version = "0.1.0"
+dependencies = [
+ "nd",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3948,10 +3955,12 @@ dependencies = [
  "nd-automation",
  "nd-backend-appkit",
  "nd-backend-gpui",
+ "nd-components",
  "nd-core",
  "nd-diag",
  "nd-gpui",
  "nd-macros",
+ "nd-theme",
  "nd-ui",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -3972,9 +3981,11 @@ version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
+ "nd-components",
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-theme",
  "nd-ui",
  "ndshell",
  "objc2 0.6.5",
@@ -3996,6 +4007,7 @@ dependencies = [
  "futures",
  "image",
  "nd-backend-gpui",
+ "nd-components",
  "nd-core",
  "nd-diag",
  "nd-gpui",
@@ -4014,6 +4026,16 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "tempfile",
+]
+
+[[package]]
+name = "nd-components"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
+ "nd-gpui",
+ "nd-theme",
+ "nd-ui",
 ]
 
 [[package]]
@@ -4176,6 +4198,19 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "nd-theme"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
+ "nd-gpui",
+ "notify",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -4969,6 +5004,7 @@ name = "overrides"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "png 0.17.16",
 ]
 
 [[package]]

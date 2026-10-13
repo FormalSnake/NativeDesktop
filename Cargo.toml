@@ -22,6 +22,8 @@ nd-backend-gpui = { path = "crates/nd-backend-gpui" }
 ndshell = { path = "crates/ndshell" }
 nd-automation = { path = "crates/nd-automation" }
 nd-test = { path = "crates/nd-test" }
+nd-theme = { path = "crates/nd-theme" }
+nd-components = { path = "crates/nd-components" }
 nd-os-windows = { path = "crates/nd-os-windows" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

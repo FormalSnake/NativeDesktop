@@ -19,9 +19,11 @@ filter = "test(/(^|::)(real::|real_)/)"
 test-group = "real-window"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-# Tier 2 AppKit tests that need their own window to stay key; two at once take it from each other.
+# Tier 2 AppKit tests that need their own window to stay key (posted key events, active-state
+# goldens) take it from each other, so they queue too; so does the matugen recolour timing,
+# which a loaded machine would push past its 100 ms budget.
 [[profile.default.overrides]]
-filter = "binary(dispatch_spike) | binary(app_dispatch)"
+filter = "binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/)"
 test-group = "real-window"
 
 # Tiers 1 and 2 only, what `just test` and CI's first step run.
@@ -58,10 +60,10 @@ fail-fast = false
 retries = 0
 slow-timeout = { period = "60s", terminate-after = 5 }
 
-# The dispatch spike needs its window key, which a real-input test activating its own app takes
-# away, so it queues with them.
+# The dispatch spike and the other key-window tests need their window key, which a real-input
+# test activating its own app takes away, so they queue with them.
 [[profile.gate.overrides]]
-filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike) | binary(app_dispatch)"
+filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/)"
 test-group = "real-window"
 
 # `nd new` compiles a whole app from cold, so its gate gets room and stays out of the default run.

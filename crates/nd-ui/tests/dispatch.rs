@@ -95,8 +95,7 @@ fn a_bound_action_nobody_handles_leaves_the_key_to_the_platform() {
 
 #[test]
 fn multi_stroke_bindings_hold_the_prefix() {
-    let mut tree =
-        tree(vec![KeyBinding::new("ctrl-x ctrl-s", Chord, None), KeyBinding::new("alt-s", Save, None)]);
+    let mut tree = tree(vec![KeyBinding::new("ctrl-x ctrl-s", Chord, None), KeyBinding::new("alt-s", Save, None)]);
     tree.on_action(ROOT, |_: &Chord, cx| cx.cx.log.push("chord"));
     tree.on_action(ROOT, |_: &Save, cx| cx.cx.log.push("save"));
     let mut app = App::default();

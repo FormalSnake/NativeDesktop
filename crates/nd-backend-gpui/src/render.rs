@@ -173,6 +173,7 @@ impl Build<'_> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
+            NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
                 div().into_any_element()
@@ -227,7 +228,12 @@ impl Build<'_> {
             .active(move |s| s.bg(look.control_active))
             // Inside a drag region the button keeps its clicks and never starts a window move.
             .occlude()
-            .child(props.label.clone())
+            // Icons arrive with `nd-icons` (M6); until then an icon-only button shows its tooltip.
+            .child(if props.label.is_empty() {
+                props.tooltip.clone().or_else(|| props.icon.clone()).unwrap_or_default()
+            } else {
+                props.label.clone()
+            })
             .on_click(move |_, _, cx| {
                 emit.emit(ClickEvent);
                 wake(cx);

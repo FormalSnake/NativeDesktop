@@ -219,6 +219,35 @@ impl WindowHost {
         self.inner.id
     }
 
+    /// Applies what the window was opened with: a custom title bar (content under a
+    /// transparent title bar, title hidden) or the settings window's toolbar style.
+    pub fn apply_options(&self, options: &nd_ui::WindowOptions) {
+        let window = &self.inner.window;
+        if options.titlebar == nd_ui::Titlebar::Custom {
+            window.setTitlebarAppearsTransparent(true);
+            window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Hidden);
+            self.inner.root.set_full_size(true);
+        }
+        match options.kind {
+            nd_ui::WindowKind::Settings => {
+                window.setToolbarStyle(objc2_app_kit::NSWindowToolbarStyle::Preference);
+                let mask = window.styleMask() & !objc2_app_kit::NSWindowStyleMask::Miniaturizable;
+                window.setStyleMask(mask);
+            }
+            nd_ui::WindowKind::Sheet { .. } => {
+                let mask = window.styleMask() & !objc2_app_kit::NSWindowStyleMask::Miniaturizable;
+                window.setStyleMask(mask);
+            }
+            nd_ui::WindowKind::Normal => {}
+        }
+        if let Some(min) = options.min_size {
+            window.setContentMinSize(objc2_foundation::NSSize::new(
+                min.width.as_f32().into(),
+                min.height.as_f32().into(),
+            ));
+        }
+    }
+
     pub fn window(&self) -> &NdWindow {
         &self.inner.window
     }
@@ -253,6 +282,12 @@ impl WindowHost {
 
 impl Drop for WindowHost {
     fn drop(&mut self) {
+        // The app closed the window: a sheet ends on its parent, any other window goes away.
+        if let Some(parent) = self.inner.window.sheetParent() {
+            parent.endSheet(&self.inner.window);
+        } else if self.inner.window.isVisible() {
+            self.inner.window.orderOut(None);
+        }
         self.inner.root.set_layout_hook(None);
         self.inner.window.setDelegate(None);
         if let Some(delegate) = self.inner.delegate.borrow().as_ref() {

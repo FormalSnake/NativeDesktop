@@ -212,6 +212,8 @@ pub struct App {
     bindings: Vec<KeyBinding>,
     /// Set by [`App::propagate`] inside an `on_action` listener.
     pub(crate) propagate_action: bool,
+    /// The window whose views are rendering or whose handlers are running.
+    pub(crate) current_window: Option<WindowId>,
 }
 
 impl App {
@@ -236,6 +238,7 @@ impl App {
             events,
             bindings: Vec::new(),
             propagate_action: false,
+            current_window: None,
         }
     }
 
@@ -377,6 +380,24 @@ impl App {
         self.bindings.extend(bindings);
     }
 
+    /// Every key binding added so far, in order. Menus read their key equivalents here, so a
+    /// menu and its shortcut never disagree.
+    pub fn key_bindings(&self) -> &[KeyBinding] {
+        &self.bindings
+    }
+
+    /// The window being rendered, or whose event or action handler is running; `None`
+    /// outside any window. Per-window globals (the theme) resolve against it.
+    pub fn current_window(&self) -> Option<WindowId> {
+        self.current_window
+    }
+
+    /// Re-renders every mounted view in the next frame, as after a theme change.
+    pub fn refresh_windows(&mut self) {
+        let views: Vec<EntityId> = self.view_windows.keys().copied().collect();
+        self.dirty.extend(views);
+    }
+
     /// Inside an `on_action` listener: lets the action continue towards the root.
     pub fn propagate(&mut self) {
         self.propagate_action = true;
@@ -403,7 +424,9 @@ impl App {
         f: impl FnOnce(&mut DispatchTree<App>, &mut App) -> R,
     ) -> R {
         let Some(mut tree) = self.windows.get_mut(&window).and_then(|w| w.tree.take()) else { return absent };
+        let outer = self.current_window.replace(window);
         let result = f(&mut tree.dispatch, self);
+        self.current_window = outer;
         tree.push_focus_change();
         match self.windows.get_mut(&window) {
             Some(slot) => slot.tree = Some(tree),
@@ -549,7 +572,9 @@ impl App {
             let Some(mut window) = slot.window.take() else {
                 panic!("native event drained while {window_id:?} is leased");
             };
+            let outer = self.current_window.replace(window_id);
             handler(any, &mut window, self);
+            self.current_window = outer;
             if let Some(slot) = self.windows.get_mut(&window_id) {
                 slot.window = Some(window);
             }

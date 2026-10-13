@@ -1,0 +1,23 @@
+[package]
+name = "chrome"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[[bin]]
+name = "chrome"
+path = "src/main.rs"
+
+# Tier 2: the settings window's grouped SwiftUI form and toolbar tabs. AppKit owns the main
+# thread, so libtest's harness is off.
+[[test]]
+name = "settings"
+harness = false
