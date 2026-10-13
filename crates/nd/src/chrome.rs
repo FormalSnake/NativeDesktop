@@ -117,8 +117,14 @@ impl Toolbar {
 
 impl IntoElement for Toolbar {
     fn into_any_element(self) -> AnyElement {
-        h_flex()
+        // On GPUI backends the toolbar is the window's title row: it moves the window and
+        // keeps clear of the OS controls.
+        drag_region()
             .id("toolbar")
+            .titlebar_insets()
+            .flex()
+            .flex_row()
+            .items_center()
             .gap_2()
             .px_3()
             .py_2()
@@ -184,8 +190,12 @@ impl Titlebar {
 
 impl IntoElement for Titlebar {
     fn into_any_element(self) -> AnyElement {
-        h_flex()
+        drag_region()
             .id("titlebar")
+            .titlebar_insets()
+            .flex()
+            .flex_row()
+            .items_center()
             .h(px(52.))
             .px_3()
             .gap_2()

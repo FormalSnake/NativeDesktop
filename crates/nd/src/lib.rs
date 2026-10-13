@@ -1,8 +1,8 @@
 //! The one crate apps depend on: `use nd::prelude::*;`.
 //!
-//! M0 state: the vocabulary, retained tree and layout are real (`nd-ui`); `scaffold`,
-//! `toolbar` and the theme are composed stand-ins until `nd-components` and `nd-theme` land,
-//! and `Application::run` has no platform host yet.
+//! The vocabulary, retained tree and layout are real (`nd-ui`), on AppKit (macOS) and GPUI
+//! (elsewhere, and on macOS with the `gpui` feature and `ND_BACKEND=gpui`); `scaffold`, `toolbar`
+//! and the theme are composed stand-ins until `nd-components` and `nd-theme` land.
 
 #[cfg(feature = "build")]
 pub mod build;

@@ -98,11 +98,15 @@ impl Application {
         &self.manifest
     }
 
-    /// Runs the app on the platform host and returns when it quits. Where no host is linked
-    /// yet (everything but macOS until M2) this returns [`Error::NoBackend`] without calling
-    /// `init`. Diagnostics (logs, incident bundles, crash and hang capture) start first; in the
-    /// copy of the executable launched as the crash helper this never returns.
+    /// Runs the app on the platform host and returns when it quits: AppKit on macOS, GPUI
+    /// elsewhere, and GPUI on macOS too with the `gpui` feature and `ND_BACKEND=gpui`.
+    /// Diagnostics (logs, incident bundles, crash and hang capture) start first; in the copy of
+    /// the executable launched as the crash helper this never returns.
     pub fn run<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
+        #[cfg(all(target_os = "macos", feature = "gpui"))]
+        if std::env::var_os("ND_BACKEND").is_some_and(|v| v == "gpui") {
+            return self.run_gpui(init);
+        }
         #[cfg(target_os = "macos")]
         {
             nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "appkit"));
@@ -121,9 +125,23 @@ impl Application {
             )
         }
         #[cfg(not(target_os = "macos"))]
-        {
-            let _ = init;
-            Err(Error::NoBackend)
-        }
+        self.run_gpui(init)
+    }
+
+    #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
+    fn run_gpui<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
+        nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "gpui"));
+        nd_backend_gpui::run_with(
+            nd_backend_gpui::NoOsHooks,
+            move |cx| {
+                init(cx);
+            },
+            |sender| {
+                if let Err(e) = nd_automation::start_from_env(move |job| sender.send(job)) {
+                    eprintln!("nd: automation socket: {e}");
+                }
+            },
+        );
+        Ok(())
     }
 }
