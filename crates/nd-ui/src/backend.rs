@@ -8,8 +8,10 @@
 //!   first), updates, frames, focus, releases.
 //! - A node is named only between its `create` and its `release`. The backend holds one strong
 //!   reference per node from `create` and drops it on `release`.
-//! - Main thread only. A backend never calls back into `nd-ui` during apply; native callbacks
-//!   go through the per-window event queue (3.13).
+//! - Main thread only. A backend never calls back into `nd-ui`; native callbacks push onto the
+//!   [`EventQueue`] it was given, which `nd-ui` drains after the transaction (3.13).
+//! - Measuring happens inside the transaction, after updates and before frames, so a node
+//!   created in this frame can be measured in the frame that lays it out.
 //! - During live resize the whole transaction runs synchronously inside the OS resize pass.
 
 use std::any::{Any, TypeId};
@@ -17,6 +19,8 @@ use std::fmt;
 use std::rc::Rc;
 
 use nd_core::{NodeId, Rect, Size, WindowId};
+
+use crate::events::EventQueue;
 
 /// What a retained node is, decided at create time and never changed. A node whose kind changes
 /// is released and recreated by the reconciler.
@@ -113,7 +117,9 @@ pub enum Phase {
     Release,
 }
 
-pub trait Backend {
+pub trait Backend: Any {
+    /// Called once, before any transaction. Native callbacks push here, never into app code.
+    fn set_event_queue(&mut self, events: EventQueue);
     /// Opens the transaction for one window's frame. AppKit begins a `CATransaction` with
     /// implicit animations off.
     fn begin(&mut self, window: WindowId);
@@ -138,7 +144,8 @@ pub trait Backend {
     /// cached views dirty.
     fn commit(&mut self, window: WindowId);
 
-    /// Query, valid outside transactions. Callers go through
+    /// Query, valid for any created node, including inside a transaction once its updates are
+    /// applied. Callers go through
     /// [`crate::transaction::MeasureCache`], which caches by props and constraint.
     fn measure(&mut self, node: NodeId, constraint: Constraint) -> Size;
     /// The size a native layout container (table row, split pane, toolbar item, scroll
