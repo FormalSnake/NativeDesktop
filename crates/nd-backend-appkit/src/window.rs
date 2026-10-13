@@ -26,7 +26,13 @@ pub struct NdWindowIvars {
     last_key: RefCell<Option<Retained<NSEvent>>>,
     /// Set while nd's own focus op moves the first responder, so it is not reported back.
     nd_focus: Cell<bool>,
+    /// A framework panel holding text focus outside nd's tree (the command palette) claims the
+    /// keys it edits with before nd's bindings see them.
+    key_capture: RefCell<Option<KeyCapture>>,
 }
+
+/// Says whether a framework panel takes a keystroke before nd dispatch.
+pub(crate) type KeyCapture = Rc<dyn Fn(&Keystroke) -> bool>;
 
 define_class!(
     // SAFETY: NSWindow has no subclassing requirements beyond calling super in the overrides
@@ -95,6 +101,10 @@ impl NdWindow {
         *self.ivars().router.borrow_mut() = router;
     }
 
+    pub(crate) fn set_key_capture(&self, capture: Option<KeyCapture>) {
+        *self.ivars().key_capture.borrow_mut() = capture;
+    }
+
     /// The backend's focus op: moves AppKit's first responder to `view` (the window itself for
     /// `None`) without reporting it back to nd as a platform focus change.
     pub(crate) fn make_first_responder_from_nd(&self, view: Option<&NSView>) {
@@ -119,6 +129,10 @@ impl NdWindow {
         let (Some(router), Some(keystroke)) = (self.router(), crate::keystroke(event)) else {
             return false;
         };
+        let capture = self.ivars().key_capture.borrow().clone();
+        if capture.is_some_and(|c| c(&keystroke)) {
+            return false;
+        }
         router.key_down(&keystroke) != KeyDispatch::Unhandled
     }
 }

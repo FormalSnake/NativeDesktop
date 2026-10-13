@@ -42,6 +42,11 @@ pub enum Role {
     Toolbar,
     ScrollArea,
     WindowControls,
+    /// A floating panel that takes input until it closes (the command palette).
+    Dialog,
+    SearchBox,
+    /// A message that does not take focus (a toast, a banner).
+    Status,
     Generic,
 }
 
@@ -73,6 +78,9 @@ impl Role {
             Role::Toolbar => "toolbar",
             Role::ScrollArea => "scroll-area",
             Role::WindowControls => "window-controls",
+            Role::Dialog => "dialog",
+            Role::SearchBox => "search-box",
+            Role::Status => "status",
             Role::Generic => "generic",
         }
     }

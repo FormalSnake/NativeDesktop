@@ -1,0 +1,26 @@
+[package]
+name = "gallery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[[bin]]
+name = "gallery"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell = { path = "../../crates/ndshell" }
+png = "0.17"
+
+# Tier 2 goldens of the macOS look. AppKit owns the main thread, so libtest's harness is off.
+[[test]]
+name = "goldens"
+harness = false
