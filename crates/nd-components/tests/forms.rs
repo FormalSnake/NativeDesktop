@@ -213,13 +213,9 @@ fn bound_view(s: &Bound, cx: &mut Context<Host<Bound>>) -> AnyElement {
         .into_any_element()
 }
 
-/// The view that keeps the entity observes it, so a change made anywhere renders the fields again.
+/// No observer: a bound field re-renders the view showing it when the entity changes.
 fn bound_rig(state: TextFieldState) -> Rig<Bound> {
-    let mut rig = Rig::build(|cx| cx.new(|_| state), bound_view);
-    rig.win.root().clone().update(&mut rig.cx, |host, cx| {
-        cx.observe(&host.s, |_, _, cx| cx.notify()).detach();
-    });
-    rig
+    Rig::build(|cx| cx.new(|_| state), bound_view)
 }
 
 #[test]

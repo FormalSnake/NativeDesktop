@@ -61,7 +61,6 @@ pub struct FormsPage {
 impl FormsPage {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let search = cx.new(|_| TextFieldState::default().placeholder("Search settings"));
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
         Self {
             action: "None yet".into(),
             name: String::new(),

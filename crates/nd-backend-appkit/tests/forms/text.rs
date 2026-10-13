@@ -123,12 +123,9 @@ fn insert(editor: &AnyObject, text: &str) {
 }
 
 pub fn run(rig: &Rig, c: &mut Checks) {
-    // `bind` reads the state when the view renders, so the view re-renders when the state changes.
     let w = rig.open("Text", |cx| {
         let bound = cx.new(|_| TextFieldState::default());
         let query = cx.new(|_| TextFieldState::default());
-        cx.observe(&bound, |_, _, cx| cx.notify()).detach();
-        cx.observe(&query, |_, _, cx| cx.notify()).detach();
         Texts {
             name: SharedString::default(),
             name_changes: Vec::new(),

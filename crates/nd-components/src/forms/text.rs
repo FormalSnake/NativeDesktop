@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Response, SemanticAction, Semantics, WidgetSemantics};
-use nd_ui::{DispatchProps, Key, Role, StyleRefinement, deferred};
+use nd_ui::{DispatchProps, EntityId, Key, Role, StyleRefinement, deferred};
 
 use super::guard;
 use crate::icon::Icon;
@@ -57,6 +57,8 @@ pub struct TextFieldState {
     text: SharedString,
     placeholder: Option<SharedString>,
     last_event: Option<TextEvent>,
+    /// Views that show this state through a bound field; `set_text` re-renders them.
+    viewers: Vec<EntityId>,
 }
 
 impl TextFieldState {
@@ -86,7 +88,14 @@ impl TextFieldState {
     pub fn set_text(&mut self, text: impl Into<SharedString>, _window: &mut Window, cx: &mut Context<Self>) {
         self.text = text.into();
         self.last_event = Some(TextEvent::Replaced);
+        self.changed(cx);
+    }
+
+    fn changed(&self, cx: &mut Context<Self>) {
         cx.notify();
+        for viewer in self.viewers.clone() {
+            (**cx).notify(viewer);
+        }
     }
 
     fn record(&mut self, text: Option<SharedString>, event: TextEvent, cx: &mut Context<Self>) {
@@ -94,7 +103,7 @@ impl TextFieldState {
             self.text = text;
         }
         self.last_event = Some(event);
-        cx.notify();
+        self.changed(cx);
     }
 }
 
@@ -503,6 +512,11 @@ impl<P: TextProps> IntoElement for TextInput<P> {
             None => self.finish(None),
             // The state is read while the tree reconciles, so the field shows its latest text.
             Some(state) => deferred(move |_window, cx| {
+                if let Some(view) = cx.rendering_view()
+                    && !state.read(cx).viewers.contains(&view)
+                {
+                    state.update(cx, |s, _| s.viewers.push(view));
+                }
                 let s = state.read(cx);
                 let (text, placeholder) = (s.text.clone(), s.placeholder.clone());
                 let props = self.element.props_mut();

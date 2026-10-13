@@ -32,8 +32,8 @@ pub use nd_backend_appkit as appkit;
 /// Tier 1 vocabulary for app tests: `TestApp` over the recording `TestBackend`.
 #[cfg(feature = "test")]
 pub mod test {
+    pub use nd_ui::semantics::{ActionError, SemanticAction};
     pub use nd_ui::test_app::TestApp;
     pub use nd_ui::test_backend::TestBackend;
-    pub use nd_ui::semantics::{ActionError, SemanticAction};
     pub use nd_ui::{ButtonProps, NodeId, Role, SemanticNode, Size, TextProps};
 }

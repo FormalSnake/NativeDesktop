@@ -369,9 +369,12 @@ impl Tree {
         }
         app.view_windows.insert(id, self.window);
         self.views.insert(id, ViewSlot { view: view.clone(), ident, root: None, parent, depth });
+        // Deferred elements in the view's subtree build while it mounts, so they see the view.
+        app.rendering.push(id);
         let el = self.render_view(&view, window, app);
         let root_ident = idents(std::slice::from_ref(&el)).remove(0);
         let root = self.mount(el, root_ident, parent, depth + 1, window, app);
+        app.rendering.pop();
         self.views.get_mut(&id).expect("view").root = Some(root);
         Slot::View(id)
     }
@@ -634,6 +637,12 @@ impl Tree {
     }
 
     fn rerender_view(&mut self, id: EntityId, window: &mut Window, app: &mut App) {
+        app.rendering.push(id);
+        self.rerender_view_in(id, window, app);
+        app.rendering.pop();
+    }
+
+    fn rerender_view_in(&mut self, id: EntityId, window: &mut Window, app: &mut App) {
         let (view, parent, depth, old) = {
             let v = &self.views[&id];
             (v.view.clone(), v.parent, v.depth, v.root)
