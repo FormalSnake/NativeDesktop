@@ -3805,6 +3805,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-config"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
 name = "nd-core"
 version = "0.1.0"
 dependencies = [
