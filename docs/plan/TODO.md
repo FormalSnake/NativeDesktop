@@ -82,3 +82,4 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 
 ## Known flakes
 - `gate_m3::matugen_live_recolour` failed once in 3 full runs on the macbook (2026-10-14) while other lanes were compiling; it passes alone. The 100 ms wall-clock budget is sensitive to CPU contention. Fix: measure from the watcher event to the presented frame on the frame clock, and run the wall-clock check only in `--profile gate`.
+- Tier 2 AppKit tests that need a key window (`dispatch_spike`, `app_dispatch`, `gate_m3` chrome and goldens, `gate_m6::gallery_goldens`) only serialize inside one nextest run. Two agents running suites at once on the macbook make them fail (2026-10-14: both failed during a concurrent run, both pass alone). Fix: every window-owning test takes the ndshell machine lock, not just the nextest group.
