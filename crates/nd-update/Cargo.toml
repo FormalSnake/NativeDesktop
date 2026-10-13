@@ -1,0 +1,33 @@
+[package]
+name = "nd-update"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Velopack updates behind an ed25519-signed static feed."
+
+[lib]
+name = "nd_update"
+
+[features]
+default = ["client"]
+# The in-app updater. `nd release` only needs the feed signing in `feed`.
+client = ["dep:velopack", "dep:ureq", "dep:log"]
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = "3"
+getrandom = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Pinned to the `vpk` version `nd package` installs; feed and package formats move together.
+velopack = { version = "=1.2.161", optional = true, features = ["public-utils"] }
+ureq = { version = "3.4", optional = true }
+log = { version = "0.4", optional = true }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

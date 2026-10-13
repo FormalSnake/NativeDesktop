@@ -18,6 +18,10 @@ const PINNED: &str = include_str!("../../../swift-toolchain.toml");
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub fn app() {
+    if let Err(message) = bake_updates() {
+        println!("cargo::error=nd::build::app: {message}");
+        std::process::exit(1);
+    }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }
@@ -89,6 +93,28 @@ fn build() -> Result<(), String> {
     println!("cargo::rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     for symbol in exported_symbols(&lib)? {
         println!("cargo::rustc-link-arg=-Wl,-u,{symbol}");
+    }
+    Ok(())
+}
+
+/// Bakes `[updates] feed` and `public_key` into the app as `ND_UPDATE_FEED` and
+/// `ND_UPDATE_PUBLIC_KEY`, read back by `nd::manifest!()`. Skipped for wasm and when
+/// `ND_NO_UPDATES=1` (Nix builds, where the store owns the files).
+fn bake_updates() -> Result<(), String> {
+    println!("cargo::rerun-if-env-changed=ND_NO_UPDATES");
+    let config = PathBuf::from(var("CARGO_MANIFEST_DIR")?).join("nativedesktop.toml");
+    if env::var("ND_NO_UPDATES").is_ok_and(|v| v == "1") || env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32")
+    {
+        return Ok(());
+    }
+    let Ok(text) = fs::read_to_string(&config) else { return Ok(()) };
+    println!("cargo::rerun-if-changed=nativedesktop.toml");
+    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", config.display()))?;
+    let updates = table.get("updates");
+    let get = |key: &str| updates.and_then(|u| u.get(key)).and_then(|v| v.as_str());
+    if let (Some(feed), Some(key)) = (get("feed"), get("public_key")) {
+        println!("cargo::rustc-env=ND_UPDATE_FEED={feed}");
+        println!("cargo::rustc-env=ND_UPDATE_PUBLIC_KEY={key}");
     }
     Ok(())
 }
