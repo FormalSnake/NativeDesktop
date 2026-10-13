@@ -11,9 +11,15 @@ ext = ["md"]
 role = "editor"
 
 [updates]
-feed = "https://updates.canarycoders.es/notes"
+feed = "https://updates.example.org/notes"
 channels = ["stable", "beta"]
 public_key = "RWQf6LRCGA9i5zm4Yq0l3z7u0n3f2Xk3t8jW6dYp6Z2b0x8c4Kq1e9s"
+
+[updates.publish]
+kind = "s3"                       # s3 (R2, S3, MinIO), github, rsync, dir
+endpoint_env = "NOTES_S3_ENDPOINT"
+bucket = "updates"
+prefix = "notes"
 
 [diagnostics]
 sentry_dsn_env = "NOTES_SENTRY_DSN"   # optional upload; bundles are always written locally

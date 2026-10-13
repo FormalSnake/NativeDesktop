@@ -746,6 +746,15 @@ Info.plist, `.desktop` plus shared-mime XML, and the installer's registry entrie
 signature first (Velopack alone trusts feed hashes, `docs/research/windows-packaging-updates.md`
 section 4); background check, apply on quit, a "what's new" view. Off on Nix and web.
 
+The feed is self-hostable by design: a release is a directory of static files (`releases.<channel>.json`,
+its `.sig`, full and delta packages, release notes) with relative links only, so any static host serves
+it: R2, S3 or any S3-compatible store, GitHub Releases or Pages, nginx/Caddy on a VPS, or a plain
+directory over `file://` for tests. `nd release` writes that directory locally first, then hands it to a
+publisher chosen in `[updates.publish]` (`s3` with endpoint/bucket for R2/S3/MinIO, `github`, `rsync`,
+`dir`); no publisher talks to a hosted service of ours and no host-specific logic lives in the app.
+`nd release serve` serves the directory locally for update tests. The ed25519 public key ships in the
+app, so swapping hosts never weakens verification. Default domain: none baked in; each app sets `feed`.
+
 Settings layers: defaults < Nix-managed file < user `config.toml` < `config.local.toml` (writable
 overlay when the main file is a `/nix/store` symlink) < env `<APP>_*` < CLI flags. `toml` reads,
 `toml_edit` writes so comments survive; own writes are tagged so the watcher ignores them; each
@@ -1014,7 +1023,8 @@ thumbnails in `nd-system`, volumes and favourites as a source list, a path bread
 | Rust reload slower than Solid HMR | Fast relaunch with state restore, live theme/settings; `subsecond` evaluated in M10 |
 
 ### Decisions on the former open questions (2026-10-13)
-1. Update feed: Cloudflare R2 under `updates.canarycoders.es`, feed signed with ed25519.
+1. Update feed: static, self-hostable files (11.3) on any host; the ecosystem's own apps use Cloudflare R2
+   under a domain other than canarycoders.es (domain to be chosen by the user).
 2. Signing: still open; decided at M10 (Azure Artifact Signing through CanaryCoders, Apple Developer ID).
 3. macOS floor: 14. Sonoma and Sequoia still hold a meaningful share, and the cost is small because
    structural elements use system components that exist on 14; the forks are `glass()` falling back to
