@@ -87,7 +87,7 @@ fn is<W: 'static>(kind: WidgetKind) -> bool {
     kind.type_id == TypeId::of::<W>()
 }
 
-fn props<'a, T: 'static>(p: &'a Props) -> &'a T {
+fn props<T: 'static>(p: &Props) -> &T {
     p.downcast_ref::<T>().unwrap_or_else(|| panic!("form control needs {} props", std::any::type_name::<T>()))
 }
 

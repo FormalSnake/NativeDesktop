@@ -172,7 +172,7 @@ pub fn part_id(owner: NodeId, index: usize) -> NodeId {
 
 /// The widget a part id belongs to; `None` for an ordinary node.
 pub fn part_owner(id: NodeId) -> Option<NodeId> {
-    (id.0 & PART_BIT != 0).then(|| NodeId((id.0 & !PART_BIT) >> 8))
+    (id.0 & PART_BIT != 0).then_some(NodeId((id.0 & !PART_BIT) >> 8))
 }
 
 impl Semantics {
