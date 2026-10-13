@@ -177,6 +177,10 @@ fn scope_of(p: &Props) -> Option<SubtreeScope> {
     p.downcast_ref::<ScaffoldProps>().map(|s| s.scope.clone())
 }
 
+fn gesture_host(div: &DivProps, emit: nd_ui::events::Emit, wake: &Wake) -> Option<crate::gestures::GestureHost> {
+    (!div.gestures.is_empty()).then(|| crate::gestures::GestureHost { set: div.gestures, emit, wake: wake.clone() })
+}
+
 fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
     list.retain(|n| *n != node);
     let at = before.and_then(|b| list.iter().position(|n| *n == b)).unwrap_or(list.len());
@@ -717,10 +721,12 @@ impl Backend for AppKitBackend {
                 let _: &RootProps = props(p, "Root");
                 Native::Root(state.window().root.content().retain())
             }
-            NodeKind::View => Native::Layer(NdLayerView::new(
-                mtm,
-                &ViewLook::from_style(&props::<DivProps>(p, "View").style, state.expose),
-            )),
+            NodeKind::View => {
+                let div = props::<DivProps>(p, "View");
+                let view = NdLayerView::new(mtm, &ViewLook::from_style(&div.style, state.expose));
+                view.set_gestures(gesture_host(div, emit(), &state.wake));
+                Native::Layer(view)
+            }
             NodeKind::Text => Native::Text(NdTextView::new(mtm, &TextLook::from_props(props(p, "Text")))),
             NodeKind::Widget(w) if is::<Button>(w) => {
                 Native::Button(NativeButtonView::new(mtm, emit(), state.wake.clone(), props(p, "Button")))
@@ -829,6 +835,7 @@ impl Backend for AppKitBackend {
     fn update(&mut self, node: NodeId, patch: &PropsPatch) {
         let mut state = self.0.borrow_mut();
         let events = state.events.clone();
+        let wake = state.wake.clone();
         let expose = state.expose;
         if let Some(scope) = scope_of(&patch.new) {
             state.set_scope(node, Some(scope));
@@ -841,7 +848,11 @@ impl Backend for AppKitBackend {
         let mut form_changed = false;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Layer(v) => {
-                v.set_props(&ViewLook::from_style(&props::<DivProps>(&patch.new, "View").style, expose))
+                let div = props::<DivProps>(&patch.new, "View");
+                v.set_props(&ViewLook::from_style(&div.style, expose));
+                if props::<DivProps>(&patch.old, "View").gestures != div.gestures {
+                    v.set_gestures(gesture_host(div, events.emitter(node), &wake));
+                }
             }
             Native::Titlebar(v) => {
                 v.set_props(&ViewLook::from_style(&props::<TitlebarProps>(&patch.new, "Titlebar").style, false))
@@ -1081,6 +1092,10 @@ impl Backend for AppKitBackend {
         input: &nd_ui::semantics::SyntheticInput,
     ) -> Result<(), nd_ui::semantics::ActionError> {
         self.post(window, input)
+    }
+
+    fn haptic(&mut self, haptic: nd_gesture::Haptic) {
+        crate::gestures::play(haptic);
     }
 
     fn capture(&mut self, window: WindowId) -> Result<nd_ui::semantics::Capture, nd_ui::semantics::ActionError> {

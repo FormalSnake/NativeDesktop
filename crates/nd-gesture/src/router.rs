@@ -134,6 +134,11 @@ impl GestureRouter {
         members
     }
 
+    /// A press is being arbitrated, or a member still waits on a timer after release.
+    pub fn pointer_active(&self) -> bool {
+        self.arena.is_active()
+    }
+
     /// The node whose pointer recognizer won the current press.
     pub fn pointer_winner(&self) -> Option<NodeId> {
         self.arena.winner()
