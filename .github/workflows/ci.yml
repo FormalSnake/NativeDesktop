@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # .cargo/config.toml points build-dir at the macbook's external drive; runners build locally.
+  CARGO_BUILD_BUILD_DIR: ${{ github.workspace }}/target/build
+  ND_ALLOW_LOCAL_BUILD: "1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-26
+          - name: linux
+            os: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: target/build
+      - name: fmt
+        run: nix develop -c cargo fmt --all --check
+      - name: clippy
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+      - name: nextest
+        run: nix develop -c cargo nextest run --workspace --exclude nd-backend-appkit --profile ci
+      - name: appkit spike (harness = false, not listable by nextest)
+        run: nix develop -c cargo test -p nd-backend-appkit
+      - name: doc tests
+        run: nix develop -c cargo test --workspace --doc
