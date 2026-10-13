@@ -15,7 +15,9 @@ pub fn app_data_dir(app: &str) -> PathBuf {
     } else if cfg!(windows) {
         PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default())
     } else {
-        std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()).map_or_else(|| home().join(".local/share"), PathBuf::from)
+        std::env::var_os("XDG_DATA_HOME")
+            .filter(|d| !d.is_empty())
+            .map_or_else(|| home().join(".local/share"), PathBuf::from)
     };
     base.join(app)
 }

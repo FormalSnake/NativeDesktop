@@ -7,11 +7,11 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
+use nd_core::FrameTime;
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSView;
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
-use nd_core::FrameTime;
 use objc2_quartz_core::{CACurrentMediaTime, CADisplayLink, CAFrameRateRange};
 
 #[derive(Clone, Copy, Debug, PartialEq)]

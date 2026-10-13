@@ -64,7 +64,11 @@ pub(crate) fn start(shared: Weak<Shared>, post: PostToMain, threshold: Duration)
                             "blocked_ms": blocked.as_millis() as u64,
                             "threshold_ms": threshold.as_millis() as u64,
                         });
-                        let _ = shared.write_incident(Kind::Hang, "hang.json", &serde_json::to_vec_pretty(&detail).unwrap_or_default());
+                        let _ = shared.write_incident(
+                            Kind::Hang,
+                            "hang.json",
+                            &serde_json::to_vec_pretty(&detail).unwrap_or_default(),
+                        );
                     }
                     std::thread::park_timeout(tick);
                 }

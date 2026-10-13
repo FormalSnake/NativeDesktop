@@ -6,8 +6,6 @@
 //! output is spliced into its parent's native children, so views add no native node or layout
 //! box of their own. Ops go into one transaction per window per frame, with layout inside it.
 
-mod snapshot;
-
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -26,7 +24,7 @@ use crate::layout::to_taffy;
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::Window;
 
-pub use snapshot::TreeNode;
+mod semantic_walk;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum SlotKind {

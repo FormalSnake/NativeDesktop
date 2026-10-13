@@ -26,13 +26,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use nd_ui::TreeNode;
+use nd_core::semantic::SemanticWindow;
 use serde_json::{Value, json};
 use tracing_subscriber::layer::SubscriberExt;
 
 pub use bundle::{Kind, Retention, Snapshot, enforce_retention};
 pub use hang::{PostToMain, Watchdog};
-pub use record::{FrameRecord, InputRecord, tree_json};
+pub use record::{FrameRecord, InputRecord};
 
 const LOG_KEEP: u64 = 7;
 const LOG_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
@@ -159,7 +159,13 @@ fn os_version() -> Option<String> {
         let mut len = buf.len();
         // SAFETY: the name is NUL-terminated and `len` is the buffer's size.
         let ok = unsafe {
-            libc::sysctlbyname(c"kern.osproductversion".as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0)
+            libc::sysctlbyname(
+                c"kern.osproductversion".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
         } == 0;
         ok.then(|| String::from_utf8_lossy(&buf[..len.saturating_sub(1)]).into_owned())
     }
@@ -197,16 +203,17 @@ pub fn init(config: Config) -> Option<&'static Diag> {
             return None;
         }
     };
-    let file = logroller::LogRollerBuilder::new(diag.0.logs.as_path(), Path::new(&format!("{}.log", diag.0.config.app)))
-        .rotation(logroller::Rotation::SizeBased(logroller::RotationSize::MB(10)))
-        .max_keep_files(LOG_KEEP)
-        .compression(logroller::Compression::Gzip)
-        .build()
-        .map_err(|e| eprintln!("nd: log file disabled: {e}"))
-        .ok()
-        .map(Mutex::new);
-    let filter =
-        tracing_subscriber::EnvFilter::try_from_env("ND_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let file =
+        logroller::LogRollerBuilder::new(diag.0.logs.as_path(), Path::new(&format!("{}.log", diag.0.config.app)))
+            .rotation(logroller::Rotation::SizeBased(logroller::RotationSize::MB(10)))
+            .max_keep_files(LOG_KEEP)
+            .compression(logroller::Compression::Gzip)
+            .build()
+            .map_err(|e| eprintln!("nd: log file disabled: {e}"))
+            .ok()
+            .map(Mutex::new);
+    let filter = tracing_subscriber::EnvFilter::try_from_env("ND_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let stderr = cfg!(debug_assertions).then(|| tracing_subscriber::fmt::layer().with_writer(io::stderr));
     #[cfg(feature = "tracy")]
     let tracy = Some(tracing_tracy::TracyLayer::default());
@@ -297,10 +304,10 @@ impl Diag {
         self.0.recorder().input_count()
     }
 
-    /// A window committed a frame. `tree` is its tree as committed, diffed against the last one
-    /// for `frames/layout.ndjson`.
-    pub fn record_frame(&self, window: u64, title: &str, frame: FrameRecord, tree: Option<&TreeNode>) {
-        self.0.recorder().frame(window, title, frame, tree);
+    /// A window committed a frame. `tree` is its semantic tree as committed, kept for
+    /// `tree.json` and diffed against the last one for `frames/layout.ndjson`.
+    pub fn record_frame(&self, window: u64, frame: FrameRecord, tree: Option<&SemanticWindow>) {
+        self.0.recorder().frame(window, frame, tree);
         self.0.touch();
     }
 

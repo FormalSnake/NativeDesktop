@@ -1682,11 +1682,22 @@ dependencies = [
 name = "nd"
 version = "0.1.0"
 dependencies = [
+ "nd-automation",
  "nd-backend-appkit",
  "nd-core",
  "nd-diag",
  "nd-ui",
  "toml",
+]
+
+[[package]]
+name = "nd-automation"
+version = "0.1.0"
+dependencies = [
+ "nd-core",
+ "nd-ui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1715,6 +1726,10 @@ dependencies = [
 [[package]]
 name = "nd-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "nd-diag"
@@ -1726,7 +1741,6 @@ dependencies = [
  "logroller",
  "minidumper",
  "nd-core",
- "nd-ui",
  "serde",
  "serde_json",
  "tempfile",
@@ -1747,6 +1761,20 @@ name = "nd-gpui"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+]
+
+[[package]]
+name = "nd-test"
+version = "0.1.0"
+dependencies = [
+ "nd-automation",
+ "nd-core",
+ "nd-gpui",
+ "nd-ui",
+ "ndshell",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

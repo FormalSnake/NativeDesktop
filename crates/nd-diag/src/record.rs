@@ -1,9 +1,11 @@
-//! The flight recorder's rings: inputs, frame timings, trees and layout diffs per window.
+//! The flight recorder's rings: inputs, frame timings, and per window the last committed
+//! semantic tree (the automation schema) and the layout diffs between frames.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use nd_core::Rect;
-use nd_ui::TreeNode;
+use nd_core::semantic::SemanticNode;
+use nd_core::semantic::SemanticWindow;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -49,7 +51,6 @@ struct Flat {
 
 #[derive(Default)]
 struct WindowRecord {
-    title: String,
     tree: Option<Value>,
     flat: HashMap<u64, Flat>,
     frames: VecDeque<FrameRecord>,
@@ -73,27 +74,8 @@ fn rect(r: Option<Rect>) -> Value {
     r.map_or(Value::Null, |r| json!([r.origin.x, r.origin.y, r.size.width, r.size.height]))
 }
 
-/// The tree as `tree.json` and the automation schema carry it.
-pub fn tree_json(node: &TreeNode) -> Value {
-    let mut v = json!({ "id": node.id.0, "role": node.role, "kind": node.kind, "frame": rect(node.frame) });
-    let map = v.as_object_mut().expect("object");
-    if let Some(name) = &node.name {
-        map.insert("name".into(), name.as_str().into());
-    }
-    if let Some(id) = &node.test_id {
-        map.insert("testId".into(), id.as_str().into());
-    }
-    if node.focused {
-        map.insert("focused".into(), true.into());
-    }
-    if !node.children.is_empty() {
-        map.insert("children".into(), node.children.iter().map(tree_json).collect());
-    }
-    v
-}
-
-fn flatten(node: &TreeNode, parent: Option<u64>, out: &mut HashMap<u64, Flat>) {
-    out.insert(node.id.0, Flat { parent, frame: node.frame });
+fn flatten(node: &SemanticNode, parent: Option<u64>, out: &mut HashMap<u64, Flat>) {
+    out.insert(node.id.0, Flat { parent, frame: node.bounds });
     for child in &node.children {
         flatten(child, Some(node.id.0), out);
     }
@@ -128,21 +110,18 @@ impl Recorder {
         push(&mut self.inputs, INPUTS, input);
     }
 
-    pub fn frame(&mut self, window: u64, title: &str, frame: FrameRecord, tree: Option<&TreeNode>) {
+    pub fn frame(&mut self, window: u64, frame: FrameRecord, tree: Option<&SemanticWindow>) {
         let w = self.windows.entry(window).or_default();
-        if w.title != title {
-            w.title = title.to_owned();
-        }
         push(&mut w.frames, FRAMES, frame);
         let Some(tree) = tree else { return };
         let mut flat = HashMap::new();
-        flatten(tree, None, &mut flat);
+        flatten(&tree.root, None, &mut flat);
         let mut diff = layout_diff(&w.flat, &flat);
         diff.as_object_mut().expect("object").insert("frame".into(), frame.frame.into());
         diff.as_object_mut().expect("object").insert("window".into(), window.into());
         push(&mut w.layout, FRAMES, diff);
         w.flat = flat;
-        w.tree = Some(tree_json(tree));
+        w.tree = serde_json::to_value(tree).ok();
     }
 
     pub fn close_window(&mut self, window: u64) {
@@ -158,10 +137,7 @@ impl Recorder {
     }
 
     pub fn trees(&self) -> Vec<Value> {
-        self.windows
-            .iter()
-            .map(|(id, w)| json!({ "window": id, "title": w.title, "root": w.tree.clone().unwrap_or(Value::Null) }))
-            .collect()
+        self.windows.iter().filter_map(|w| w.1.tree.clone()).collect()
     }
 
     pub fn frames(&self) -> BTreeMap<u64, Vec<FrameRecord>> {

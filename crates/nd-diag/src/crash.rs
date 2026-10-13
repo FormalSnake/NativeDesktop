@@ -163,12 +163,8 @@ pub fn run_server(socket: &Path, diagnostics: &Path) {
             }
         });
     }
-    let handler = Handler {
-        diagnostics: diagnostics.to_owned(),
-        target: Mutex::new(None),
-        current: Mutex::new(None),
-        connected,
-    };
+    let handler =
+        Handler { diagnostics: diagnostics.to_owned(), target: Mutex::new(None), current: Mutex::new(None), connected };
     let _ = server.run(Box::new(handler), &shutdown, None);
     let _ = fs::remove_file(socket);
 }

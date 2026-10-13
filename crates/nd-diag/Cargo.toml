@@ -12,7 +12,6 @@ tracy = ["dep:tracing-tracy"]
 
 [dependencies]
 nd-core.workspace = true
-nd-ui.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 crash-handler = "0.8.1"
 libc = "0.2.190"

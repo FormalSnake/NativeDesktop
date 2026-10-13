@@ -74,7 +74,7 @@ mod gate_m1 {
         assert!(dump.starts_with(b"MDMP"), "minidump.dmp is not a minidump ({} bytes)", dump.len());
     }
 
-    /// The committed tree, the native hierarchy, the profile, layout diffs and meta: what every
+    /// The committed semantic tree (the automation schema), the native hierarchy, the profile, layout diffs and meta: what every
     /// bundle carries besides its primary file.
     fn assert_snapshot(dir: &Path, kind: &str) {
         let tree = json(&dir.join("tree.json"));
@@ -84,7 +84,8 @@ mod gate_m1 {
         assert_eq!(button["name"], "Add one");
         assert_eq!(button["testId"], "add");
         assert!(find(root, &|n| n["role"] == "text" && n["name"] == "0").is_some(), "counter text in tree.json");
-        assert!(button["frame"].as_array().is_some_and(|f| f.len() == 4), "button has a frame");
+        assert!(button["bounds"]["width"].as_f64().is_some_and(|w| w > 0.), "button has bounds: {button}");
+        assert!(button["ref"].is_u64(), "nodes carry their automation ref");
 
         let profile = json(&dir.join("profile.json"));
         let window = profile["windows"].as_object().and_then(|w| w.values().next()).expect("profile window");
@@ -134,7 +135,9 @@ mod gate_m1 {
         assert!(inputs[0]["position"].is_array());
 
         let log = lines(&dir.join("log.ndjson"));
-        assert!(log.iter().any(|l| l["level"] == "ERROR" && l["message"].as_str().is_some_and(|m| m.starts_with("panic:"))));
+        assert!(
+            log.iter().any(|l| l["level"] == "ERROR" && l["message"].as_str().is_some_and(|m| m.starts_with("panic:")))
+        );
         assert_minidump(dir);
         assert!(fs::read_dir(data.path().join("logs")).expect("logs dir").count() >= 1, "rolling log file");
     }
