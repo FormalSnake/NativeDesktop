@@ -372,6 +372,11 @@ impl App {
         self.windows.keys().copied()
     }
 
+    /// The window's state, for a host opening its OS window. `None` while a handler holds it.
+    pub fn window(&self, id: WindowId) -> Option<&Window> {
+        self.windows.get(&id)?.window.as_ref()
+    }
+
     /// The OS resized the window's content. Lays out in the next frame; during live resize the
     /// host calls [`Self::frame`] right after, inside the OS resize pass.
     pub fn resize_window(&mut self, id: WindowId, size: Size) {

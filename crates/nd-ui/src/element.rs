@@ -336,3 +336,34 @@ impl IntoElement for Button {
         self.0.into_any_element()
     }
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowControlsProps {
+    /// Pins the OS window controls with their first button's top-left at this point, in
+    /// window coordinates; `None` leaves them where the OS puts them.
+    pub at: Option<nd_core::Point>,
+}
+
+/// The window's own controls (traffic lights on macOS, ARCHITECTURE.md 5.4). The buttons stay
+/// the OS's; the element only says where they go and takes no space in layout. Its widget kind
+/// is `WidgetKind::of::<WindowControls>()`.
+pub struct WindowControls(NativeElement<WindowControlsProps>);
+
+#[track_caller]
+pub fn window_controls() -> WindowControls {
+    let element = NativeElement::new::<WindowControls>(Key::Site(Location::caller()), WindowControlsProps { at: None });
+    WindowControls(element.absolute())
+}
+
+impl WindowControls {
+    pub fn at(mut self, at: nd_gpui::gpui::Point<nd_gpui::gpui::Pixels>) -> Self {
+        self.0.props_mut().at = Some(nd_core::Point { x: at.x.as_f32(), y: at.y.as_f32() });
+        self
+    }
+}
+
+impl IntoElement for WindowControls {
+    fn into_any_element(self) -> AnyElement {
+        self.0.into_any_element()
+    }
+}

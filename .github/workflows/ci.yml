@@ -42,8 +42,6 @@ jobs:
       - name: clippy
         run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
       - name: nextest
-        run: nix develop -c cargo nextest run --workspace --exclude nd-backend-appkit --profile ci
-      - name: appkit spike (harness = false, not listable by nextest)
-        run: nix develop -c cargo test -p nd-backend-appkit
+        run: nix develop -c cargo nextest run --workspace --profile ci
       - name: doc tests
         run: nix develop -c cargo test --workspace --doc

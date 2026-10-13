@@ -1,11 +1,11 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use nd_ui::Keystroke;
 use nd_ui::dispatch::KeyDispatch;
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
-use objc2_app_kit::{NSBackingStoreType, NSEvent, NSEventType, NSResponder, NSWindow, NSWindowStyleMask};
+use objc2_app_kit::{NSBackingStoreType, NSEvent, NSEventType, NSResponder, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSRect};
 
 /// What an [`NdWindow`] calls into. Implemented by [`crate::AppKitDispatch`].
@@ -14,6 +14,8 @@ pub trait KeyRouter {
     fn key_down(&self, keystroke: &Keystroke) -> KeyDispatch;
     /// The window's first responder changed, by nd's request or AppKit's own.
     fn responder_changed(&self, window: &NdWindow);
+    /// AppKit's per-event `update` pass: the window may have re-linked views behind nd's back.
+    fn window_updated(&self, _window: &NdWindow) {}
 }
 
 #[derive(Default)]
@@ -22,6 +24,8 @@ pub struct NdWindowIvars {
     /// The last key-down routed to nd. AppKit offers one key-down to both
     /// `performKeyEquivalent:` and `sendEvent:`; nd must see it once.
     last_key: RefCell<Option<Retained<NSEvent>>>,
+    /// Set while nd's own focus op moves the first responder, so it is not reported back.
+    nd_focus: Cell<bool>,
 }
 
 define_class!(
@@ -53,10 +57,18 @@ define_class!(
         #[unsafe(method(makeFirstResponder:))]
         fn make_first_responder(&self, responder: Option<&NSResponder>) -> bool {
             let changed: bool = unsafe { msg_send![super(self), makeFirstResponder: responder] };
-            if changed && let Some(router) = self.router() {
+            if changed && !self.ivars().nd_focus.get() && let Some(router) = self.router() {
                 router.responder_changed(self);
             }
             changed
+        }
+
+        #[unsafe(method(update))]
+        fn update(&self) {
+            let _: () = unsafe { msg_send![super(self), update] };
+            if let Some(router) = self.router() {
+                router.window_updated(self);
+            }
         }
     }
 );
@@ -80,6 +92,14 @@ impl NdWindow {
 
     pub fn set_router(&self, router: Option<Rc<dyn KeyRouter>>) {
         *self.ivars().router.borrow_mut() = router;
+    }
+
+    /// The backend's focus op: moves AppKit's first responder to `view` (the window itself for
+    /// `None`) without reporting it back to nd as a platform focus change.
+    pub(crate) fn make_first_responder_from_nd(&self, view: Option<&NSView>) {
+        self.ivars().nd_focus.set(true);
+        self.makeFirstResponder(view.map(|v| &**v));
+        self.ivars().nd_focus.set(false);
     }
 
     fn router(&self) -> Option<Rc<dyn KeyRouter>> {
