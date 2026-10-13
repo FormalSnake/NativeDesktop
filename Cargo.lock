@@ -2876,6 +2876,7 @@ name = "hello"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "nd-cli",
  "serde_json",
  "tempfile",
 ]
@@ -3795,9 +3796,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nd-core",
+ "nd-diag",
  "proc-macro2",
  "serde_json",
  "syn 2.0.119",
+ "tempfile",
 ]
 
 [[package]]

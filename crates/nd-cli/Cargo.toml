@@ -16,7 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+nd-core.workspace = true
+nd-diag.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 serde_json = "1"
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+
+[dev-dependencies]
+tempfile = "3"

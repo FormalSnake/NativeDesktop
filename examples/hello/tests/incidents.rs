@@ -142,6 +142,31 @@ mod gate_m1 {
         assert!(fs::read_dir(data.path().join("logs")).expect("logs dir").count() >= 1, "rolling log file");
     }
 
+    /// `nd diagnose` over the bundle a real panic leaves: what an agent reads before reproducing.
+    #[test]
+    fn real_panic_bundle_diagnoses() {
+        use nd_cli::diagnose::{DiagnoseArgs, output};
+
+        let data = tempfile::tempdir().expect("tempdir");
+        let mut child = launch(data.path(), &[("ND_DEBUG_PANIC", "1")]);
+        assert_eq!(wait(&mut child, Duration::from_secs(60)).code(), Some(101));
+        let dir = data.path().join("diagnostics");
+        let args = |json| DiagnoseArgs { id: None, last: true, list: false, json, app: None, manifest_path: None };
+
+        let text = output(&args(false), &dir).expect("diagnose");
+        assert!(text.contains("panic on thread"), "{text}");
+        assert!(text.contains("ND_DEBUG_PANIC: forced panic"), "{text}");
+        assert!(text.contains("after_first_frame"), "top frames name the trigger:\n{text}");
+        assert!(text.contains("button \"Add one\""), "semantic tree:\n{text}");
+        assert!(text.contains("key_up") && text.contains("\"n\""), "inputs:\n{text}");
+        assert!(text.contains("frames,") && text.contains("log tail"), "{text}");
+        assert!(text.contains("minidump:"), "{text}");
+
+        let report: Value = serde_json::from_str(&output(&args(true), &dir).expect("json")).expect("json");
+        assert_eq!(report["kind"], "panic");
+        assert_eq!(report["meta"]["app"], "hello");
+    }
+
     #[test]
     fn real_hang_bundle() {
         let data = tempfile::tempdir().expect("tempdir");
