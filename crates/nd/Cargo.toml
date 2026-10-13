@@ -11,12 +11,18 @@ links = "nd-swift"
 default = ["runtime"]
 # The app vocabulary. An app's build script depends on `nd` with `default-features = false,
 # features = ["build"]`, which keeps gpui out of the host build.
-runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation"]
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components"]
 build = ["dep:toml"]
 # Placeholders for APIs later milestones ship; the examples that need them gate on their own
 # milestone feature.
 settings-ui = []
 test = ["runtime", "nd-ui/test-support"]
+# The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
+# Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
+gpui = ["dep:nd-backend-gpui"]
+# gpui-fast in place of gpui-pre for the GPUI backend (`nd-gpui/fast`), measured against it on
+# e1504g (docs/plan/baselines.md).
+fast = ["runtime", "nd-gpui/fast"]
 
 [dependencies]
 nd-core = { workspace = true, optional = true }
@@ -25,7 +31,24 @@ nd-diag = { workspace = true, optional = true }
 nd-gpui = { workspace = true, optional = true }
 nd-macros = { workspace = true, optional = true }
 nd-automation = { workspace = true, optional = true }
+nd-theme = { workspace = true, optional = true }
+nd-components = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
+nd-backend-gpui = { workspace = true, optional = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+nd-backend-gpui = { workspace = true }
+
+# Tier 2 gate: a matugen `theme.json` write recolours a running app within 100 ms. AppKit owns
+# the main thread, so libtest's harness is off.
+[[test]]
+name = "matugen_live"
+harness = false
+
+# Tier 2: every macOS chrome intent mapped to its system component, read back off AppKit.
+[[test]]
+name = "chrome"
+harness = false

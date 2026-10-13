@@ -3,6 +3,29 @@ use nd_gpui::gpui::{self, Pixels, SharedString};
 
 use crate::app::Entity;
 
+/// How the window's title bar is drawn (ARCHITECTURE.md 5.4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Titlebar {
+    /// The OS title bar, or the toolbar a `scaffold()` puts in it.
+    #[default]
+    Native,
+    /// Content runs under a transparent title bar; the app draws its own row with
+    /// `titlebar()`. The OS window controls stay the OS's.
+    Custom,
+}
+
+/// What kind of window this is, which decides how the platform presents it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WindowKind {
+    #[default]
+    Normal,
+    /// A sheet attached to `parent`: a window-modal sheet on macOS, a dialog with a scrim
+    /// elsewhere.
+    Sheet { parent: WindowId },
+    /// The app's settings window (`cmd-,` on macOS).
+    Settings,
+}
+
 /// What to open. Window frames persist by `id` (5.3).
 #[derive(Clone, Debug)]
 pub struct WindowOptions {
@@ -10,12 +33,31 @@ pub struct WindowOptions {
     pub title: Option<SharedString>,
     pub size: Option<gpui::Size<Pixels>>,
     pub min_size: Option<gpui::Size<Pixels>>,
+    pub titlebar: Titlebar,
+    pub kind: WindowKind,
 }
 
 impl WindowOptions {
     /// The app's main window.
     pub fn main(id: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), title: None, size: None, min_size: None }
+        Self {
+            id: id.into(),
+            title: None,
+            size: None,
+            min_size: None,
+            titlebar: Titlebar::Native,
+            kind: WindowKind::Normal,
+        }
+    }
+
+    pub fn titlebar(mut self, titlebar: Titlebar) -> Self {
+        self.titlebar = titlebar;
+        self
+    }
+
+    pub fn kind(mut self, kind: WindowKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
@@ -34,12 +76,26 @@ impl WindowOptions {
     }
 }
 
+/// The room the OS window controls take in the window's top row, in logical points (5.4):
+/// traffic lights leading on macOS, caption buttons trailing on Windows, either side under a
+/// client-decorated Linux window, nothing under server decorations (Hyprland). The backend
+/// reports them; [`Div::titlebar_insets`](crate::Div::titlebar_insets) pads by them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TitlebarInsets {
+    pub leading: f32,
+    pub trailing: f32,
+    /// The height of the controls' row; a padded element is at least this tall.
+    pub height: f32,
+}
+
 /// Per-window state handed to `render` and to handlers.
 pub struct Window {
     id: WindowId,
     title: SharedString,
     viewport: Size,
     clock: FrameTime,
+    options: WindowOptions,
+    insets: TitlebarInsets,
 }
 
 impl Window {
@@ -48,7 +104,19 @@ impl Window {
             .size
             .map(|s| Size { width: s.width.as_f32(), height: s.height.as_f32() })
             .unwrap_or(Size { width: 800., height: 600. });
-        Self { id, title: options.title.clone().unwrap_or_default(), viewport, clock: FrameTime::default() }
+        Self {
+            id,
+            title: options.title.clone().unwrap_or_default(),
+            viewport,
+            clock: FrameTime::default(),
+            options: options.clone(),
+            insets: TitlebarInsets::default(),
+        }
+    }
+
+    /// What the window was opened with.
+    pub fn options(&self) -> &WindowOptions {
+        &self.options
     }
 
     pub fn id(&self) -> WindowId {
@@ -66,6 +134,15 @@ impl Window {
 
     pub(crate) fn set_viewport_size(&mut self, size: Size) {
         self.viewport = size;
+    }
+
+    /// Where the OS window controls sit, as the backend last reported them.
+    pub fn titlebar_insets(&self) -> TitlebarInsets {
+        self.insets
+    }
+
+    pub(crate) fn set_titlebar_insets(&mut self, insets: TitlebarInsets) {
+        self.insets = insets;
     }
 
     /// The window's frame clock: its display's refresh on a real host, the test clock in tests.

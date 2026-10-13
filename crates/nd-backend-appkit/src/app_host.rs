@@ -13,7 +13,7 @@ use std::time::Instant;
 use nd_core::{FrameTime, WindowId};
 use nd_diag::{FrameRecord, Watchdog};
 use nd_ui::dispatch::KeyDispatch;
-use nd_ui::{App, Keystroke};
+use nd_ui::{App, Keystroke, WindowKind};
 use objc2::rc::Retained;
 use objc2_foundation::MainThreadMarker;
 
@@ -57,8 +57,10 @@ impl Host {
             }
             let Some(window) = app.window(id) else { continue };
             let size = window.viewport_size();
+            let options = window.options().clone();
             let ns_window = self.platform.open_window(window.title(), size.width.into(), size.height.into());
             let host = WindowHost::new(&self.backend, id, &ns_window);
+            host.apply_options(&options);
             let this = Rc::downgrade(self);
             let clock = host.clock().clone();
             let window = ns_window.clone();
@@ -83,8 +85,19 @@ impl Host {
             let this = Rc::downgrade(self);
             host.clock().on_frame(move |_| tick(&this));
             ns_window.set_router(Some(Rc::new(AppRouter { host: Rc::downgrade(self), window: id })));
-            ns_window.center();
-            self.platform.show(&ns_window);
+            match options.kind {
+                WindowKind::Sheet { parent } => match windows.get(&parent) {
+                    Some(parent) => parent.window().beginSheet_completionHandler(&ns_window, None),
+                    None => {
+                        ns_window.center();
+                        self.platform.show(&ns_window);
+                    }
+                },
+                WindowKind::Normal | WindowKind::Settings => {
+                    ns_window.center();
+                    self.platform.show(&ns_window);
+                }
+            }
             windows.insert(id, host);
         }
     }
@@ -192,6 +205,38 @@ fn run_jobs(jobs: &Jobs) {
         app.flush_effects();
     }
     host.after_frame();
+}
+
+type AppTask = Box<dyn FnOnce(&mut App)>;
+
+/// Runs `f` with the app on a later main run loop turn: outside the native callback that asks
+/// for it, outside every entity lease (3.13). Menus, alerts and panels report through here.
+/// Dropped when no app is running.
+pub fn defer_with_app(f: impl FnOnce(&mut App) + 'static) {
+    defer_task(Box::new(f));
+}
+
+fn defer_task(task: AppTask) {
+    crate::events::defer(move || {
+        let Some(host) = HOST.with(|h| h.borrow().upgrade()) else { return };
+        let Ok(mut app) = host.app.try_borrow_mut() else {
+            // A nested run loop holds the app; come back next turn.
+            defer_task(task);
+            return;
+        };
+        task(&mut app);
+        app.flush_effects();
+        drop(app);
+        host.after_frame();
+    });
+}
+
+/// The app window whose NSWindow is AppKit's key window.
+pub(crate) fn key_window() -> Option<nd_core::WindowId> {
+    let host = HOST.with(|h| h.borrow().upgrade())?;
+    let mtm = MainThreadMarker::new()?;
+    let key = objc2_app_kit::NSApplication::sharedApplication(mtm).keyWindow()?;
+    host.backend.window_id_of(&key)
 }
 
 /// An app on AppKit, before or while its run loop runs. [`run`] is the usual entry; tests build

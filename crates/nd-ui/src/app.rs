@@ -212,6 +212,8 @@ pub struct App {
     bindings: Vec<KeyBinding>,
     /// Set by [`App::propagate`] inside an `on_action` listener.
     pub(crate) propagate_action: bool,
+    /// The window whose views are rendering or whose handlers are running.
+    pub(crate) current_window: Option<WindowId>,
 }
 
 impl App {
@@ -236,6 +238,7 @@ impl App {
             events,
             bindings: Vec::new(),
             propagate_action: false,
+            current_window: None,
         }
     }
 
@@ -377,6 +380,24 @@ impl App {
         self.bindings.extend(bindings);
     }
 
+    /// Every key binding added so far, in order. Menus read their key equivalents here, so a
+    /// menu and its shortcut never disagree.
+    pub fn key_bindings(&self) -> &[KeyBinding] {
+        &self.bindings
+    }
+
+    /// The window being rendered, or whose event or action handler is running; `None`
+    /// outside any window. Per-window globals (the theme) resolve against it.
+    pub fn current_window(&self) -> Option<WindowId> {
+        self.current_window
+    }
+
+    /// Re-renders every mounted view in the next frame, as after a theme change.
+    pub fn refresh_windows(&mut self) {
+        let views: Vec<EntityId> = self.view_windows.keys().copied().collect();
+        self.dirty.extend(views);
+    }
+
     /// Inside an `on_action` listener: lets the action continue towards the root.
     pub fn propagate(&mut self) {
         self.propagate_action = true;
@@ -403,7 +424,9 @@ impl App {
         f: impl FnOnce(&mut DispatchTree<App>, &mut App) -> R,
     ) -> R {
         let Some(mut tree) = self.windows.get_mut(&window).and_then(|w| w.tree.take()) else { return absent };
+        let outer = self.current_window.replace(window);
         let result = f(&mut tree.dispatch, self);
+        self.current_window = outer;
         tree.push_focus_change();
         match self.windows.get_mut(&window) {
             Some(slot) => slot.tree = Some(tree),
@@ -470,6 +493,31 @@ impl App {
         }
     }
 
+    /// The backend's report of where the OS window controls sit. Elements padded by
+    /// `titlebar_insets()` lay out again and the window's root view renders again, so a view
+    /// reading [`Window::titlebar_insets`] sees the change.
+    pub fn set_titlebar_insets(&mut self, id: WindowId, insets: crate::TitlebarInsets) {
+        let Some(slot) = self.windows.get_mut(&id) else { return };
+        if slot.window.as_ref().is_some_and(|w| w.titlebar_insets() == insets) {
+            return;
+        }
+        if let Some(window) = slot.window.as_mut() {
+            window.set_titlebar_insets(insets);
+        }
+        if let Some(tree) = slot.tree.as_mut() {
+            tree.set_titlebar_insets(insets);
+            let root = tree.root_view_id();
+            self.dirty.insert(root);
+        }
+    }
+
+    /// Renders the window's root view again in the next frame, as if it were notified.
+    pub fn refresh_window(&mut self, id: WindowId) {
+        if let Some(root) = self.windows.get(&id).and_then(|w| w.tree.as_ref()).map(|t| t.root_view_id()) {
+            self.dirty.insert(root);
+        }
+    }
+
     /// The window's display clock ticked: the next frame of that window renders for `time`.
     pub fn tick_window(&mut self, id: WindowId, time: FrameTime) {
         if let Some(window) = self.windows.get_mut(&id).and_then(|w| w.window.as_mut()) {
@@ -524,7 +572,9 @@ impl App {
             let Some(mut window) = slot.window.take() else {
                 panic!("native event drained while {window_id:?} is leased");
             };
+            let outer = self.current_window.replace(window_id);
             handler(any, &mut window, self);
+            self.current_window = outer;
             if let Some(slot) = self.windows.get_mut(&window_id) {
                 slot.window = Some(window);
             }

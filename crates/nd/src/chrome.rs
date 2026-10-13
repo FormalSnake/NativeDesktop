@@ -1,296 +1,136 @@
-//! Composed stand-ins for the chrome intents: `scaffold()`, `toolbar()`, `sidebar()`,
-//! `titlebar()`, `glass()` and `separator()`. `nd-components` replaces them with the native
-//! mappings of ARCHITECTURE.md 3.6 (`NSSplitViewController`, `NSToolbar`, `NSGlassEffectView`);
-//! the call sites stay the same.
+//! The chrome intents apps declare (ARCHITECTURE.md 3.6): `scaffold`, `toolbar`, `sidebar`,
+//! `inspector`, `titlebar`, `glass`, from `nd-components`, plus the imperative ones on a window:
+//! sheets, the settings window, alerts and file pickers, and the app's menu bar.
 
-use nd_gpui::gpui::Action;
+use std::path::PathBuf;
+
+pub use nd_components::services::{alert, open_dialog, save_dialog, set_menus};
+pub use nd_components::*;
 use nd_ui::prelude::*;
-use nd_ui::{DispatchProps, StyleRefinement, WindowControls};
+use nd_ui::{WindowId, WindowKind};
 
-use crate::theme::{Pattern, ThemeRefinement};
+/// The size a sheet opens at when the app names none.
+fn sheet_size() -> Size<Pixels> {
+    size(px(480.), px(360.))
+}
 
-/// Forwards `Styled`, `ParentElement` and `IntoElement` to the `Div` a stand-in wraps.
-macro_rules! wraps_div {
-    ($ty:ident . $field:ident) => {
-        impl Styled for $ty {
-            fn style(&mut self) -> &mut StyleRefinement {
-                self.$field.style()
-            }
+fn sheets_of(cx: &App, parent: WindowId) -> Vec<WindowId> {
+    cx.window_ids()
+        .filter(|id| cx.window(*id).is_some_and(|w| w.options().kind == WindowKind::Sheet { parent }))
+        .collect()
+}
+
+/// Closes `window` after the current handler returns, outside every native callback.
+fn close_later(cx: &mut App, window: WindowId) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = cx;
+        nd_backend_appkit::defer_with_app(move |app| app.close_window(window));
+    }
+    #[cfg(not(target_os = "macos"))]
+    cx.close_window(window);
+}
+
+use nd_gpui::gpui::Size;
+
+/// Sheets, settings, alerts and pickers on a window.
+pub trait WindowChromeExt {
+    /// Opens `build`'s view as a sheet on this window: window-modal and attached on macOS, a
+    /// dialog with a scrim elsewhere.
+    fn open_sheet<V: Render>(
+        &mut self,
+        cx: &mut App,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V>;
+
+    /// As [`WindowChromeExt::open_sheet`], at `size`.
+    fn open_sheet_sized<V: Render>(
+        &mut self,
+        cx: &mut App,
+        size: Size<Pixels>,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V>;
+
+    /// Closes this window if it is a sheet, else every sheet open on it.
+    fn close_sheet(&mut self, cx: &mut App);
+
+    fn alert(&self, cx: &mut App, alert: Alert, done: impl FnOnce(AlertResponse, &mut App) + 'static);
+
+    fn open_dialog(
+        &self,
+        cx: &mut App,
+        dialog: OpenDialog,
+        done: impl FnOnce(Option<Vec<PathBuf>>, &mut App) + 'static,
+    );
+
+    fn save_dialog(&self, cx: &mut App, dialog: SaveDialog, done: impl FnOnce(Option<PathBuf>, &mut App) + 'static);
+}
+
+impl WindowChromeExt for Window {
+    fn open_sheet<V: Render>(
+        &mut self,
+        cx: &mut App,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V> {
+        self.open_sheet_sized(cx, sheet_size(), build)
+    }
+
+    fn open_sheet_sized<V: Render>(
+        &mut self,
+        cx: &mut App,
+        size: Size<Pixels>,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V> {
+        let parent = self.id();
+        let options =
+            WindowOptions::main(format!("{}.sheet", self.options().id)).kind(WindowKind::Sheet { parent }).size(size);
+        cx.open_window(options, build)
+    }
+
+    fn close_sheet(&mut self, cx: &mut App) {
+        if matches!(self.options().kind, WindowKind::Sheet { .. }) {
+            close_later(cx, self.id());
+            return;
         }
-
-        impl ParentElement for $ty {
-            fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-                self.$field.extend(elements);
-            }
+        for sheet in sheets_of(cx, self.id()) {
+            close_later(cx, sheet);
         }
-
-        impl FluentBuilder for $ty {}
-    };
-}
-
-pub struct Scaffold {
-    root: Div,
-    toolbar: Option<Toolbar>,
-    sidebar: Option<Sidebar>,
-    content: Option<AnyElement>,
-    overlay: Option<AnyElement>,
-}
-
-pub fn scaffold() -> Scaffold {
-    Scaffold { root: v_flex().size_full(), toolbar: None, sidebar: None, content: None, overlay: None }
-}
-
-impl Scaffold {
-    pub fn toolbar(mut self, toolbar: Toolbar) -> Self {
-        self.toolbar = Some(toolbar);
-        self
     }
 
-    pub fn sidebar(mut self, sidebar: Sidebar) -> Self {
-        self.sidebar = Some(sidebar);
-        self
+    fn alert(&self, cx: &mut App, alert: Alert, done: impl FnOnce(AlertResponse, &mut App) + 'static) {
+        nd_components::services::alert(cx, self.id(), alert, done);
     }
 
-    pub fn content(mut self, content: impl IntoElement) -> Self {
-        self.content = Some(content.into_any_element());
-        self
+    fn open_dialog(
+        &self,
+        cx: &mut App,
+        dialog: OpenDialog,
+        done: impl FnOnce(Option<Vec<PathBuf>>, &mut App) + 'static,
+    ) {
+        nd_components::services::open_dialog(cx, self.id(), dialog, done);
     }
 
-    /// Floats over the content: palettes, sheets drawn in-window.
-    pub fn overlay(mut self, overlay: impl IntoElement) -> Self {
-        self.overlay = Some(overlay.into_any_element());
-        self
+    fn save_dialog(&self, cx: &mut App, dialog: SaveDialog, done: impl FnOnce(Option<PathBuf>, &mut App) + 'static) {
+        nd_components::services::save_dialog(cx, self.id(), dialog, done);
     }
 }
 
-impl InteractiveElement for Scaffold {
-    fn dispatch_props(&mut self) -> &mut DispatchProps {
-        self.root.dispatch_props()
-    }
-}
-
-impl IntoElement for Scaffold {
-    fn into_any_element(self) -> AnyElement {
-        let body = h_flex()
-            .id("body")
-            .flex_1()
-            .min_h_0()
-            .items_start()
-            .children(self.sidebar.filter(|s| !s.collapsed))
-            .child(div().id("content").flex_1().h_full().min_w_0().children(self.content));
-        self.root.children(self.toolbar).child(body).children(self.overlay).into_any_element()
-    }
-}
-
-pub struct Toolbar {
-    leading: Vec<AnyElement>,
-    title: Option<SharedString>,
-    items: Vec<AnyElement>,
-}
-
-pub fn toolbar() -> Toolbar {
-    Toolbar { leading: Vec::new(), title: None, items: Vec::new() }
-}
-
-impl Toolbar {
-    pub fn item(mut self, item: impl IntoElement) -> Self {
-        self.items.push(item.into_any_element());
-        self
-    }
-
-    /// Sits before the title: window controls embedded in the toolbar, a back button.
-    pub fn leading(mut self, item: impl IntoElement) -> Self {
-        self.leading.push(item.into_any_element());
-        self
-    }
-
-    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    /// Pushes the items after it to the trailing edge.
-    pub fn flexible_space(self) -> Self {
-        self.item(div().flex_1())
-    }
-}
-
-impl IntoElement for Toolbar {
-    fn into_any_element(self) -> AnyElement {
-        h_flex()
-            .id("toolbar")
-            .gap_2()
-            .px_3()
-            .py_2()
-            .children(self.leading)
-            .children(self.title.map(text))
-            .children(self.items)
-            .into_any_element()
-    }
-}
-
-pub struct Sidebar {
-    root: Div,
-    collapsed: bool,
-}
-
-pub fn sidebar() -> Sidebar {
-    Sidebar { root: v_flex().id("sidebar").h_full().w(px(220.)), collapsed: false }
-}
-
-impl Sidebar {
-    pub fn collapsed(mut self, collapsed: bool) -> Self {
-        self.collapsed = collapsed;
-        self
-    }
-}
-
-wraps_div!(Sidebar.root);
-
-impl IntoElement for Sidebar {
-    fn into_any_element(self) -> AnyElement {
-        self.root.into_any_element()
-    }
-}
-
-/// A custom title bar. It reserves the side and size of the OS window controls (5.4).
-pub struct Titlebar {
-    title: Option<SharedString>,
-    trailing: Vec<AnyElement>,
-    controls: Option<WindowControls>,
-}
-
-pub fn titlebar() -> Titlebar {
-    Titlebar { title: None, trailing: Vec::new(), controls: None }
-}
-
-impl Titlebar {
-    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    pub fn trailing(mut self, item: impl IntoElement) -> Self {
-        self.trailing.push(item.into_any_element());
-        self
-    }
-
-    /// Places the OS window controls itself instead of in the default slot.
-    pub fn controls(mut self, controls: WindowControls) -> Self {
-        self.controls = Some(controls);
-        self
-    }
-}
-
-impl IntoElement for Titlebar {
-    fn into_any_element(self) -> AnyElement {
-        h_flex()
-            .id("titlebar")
-            .h(px(52.))
-            .px_3()
-            .gap_2()
-            .children(self.controls)
-            .children(self.title.map(text))
-            .child(div().flex_1())
-            .children(self.trailing)
-            .into_any_element()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GlassVariant {
-    #[default]
-    Regular,
-    Clear,
-}
-
-/// Liquid Glass on macOS 26 and later, the platform material or a drawn blur elsewhere.
-pub struct Glass {
-    root: Div,
-    variant: GlassVariant,
-    tint: Option<Hsla>,
-}
-
-pub fn glass() -> Glass {
-    Glass { root: v_flex(), variant: GlassVariant::default(), tint: None }
-}
-
-impl Glass {
-    pub fn variant(mut self, variant: GlassVariant) -> Self {
-        self.variant = variant;
-        self
-    }
-
-    pub fn tint(mut self, tint: impl Into<Hsla>) -> Self {
-        self.tint = Some(tint.into());
-        self
-    }
-}
-
-wraps_div!(Glass.root);
-
-impl IntoElement for Glass {
-    fn into_any_element(self) -> AnyElement {
-        let root = self.root;
-        match self.tint {
-            Some(tint) => root.bg(tint),
-            None => root,
+/// Opens the app's settings window, or brings the open one forward. On macOS it is a
+/// preference-style window (toolbar tabs, `cmd-,` from the app menu when the app binds it).
+pub fn open_settings<V: Render>(
+    cx: &mut App,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> Option<WindowHandle<V>> {
+    let open = cx.window_ids().find(|id| cx.window(*id).is_some_and(|w| w.options().kind == WindowKind::Settings));
+    if let Some(id) = open {
+        #[cfg(target_os = "macos")]
+        if let Some(window) = cx.backend_as::<nd_backend_appkit::AppKitBackend>().and_then(|b| b.ns_window(id)) {
+            window.makeKeyAndOrderFront(None);
         }
-        .into_any_element()
+        let _ = id;
+        return None;
     }
+    let options =
+        WindowOptions::main("settings").title("Settings").kind(WindowKind::Settings).size(size(px(560.), px(420.)));
+    Some(cx.open_window(options, build))
 }
-
-pub struct Separator {
-    vertical: bool,
-}
-
-pub fn separator() -> Separator {
-    Separator { vertical: false }
-}
-
-impl Separator {
-    pub fn vertical(mut self) -> Self {
-        self.vertical = true;
-        self
-    }
-}
-
-impl IntoElement for Separator {
-    #[track_caller]
-    fn into_any_element(self) -> AnyElement {
-        let line = div().bg(hsla(0., 0., 0., 0.1));
-        if self.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
-    }
-}
-
-/// A context menu's items, built when it opens.
-#[derive(Default)]
-pub struct ContextMenu {
-    pub items: Vec<(SharedString, Box<dyn Action>)>,
-}
-
-impl ContextMenu {
-    pub fn item(mut self, label: impl Into<SharedString>, action: impl Action) -> Self {
-        self.items.push((label.into(), Box::new(action)));
-        self
-    }
-}
-
-/// Subtree overrides (3.6): theme, pattern and a context menu on a container. Recorded by the
-/// stand-ins; applied once `nd-theme` and `nd-components` land.
-pub trait SubtreeOverrides: Sized {
-    fn theme(self, _refine: fn(ThemeRefinement) -> ThemeRefinement) -> Self {
-        self
-    }
-
-    fn pattern(self, _pattern: Pattern) -> Self {
-        self
-    }
-
-    fn context_menu(self, _build: impl Fn(ContextMenu, &mut Window, &mut App) -> ContextMenu + 'static) -> Self {
-        self
-    }
-}
-
-impl SubtreeOverrides for Div {}
-impl SubtreeOverrides for Glass {}

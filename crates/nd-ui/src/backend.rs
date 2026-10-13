@@ -105,6 +105,15 @@ pub enum SurfaceOp {
     SetOcclusion(Vec<Rect>),
 }
 
+/// Edges a layout container keeps clear inside the box it gives a child, in points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BoundaryInsets {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
 /// Where an op runs inside a transaction. Ordered: a transaction never sends an op of an
 /// earlier phase after one of a later phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -151,6 +160,11 @@ pub trait Backend: Any {
     /// The size a native layout container (table row, split pane, toolbar item, scroll
     /// document) gives `node`, when `node` is the child of such a layout boundary.
     fn boundary_size(&self, node: NodeId) -> Option<Size>;
+    /// Inside that box, the edges the container keeps clear of content (a split pane under
+    /// the toolbar): added to the node's padding, so its background still fills the box.
+    fn boundary_insets(&self, _node: NodeId) -> BoundaryInsets {
+        BoundaryInsets::default()
+    }
     /// True when `nd-ui` lays out with Taffy and pushes frames (AppKit, tests); false when the
     /// backend lays out itself (GPUI runs Taffy inside its own element tree).
     fn retains_frames(&self) -> bool;

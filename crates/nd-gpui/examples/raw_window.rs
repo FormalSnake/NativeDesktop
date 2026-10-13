@@ -13,9 +13,6 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[cfg(feature = "fast")]
-use nd_gpui::fast::{gpui, gpui_platform};
-#[cfg(not(feature = "fast"))]
 use nd_gpui::{gpui, gpui_platform};
 
 use gpui::{

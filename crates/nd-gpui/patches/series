@@ -1,2 +1,4 @@
 # nd's patch queue on zed, applied in this order onto `zed_rev` (fork.toml) with `git am`.
 # One `git format-patch` file per line, written by `scripts/gpui-fork export`.
+0001-gpui_linux-pace-each-x11-window-at-the-refresh-of-th.patch
+0002-gpui_wgpu-create-the-gl-backend-only-when-vulkan-alo.patch

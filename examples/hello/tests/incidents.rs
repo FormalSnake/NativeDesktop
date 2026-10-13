@@ -126,7 +126,9 @@ mod gate_m1 {
 
         let tree = json(&dir.join("tree.json"));
         let native = &tree["native"]["windows"][0];
-        assert!(native["content"]["class"].as_str().is_some_and(|c| c.contains("Nd")), "native hierarchy: {native}");
+        // A scaffold makes its split view controller the window's content, with nd's root view
+        // over it, so the hierarchy holds nd's views below the content view.
+        assert!(native["content"].to_string().contains("NdRootView"), "native hierarchy: {native}");
 
         let inputs = lines(&dir.join("input.ndjson"));
         let kinds: Vec<&str> = inputs.iter().filter_map(|i| i["kind"].as_str()).collect();

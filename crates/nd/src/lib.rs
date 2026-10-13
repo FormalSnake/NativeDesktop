@@ -1,13 +1,13 @@
 //! The one crate apps depend on: `use nd::prelude::*;`.
 //!
-//! M0 state: the vocabulary, retained tree and layout are real (`nd-ui`); `scaffold`,
-//! `toolbar` and the theme are composed stand-ins until `nd-components` and `nd-theme` land,
-//! and `Application::run` has no platform host yet.
+//! The vocabulary, retained tree and layout are `nd-ui`'s, on AppKit (macOS) and GPUI
+//! (elsewhere, and on macOS with the `gpui` feature and `ND_BACKEND=gpui`); the theme is
+//! `nd-theme`'s; the chrome intents, `glass()`, menus and dialogs are `nd-components`'.
 
 #[cfg(feature = "build")]
 pub mod build;
 #[cfg(feature = "runtime")]
-mod chrome;
+pub mod chrome;
 #[cfg(feature = "runtime")]
 mod controls;
 #[cfg(feature = "runtime")]
@@ -19,6 +19,8 @@ pub mod theme;
 #[cfg(feature = "runtime")]
 pub use runtime::*;
 
+#[cfg(feature = "runtime")]
+pub use nd_components as components;
 #[cfg(feature = "runtime")]
 pub use nd_core as core;
 #[cfg(feature = "runtime")]

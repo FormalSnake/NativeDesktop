@@ -13,7 +13,6 @@ test-support = []
 [dependencies]
 nd-core.workspace = true
 nd-gpui.workspace = true
-taffy.workspace = true
 
 [dev-dependencies]
 nd-ui = { path = ".", features = ["test-support"] }

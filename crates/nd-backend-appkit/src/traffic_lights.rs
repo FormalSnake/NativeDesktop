@@ -34,6 +34,15 @@ pub(crate) fn buttons(window: &NSWindow) -> Option<[Retained<NSButton>; 3]> {
     Some([a?, b?, c?])
 }
 
+/// The size of the three buttons together, as AppKit lays them out.
+pub(crate) fn cluster_size(window: &NSWindow) -> Option<nd_core::Size> {
+    let [close, _, zoom] = buttons(window)?.map(|b| b.frame());
+    Some(nd_core::Size {
+        width: (zoom.origin.x + zoom.size.width - close.origin.x) as f32,
+        height: close.size.height as f32,
+    })
+}
+
 impl TrafficLights {
     pub fn new(diag: bool) -> Self {
         Self {
