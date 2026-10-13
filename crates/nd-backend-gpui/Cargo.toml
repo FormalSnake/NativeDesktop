@@ -32,6 +32,11 @@ nd-virtual = { workspace = true, features = ["conformance"] }
 name = "headless"
 harness = false
 
+# The 100k-row scroll budget without a display.
+[[test]]
+name = "scroll_budget"
+harness = false
+
 # The list conformance suite on the GPUI presenter, in GPUI's headless app.
 [[test]]
 name = "virtual_list"
