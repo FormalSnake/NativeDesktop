@@ -1,0 +1,23 @@
+[package]
+name = "nd-os-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-gpui.workspace = true
+
+# The probe opens a real Wayland window, so it needs GPUI's platform layer.
+[target.'cfg(target_os = "linux")'.dependencies]
+nd-gpui = { workspace = true, features = ["platform"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ndshell.workspace = true
+
+# A GPUI window that applies `chrome::plan` and reports what it drew; the tier 3 tests on headless
+# Hyprland launch it.
+[[bin]]
+name = "nd-linux-probe"
+path = "src/bin/probe.rs"

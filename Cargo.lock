@@ -3866,6 +3866,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-os-linux"
+version = "0.1.0"
+dependencies = [
+ "nd-gpui",
+ "ndshell",
+]
+
+[[package]]
 name = "nd-test"
 version = "0.1.0"
 dependencies = [
@@ -3904,6 +3912,13 @@ version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "rustix",
+ "serde_json",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "xkbcommon",
 ]
 
 [[package]]
@@ -6865,6 +6880,19 @@ dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 

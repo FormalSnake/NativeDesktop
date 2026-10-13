@@ -60,6 +60,9 @@
                   cmake
                   wayland-scanner
                   mesa
+                  # Headless parent compositor that lends each test's Hyprland a render node
+                  # (ndshell::hyprland). Hyprland itself is the system's.
+                  labwc
                 ]
                 ++ gpuLibs
               );
