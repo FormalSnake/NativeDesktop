@@ -3988,6 +3988,7 @@ dependencies = [
  "nd-gpui",
  "nd-theme",
  "nd-ui",
+ "nd-virtual",
  "ndshell",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",

@@ -13,6 +13,7 @@ nd-ui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
 nd-components.workspace = true
+nd-virtual.workspace = true
 serde_json = "1.0.154"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -43,8 +44,13 @@ harness = false
 name = "real_resize_gate"
 harness = false
 
+[[test]]
+name = "virtual_list"
+harness = false
+
 [dev-dependencies]
 nd-gpui.workspace = true
+nd-virtual = { workspace = true, features = ["conformance"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 dispatch2 = "0.3.1"

@@ -68,6 +68,14 @@ impl Diff {
     }
 }
 
+/// A tree row's place in the hierarchy, for presenters that draw disclosure natively.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RowMeta {
+    pub depth: u16,
+    pub expandable: bool,
+    pub expanded: bool,
+}
+
 /// One placed row.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -151,6 +159,7 @@ pub struct Core {
     now: Option<f64>,
     diffs: Vec<Diff>,
     generation: u64,
+    meta: Vec<RowMeta>,
 }
 
 impl Default for Core {
@@ -181,6 +190,7 @@ impl Core {
             now: None,
             diffs: Vec::new(),
             generation: 0,
+            meta: Vec::new(),
         }
     }
 
@@ -380,6 +390,16 @@ impl Core {
             self.diffs.push(diff.clone());
         }
         diff
+    }
+
+    /// Tree rows' hierarchy, by index, after `set_rows`. Empty for lists.
+    pub fn set_meta(&mut self, meta: Vec<RowMeta>) {
+        debug_assert!(meta.is_empty() || meta.len() == self.ids.len());
+        self.meta = meta;
+    }
+
+    pub fn meta(&self, index: usize) -> RowMeta {
+        self.meta.get(index).copied().unwrap_or_default()
     }
 
     /// Diffs since the last call, oldest first.
@@ -703,6 +723,13 @@ impl Core {
         let here = self.render_range_at(self.scroll_top());
         here.start.min(resting.start)..here.end.max(resting.end)
     }
+}
+
+/// The native diff between two row orders: removed rows by old index, inserted by new index.
+pub fn diff_rows(old: &[RowId], new: &[RowId]) -> Diff {
+    let old_index: HashMap<RowId, usize> = old.iter().enumerate().map(|(i, r)| (*r, i)).collect();
+    let new_index: HashMap<RowId, usize> = new.iter().enumerate().map(|(i, r)| (*r, i)).collect();
+    diff(old, &old_index, new, &new_index)
 }
 
 /// Removed rows by old index and inserted rows by new index, ascending. Survivors that changed

@@ -11,7 +11,7 @@ pub mod physics;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
-pub use crate::core::{Align, Alignment, Core, Diff, Follow, GridSpec, Layout, Placed, RowId};
+pub use crate::core::{Align, Alignment, Core, Diff, Follow, GridSpec, Layout, Placed, RowId, RowMeta, diff_rows};
 pub use crate::list::{
     ActivateEvent, CellTag, Column, ColumnResized, ExpandEvent, List, ListHandle, ListKind, ListProps, ListState,
     ListWidget, RowActivated, RowDisclosed, RowKey, RowTag, RowView, RowsSelected, SelectEvent, Selection, SortChanged,

@@ -455,8 +455,27 @@ impl<K: RowKey> ListState<K> {
             inner.keys = keys;
             let ids_now = &inner.ids;
             inner.selected.retain(|k| ids_now.contains_key(k));
+            let tree = inner.tree.is_some();
+            let meta: Vec<crate::core::RowMeta> = if tree {
+                inner
+                    .keys
+                    .iter()
+                    .zip(&ids)
+                    .map(|(k, id)| {
+                        let m = inner.meta.get(id).copied().unwrap_or_default();
+                        crate::core::RowMeta {
+                            depth: m.depth,
+                            expandable: m.expandable,
+                            expanded: inner.expanded.contains(k),
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             inner.core.borrow_mut().set_rows(ids);
             let mut core = inner.core.borrow_mut();
+            core.set_meta(meta);
             for id in &stale {
                 core.invalidate(*id);
             }
