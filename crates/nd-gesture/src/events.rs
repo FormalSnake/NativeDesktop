@@ -20,6 +20,13 @@ pub struct TapEvent {
     pub count: u32,
 }
 
+/// The second press of a double tap, for `.on_double_tap`. The router reports it as a
+/// [`TapEvent`] with `count: 2`; `nd-ui` delivers it as this type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DoubleTapEvent {
+    pub position: Point,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LongPressEvent {
     pub position: Point,

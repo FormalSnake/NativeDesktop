@@ -4225,6 +4225,7 @@ name = "nd-ui"
 version = "0.1.0"
 dependencies = [
  "nd-core",
+ "nd-gesture",
  "nd-gpui",
  "nd-ui",
 ]
