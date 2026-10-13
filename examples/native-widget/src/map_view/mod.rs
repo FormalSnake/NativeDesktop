@@ -52,9 +52,7 @@ impl NativeWidget for MapWidget {
     type Event = MapEvent;
 
     fn semantics(props: &MapProps) -> Semantics {
-        Semantics::new(Role::Group)
-            .label("Map")
-            .value(format!("{} places", props.pins.len()))
+        Semantics::new(Role::Group).label("Map").value(format!("{} places", props.pins.len()))
     }
 
     fn drawn(props: &MapProps, emit: Emit<MapEvent>, window: &mut Window, cx: &mut App) -> AnyElement {

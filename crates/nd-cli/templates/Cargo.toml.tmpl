@@ -1,0 +1,22 @@
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[dependencies]
+nd = {{nd_dep}}
+
+[dev-dependencies]
+nd = {{nd_dev_dep}}
+
+[build-dependencies]
+nd = {{nd_build_dep}}
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+print_stdout = "deny"
+{{workspace}}

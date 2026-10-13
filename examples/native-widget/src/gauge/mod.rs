@@ -22,9 +22,11 @@ impl NativeWidget for GaugeWidget {
     type Event = Infallible;
 
     fn semantics(props: &GaugeProps) -> Semantics {
-        Semantics::new(Role::ProgressIndicator)
-            .label(props.label.clone())
-            .value(SemanticValue::range(props.value, props.min, props.max))
+        Semantics::new(Role::ProgressIndicator).label(props.label.clone()).value(SemanticValue::range(
+            props.value,
+            props.min,
+            props.max,
+        ))
     }
 
     fn drawn(props: &GaugeProps, _emit: Emit<Infallible>, _window: &mut Window, cx: &mut App) -> AnyElement {
@@ -71,7 +73,10 @@ pub struct Gauge {
 }
 
 pub fn gauge(id: impl Into<ElementId>, value: f64) -> Gauge {
-    Gauge { base: NativeBase::new(id), props: GaugeProps { value, min: 0.0, max: 100.0, label: SharedString::default() } }
+    Gauge {
+        base: NativeBase::new(id),
+        props: GaugeProps { value, min: 0.0, max: 100.0, label: SharedString::default() },
+    }
 }
 
 impl Gauge {

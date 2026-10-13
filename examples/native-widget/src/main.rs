@@ -4,7 +4,7 @@ mod map_view;
 use nd::prelude::*;
 
 use gauge::gauge;
-use map_view::{map_view, LatLng, Pin, PinSelected, RegionChanged};
+use map_view::{LatLng, Pin, PinSelected, RegionChanged, map_view};
 
 struct Place {
     name: &'static str,
@@ -49,17 +49,15 @@ impl Render for Places {
                 sidebar().child(
                     v_flex()
                         .size_full()
-                        .child(source_list("places", &self.list, cx.processor(Self::row)).flex_1().on_select(cx.listener(
-                            |this, e: &SelectEvent<usize>, _window, cx| {
+                        .child(source_list("places", &self.list, cx.processor(Self::row)).flex_1().on_select(
+                            cx.listener(|this, e: &SelectEvent<usize>, _window, cx| {
                                 this.center = this.places[e.key].at;
                                 cx.notify();
-                            },
-                        )))
-                        .child(
-                            h_flex().p_3().justify_center().child(
-                                gauge("visited", visited as f64).range(0.0, self.places.len() as f64).label("Visited"),
-                            ),
-                        ),
+                            }),
+                        ))
+                        .child(h_flex().p_3().justify_center().child(
+                            gauge("visited", visited as f64).range(0.0, self.places.len() as f64).label("Visited"),
+                        )),
                 ),
             )
             .content(
@@ -83,7 +81,6 @@ impl Render for Places {
 }
 
 fn main() -> nd::Result<()> {
-    Application::new(nd::manifest!()).run(|cx| {
-        cx.open_window(WindowOptions::main("main").title("Places"), |_window, cx| cx.new(Places::new))
-    })
+    Application::new(nd::manifest!())
+        .run(|cx| cx.open_window(WindowOptions::main("main").title("Places"), |_window, cx| cx.new(Places::new)))
 }

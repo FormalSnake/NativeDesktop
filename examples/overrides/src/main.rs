@@ -54,17 +54,12 @@ impl Render for Showcase {
                     )
                     // Mapping override: the composed (drawn) slider on every OS, for a look the
                     // native control cannot express.
-                    .child(
-                        slider("volume", self.volume)
-                            .range(0.0..=1.0)
-                            .drawn()
-                            .h(px(28.))
-                            .rounded_full()
-                            .on_change(cx.listener(|this, e: &SliderChanged, _window, cx| {
-                                this.volume = e.value;
-                                cx.notify();
-                            })),
-                    )
+                    .child(slider("volume", self.volume).range(0.0..=1.0).drawn().h(px(28.)).rounded_full().on_change(
+                        cx.listener(|this, e: &SliderChanged, _window, cx| {
+                            this.volume = e.value;
+                            cx.notify();
+                        }),
+                    ))
                     // Mapping override: a picker shown as a segmented control instead of a pop-up.
                     .child(
                         select("sort", ["Name", "Date", "Size"])
@@ -85,7 +80,9 @@ impl Render for Showcase {
                             .gap_2()
                             .theme(theme::warm)
                             .child(text("Tinted glass with its own accent"))
-                            .child(h_flex().gap_2().child(button("ok", "Accept").primary()).child(button("no", "Decline")))
+                            .child(
+                                h_flex().gap_2().child(button("ok", "Accept").primary()).child(button("no", "Decline")),
+                            )
                             // Pattern override on one element: this context menu is drawn, not an NSMenu.
                             .context_menu(|menu, _window, _cx| menu.item("Rename…", Rename).item("Share", Share))
                             .pattern(Pattern::Drawn),

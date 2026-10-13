@@ -41,6 +41,8 @@ jobs:
         run: nix develop -c cargo fmt --all --check
       - name: clippy
         run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+      - name: nd check on examples
+        run: nix develop -c cargo run -p nd-cli -- check -p hello -p notes -p overrides -p places
       - name: nextest
         run: nix develop -c cargo nextest run --workspace --profile ci
       - name: doc tests

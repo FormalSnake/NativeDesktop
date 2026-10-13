@@ -1,0 +1,35 @@
+# CLAUDE.md
+
+{{title}} is a NativeDesktop app: a Rust view tree that renders to native widgets (AppKit on
+macOS) through the `nd` crate. It starts as a click counter in `src/app.rs`.
+
+## Commands
+
+- `cargo run`: open the app. `{{env}}_DEMO=1` starts it in demo mode (fixed state).
+- `nd check`: fmt, clippy with the framework lint table, framework lints. Run before every commit.
+- `nd test`: tiers 1 and 2. `nd test --tier real` runs tier 3 (needs a window server).
+- `nd check --release` also fails while the README still has its `nd:` HTML-comment placeholders.
+
+## Rules
+
+- Use intents, not `cfg`. Say `scaffold()`, `toolbar()`, `titlebar()`; do not branch on the OS in
+  view code. `cfg(target_os)` belongs in native widget modules, with a reason comment elsewhere.
+- Colours, radii, spacing and fonts come from tokens (`cx.theme()`), never literals. Colour
+  constructors live in the theme file only.
+- Any list that can pass 50 rows uses `list()`. No scroll container fed by `.children(..)`.
+- Floating things (menus, popovers, tooltips) go through `cx.overlay` or a built-in.
+- Timers run on the executor. No `Instant::now`, `thread::sleep` or `smol::Timer` in UI code.
+- The OS draws its own structure: sidebar, toolbar, window controls, sheets, menus. Do not build a
+  replica. `.drawn()` needs a comment saying why the native control cannot do the job.
+- No inline SVG. Use the icon set.
+- Name `gpui` and `objc2` only inside native widget modules.
+- Keep views small. State lives in entities, views read it in `render`.
+- Test in the tier that matches the behaviour: logic in tier 1 (`tests/app.rs`, `nd::test::TestApp`,
+  no window), looks in tier 2, OS-owned behaviour in tier 3.
+
+A finding from `nd check` prints as `file:line:col: [rule] message`. To silence one with a reason,
+put `// nd-allow(rule): reason` on the line or the line above.
+
+## Debugging
+
+Read `nd diagnose --last` before reproducing a bug.

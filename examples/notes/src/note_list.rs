@@ -67,7 +67,10 @@ impl NoteList {
                         paint.fill_circle(point(bounds.center().x, bounds.top() + px(7.)), px(4.), color);
                     }
                     if pinned {
-                        let notch = Bounds::new(point(bounds.left(), bounds.bottom() - px(6.)), size(bounds.size.width, px(2.)));
+                        let notch = Bounds::new(
+                            point(bounds.left(), bounds.bottom() - px(6.)),
+                            size(bounds.size.width, px(2.)),
+                        );
                         paint.fill_rounded_rect(notch, px(1.), accent);
                     }
                 })
@@ -110,7 +113,8 @@ impl Render for NoteList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let compact = cx.settings::<NotesSettings>().compact_rows;
         let accent = cx.theme().accent;
-        let pinned = |library: &Entity<Library>, id: NoteId, cx: &App| library.read(cx).note(&id).is_some_and(|n| n.pinned);
+        let pinned =
+            |library: &Entity<Library>, id: NoteId, cx: &App| library.read(cx).note(&id).is_some_and(|n| n.pinned);
         let library = self.library.clone();
 
         list("notes", &self.list, cx.processor(Self::row))
@@ -127,11 +131,9 @@ impl Render for NoteList {
                     .full_swipe(RowEdge::Trailing)
             })
             .on_select(cx.listener(|_, e: &SelectEvent<NoteId>, _window, cx| cx.emit(NoteSelected(e.key))))
-            .empty(
-                status_page(Icon::Notebook, "No Notes").description(match window.binding_label(&NewNote) {
-                    Some(keys) => format!("Press {keys} to write one."),
-                    None => "Use the New Note button to write one.".to_owned(),
-                }),
-            )
+            .empty(status_page(Icon::Notebook, "No Notes").description(match window.binding_label(&NewNote) {
+                Some(keys) => format!("Press {keys} to write one."),
+                None => "Use the New Note button to write one.".to_owned(),
+            }))
     }
 }

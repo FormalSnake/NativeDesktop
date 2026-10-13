@@ -16,7 +16,7 @@ build = ["dep:toml"]
 # Placeholders for APIs later milestones ship; the examples that need them gate on their own
 # milestone feature.
 settings-ui = []
-test = []
+test = ["runtime", "nd-ui/test-support"]
 
 [dependencies]
 nd-core = { workspace = true, optional = true }

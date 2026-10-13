@@ -2,13 +2,15 @@ use std::cell::RefCell;
 
 use nd::native::appkit::objc2::rc::Retained;
 use nd::native::appkit::objc2::runtime::ProtocolObject;
-use nd::native::appkit::objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use nd::native::appkit::objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use nd::native::appkit::objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 use nd::native::appkit::{AppKitCx, AppKitWidget, AvailableSize};
 use nd::native::*;
 use nd::prelude::*;
 use objc2_core_location::CLLocationCoordinate2D;
-use objc2_map_kit::{MKAnnotation, MKCoordinateRegion, MKCoordinateSpan, MKMapView, MKMapViewDelegate, MKPointAnnotation};
+use objc2_map_kit::{
+    MKAnnotation, MKCoordinateRegion, MKCoordinateSpan, MKMapView, MKMapViewDelegate, MKPointAnnotation,
+};
 
 use super::{LatLng, MapEvent, MapProps, MapWidget, Pin, PinSelected, RegionChanged};
 
@@ -32,7 +34,14 @@ impl AppKitWidget<MapWidget> for MapKit {
         (map, delegate)
     }
 
-    fn update(&self, map: &MKMapView, delegate: &mut Self::State, old: &MapProps, new: &MapProps, cx: &mut AppKitCx<MapWidget>) {
+    fn update(
+        &self,
+        map: &MKMapView,
+        delegate: &mut Self::State,
+        old: &MapProps,
+        new: &MapProps,
+        cx: &mut AppKitCx<MapWidget>,
+    ) {
         apply(map, delegate, Some(old), new, cx);
     }
 
@@ -42,7 +51,13 @@ impl AppKitWidget<MapWidget> for MapKit {
     }
 }
 
-fn apply(map: &MKMapView, delegate: &MapDelegate, old: Option<&MapProps>, new: &MapProps, cx: &mut AppKitCx<MapWidget>) {
+fn apply(
+    map: &MKMapView,
+    delegate: &MapDelegate,
+    old: Option<&MapProps>,
+    new: &MapProps,
+    cx: &mut AppKitCx<MapWidget>,
+) {
     let viewport: Viewport = (new.center, new.zoom);
     delegate.ivars().viewport.borrow_mut().apply(&viewport, |&(center, zoom)| {
         let region = MKCoordinateRegion { center: to_cl(center), span: span_for_zoom(zoom) };

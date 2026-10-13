@@ -77,7 +77,8 @@ impl Library {
     pub fn open(cx: &mut App) -> Entity<Self> {
         let store = Store::<LibraryData>::load("library", cx);
         cx.new(|_| {
-            let mut library = Self { store, order: Vec::new(), search_text: HashMap::default(), counts: HashMap::default() };
+            let mut library =
+                Self { store, order: Vec::new(), search_text: HashMap::default(), counts: HashMap::default() };
             library.reindex();
             library
         })
