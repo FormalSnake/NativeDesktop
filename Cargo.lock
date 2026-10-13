@@ -3866,6 +3866,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-os-windows"
+version = "0.1.0"
+dependencies = [
+ "nd-gpui",
+ "ndshell",
+ "raw-window-handle",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "nd-test"
 version = "0.1.0"
 dependencies = [
@@ -3902,8 +3913,13 @@ dependencies = [
 name = "ndshell"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
+ "nd-os-windows",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "png 0.18.1",
+ "serde_json",
+ "windows 0.62.2",
 ]
 
 [[package]]

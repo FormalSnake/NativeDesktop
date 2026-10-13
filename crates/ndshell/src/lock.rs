@@ -4,7 +4,8 @@
 //! stealing focus mid-test. Tests that only post events into their own app's queue skip it.
 //!
 //! The lock is an advisory `flock` on `real-input.lock` under `~/Library/Caches/nd/` (macOS),
-//! `$XDG_CACHE_HOME/nd/` or `~/.cache/nd/` elsewhere; `ND_LOCK_DIR` overrides the directory. The
+//! `%LOCALAPPDATA%\nd\` (Windows), `$XDG_CACHE_HOME/nd/` or `~/.cache/nd/` elsewhere;
+//! `ND_LOCK_DIR` overrides the directory. The
 //! holder writes its pid, worktree and purpose into the file, and a waiting run prints them. The
 //! OS drops the lock when the holder exits, crashed or not.
 
@@ -18,6 +19,11 @@ pub const LOCK_FILE: &str = "real-input.lock";
 pub fn lock_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ND_LOCK_DIR") {
         return PathBuf::from(dir);
+    }
+    if cfg!(windows)
+        && let Some(local) = std::env::var_os("LOCALAPPDATA")
+    {
+        return PathBuf::from(local).join("nd");
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     if cfg!(target_os = "macos") {
