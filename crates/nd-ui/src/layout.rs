@@ -2,6 +2,8 @@
 //! the same on retained backends as inside GPUI. Rounding to the pixel grid is the backend's.
 
 use nd_gpui::gpui::{self, AbsoluteLength, DefiniteLength, Edges, Length, Refineable, StyleRefinement, px};
+
+use crate::window::TitlebarInsets;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 const REM: f32 = 16.;
@@ -73,4 +75,25 @@ pub(crate) fn to_taffy(refinement: &StyleRefinement) -> taffy::Style {
         flex_shrink: s.flex_shrink,
         ..Default::default()
     }
+}
+
+/// `style` padded by the titlebar insets: leading and trailing added to the left and right
+/// padding, the height as a minimum. Every backend lays a `titlebar_insets()` element out
+/// through this, so the controls' room is the same on retained and GPUI backends.
+pub fn with_titlebar_insets(style: &StyleRefinement, insets: TitlebarInsets) -> StyleRefinement {
+    let pad = |l: Option<DefiniteLength>, add: f32| match l {
+        Some(DefiniteLength::Fraction(f)) if add == 0. => Some(DefiniteLength::Fraction(f)),
+        Some(DefiniteLength::Absolute(a)) => Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(abs(a) + add)))),
+        // A fractional padding has no point size to add to; the inset wins.
+        Some(DefiniteLength::Fraction(_)) | None => Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(add)))),
+    };
+    let mut out = style.clone();
+    out.padding.left = pad(style.padding.left, insets.leading);
+    out.padding.right = pad(style.padding.right, insets.trailing);
+    let min = match style.min_size.height {
+        Some(Length::Definite(DefiniteLength::Absolute(a))) => abs(a).max(insets.height),
+        _ => insets.height,
+    };
+    out.min_size.height = Some(Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(min)))));
+    out
 }

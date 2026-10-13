@@ -19,10 +19,10 @@ use taffy::prelude::TaffyMaxContent;
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch};
 use crate::dispatch::DispatchTree;
-use crate::element::{AnyElement, DispatchProps, Element, Handler, Key, NodeElement, RootProps};
-use crate::layout::to_taffy;
+use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
+use crate::layout::{to_taffy, with_titlebar_insets};
 use crate::transaction::{MeasureCache, Op, Transaction};
-use crate::window::Window;
+use crate::window::{TitlebarInsets, Window};
 
 mod semantic_walk;
 
@@ -82,6 +82,7 @@ pub(crate) struct Tree {
     taffy: TaffyTree<NodeId>,
     tx: Transaction,
     needs_layout: bool,
+    insets: TitlebarInsets,
     /// Views placed in this frame's output so far; a second placement is a render bug.
     placed: HashSet<EntityId>,
     /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
@@ -107,6 +108,10 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
             Ident { kind, key, occurrence }
         })
         .collect()
+}
+
+fn pads(props: &Props) -> bool {
+    props.downcast_ref::<DivProps>().is_some_and(|p| p.titlebar_insets)
 }
 
 fn root_style(size: Size) -> taffy::Style {
@@ -163,6 +168,7 @@ impl Tree {
             taffy,
             tx,
             needs_layout: true,
+            insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
             dispatch,
@@ -189,6 +195,28 @@ impl Tree {
         let root = self.nodes[&self.root].taffy;
         self.taffy.set_style(root, root_style(size)).expect("taffy root");
         self.needs_layout = true;
+    }
+
+    pub(crate) fn root_view_id(&self) -> EntityId {
+        self.root_view.entity_id()
+    }
+
+    /// Re-lays out the elements padded by the titlebar insets.
+    pub(crate) fn set_titlebar_insets(&mut self, insets: TitlebarInsets) {
+        if self.insets == insets {
+            return;
+        }
+        self.insets = insets;
+        let padded: Vec<NodeId> = self.nodes.iter().filter(|(_, n)| pads(&n.props)).map(|(id, _)| *id).collect();
+        for id in padded {
+            let style = self.taffy_style(&self.nodes[&id].layout, &self.nodes[&id].props);
+            self.taffy.set_style(self.nodes[&id].taffy, style).expect("taffy node");
+        }
+        self.needs_layout = true;
+    }
+
+    fn taffy_style(&self, layout: &StyleRefinement, props: &Props) -> taffy::Style {
+        if pads(props) { to_taffy(&with_titlebar_insets(layout, self.insets)) } else { to_taffy(layout) }
     }
 
     /// Releases every node in one last transaction.
@@ -251,7 +279,7 @@ impl Tree {
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
         self.tx.push(Op::Create { node: id, kind: el.kind, props: el.props.clone() });
-        let style = to_taffy(&el.layout);
+        let style = self.taffy_style(&el.layout, &el.props);
         let taffy = if el.measured { self.taffy.new_leaf_with_context(style, id) } else { self.taffy.new_leaf(style) };
         self.nodes.insert(
             id,
@@ -466,7 +494,9 @@ impl Tree {
 
     fn reconcile_node(&mut self, n: NodeId, el: NodeElement, depth: u32, window: &mut Window, app: &mut App) {
         let node = self.nodes.get_mut(&n).expect("node");
+        let mut restyle = false;
         if !node.props.props_eq(&*el.props) {
+            restyle = pads(&node.props) || pads(&el.props);
             let patch = PropsPatch { old: mem::replace(&mut node.props, el.props), new: node.props.clone() };
             self.tx.push(Op::Update { node: n, patch });
             if node.measured {
@@ -474,11 +504,13 @@ impl Tree {
                 self.needs_layout = true;
             }
         }
-        if node.layout != el.layout {
-            self.taffy.set_style(node.taffy, to_taffy(&el.layout)).expect("taffy node");
+        if node.layout != el.layout || restyle {
             node.layout = el.layout;
+            let style = self.taffy_style(&self.nodes[&n].layout, &self.nodes[&n].props);
+            self.taffy.set_style(self.nodes[&n].taffy, style).expect("taffy node");
             self.needs_layout = true;
         }
+        let node = self.nodes.get_mut(&n).expect("node");
         node.handlers = el.handlers;
         node.dispatch = el.dispatch;
         self.bind_dispatch(n);
@@ -580,6 +612,11 @@ impl Tree {
             return Vec::new();
         }
         self.needs_layout = false;
+        // A backend that lays out itself (GPUI) would drop the frames; measuring for them is
+        // wasted work every resize.
+        if !backend.retains_frames() {
+            return Vec::new();
+        }
         let root = self.nodes[&self.root].taffy;
         let space = |s: taffy::AvailableSpace| match s {
             taffy::AvailableSpace::Definite(v) => AvailableSpace::Definite(v),
