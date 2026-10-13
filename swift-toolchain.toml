@@ -1,0 +1,4 @@
+# Swift and the macOS SDK come from the system Xcode or Command Line Tools, never from Nix.
+# `nd::build::app()` and `nd doctor` fail when the installed major versions are lower.
+swift_major = 6
+sdk_major = 26

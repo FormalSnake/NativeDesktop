@@ -1,0 +1,13 @@
+[package]
+name = "nd-example-swift-leaf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd = { path = "../nd" }
+
+[build-dependencies]
+nd = { path = "../nd", default-features = false, features = ["build"] }

@@ -7,12 +7,14 @@
 mod dispatch;
 mod keys;
 mod platform;
+mod swift;
 mod toolbar;
 mod window;
 
 pub use dispatch::AppKitDispatch;
 pub use keys::keystroke;
 pub use platform::NdAppKitPlatform;
+pub use swift::SwiftGauge;
 pub use toolbar::ToolbarHost;
 pub use window::{KeyRouter, NdWindow};
 
