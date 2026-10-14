@@ -13,6 +13,7 @@ mod support;
 use std::time::Instant;
 
 use nd_terminal::{SessionOptions, TerminalSession};
+#[cfg(target_os = "macos")]
 use nd_theme::{Preset, ThemeRegistry};
 
 const BUDGET_MS: f64 = 1000. / 60.;

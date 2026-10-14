@@ -98,6 +98,10 @@
             # nd-cef's build script downloads the CEF binary distribution (about 500 MB unpacked) into
             # $CEF_PATH; on the macbook that is the cache drive, next to the cargo build dir.
             export CEF_PATH="/Volumes/Kyan Drive/dev-cache.noindex/cef"
+            # Several agents build here at once next to the user's own services; cap each build and
+            # test run. Workspace-wide and Linux-capable runs belong on g815 (scripts/linux-gate).
+            export CARGO_BUILD_JOBS="''${CARGO_BUILD_JOBS:-4}"
+            export NEXTEST_TEST_THREADS="''${NEXTEST_TEST_THREADS:-4}"
           ''
           + lib.optionalString stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH="${lib.makeLibraryPath gpuLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

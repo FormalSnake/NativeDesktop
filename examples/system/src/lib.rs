@@ -242,7 +242,8 @@ impl SystemDemo {
                 let Ok(path) = written else {
                     return self.note(format!("play failed: {written:?}"));
                 };
-                let play = sys.audio().play(PlayOptions::path(path).volume(0.3).spectrum());
+                let (player, started) = sys.audio().play(PlayOptions::path(path).volume(0.3).spectrum());
+                self.player = Some(player);
                 let media = sys.media().set(NowPlaying {
                     title: "A 440 Hz tone".into(),
                     artist: Some("System demo".into()),
@@ -253,15 +254,15 @@ impl SystemDemo {
                 let view = cx.weak_entity();
                 nd::system::spawn(
                     async move {
-                        let player = play.await?;
+                        started.await?;
                         let _ = media.await;
-                        Ok::<_, nd::system::Error>(player)
+                        Ok::<_, nd::system::Error>(())
                     },
                     move |result, app| {
                         view.update(app, |this, cx| {
-                            match result {
-                                Ok(player) => this.player = Some(player),
-                                Err(e) => this.note(format!("play failed: {e}")),
+                            if let Err(e) = result {
+                                this.player = None;
+                                this.note(format!("play failed: {e}"));
                             }
                             cx.notify();
                         });

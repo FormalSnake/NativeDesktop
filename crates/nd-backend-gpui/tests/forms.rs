@@ -1,7 +1,7 @@
 //! Tier 2: the drawn forms controls on the GPUI backend inside GPUI's headless app. Pointer and
 //! key input go through the window's own input path (`App::synthesize`), automation through
 //! `App::perform`; checks read the app's state and the events it heard. Goldens compare the
-//! gallery in light and dark with `tests/goldens/forms-{light,dark}.png` (`ND_UPDATE_GOLDENS=1`
+//! gallery in light and dark with `tests/goldens/<os>/forms-{light,dark}.png` (`ND_UPDATE_GOLDENS=1`
 //! records them; a mismatch writes `<golden>.actual.png`).
 
 use std::cell::RefCell;
@@ -651,7 +651,8 @@ mod forms {
     const PIXEL_TOLERANCE: f64 = 0.004;
 
     fn golden(scheme: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/forms-{scheme}.png"))
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/goldens/{}/forms-{scheme}.png", std::env::consts::OS))
     }
 
     fn compare(scheme: &str, png: &[u8]) {

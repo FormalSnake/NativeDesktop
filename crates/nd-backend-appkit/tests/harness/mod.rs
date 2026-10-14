@@ -22,6 +22,7 @@ pub fn main_real(name: &str, run: fn()) {
 /// Lists or runs `name` holding the machine-wide window lock (`ndshell::lock::window_test`), since
 /// every test here opens a real window that must stay key. `run` exits the process itself with the
 /// test's status, which releases the lock.
+#[allow(dead_code)]
 pub fn main(name: &str, run: fn()) {
     run_selected(name, run, true);
 }

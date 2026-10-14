@@ -8,6 +8,7 @@
 //! watcher alone, is asserted only under nextest's `gate` profile. Prints `ND_MATUGEN_LIVE_OK`
 //! and the latencies.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m3::matugen_live_recolour";

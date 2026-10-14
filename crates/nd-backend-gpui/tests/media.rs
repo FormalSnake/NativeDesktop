@@ -1,7 +1,7 @@
 //! Tier 2: the drawn media kinds on the GPUI backend inside GPUI's headless app. Pointer and key
 //! input go through the window's own input path (`App::synthesize`), wheels through GPUI's
 //! dispatch; checks read the events the app heard and what the backend probes. Goldens compare
-//! one board in light and dark with `tests/goldens/media-{light,dark}.png` (`ND_UPDATE_GOLDENS=1`
+//! one board in light and dark with `tests/goldens/<os>/media-{light,dark}.png` (`ND_UPDATE_GOLDENS=1`
 //! records them; a mismatch writes `<golden>.actual.png`). Image content is PNG bytes made here
 //! and every clock is paused, so the board is the same on every run.
 
@@ -551,7 +551,8 @@ mod media {
     const PIXEL_TOLERANCE: f64 = 0.004;
 
     fn golden(scheme: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/media-{scheme}.png"))
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/goldens/{}/media-{scheme}.png", std::env::consts::OS))
     }
 
     fn compare(scheme: &str, png: &[u8]) {

@@ -21,15 +21,14 @@ filter = "test(/(^|::)(real::|real_)/)"
 test-group = "real-window"
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-# Tier 2 AppKit tests that need their own window to stay key (posted key events, active-state
-# goldens) take it from each other, so they queue too; so does the matugen recolour timing,
-# which a loaded machine would push past its 100 ms budget. The appearance audits open AppKit
-# windows that would take key from them. Every nd-backend-appkit test opens a window. This group only orders tests inside one nextest run:
-# each of these tests also holds the machine-wide ndshell lock (`ndshell::lock::window_test`),
-# which orders them against runs in other worktrees. Group and lock stay in step, so a test
-# is not parked on the lock while a slot of its own run waits on it.
+# Every test that holds the machine-wide window lock (`ndshell::lock::window_test`): AppKit
+# windows that must stay key, panels and alerts, screen captures. The group orders them inside
+# one run and the lock orders them against runs in other worktrees. Keep the two in step: a
+# window test missing here takes a parallel slot and parks on the lock, and a test here that
+# never takes the lock queues for nothing. The matugen recolour timing queues too, since a
+# loaded machine would push it past its 100 ms budget.
 [[profile.default.overrides]]
-filter = "package(nd-backend-appkit) | binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery(_forms)?_goldens$/) | test(/^gate_m9_terminal::appkit_window_/) | binary(mac_native)"
+filter = "(package(nd-backend-appkit) - binary(native_mappings_lint)) | (binary(/^appearance/) & test(=appearance_audit::appkit)) | binary_id(chrome::settings) | binary_id(nd::chrome) | binary_id(nd::matugen_live) | binary_id(overrides::goldens) | binary_id(/^gallery::(goldens|forms_goldens|media_goldens|audio)$/) | binary_id(tabs::window_tabs) | binary_id(terminal::window) | binary_id(nd-system::mac_native)"
 test-group = "real-window"
 # Waiting for the machine lock (up to 600 s) counts against the test, so these get room for it.
 slow-timeout = { period = "60s", terminate-after = 15 }
@@ -73,7 +72,7 @@ slow-timeout = { period = "60s", terminate-after = 15 }
 # test activating its own app takes away, so they queue with them.
 [[profile.gate.overrides]]
 platform = 'cfg(not(target_os = "linux"))'
-filter = "test(/(^|::)(real::|real_)/) | package(nd-backend-appkit) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery(_forms)?_goldens$/) | test(/^gate_m9_terminal::appkit_window_/)"
+filter = "test(/(^|::)(real::|real_)/) | (package(nd-backend-appkit) - binary(native_mappings_lint)) | (binary(/^appearance/) & test(=appearance_audit::appkit)) | binary_id(chrome::settings) | binary_id(nd::chrome) | binary_id(nd::matugen_live) | binary_id(overrides::goldens) | binary_id(/^gallery::(goldens|forms_goldens|media_goldens|audio)$/) | binary_id(tabs::window_tabs) | binary_id(terminal::window) | binary_id(nd-system::mac_native)"
 test-group = "real-window"
 
 # The M10 flow builds and packs an app three times (release profile, one cold), so it gets room.

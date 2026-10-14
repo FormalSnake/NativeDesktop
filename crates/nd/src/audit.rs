@@ -12,7 +12,8 @@
 //! }
 //! ```
 //!
-//! Each backend runs in its own child process, so AppKit and headless GPUI never share one.
+//! Each backend kind is its own test (`appearance_audit::appkit`, `appearance_audit::gpui`) in its
+//! own process, so AppKit and headless GPUI never share one.
 //! The matugen themes run on GPUI only: on AppKit native text draws with system colours by
 //! design, and matugen is a Linux palette source.
 
@@ -153,32 +154,50 @@ impl Audit {
         })
     }
 
+    /// Lists one test per backend kind, `appearance_audit::<kind>`, so nextest runs them as
+    /// separate processes and only the AppKit one queues with the window tests.
     fn main(self) -> ExitCode {
-        let args: Vec<String> = std::env::args().collect();
-        if args.iter().any(|a| a == "--list") {
-            if !args.iter().any(|a| a == "--ignored") {
-                println!("{TEST_NAME}: test");
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let has = |flag: &str| args.iter().any(|a| a == flag);
+        let tests: Vec<(String, Kind)> =
+            Kind::linked().into_iter().map(|k| (format!("{TEST_NAME}::{}", k.name()), k)).collect();
+        if has("--list") {
+            if !has("--ignored") {
+                for (name, _) in &tests {
+                    println!("{name}: test");
+                }
             }
             return ExitCode::SUCCESS;
         }
-        let filters: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with('-')).collect();
-        if args.iter().any(|a| a == "--ignored")
-            || !(filters.is_empty() || filters.iter().any(|f| TEST_NAME.contains(f.as_str())))
-        {
+        if has("--ignored") {
             return ExitCode::SUCCESS;
         }
         match std::env::var(BACKEND_ENV).as_deref() {
-            Ok("appkit") => self.in_process(Kind::AppKit),
-            Ok("gpui") => self.in_process(Kind::Gpui),
-            _ => self.each_backend(),
+            Ok("appkit") => return self.in_process(Kind::AppKit),
+            Ok("gpui") => return self.in_process(Kind::Gpui),
+            _ => {}
+        }
+        let exact = has("--exact");
+        let filters: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let selected: Vec<Kind> = tests
+            .iter()
+            .filter(|(name, _)| {
+                filters.is_empty() || filters.iter().any(|f| if exact { *f == name } else { name.contains(f.as_str()) })
+            })
+            .map(|(_, kind)| *kind)
+            .collect();
+        match selected.as_slice() {
+            [] => ExitCode::SUCCESS,
+            [kind] => self.in_process(*kind),
+            kinds => self.each_backend(kinds),
         }
     }
 
-    fn each_backend(&self) -> ExitCode {
+    fn each_backend(&self, kinds: &[Kind]) -> ExitCode {
         let exe = std::env::current_exe().expect("the test binary's path");
         let mut ok = true;
-        for kind in Kind::linked() {
-            let status = Command::new(&exe).arg(TEST_NAME).env(BACKEND_ENV, kind.name()).status();
+        for kind in kinds {
+            let status = Command::new(&exe).env(BACKEND_ENV, kind.name()).status();
             match status {
                 Ok(s) if s.success() => {}
                 Ok(s) => {

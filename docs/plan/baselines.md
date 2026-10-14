@@ -83,12 +83,16 @@ missed frames and p95 within 1.25 periods.
 | g815, headless, release | 8d03a1c5, again on ee5049c6 (router scrolling) | 100k, 40 | p95 0.87 to 0.94 ms, max 1.43 per frame, 0 over 16.7 ms |
 | g815, headless, release | same | 10k, 40 | p95 0.90 ms |
 | g815, headless, release | same | 100k, 400 | p95 1.69 ms, max 2.06 |
+| e1504g, eDP-1 60.008 Hz, window, Hyprland session | 3bebe63b (main, both fixes) | 100k, 40, 3 runs | p50 16.65 to 16.67 ms, p95 17.00 to 17.05, p99 17.46 to 17.74, missed 1 to 2 of 598 to 601: within |
+| e1504g | 3bebe63b | 10k, 40, 2 runs | p50 16.66 to 16.67 ms, p95 17.02, missed 1: within |
+| e1504g | 3bebe63b | 100k, 400 | p50 16.67 ms, p95 17.02, missed 1: within |
 
 The two fixes: `nd-diag`'s recorder kept each frame's semantic tree as a `serde_json::Value`
 (about a quarter of main-thread samples on the macbook, far more on e1504g); it now keeps typed
 records and serializes when a bundle is written. The GPUI presenter laid out every rendered row
 each frame, overscan included; it now lays out visible rows and rows not yet measured at the
-current width. e1504g was offline for the rerun.
+current width. With both, e1504g holds 60 Hz at 100k rows (2026-10-14); the missed frame is the first
+one, while rows and glyphs are first built.
 
 Rerun: build on g815 (`cargo build --release -p scroll-bench -p nd-cli`), stage both binaries and
 the dev shell's `LD_LIBRARY_PATH` on e1504g, then `nd diag scroll --rows 100000 --bin ./scroll-bench`

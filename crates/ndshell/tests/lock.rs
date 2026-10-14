@@ -33,3 +33,13 @@ fn second_holder_waits_until_the_first_lets_go() {
     assert_eq!(lock::holder_in(&dir), "", "a released lock names no holder");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn taking_it_again_on_the_holding_thread_fails_at_once() {
+    let dir = dir("reentry");
+    let _first = lock::acquire_in(&dir, "first").unwrap();
+    let again = lock::acquire_timeout_in(&dir, "again", std::time::Duration::from_secs(5)).unwrap_err();
+    assert_eq!(again.kind(), std::io::ErrorKind::Deadlock, "{again}");
+    assert_eq!(lock::acquire_in(&dir, "again").unwrap_err().kind(), std::io::ErrorKind::Deadlock);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -146,6 +146,8 @@ impl BubbleInner {
         let font = NSFont::systemFontOfSize_weight(f64::from(theme.type_scale.caption.as_f32()), unsafe {
             NSFontWeightSemibold
         });
+        // The ring that cuts each pill out of the bubble scales with the pill's text.
+        let ring = (font.pointSize() / 6.).round().max(1.);
         for ((pill, text), reaction) in pills.iter().zip(&props.reactions) {
             let (bg, fg) = if reaction.mine {
                 (theme.accent, theme.text.on_accent)
@@ -154,7 +156,7 @@ impl BubbleInner {
             };
             pill.setBackgroundColor(Some(&cg(bg)));
             pill.setBorderColor(Some(&cg(theme.surface.base)));
-            pill.setBorderWidth(2.);
+            pill.setBorderWidth(ring);
             set_font(text, &font);
             text.setForegroundColor(Some(&cg(fg)));
             let label = if reaction.count > 1 {

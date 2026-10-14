@@ -27,11 +27,11 @@ mod controls;
 #[cfg(feature = "runtime")]
 pub mod files;
 #[cfg(feature = "runtime")]
+pub mod media;
+#[cfg(feature = "runtime")]
 pub mod native;
 #[cfg(feature = "runtime")]
 mod runtime;
-#[cfg(feature = "runtime")]
-pub mod media;
 #[cfg(feature = "runtime")]
 pub mod system;
 #[cfg(feature = "runtime")]

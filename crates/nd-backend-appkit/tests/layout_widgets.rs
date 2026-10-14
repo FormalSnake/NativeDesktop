@@ -219,7 +219,6 @@ mod layout {
     }
 
     pub fn run() -> ! {
-        let _lock = ndshell::lock::acquire("nd-backend-appkit layout widgets").expect("machine lock");
         let mut c = Checks(0);
         let loaded = load_ndswift();
         c.check(loaded.is_ok(), &format!("NDSwift builds and loads ({loaded:?})"));

@@ -38,7 +38,7 @@ mod gate_m9_terminal {
             surface.fit(&session);
             let (w, h, rgba) = surface.image(&session);
             let image = image::RgbaImage::from_raw(w, h, rgba).expect("sized");
-            let name = format!("printf-appkit-{}-macos", if scheme.is_dark() { "dark" } else { "light" });
+            let name = format!("printf-appkit-{}", if scheme.is_dark() { "dark" } else { "light" });
             if let Err(e) = support::compare(&name, &image) {
                 failed.push(e);
             }

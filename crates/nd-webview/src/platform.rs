@@ -32,14 +32,17 @@ pub(crate) fn register_presenters() {
 }
 
 /// Registers the engines this crate implements.
+#[cfg(target_os = "macos")]
 pub(crate) fn register_builtin() {
     thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if DONE.with(|d| d.replace(true)) {
         return;
     }
-    #[cfg(target_os = "macos")]
     crate::engine::register_engine(crate::Engine::System, appkit::wk::WkFactory);
 }
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn register_builtin() {}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn defer(f: Box<dyn FnOnce(&mut App)>) {

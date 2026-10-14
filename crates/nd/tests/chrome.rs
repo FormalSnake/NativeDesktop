@@ -7,6 +7,7 @@
 //! embedded traffic lights riding their slot. `ND_CHROME_SHOT=<dir>` also screenshots the
 //! windows there. Prints `ND_CHROME_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m3::appkit_chrome_intents";

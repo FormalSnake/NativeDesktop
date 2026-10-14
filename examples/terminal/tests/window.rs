@@ -4,6 +4,7 @@
 //! back into the grid. The view draws through a `CAMetalLayer` sized to its backing pixels.
 //! Takes the ndshell machine lock: a key window is needed. Prints `ND_TERMINAL_WINDOW_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m9_terminal::appkit_window_keys_reach_cat";
@@ -32,7 +33,7 @@ mod window {
     use nd::appkit::objc2::{Message, msg_send};
     use nd::appkit::objc2_app_kit::{NSResponder, NSView};
     use nd::appkit::objc2_foundation::{NSNotFound, NSRange, NSString};
-    use nd::terminal::{Command, SessionOptions, TerminalSession};
+    use nd_terminal::{Command, SessionOptions, TerminalSession};
     use nd_ui::semantics::{MouseButton, PointerPhase, SyntheticInput};
     use nd_ui::{Keystroke, Point};
 
@@ -87,7 +88,7 @@ mod window {
         let layer = view.layer().expect("layer-backed");
         assert!(layer.class().name().to_str().is_ok_and(|n| n.contains("CAMetalLayer")), "drawn by Metal");
         let terminal_view =
-            view.downcast_ref::<nd::terminal::appkit::NdTerminalView>().expect("the terminal's own view class");
+            view.downcast_ref::<nd_terminal::appkit::NdTerminalView>().expect("the terminal's own view class");
         assert!(terminal_view.frames_presented() > 0, "the view presented a frame");
 
         // Click the middle of the terminal, in the content view's top-left coordinates.
