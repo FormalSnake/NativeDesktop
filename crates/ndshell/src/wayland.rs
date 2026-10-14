@@ -54,8 +54,11 @@ pub enum Modifier {
 }
 
 fn connect(hyprland: &Hyprland) -> Result<Connection, String> {
-    let socket = hyprland.wayland_socket();
-    let stream = UnixStream::connect(&socket).map_err(|e| format!("{}: {e}", socket.display()))?;
+    connect_socket(&hyprland.wayland_socket())
+}
+
+fn connect_socket(socket: &std::path::Path) -> Result<Connection, String> {
+    let stream = UnixStream::connect(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     Connection::from_socket(stream).map_err(|e| format!("wayland connect: {e}"))
 }
 
@@ -108,7 +111,16 @@ pub struct VirtualInput {
 
 impl VirtualInput {
     pub fn connect(hyprland: &Hyprland) -> Result<Self, String> {
-        let conn = connect(hyprland)?;
+        Self::connect_to(connect(hyprland)?, (hyprland.options.width, hyprland.options.height))
+    }
+
+    /// On the compositor behind `socket`, whose first output is `extent` logical pixels: the
+    /// user's own session, for measurements that need its configuration and display.
+    pub fn connect_socket(socket: &std::path::Path, extent: (u32, u32)) -> Result<Self, String> {
+        Self::connect_to(connect_socket(socket)?, extent)
+    }
+
+    fn connect_to(conn: Connection, extent: (u32, u32)) -> Result<Self, String> {
         let (globals, queue) = registry_queue_init::<InputState>(&conn).map_err(|e| e.to_string())?;
         let qh = queue.handle();
         let seat: wl_seat::WlSeat = bind(&globals, &qh, 1..=1)?;
@@ -145,13 +157,12 @@ impl VirtualInput {
         file.write_all(text.as_bytes()).and_then(|()| file.write_all(&[0])).map_err(|e| e.to_string())?;
         keyboard.keymap(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1, file.as_fd(), text.len() as u32 + 1);
 
-        let (w, h) = (hyprland.options.width, hyprland.options.height);
         let mut this = Self {
             conn,
             queue,
             pointer,
             keyboard,
-            extent: (w, h),
+            extent,
             position: (0., 0.),
             mod_masks,
             started: Instant::now(),

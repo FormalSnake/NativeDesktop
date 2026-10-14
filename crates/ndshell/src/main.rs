@@ -82,7 +82,46 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// `ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h>` drags with a virtual
+/// pointer in the session `WAYLAND_DISPLAY` names, printing `drag motion t_us=.. x=.. y=..` per
+/// motion on the monotonic clock, so an app's present times can be set against the pointer.
+#[cfg(target_os = "linux")]
+fn run(args: &[String]) -> Result<(), String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let ["drag", rest @ ..] = args.as_slice() else {
+        return Err(format!("{USAGE} | ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h>"));
+    };
+    let n: Vec<f64> = rest.iter().map(|a| a.parse::<f64>().map_err(|e| format!("{a}: {e}"))).collect::<Result<_, _>>()?;
+    let [x, y, dx, dy, steps, step_ms, w, h] = n[..] else { return Err("drag takes eight numbers".into()) };
+    let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| "XDG_RUNTIME_DIR is not set")?;
+    let display = std::env::var("WAYLAND_DISPLAY").map_err(|_| "WAYLAND_DISPLAY is not set")?;
+    let socket = std::path::Path::new(&runtime).join(display);
+    let mut input = ndshell::wayland::VirtualInput::connect_socket(&socket, (w as u32, h as u32))?;
+    let now_us = || {
+        let t = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        t.tv_sec as u64 * 1_000_000 + t.tv_nsec as u64 / 1000
+    };
+    input.move_to(x, y);
+    input.sync()?;
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    input.button(true);
+    input.sync()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let steps = steps as u32;
+    for i in 1..=steps {
+        let t = f64::from(i) / f64::from(steps);
+        let (px, py) = (x + dx * t, y + dy * t);
+        input.move_to(px, py);
+        println!("drag motion t_us={} x={px:.1} y={py:.1}", now_us());
+        std::thread::sleep(std::time::Duration::from_secs_f64(step_ms / 1000.));
+    }
+    input.sync()?;
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    input.button(false);
+    input.sync()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn run(_args: &[String]) -> Result<(), String> {
     Err(format!("ndshell has only the lock and the agent on this OS; {USAGE}"))
 }
