@@ -317,6 +317,10 @@ impl GpuiBackend {
         self.state.borrow_mut().swallow_up.insert(window);
     }
 
+    pub(crate) fn clear_swallow(&self, window: WindowId) {
+        self.state.borrow_mut().swallow_up.remove(&window);
+    }
+
     pub(crate) fn take_swallow(&self, window: WindowId) -> bool {
         self.state.borrow_mut().swallow_up.remove(&window)
     }

@@ -138,7 +138,10 @@ mod gate_m4_overlays {
         wiggle(&mut input, free);
         click(&mut input, free);
         let after = app.counts();
-        assert!(after.moved > before.moved && after.down > before.down, "control: {before} -> {after}");
+        assert!(
+            after.moved > before.moved && after.down > before.down && after.up > before.up,
+            "control: {before} -> {after}"
+        );
         click(&mut input, under);
         app.status_has("under=1");
 

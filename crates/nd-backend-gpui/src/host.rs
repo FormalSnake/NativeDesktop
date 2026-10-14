@@ -670,9 +670,12 @@ impl Inner {
             Rc::downgrade(self),
         );
         let expose = self.debug.expose;
-        let backend = self.backend.clone();
+        let (backend, fresh) = (self.backend.clone(), self.backend.clone());
         div()
             .size_full()
+            // A new press starts clean: a release owed to an earlier consumed press that never
+            // arrived (the compositor dropped it) must not eat this press's release.
+            .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))
             .capture_any_mouse_up(move |_, _, cx| {
                 if backend.take_swallow(id) {
                     cx.stop_propagation();
