@@ -122,6 +122,10 @@ struct GridLayout {
     cell_width: Pixels,
     cell_height: Pixels,
     baseline: Pixels,
+    /// From the baseline, down: where an underline's top sits.
+    underline: Pixels,
+    /// From the baseline, up: the middle of a strikethrough (half the face's x-height).
+    strikethrough: Pixels,
     scale: f32,
     cols: u16,
     rows: u16,
@@ -385,6 +389,7 @@ fn grid_layout(fonts: &Fonts, bounds: Bounds<Pixels>, padding: Pixels, window: &
         .max(1.);
     let ascent = text.ascent(id, fonts.size).as_f32();
     let descent = text.descent(id, fonts.size).as_f32().abs();
+    let x_height = text.x_height(id, fonts.size).as_f32();
     let snap = |v: f32| (v * scale).ceil() / scale;
     let cell_width = snap(width);
     let cell_height = snap(ascent + descent);
@@ -402,6 +407,10 @@ fn grid_layout(fonts: &Fonts, bounds: Bounds<Pixels>, padding: Pixels, window: &
         cell_width: px(cell_width),
         cell_height: px(cell_height),
         baseline: px(baseline),
+        // A third of the way into the descent, as text views place it, and clear of the
+        // baseline by at least a device pixel.
+        underline: px(snap(descent / 3.).max(1. / scale)),
+        strikethrough: px(snap(x_height / 2.)),
         scale,
         cols,
         rows,
@@ -700,29 +709,15 @@ impl TerminalElement {
         let mut placed = Vec::new();
         for shaped_run in &shaped.runs {
             for (i, gl) in shaped_run.glyphs.iter().enumerate() {
-                let ink = match single {
-                    Some(c) if !gl.is_emoji => {
-                        window.text_system().typographic_bounds(shaped_run.font_id, fonts.size, c).ok().map(|b| Ink {
-                            x: b.origin.x.as_f32(),
-                            // Font bounds are y up from the baseline.
-                            y: -(b.origin.y + b.size.height).as_f32(),
-                            width: b.size.width.as_f32(),
-                            height: b.size.height.as_f32(),
-                        })
-                    }
-                    _ => None,
-                }
-                .unwrap_or_else(|| {
-                    // A cluster or an emoji: its advance by the line's height.
-                    let next = shaped_run.glyphs.get(i + 1).map(|n| n.position.x);
-                    let advance = next.map_or(shaped.width, |x| x) - gl.position.x;
-                    Ink {
-                        x: 0.,
-                        y: -shaped.ascent.as_f32(),
-                        width: advance.as_f32().max(cw.as_f32()),
-                        height: (shaped.ascent + shaped.descent).as_f32(),
-                    }
-                });
+                // The glyph's box in its own face: its advance by the face's ascent and descent.
+                // Not ink: GPUI's typographic bounds are the glyph's ink on macOS but only its
+                // advances on Linux, which read as a glyph a whole line tall above the baseline.
+                let text = window.text_system();
+                let next = shaped_run.glyphs.get(i + 1).map(|n| n.position.x);
+                let advance = next.map_or(shaped.width, |x| x) - gl.position.x;
+                let ascent = text.ascent(shaped_run.font_id, fonts.size).as_f32();
+                let descent = text.descent(shaped_run.font_id, fonts.size).as_f32().abs();
+                let ink = Ink { x: 0., y: -ascent, width: advance.as_f32(), height: ascent + descent };
                 let fit = glyph::fit(
                     ink,
                     cw.as_f32() * f32::from(cells),
@@ -770,10 +765,10 @@ impl TerminalElement {
         fg: Hsla,
         window: &mut Window,
     ) {
-        let (cw, ch) = (layout.cell_width * f32::from(cell.width()), layout.cell_height);
+        let cw = layout.cell_width * f32::from(cell.width());
         let thick = px((layout.scale).round().max(1.) / layout.scale);
         let color = cell.underline_color.map_or(fg, |c| self.theme.ink(c));
-        let under_y = o.y + layout.baseline + thick * 2.;
+        let under_y = o.y + layout.baseline + layout.underline;
         match cell.underline {
             Underline::None => {}
             Underline::Single => window.paint_quad(fill(Bounds::new(point(o.x, under_y), size(cw, thick)), color)),
@@ -796,7 +791,7 @@ impl TerminalElement {
             }
         }
         if cell.attrs.contains(Attrs::STRIKETHROUGH) {
-            let y = o.y + ch / 2. - thick / 2.;
+            let y = o.y + layout.baseline - layout.strikethrough - thick / 2.;
             window.paint_quad(fill(Bounds::new(point(o.x, y), size(cw, thick)), fg));
         }
         if cell.attrs.contains(Attrs::OVERLINE) {
