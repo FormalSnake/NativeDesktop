@@ -17,7 +17,8 @@ clean-merged:
     set -euo pipefail
     git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt; do
         [ "$wt" = "$PWD" ] && continue
-        branch=$(git -C "$wt" branch --show-current)
+        [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
+        branch=$(git -C "$wt" branch --show-current 2>/dev/null) || continue
         [ -n "$branch" ] || continue
         git merge-base --is-ancestor "$branch" main || continue
         [ "$(git rev-parse "$branch")" != "$(git rev-parse main)" ] || continue
