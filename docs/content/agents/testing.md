@@ -1,6 +1,6 @@
 +++
 title = "Testing"
-description = "Draft."
+description = "The three test tiers, the machine lock, and reading the incident bundle before reproducing a bug."
 +++
 
-Draft.
+<!-- docs:include crates/nd-cli/templates/docs/agents/testing.md -->

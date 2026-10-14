@@ -1,6 +1,6 @@
 +++
 title = "Styling"
-description = "Draft."
+description = "Theme tokens, the appearance audit, override layers and glass."
 +++
 
-Draft.
+<!-- docs:include crates/nd-cli/templates/docs/agents/styling.md -->

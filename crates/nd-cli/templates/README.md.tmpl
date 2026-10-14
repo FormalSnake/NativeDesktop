@@ -1,61 +1,103 @@
 <p align="center">
-  <!-- nd: icon (160 px, from assets/icon.icon via `nd docs shots`) -->
+  <!-- nd: icon, 160 px wide: <img src="assets/icon.png" width="160" alt="{{title}} icon"> -->
 </p>
 
 # {{title}}
 
-A counter with a button. It is the smallest app that still has a toolbar, a native control and a test, so it is where you start breaking things.
+A counter with one button. <!-- nd: replace with one plain sentence: what it is and who it is for, e.g. "iMessage on Linux." -->
 
-It is a [NativeDesktop](https://github.com/FormalSnake/nativedesktop) app. One Rust view tree renders through the platform backend: AppKit draws the toolbar and the button on macOS, and the framework draws them elsewhere once those backends ship.
+<!-- nd: hero screenshot from `nd docs capture`: ![{{title}}](docs/images/main.png) -->
 
 ```
-┌──────────────┐  ops   ┌──────────────┐
-│  src/app.rs  │ ─────> │   backend    │
-│  Counter     │ <───── │  NSButton    │
-└──────────────┘ events └──────────────┘
+┌──────────────────────┐   ops: create, update   ┌──────────────────────────┐
+│ src/app.rs (Rust)    │ ──────────────────────▶ │ backend                  │
+│ Counter view         │ ◀────────────────────── │ AppKit on macOS, GPUI on │
+└──────────────────────┘   events: clicks, keys  │ Linux, Windows and web   │
+                                                 └──────────────────────────┘
 ```
 
-<!-- nd: one measured number, e.g. idle CPU or cold start, from `nd diag` -->
+The window is one Rust view tree. On macOS the toolbar is a real `NSToolbar` and the button a
+real `NSButton`; on Linux the same tree draws through GPUI in your matugen colours, and on Windows
+in Fluent. Clicking sends one event back, the count goes up, and only the text that changed is
+touched.
 
-<!-- nd: hero screenshot from `nd docs shots` -->
+<!-- nd: one measured number in a plain sentence, e.g. "It opens in 140 ms and idles at 0% CPU." Measure a release build on the slowest machine you have. -->
+
+<!-- nd: two-column screenshot table from `nd docs capture`:
+| | |
+|---|---|
+| ![Light](docs/images/light.png) | ![Dark](docs/images/dark.png) |
+-->
 
 ## Features
 
-- Counts clicks, 42 of them if you start it with `{{env}}_DEMO=1`.
-- One test per tier it can use today: `tests/app.rs` runs the view without a window.
-- `nd check` and `nd test` work out of the box, so an agent has something to run on the first try.
+- Counts clicks. Starts at 42 with `{{env}}_DEMO=1`, which is what the tests and screenshots use.
+- Follows the system: light and dark, the accent colour, and matugen palettes on Linux, live.
+- Writes an incident bundle when it crashes or hangs, so a bug report comes with the last inputs
+  and what was on screen.
 
-Status: first scaffold. The Linux and Windows backends are not shipped, so `cargo run` on those targets returns `no platform backend is linked for this target`.
+<!-- nd: replace these with what the app does. Numbers beat adjectives: "100k rows", "under 150 ms". A yes/no table works when features differ by platform. Say what does not work yet. -->
 
 ## Install
 
-<!-- nd: Nix with Home Manager snippet, other Linux, macOS and Windows install steps -->
+### Nix
+
+<!-- nd: `nix run github:<owner>/{{name}}`, then a Home Manager snippet:
+```nix
+programs.{{name}} = {
+  enable = true;
+  settings = { };   # written to ~/.config/{{name}}/
+};
+```
+-->
+
+### Other Linux
+
+```sh
+git clone <!-- nd: repository URL -->
+cd {{name}}
+nd package linux            # AppImage in target/nd/
+```
+
+### macOS
+
+<!-- nd: download link for the .dmg, or build it: `nd package mac`. Note the minimum macOS version. -->
+
+### Windows
+
+<!-- nd: download link for Setup.exe, or build it: `nd package windows`. -->
 
 ## Configuration
 
-<!-- nd: settings file path and a sample, once the app has settings -->
+<!-- nd: the settings file path and a short sample, once the app has settings. -->
 
-Set `{{env}}_DEMO=1` to start with a fixed count. Tests and screenshots use it.
+| Variable | Effect |
+| --- | --- |
+| `{{env}}_DEMO=1` | start on fixed demo state |
 
 ## Keyboard
 
-| Action | Shortcut |
-| --- | --- |
-| Add one | click the button, there is no shortcut yet |
+| | |
+|---|---|
+| `Tab` / `Shift+Tab` | move focus |
+| `Esc` | close the open popover |
 
-`Cmd` on macOS.
+`Cmd` on macOS. <!-- nd: one row per shortcut the app binds with `KeyBinding::new("secondary-..", ..)`. -->
 
 ## Development
 
 ```sh
-cargo run       # open the window
-nd check        # fmt, clippy, framework lints
-nd test         # tiers 1 and 2, parallel
-nd test --tier real   # tier 3, needs a window server
+just dev                  # run it; {{env}}_DEMO=1 just dev for demo state
+nd check                  # fmt, clippy, framework lints, appearance audit
+nd test                   # tiers 1 and 2, parallel, no window
+nd test --tier real       # tier 3, real windows
+nd serve --target web     # the web build on localhost:8080
 ```
 
-`src/app.rs` is the view, `src/demo.rs` is the fixed state for tests and screenshots, `build.rs` links the Swift side on macOS. `CLAUDE.md` has the rules for agents working here.
+`src/app.rs` is the window, `src/demo.rs` the fixed state for tests and screenshots, and
+`build.rs` links the Swift side on macOS. `CLAUDE.md` and `docs/agents/` have the rules for
+agents working here.
 
 ## License
 
-<!-- nd: license line, e.g. [MIT](LICENSE). -->
+<!-- nd: [MIT](LICENSE), plus any bundled fonts or assets under their own licences. -->

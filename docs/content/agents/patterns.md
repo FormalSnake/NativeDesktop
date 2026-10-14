@@ -1,6 +1,6 @@
 +++
 title = "Patterns"
-description = "Draft."
+description = "How an nd app is put together: system structure, entities, actions, controlled values, overlays and time."
 +++
 
-Draft.
+<!-- docs:include crates/nd-cli/templates/docs/agents/patterns.md -->
