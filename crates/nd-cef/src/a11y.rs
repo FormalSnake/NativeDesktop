@@ -1,7 +1,8 @@
 //! The page's accessibility tree, mirrored from Chromium's serialized updates
-//! (`on_accessibility_tree_change`) so the view can expose it to VoiceOver and automation as
-//! `NSAccessibilityElement` children. Covered: roles, names, values and frames of the nodes,
-//! and their nesting; actions and live-region notifications are not.
+//! (`on_accessibility_tree_change`) so the view can expose it to the platform (on macOS,
+//! VoiceOver and automation through `NSAccessibilityElement` children). Covered: roles, names,
+//! values and frames of the nodes, and their nesting; actions and live-region notifications are
+//! not.
 
 use std::collections::HashMap;
 
@@ -122,6 +123,7 @@ impl Tree {
 
 /// The AppKit role for a Chromium role; `None` for nodes that only carry text runs of their
 /// parent and are left out.
+#[cfg(target_os = "macos")]
 pub(crate) fn ns_role(role: &str) -> Option<&'static str> {
     Some(match role {
         "inlineTextBox" | "none" | "ignored" => return None,
@@ -166,6 +168,7 @@ mod tests {
         assert!(!tree.nodes.contains_key(&2));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn roles_map_to_appkit() {
         assert_eq!(ns_role("link"), Some("AXLink"));

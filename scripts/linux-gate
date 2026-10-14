@@ -32,9 +32,10 @@ remote() {
 
 # Wraps a command in the dev shell with the shared target and the quiet settings. Every lane shares
 # g815's small root disk: one run at a time (the flock queues the rest), and no incremental cache,
-# which was a third of the shared target.
+# which was a third of the shared target. The CEF distribution nd-cef builds against stays outside
+# the target, so a clean does not download it again.
 in_shell() {
-  printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && flock ~/.cache/nd-build/build.lock nice -n 19 ionice -c3 nix develop "path:$HOME/%s" -c env CARGO_TARGET_DIR="%s" CARGO_BUILD_BUILD_DIR="%s" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 nice -n 19 ionice -c3 bash -c %q' \
+  printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && flock ~/.cache/nd-build/build.lock nice -n 19 ionice -c3 nix develop "path:$HOME/%s" -c env CARGO_TARGET_DIR="%s" CARGO_BUILD_BUILD_DIR="%s" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH="$HOME/.cache/nd-build/cef" nice -n 19 ionice -c3 bash -c %q' \
     "$dir" "$dir" "$target" "$target" "$1"
 }
 

@@ -44,6 +44,7 @@ pub mod keys {
 }
 
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Modifier {
@@ -187,10 +188,40 @@ impl VirtualInput {
     }
 
     pub fn button(&mut self, pressed: bool) {
+        self.press(BTN_LEFT, pressed);
+    }
+
+    fn press(&mut self, button: u32, pressed: bool) {
         let state = if pressed { wl_pointer::ButtonState::Pressed } else { wl_pointer::ButtonState::Released };
-        self.pointer.button(self.time(), BTN_LEFT, state);
+        self.pointer.button(self.time(), button, state);
         self.pointer.frame();
         self.flush();
+    }
+
+    /// Presses and releases the secondary button at `(x, y)`.
+    pub fn right_click(&mut self, x: f64, y: f64) -> Result<(), String> {
+        self.move_to(x, y);
+        self.sync()?;
+        self.press(BTN_RIGHT, true);
+        self.press(BTN_RIGHT, false);
+        self.sync()
+    }
+
+    /// Turns the wheel `notches` steps at `(x, y)`: positive scrolls down, as a wheel turned
+    /// towards the user does.
+    pub fn scroll(&mut self, x: f64, y: f64, notches: i32) -> Result<(), String> {
+        self.move_to(x, y);
+        self.sync()?;
+        for _ in 0..notches.unsigned_abs() {
+            let step = notches.signum();
+            let time = self.time();
+            self.pointer.axis_source(wl_pointer::AxisSource::Wheel);
+            self.pointer.axis_discrete(time, wl_pointer::Axis::VerticalScroll, f64::from(15 * step), step);
+            self.pointer.frame();
+            self.flush();
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        self.sync()
     }
 
     pub fn click(&mut self, x: f64, y: f64) -> Result<(), String> {

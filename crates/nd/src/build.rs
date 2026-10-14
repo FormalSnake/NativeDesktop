@@ -6,7 +6,8 @@
 //! `OUT_DIR`, builds it into one static library and emits the link arguments for the app's
 //! binaries. Every package must export a library product named like its package. Packages that
 //! depend on the framework package take its path from the `ND_SWIFT_PATH` environment variable.
-//! On every other target it does nothing.
+//! On Linux it gives the app's binaries an `$ORIGIN` run path, so the Chromium runtime web views
+//! link (`libcef.so`) loads from beside the executable, where builds and packages put it.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -22,8 +23,10 @@ pub fn app() {
         println!("cargo::error=nd::build::app: {message}");
         std::process::exit(1);
     }
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
-        return;
+    match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => {}
+        Ok("linux") => return println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN"),
+        _ => return,
     }
     if let Err(message) = build() {
         println!("cargo::error=nd::build::app: {message}");

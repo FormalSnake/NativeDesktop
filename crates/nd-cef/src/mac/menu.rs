@@ -1,24 +1,18 @@
-//! Chromium's context menu as an `NSMenu`, with the app's items appended. Off-screen, Chromium
-//! only hands over the model; showing it, and the system look, are ours.
+//! Chromium's context menu as an `NSMenu`, with the app's items appended.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use cef::*;
 use nd_webview::MenuItemKind;
-use nd_webview::menu::{Entry, Hit};
+use nd_webview::menu::Entry;
 use objc2::rc::Retained;
 use objc2::runtime::NSObjectProtocol;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSControlStateValueOff, NSControlStateValueOn, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSObject, NSString};
 
-/// What the user picked.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Choice {
-    Chromium(i32),
-    App(nd_webview::MenuItem),
-}
+use crate::menu::Choice;
 
 pub(crate) struct Built {
     pub menu: Retained<NSMenu>,
@@ -27,8 +21,7 @@ pub(crate) struct Built {
 }
 
 fn label(text: &str) -> Retained<NSString> {
-    // Chromium marks mnemonics with `&`, which AppKit shows literally.
-    NSString::from_str(&text.replace("&&", "\u{0}").replace('&', "").replace('\u{0}', "&"))
+    NSString::from_str(&crate::menu::label(text))
 }
 
 pub(crate) fn build(mtm: MainThreadMarker, model: Option<&MenuModel>, app: &[Entry<'_>]) -> Built {
@@ -60,7 +53,7 @@ fn add_model(mtm: MainThreadMarker, menu: &NSMenu, model: &MenuModel, target: &T
             }
             continue;
         }
-        let title = label(&super::text(&model.label_at(i)));
+        let title = label(&crate::text(&model.label_at(i)));
         if kind == MenuItemType::SUBMENU {
             let Some(sub_model) = model.sub_menu_at(i) else { continue };
             let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &title);
@@ -120,18 +113,6 @@ fn item(mtm: MainThreadMarker, title: &NSString, action: objc2::runtime::Sel, ta
     item
 }
 
-/// What a context menu hit, from Chromium's parameters.
-pub(crate) fn hit(params: &ContextMenuParams) -> Hit {
-    let some = |s: String| Some(s).filter(|s| !s.is_empty());
-    let image = (params.media_type() == ContextMenuMediaType::IMAGE).then(|| super::text(&params.source_url()));
-    Hit {
-        link: some(super::text(&params.link_url())),
-        image: image.and_then(some),
-        selection: some(super::text(&params.selection_text())),
-        editable: params.is_editable() != 0,
-    }
-}
-
 pub struct TargetIvars {
     chosen: Rc<RefCell<Option<Choice>>>,
     items: RefCell<Vec<nd_webview::MenuItem>>,
@@ -164,14 +145,5 @@ impl Target {
     fn new(mtm: MainThreadMarker, chosen: Rc<RefCell<Option<Choice>>>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(TargetIvars { chosen, items: RefCell::default() });
         unsafe { msg_send![super(this), init] }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn mnemonics_are_dropped_and_escaped_ampersands_kept() {
-        assert_eq!(super::label("&Back").to_string(), "Back");
-        assert_eq!(super::label("Save && Close").to_string(), "Save & Close");
     }
 }

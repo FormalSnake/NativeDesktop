@@ -13,14 +13,24 @@ nd-webview.workspace = true
 tracing = "0.1.44"
 serde_json.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # CEF 154. Its build script downloads the binary distribution into $CEF_PATH (the dev shell
-# points it at the cache drive) and builds the C++ wrapper; the framework itself is loaded at
-# run time from the app bundle, so nothing of Chromium is linked into the binary.
+# points it at a cache directory) and builds the C++ wrapper. On macOS the framework is loaded at
+# run time from the app bundle, so nothing of Chromium is linked into the binary; on Linux the
+# executable links libcef.so, which sits beside it.
 cef = { version = "=154.5.0", default-features = false }
 # Named directly only for its `CEF_DIR` build metadata (build.rs), the dev fallback for
-# finding the framework.
+# finding the runtime.
 cef-dll-sys = { version = "=154.5.0", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nd-backend-gpui.workspace = true
+nd-gpui.workspace = true
+nd-components.workspace = true
+futures = "0.3.34"
+image = { version = "0.25.10", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit.workspace = true
 objc2 = "0.6.5"
 objc2-foundation = "0.3.2"

@@ -38,11 +38,49 @@
           ]
         );
 
+      # What libcef.so links on Linux (nixpkgs' cef-binary patches the same list in as its rpath).
+      # Web views render with Chromium there, so a dev run of an app with `webview` needs them.
+      cefLibs =
+        pkgs:
+        nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
+          with pkgs;
+          [
+            glib
+            nss
+            nspr
+            atk
+            at-spi2-atk
+            libdrm
+            expat
+            libxkbcommon
+            libgbm
+            gtk3
+            pango
+            cairo
+            alsa-lib
+            dbus
+            at-spi2-core
+            cups
+            libGL
+            udev
+            systemdLibs
+            libxcb
+            libx11
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxrandr
+            libxshmfence
+          ]
+        );
+
       mkDevShell =
         pkgs:
         let
           inherit (pkgs) lib stdenv;
           gpuLibs = runtimeLibs pkgs;
+          webLibs = cefLibs pkgs;
 
           # A darwin stdenv carries the apple-sdk setup hook, which exports SDKROOT and
           # DEVELOPER_DIR and pins Swift and the linker to nixpkgs' old SDK.
@@ -66,6 +104,8 @@
                 clang
                 mold
                 cmake
+                # cef-dll-sys builds CEF's C++ wrapper with Ninja.
+                ninja
                 wayland-scanner
                 mesa
                 # Headless compositors for tier 3: labwc lends each test's Hyprland a render node
@@ -104,7 +144,10 @@
             export NEXTEST_TEST_THREADS="''${NEXTEST_TEST_THREADS:-4}"
           ''
           + lib.optionalString stdenv.hostPlatform.isLinux ''
-            export LD_LIBRARY_PATH="${lib.makeLibraryPath gpuLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${lib.makeLibraryPath (gpuLibs ++ webLibs)}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            # nd-cef's build script downloads the CEF binary distribution (about 1.3 GB unpacked) into
+            # $CEF_PATH, outside the target dir so a `cargo clean` keeps it.
+            export CEF_PATH="''${CEF_PATH:-''${XDG_CACHE_HOME:-$HOME/.cache}/nd-cef}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
             export RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-fuse-ld=mold"
             export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.gst_all_1.gstreamer ]}:$LD_LIBRARY_PATH"
@@ -121,7 +164,14 @@
           '';
         };
 
-      mkApp = import ./nix/mk-app.nix { inherit crane mkDevShell runtimeLibs; };
+      mkApp = import ./nix/mk-app.nix {
+        inherit
+          crane
+          mkDevShell
+          runtimeLibs
+          cefLibs
+          ;
+      };
       hmModule = import ./nix/hm-module.nix;
       hmEvalCheck = import ./nix/hm-eval-check.nix { lib = nixpkgs.lib; };
 

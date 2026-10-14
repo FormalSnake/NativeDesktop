@@ -15,9 +15,6 @@ use crate::project::{Project, fresh_dir, write, xml_escape};
 use crate::vpk;
 
 pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
-    if super::cef::enabled(project) {
-        bail!("[webview] engine = \"cef\": bundling Chromium for Linux is not implemented yet (macOS only)");
-    }
     let formats = &project.config.linux.formats;
     if let Some(other) = formats.iter().find(|f| **f != LinuxFormat::Appimage) {
         bail!("linux.formats: {other:?} is not built by nd package yet; only appimage is");
@@ -72,6 +69,11 @@ fn stage_appdir(project: &Project, exe: &Path, work: &Path) -> Result<PathBuf> {
     let bin = appdir.join("usr/bin");
     std::fs::create_dir_all(&bin)?;
     std::fs::copy(exe, bin.join(&project.bin)).with_context(|| format!("copying {}", exe.display()))?;
+    // Web views render with Chromium: its runtime goes beside the executable.
+    if super::cef::links_cef(exe)? {
+        let built = exe.parent().context("the executable has no directory")?;
+        super::cef::stage_linux(built, &bin)?;
+    }
 
     let source = project.config.app.icon.as_deref().context("app.icon is required for an AppImage (a 1024 px PNG)")?;
     let image = icon::load(&project.resolve(source))?;
