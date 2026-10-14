@@ -38,6 +38,9 @@ const SYMBOLS: &[(&str, &str)] = &[
     ("user", "person"),
     ("x", "xmark"),
     ("circle-x", "xmark.circle.fill"),
+    ("rotate-cw", "arrow.clockwise"),
+    ("code", "chevron.left.forwardslash.chevron.right"),
+    ("download", "arrow.down.circle"),
 ];
 
 /// The SF Symbol for a Lucide name; `None` when nd has no mapping for it.

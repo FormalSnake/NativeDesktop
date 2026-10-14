@@ -39,14 +39,17 @@ pub use nd_core::platform;
 pub use nd_core::time;
 #[cfg(feature = "runtime")]
 pub use nd_macros::unavailable;
+#[cfg(feature = "terminal")]
+pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]
 pub use nd_ui::{actions, backend, dispatch, events, transaction};
 #[cfg(feature = "runtime")]
 pub use nd_update as update;
-#[cfg(feature = "terminal")]
-pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]
 pub use nd_virtual as virtual_list;
+/// `webview(id, &page)` and [`webview::WebView`] (nd-webview).
+#[cfg(feature = "webview")]
+pub use nd_webview as webview;
 
 #[cfg(all(feature = "runtime", target_os = "macos"))]
 pub use nd_backend_appkit as appkit;

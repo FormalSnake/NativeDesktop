@@ -13,6 +13,7 @@ use nd_theme::Theme;
 use nd_ui::backend::Props;
 use nd_ui::events::Emit;
 use nd_ui::prelude::Hsla;
+use objc2::rc::Retained;
 use objc2_app_kit::NSView;
 use objc2_foundation::MainThreadMarker;
 
@@ -42,6 +43,16 @@ pub trait CustomNative {
     fn paints(&self) -> Vec<CustomPaint> {
         Vec::new()
     }
+
+    /// The view that takes the keyboard when nd focuses the node, when it is not [`Self::view`]
+    /// (a container hosting an engine's own view).
+    fn focus_view(&self) -> Option<Retained<NSView>> {
+        None
+    }
+
+    /// Adds what only the native object knows (a page's title and address) to the node's
+    /// semantics.
+    fn probe(&self, _probe: &mut nd_ui::semantics::Probe) {}
 }
 
 /// A text run or fill a custom view painted: its colour and the fills under it inside the

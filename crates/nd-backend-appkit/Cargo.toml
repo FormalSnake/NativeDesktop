@@ -71,6 +71,15 @@ harness = false
 name = "real_resize_webview_gate"
 harness = false
 
+# Tier 3: the same gate on `examples/browser`'s page, per engine (`gate_m8_webview::`).
+[[test]]
+name = "real_resize_wkwebview_gate"
+harness = false
+
+[[test]]
+name = "real_resize_cef_gate"
+harness = false
+
 [[test]]
 name = "virtual_list"
 harness = false

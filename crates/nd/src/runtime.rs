@@ -81,7 +81,8 @@ impl std::error::Error for Error {}
 
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 
-/// Identity of the app, from its `Cargo.toml`, plus the update feed `nd::build::app()` baked in.
+/// Identity of the app, from its `Cargo.toml`, plus what `nd::build::app()` baked in from
+/// `nativedesktop.toml`: the update feed and the web engine.
 #[derive(Clone, Debug)]
 pub struct Manifest {
     pub name: &'static str,
@@ -91,6 +92,8 @@ pub struct Manifest {
     /// `[app] display_name`, likewise.
     pub display_name: Option<&'static str>,
     pub updates: Option<nd_update::UpdateConfig>,
+    /// `[webview] engine`, when set.
+    pub webview_engine: Option<&'static str>,
 }
 
 #[macro_export]
@@ -102,8 +105,20 @@ macro_rules! manifest {
             id: ::core::option_env!("ND_APP_ID"),
             display_name: ::core::option_env!("ND_APP_DISPLAY_NAME"),
             updates: $crate::update::build_config!(),
+            webview_engine: option_env!("ND_WEBVIEW_ENGINE"),
         }
     };
+}
+
+/// Makes the engines this build links available to web views and picks the app's default.
+#[allow(unused_variables)]
+fn install_webview(manifest: &Manifest) {
+    #[cfg(feature = "webview")]
+    if let Some(engine) = manifest.webview_engine.and_then(nd_webview::Engine::parse) {
+        nd_webview::set_default_engine(engine);
+    }
+    #[cfg(feature = "cef")]
+    nd_cef::register(manifest.name);
 }
 
 /// Release notes of the update this launch is the result of, until [`mark_whats_new_seen`].
@@ -203,6 +218,7 @@ impl Application {
     /// `init`. Diagnostics (logs, incident bundles, crash and hang capture) start first; in the
     /// copy of the executable launched as the crash helper this never returns.
     pub fn run<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
+        install_webview(&self.manifest);
         #[cfg(all(target_os = "macos", feature = "gpui"))]
         if std::env::var_os("ND_BACKEND").is_some_and(|v| v == "gpui") {
             return self.run_gpui(init);

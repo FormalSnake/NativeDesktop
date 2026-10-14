@@ -1,6 +1,7 @@
 //! `nd package [mac|linux|windows]`: installers from `nativedesktop.toml`, through Velopack
 //! (ARCHITECTURE.md 11.2). Name and version come from `Cargo.toml`.
 
+pub mod cef;
 pub mod icon;
 pub mod linux;
 pub mod mac;

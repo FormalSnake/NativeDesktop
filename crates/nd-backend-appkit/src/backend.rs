@@ -152,6 +152,15 @@ impl Native {
         }
     }
 
+    /// The view that takes first responder when nd focuses the node.
+    fn key_view(&self) -> Option<Retained<NSView>> {
+        match self {
+            Native::Control(c) => Some(c.control.focus_view().retain()),
+            Native::Custom(c) => c.focus_view().or_else(|| Some(c.view().retain())),
+            _ => self.view().map(|v| v.retain()),
+        }
+    }
+
     /// The view children are added to.
     fn container(&self) -> Option<&NSView> {
         match self {
@@ -299,6 +308,11 @@ impl AppKitBackend {
 
     pub fn view(&self, node: NodeId) -> Option<Retained<NSView>> {
         self.0.borrow().nodes.get(&node)?.view().map(|v| v.retain())
+    }
+
+    /// The view that takes first responder when nd focuses `node`.
+    pub fn key_view(&self, node: NodeId) -> Option<Retained<NSView>> {
+        self.0.borrow().nodes.get(&node)?.key_view()
     }
 
     /// The node whose view is `view`, if nd created or registered it. `None` while a
@@ -1522,10 +1536,7 @@ impl Backend for AppKitBackend {
         if let Some(Native::Layer(v)) = native {
             v.set_focusable();
         }
-        let view = match native {
-            Some(Native::Control(c)) => Some(c.control.focus_view().retain()),
-            _ => native.and_then(Native::view).map(|v| v.retain()),
-        };
+        let view = native.and_then(Native::key_view);
         drop(state);
         window.make_first_responder_from_nd(view.as_deref());
     }
