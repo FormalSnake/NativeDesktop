@@ -152,6 +152,7 @@ impl Native {
             Native::Scaffold(s) => Some(&s.host),
             Native::ToolbarItem(i) => Some(&i.host),
             Native::Overlay(o) => Some(&o.content),
+            Native::Custom(c) => c.container(),
             _ => None,
         }
     }
@@ -231,6 +232,7 @@ fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
 
 impl AppKitBackend {
     pub fn new(mtm: MainThreadMarker) -> Self {
+        crate::media::register();
         let state = Rc::new_cyclic(|weak| {
             RefCell::new(State {
                 mtm,
@@ -1430,6 +1432,17 @@ impl Backend for AppKitBackend {
         state.rebuild_toolbars();
         state.rebuild_forms();
         state.commit_lists(window);
+        let customs: Vec<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|(id, n)| matches!(n, Native::Custom(_)) && state.node_window.get(id) == Some(&window))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in customs {
+            if let Some(Native::Custom(c)) = state.nodes.get_mut(&id) {
+                c.committed();
+            }
+        }
         for (node, scroll) in &state.scrolls {
             if state.node_window.get(node) == Some(&window) {
                 scroll.fit_document();

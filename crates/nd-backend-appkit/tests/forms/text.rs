@@ -159,7 +159,9 @@ pub fn run(rig: &Rig, c: &mut Checks) {
     c.check(class(&combo) == "NSComboBox", "combo_box mounts as NSComboBox");
     let scroll = rig.view(id, "notes").downcast::<NSScrollView>().expect("text_area is a scroll view");
     let notes = scroll.documentView().and_then(|v| v.downcast::<NSTextView>().ok()).expect("text view");
-    c.check(class(&notes) == "NSTextView", "text_area mounts as NSTextView in NSScrollView");
+    // nd's NSTextView subclass, which reads pasted and dropped media when asked to.
+    let area_class = class(&notes);
+    c.check(area_class.contains("NdAreaView"), &format!("text_area mounts as an NSTextView in NSScrollView ({area_class})"));
 
     // Props.
     c.check(name.placeholderString().is_some_and(|p| p.to_string() == "Name"), "placeholder reaches NSTextField");

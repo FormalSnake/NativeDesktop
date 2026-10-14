@@ -14,8 +14,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use nd_components::forms::{
-    ComboBoxProps, FieldIcon, FieldIconClicked, FieldStyle, IconEdge, SelectChanged, TextAreaProps, TextChanged,
-    TextFieldProps, TextSubmitted,
+    ComboBoxProps, FieldIcon, FieldIconClicked, FieldStyle, FilesDropped, IconEdge, ImagesPasted, PastedImage,
+    SelectChanged, TextAreaProps, TextChanged, TextFieldProps, TextSubmitted,
 };
 use nd_core::Size;
 use nd_ui::backend::Props;
@@ -24,9 +24,10 @@ use nd_ui::prelude::SharedString;
 use nd_ui::semantics::{ActionError, Probe, SemanticAction};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSActionCell, NSAttributedStringNSStringDrawing, NSBorderType, NSButton, NSCell,
+    NSAppearanceCustomization, NSAttributedStringNSExtendedStringDrawing, NSStandardKeyBindingResponding, NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEventModifierFlags, NSPasteboard, NSPasteboardType,
+    NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSAccessibility, NSActionCell, NSAttributedStringNSStringDrawing, NSBorderType, NSButton, NSCell,
     NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
     NSControlTextEditingDelegate, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSResponder,
     NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField,
@@ -35,7 +36,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSPoint,
-    NSRect, NSSize, NSString,
+    NSRect, NSSize, NSString, NSURL,
 };
 
 use super::{Ctx, FormControl, NdControlTarget, apply_common, props, set_accessibility_label};
@@ -164,6 +165,8 @@ struct Core {
     cx: Ctx,
     source: Source,
     search: bool,
+    /// Return submits and Shift- or Option-Return breaks the line (a composer's text area).
+    submit_on_return: Cell<bool>,
     text: RefCell<Synced<SharedString>>,
     pending: RefCell<Option<SharedString>>,
     options: RefCell<Vec<SharedString>>,
@@ -175,6 +178,7 @@ impl Core {
             cx,
             source,
             search,
+            submit_on_return: Cell::new(false),
             text: RefCell::default(),
             pending: RefCell::default(),
             options: RefCell::default(),
@@ -375,7 +379,27 @@ define_class!(
         }
     }
 
-    unsafe impl NSTextViewDelegate for NdTextDelegate {}
+    unsafe impl NSTextViewDelegate for NdTextDelegate {
+        #[unsafe(method(textView:doCommandBySelector:))]
+        fn text_view_do_command(&self, text_view: &NSTextView, command: Sel) -> bool {
+            let core = &self.ivars().core;
+            if command != sel!(insertNewline:) || !core.submit_on_return.get() {
+                false
+            } else {
+                let mtm = MainThreadMarker::from(self);
+                let flags = NSApplication::sharedApplication(mtm).currentEvent().map(|e| e.modifierFlags());
+                let line_break = flags.is_some_and(|f| {
+                    f.contains(NSEventModifierFlags::Shift) || f.contains(NSEventModifierFlags::Option)
+                });
+                if line_break {
+                    unsafe { text_view.insertNewlineIgnoringFieldEditor(None) };
+                } else {
+                    core.submitted();
+                }
+                true
+            }
+        }
+    }
 );
 
 impl NdTextDelegate {
@@ -787,9 +811,102 @@ impl MaxWidth for Size {
     }
 }
 
+pub struct AreaIvars {
+    core: RefCell<Option<std::rc::Weak<Core>>>,
+    media: Cell<bool>,
+}
+
+define_class!(
+    // SAFETY: NSTextView has no subclassing requirements beyond calling super in the overrides
+    // below, and this type does not implement Drop.
+    #[unsafe(super(NSTextView, NSText, NSView, NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = AreaIvars]
+    struct NdAreaView;
+
+    impl NdAreaView {
+        #[unsafe(method_id(readablePasteboardTypes))]
+        fn readable_types(&self) -> Retained<NSArray<NSPasteboardType>> {
+            let own: Retained<NSArray<NSPasteboardType>> = unsafe { msg_send![super(self), readablePasteboardTypes] };
+            self.with_media(own)
+        }
+
+        #[unsafe(method_id(acceptableDragTypes))]
+        fn drag_types(&self) -> Retained<NSArray<NSPasteboardType>> {
+            let own: Retained<NSArray<NSPasteboardType>> = unsafe { msg_send![super(self), acceptableDragTypes] };
+            self.with_media(own)
+        }
+
+        #[unsafe(method(readSelectionFromPasteboard:type:))]
+        fn read_typed(&self, pboard: &NSPasteboard, kind: &NSPasteboardType) -> bool {
+            self.take_media(pboard) || unsafe { msg_send![super(self), readSelectionFromPasteboard: pboard, type: kind] }
+        }
+
+        #[unsafe(method(readSelectionFromPasteboard:))]
+        fn read(&self, pboard: &NSPasteboard) -> bool {
+            self.take_media(pboard) || unsafe { msg_send![super(self), readSelectionFromPasteboard: pboard] }
+        }
+    }
+);
+
+fn media_types() -> Vec<&'static NSPasteboardType> {
+    unsafe { vec![NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF] }
+}
+
+impl NdAreaView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(AreaIvars { core: RefCell::new(None), media: Cell::new(false) });
+        unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+    }
+
+    /// The pasteboard types the area reads: its own, and files and images when it takes media.
+    fn with_media(&self, own: Retained<NSArray<NSPasteboardType>>) -> Retained<NSArray<NSPasteboardType>> {
+        if !self.ivars().media.get() {
+            return own;
+        }
+        let mut types: Vec<Retained<NSPasteboardType>> = media_types().into_iter().map(|t| t.retain()).collect();
+        types.extend(own.iter());
+        NSArray::from_retained_slice(&types)
+    }
+
+    /// Files and images on `pboard` become the area's media events instead of text.
+    fn take_media(&self, pboard: &NSPasteboard) -> bool {
+        if !self.ivars().media.get() {
+            return false;
+        }
+        let Some(core) = self.ivars().core.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return false };
+        let mut paths = Vec::new();
+        for item in pboard.pasteboardItems().iter().flat_map(|items| items.iter().collect::<Vec<_>>()) {
+            let url = item.stringForType(unsafe { NSPasteboardTypeFileURL });
+            if let Some(url) = url.and_then(|u| NSURL::URLWithString(&u)).and_then(|u| u.path()) {
+                paths.push(std::path::PathBuf::from(url.to_string()));
+            }
+        }
+        if !paths.is_empty() {
+            core.cx.send(FilesDropped { paths });
+            return true;
+        }
+        let png = pboard.dataForType(unsafe { NSPasteboardTypePNG }).map(|d| d.to_vec());
+        let png = png.or_else(|| {
+            let tiff = pboard.dataForType(unsafe { NSPasteboardTypeTIFF })?;
+            let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;
+            let data = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?;
+            Some(data.to_vec())
+        });
+        match png {
+            Some(bytes) => {
+                let image = PastedImage { bytes: std::sync::Arc::from(bytes), mime: "image/png".into() };
+                core.cx.send(ImagesPasted { images: vec![image] });
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 pub(crate) struct TextAreaControl {
     scroll: Retained<NSScrollView>,
-    text_view: Retained<NSTextView>,
+    text_view: Retained<NdAreaView>,
     core: Rc<Core>,
     _delegate: Retained<NdTextDelegate>,
     enabled: Cell<bool>,
@@ -799,17 +916,25 @@ pub(crate) struct TextAreaControl {
 impl TextAreaControl {
     pub fn new(cx: Ctx, props: &TextAreaProps) -> Self {
         let mtm = cx.mtm;
-        let scroll = NSTextView::scrollableTextView(mtm);
+        let scroll = NSScrollView::new(mtm);
         scroll.setBorderType(NSBorderType::BezelBorder);
+        scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
-        let text_view = scroll
-            .documentView()
-            .and_then(|v| v.downcast::<NSTextView>().ok())
-            .expect("scrollableTextView holds a text view");
+        let text_view = NdAreaView::new(mtm);
+        text_view.setVerticallyResizable(true);
+        text_view.setHorizontallyResizable(false);
+        text_view.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable);
+        text_view.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
+        if let Some(container) = unsafe { text_view.textContainer() } {
+            container.setWidthTracksTextView(true);
+            container.setContainerSize(NSSize::new(0., f64::MAX));
+        }
+        scroll.setDocumentView(Some(&text_view));
         text_view.setRichText(false);
         text_view.setAllowsUndo(true);
         text_view.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
-        let core = Core::new(cx, Source::Area(text_view.clone()), false);
+        let core = Core::new(cx, Source::Area(Retained::into_super(text_view.clone())), false);
+        *text_view.ivars().core.borrow_mut() = Some(Rc::downgrade(&core));
         let delegate = NdTextDelegate::new(mtm, core.clone());
         text_view.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         let this =
@@ -834,7 +959,42 @@ impl TextAreaControl {
         if old.is_none_or(|o| o.label != new.label) {
             set_accessibility_label(tv, new.label.as_deref());
         }
+        self.core.submit_on_return.set(new.submit_on_return);
+        tv.ivars().media.set(new.accepts_media);
+        if old.is_none_or(|o| o.style.corner_radii != new.style.corner_radii) {
+            self.apply_shape(new);
+        }
+        if old.is_some_and(|o| o.emoji_picker != new.emoji_picker) {
+            let tv = tv.clone();
+            defer(move || {
+                if let Some(window) = tv.window() {
+                    window.makeFirstResponder(Some(&tv));
+                }
+                NSApplication::sharedApplication(MainThreadMarker::from(&*tv)).orderFrontCharacterPalette(None);
+            });
+        }
         self.core.apply(&new.text);
+    }
+
+    /// A style with rounded corners draws the area as a capsule: a hairline in the system
+    /// separator colour instead of the square bezel, the text kept clear of the curve.
+    fn apply_shape(&self, props: &TextAreaProps) {
+        let radius = props.style.corner_radii.top_left.map(crate::look::length).unwrap_or(0.);
+        if radius <= 0. {
+            self.scroll.setBorderType(NSBorderType::BezelBorder);
+            self.scroll.setWantsLayer(false);
+            return;
+        }
+        self.scroll.setBorderType(NSBorderType::NoBorder);
+        self.scroll.setWantsLayer(true);
+        if let Some(layer) = self.scroll.layer() {
+            layer.setCornerRadius(f64::from(radius));
+            layer.setMasksToBounds(true);
+            layer.setBorderWidth(1.);
+        }
+        self.appearance_changed();
+        let inset = (f64::from(radius) * 0.4).round();
+        self.text_view.setTextContainerInset(NSSize::new(inset, 6.));
     }
 
     /// NSTextView draws `placeholderAttributedString` while empty; it is not in the public
@@ -882,6 +1042,15 @@ impl FormControl for TextAreaControl {
         &self.text_view
     }
 
+    fn appearance_changed(&self) {
+        if self.scroll.borderType() != NSBorderType::NoBorder {
+            return;
+        }
+        let Some(layer) = self.scroll.layer() else { return };
+        let resolve = block2::RcBlock::new(|| layer.setBorderColor(Some(&NSColor::separatorColor().CGColor())));
+        self.scroll.effectiveAppearance().performAsCurrentDrawingAppearance(&resolve);
+    }
+
     fn update(&mut self, old: &Props, new: &Props) -> bool {
         let (old, new): (&TextAreaProps, &TextAreaProps) = (props(old), props(new));
         self.apply(Some(old), new);
@@ -894,10 +1063,28 @@ impl FormControl for TextAreaControl {
         let inset = tv.textContainerInset();
         let padding = unsafe { tv.textContainer() }.map_or(0., |c| c.lineFragmentPadding());
         let placeholder = self.props.placeholder.as_deref().map_or(0., |p| text_width(p, tv.font().as_deref()));
-        let content = NSSize::new(
-            placeholder + 2. * (inset.width + padding),
-            f64::from(self.props.min_lines.max(1)) * self.line_height() + 2. * inset.height,
-        );
+        let line = self.line_height().max(1.);
+        let lines = match self.props.max_lines {
+            Some(max) => {
+                let text_width = width.map_or(tv.frame().size.width, f64::from) - 2. * (inset.width + padding);
+                let text = self.core.current();
+                let font = tv.font();
+                let used = font.as_deref().map_or(line, |f| {
+                    let s = unsafe {
+                        NSAttributedString::new_with_attributes(&NSString::from_str(&format!("{text} ")), &attributes(f, None))
+                    };
+                    let r = s.boundingRectWithSize_options_context(
+                        NSSize::new(text_width.max(1.), f64::MAX),
+                        objc2_app_kit::NSStringDrawingOptions::UsesLineFragmentOrigin,
+                        None,
+                    );
+                    r.size.height
+                });
+                ((used / line).round() as u16).clamp(self.props.min_lines.max(1), max.max(1))
+            }
+            None => self.props.min_lines.max(1),
+        };
+        let content = NSSize::new(placeholder + 2. * (inset.width + padding), f64::from(lines) * line + 2. * inset.height);
         let frame = unsafe {
             NSScrollView::frameSizeForContentSize_horizontalScrollerClass_verticalScrollerClass_borderType_controlSize_scrollerStyle(
                 content,

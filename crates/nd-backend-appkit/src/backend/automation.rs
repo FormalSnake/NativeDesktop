@@ -194,6 +194,9 @@ impl AppKitBackend {
     /// props say the control would, through the event queue.
     fn perform_control(&self, node: NodeId, action: &SemanticAction) -> Option<Result<(), ActionError>> {
         let state = self.0.borrow();
+        if let Some(Native::Custom(c)) = state.nodes.get(&node) {
+            return c.perform(action);
+        }
         let Some(Native::Control(c)) = state.nodes.get(&node) else { return None };
         if let Some(result) = c.control.perform(action) {
             return Some(result);
@@ -479,7 +482,9 @@ impl Walk<'_> {
                 };
                 self.push(node, kind, paint.color, under, paint.label);
             }
-            return;
+            if custom.container().is_none() {
+                return;
+            }
         }
         let appearance = view.effectiveAppearance();
         let alpha = view.alphaValue() as f32;

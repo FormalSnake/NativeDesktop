@@ -49,6 +49,11 @@ harness = false
 name = "nav_components"
 harness = false
 
+# Tier 2: the media family (images, seek bar, lyrics, shelf, chat, the composer's field).
+[[test]]
+name = "media"
+harness = false
+
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]
@@ -83,6 +88,7 @@ harness = false
 
 [dev-dependencies]
 nd-gpui.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 nd-virtual = { workspace = true, features = ["conformance"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

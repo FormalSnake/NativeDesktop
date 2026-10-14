@@ -22,6 +22,7 @@ mod host;
 mod icons;
 mod keys;
 mod look;
+mod media;
 mod overlay;
 mod palette;
 mod platform;
