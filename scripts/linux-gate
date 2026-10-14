@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# The Linux leg of the M2 gate, driven from the macbook (ARCHITECTURE.md 10.2, 16).
+#
+#   scripts/linux-gate sync                copy this checkout to the Linux host (tracked and untracked files)
+#   scripts/linux-gate test [runs]         build hello, then the Linux tier 3 tests (resize gate, chrome,
+#                                          drag region, keyboard) `runs` times (default 3) and twice in
+#                                          parallel
+#   scripts/linux-gate tiers               tier 1 + 2 for the workspace
+#
+# The host is `ssh g815` ($ND_LINUX_HOST). The checkout lands in ~/Developer/nativedesktop-<branch>
+# there, never in another checkout. Every lane shares one target dir ($ND_LINUX_TARGET, default
+# ~/.cache/nd-build/target) and builds quietly: nice, idle IO class, two jobs, two test threads.
+# Before each build the shared target is cleaned once it passes $ND_LINUX_TARGET_CAP_GB (default
+# 40), so parallel lanes cannot fill the host's disk.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+host=${ND_LINUX_HOST:-g815}
+branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
+dir="Developer/nativedesktop-$branch"
+target=${ND_LINUX_TARGET:-'$HOME/.cache/nd-build/target'}
+cap=${ND_LINUX_TARGET_CAP_GB:-40}
+
+remote() {
+  # The login shell there may be fish; everything runs under bash.
+  ssh "$host" "bash -lc $(printf %q "$1")" 2>&1 | grep -v -e 'post-quantum' -e 'store now' -e 'openssh.com/pq' || true
+}
+
+# Wraps a command in the dev shell with the shared target and the quiet settings.
+in_shell() {
+  printf 'cd ~/%s && nice -n 19 ionice -c3 nix develop "path:$HOME/%s" -c env CARGO_TARGET_DIR="%s" CARGO_BUILD_BUILD_DIR="%s" CARGO_BUILD_JOBS=2 nice -n 19 ionice -c3 bash -c %q' \
+    "$dir" "$dir" "$target" "$target" "$1"
+}
+
+cap_target() {
+  remote "t=\"$target\"; if [ -d \"\$t\" ]; then gb=\$(du -s --block-size=1G \"\$t\" | cut -f1); echo \"linux-gate: shared target \${gb} GB (cap $cap)\"; if [ \"\$gb\" -gt $cap ]; then cd ~/$dir && nix develop \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" cargo clean && echo 'linux-gate: cleaned the shared target'; fi; fi; df -h / | tail -1"
+}
+
+cmd_sync() {
+  ssh "$host" "mkdir -p ~/$dir" 2>/dev/null
+  rsync -az --delete --exclude target --exclude .git --exclude .direnv "$root/" "$host:$dir/"
+  echo "linux-gate: synced $branch to $host:~/$dir"
+}
+
+cmd_test() {
+  local runs=${1:-3}
+  cap_target
+  remote "$(in_shell "cargo build -p hello 2>&1 | grep -E '^(error|warning)' || true
+for i in \$(seq 1 $runs); do
+  echo \"run \$i\"
+  cargo nextest run -p nd-os-linux --profile real --test-threads 2 2>&1 | grep -E 'FAIL|panicked|Summary'
+done
+echo parallel
+(cargo nextest run -p nd-os-linux --profile real --test-threads 2 2>&1 | grep -E 'FAIL|panicked|Summary' | sed 's/^/A: /') &
+(cargo nextest run -p nd-os-linux --profile real --test-threads 2 2>&1 | grep -E 'FAIL|panicked|Summary' | sed 's/^/B: /') &
+wait")"
+}
+
+cmd_tiers() {
+  cap_target
+  remote "$(in_shell "cargo nextest run --workspace --test-threads 2 2>&1 | grep -E 'FAIL|^error|Summary'")"
+}
+
+case "${1:-}" in
+  sync) cmd_sync ;;
+  test) shift; cmd_test "$@" ;;
+  tiers) cmd_tiers ;;
+  *) sed -n '2,15p' "$0"; exit 2 ;;
+esac
