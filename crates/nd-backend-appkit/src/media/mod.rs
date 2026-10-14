@@ -20,9 +20,7 @@ use nd_components::media::{AvatarKind, ChatBubbleKind, ImageKind, LyricsKind, Se
 use nd_ui::prelude::Hsla;
 use objc2::rc::Retained;
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{
-    NSColor, NSEvent, NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWorkspace,
-};
+use objc2_app_kit::{NSColor, NSEvent, NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWorkspace};
 use objc2_core_foundation::CGFloat;
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSTimer};

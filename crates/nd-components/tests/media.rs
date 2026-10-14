@@ -72,13 +72,22 @@ fn requests_round_the_box_up_to_the_edge_step_at_the_scale() {
 fn decode_scales_down_to_the_box_and_never_up() {
     let bytes = png(800, 400);
     let source = ImageSource::bytes("wide", bytes.clone());
-    let cover = decode(&bytes, &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover }, 1 << 30).unwrap();
+    let cover = decode(
+        &bytes,
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover },
+        1 << 30,
+    )
+    .unwrap();
     assert_eq!((cover.width, cover.height), (256, 128), "cover fills the shorter side");
-    let contain =
-        decode(&bytes, &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain }, 1 << 30)
-            .unwrap();
+    let contain = decode(
+        &bytes,
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain },
+        1 << 30,
+    )
+    .unwrap();
     assert_eq!((contain.width, contain.height), (128, 64), "contain fits the longer side");
-    let big = decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover }, 1 << 30).unwrap();
+    let big =
+        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover }, 1 << 30).unwrap();
     assert_eq!((big.width, big.height), (800, 400), "never scaled up");
     assert_eq!((big.source_width, big.source_height), (800, 400));
     assert_eq!(big.frames.len(), 1);
@@ -88,7 +97,8 @@ fn decode_scales_down_to_the_box_and_never_up() {
 #[test]
 fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
     let bytes = gif(16, 16, 4, 10);
-    let request = DecodeRequest { source: ImageSource::bytes("gif", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
+    let request =
+        DecodeRequest { source: ImageSource::bytes("gif", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
     let d = decode(&bytes, &request, 1 << 30).unwrap();
     assert!(d.is_animated());
     assert_eq!(d.frames.len(), 4);
@@ -101,7 +111,8 @@ fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
 #[test]
 fn an_animation_over_budget_drops_frames_and_keeps_its_length() {
     let bytes = gif(16, 16, 8, 50);
-    let request = DecodeRequest { source: ImageSource::bytes("gif8", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
+    let request =
+        DecodeRequest { source: ImageSource::bytes("gif8", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
     let one_frame = 16 * 16 * 4;
     let d = decode(&bytes, &request, one_frame * 3).unwrap();
     assert_eq!(d.frames.len(), 2, "8 frames thinned by 4 to fit 3 frames' budget");
@@ -166,7 +177,8 @@ fn downloads_land_on_disk_and_a_new_process_reads_them_back() {
     assert_eq!(second.intrinsic_size(&url), Some((20, 10)), "the header reads from the disk cache");
     load(&second, request).unwrap();
     assert_eq!(fetches.load(Ordering::SeqCst), 1, "the second pipeline never fetched");
-    let names: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    let names: Vec<String> =
+        std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     assert_eq!(names.len(), 1);
     assert!(!names[0].ends_with(".tmp"), "no temp file is left behind");
 }
@@ -179,7 +191,12 @@ fn a_failure_is_remembered_instead_of_retried_at_once() {
         counted.fetch_add(1, Ordering::SeqCst);
         Err("404".into())
     });
-    let request = DecodeRequest { source: ImageSource::url("https://example.com/gone"), width: 0, height: 0, fit: ImageFit::Cover };
+    let request = DecodeRequest {
+        source: ImageSource::url("https://example.com/gone"),
+        width: 0,
+        height: 0,
+        fit: ImageFit::Cover,
+    };
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
     assert_eq!(fetches.load(Ordering::SeqCst), 1);
@@ -195,7 +212,12 @@ fn memory_evicts_least_recent_but_never_what_was_just_shown() {
         fetch: Arc::new(|_| Err("no".into())),
         ..PipelineConfig::default()
     });
-    let req = |k: &str| DecodeRequest { source: ImageSource::bytes(k.to_owned(), png(32, 32)), width: 0, height: 0, fit: ImageFit::Cover };
+    let req = |k: &str| DecodeRequest {
+        source: ImageSource::bytes(k.to_owned(), png(32, 32)),
+        width: 0,
+        height: 0,
+        fit: ImageFit::Cover,
+    };
     load(&p, req("a")).unwrap();
     load(&p, req("b")).unwrap();
     load(&p, req("c")).unwrap();
@@ -340,12 +362,14 @@ fn player_view(s: &Player, cx: &mut Context<Host<Player>>) -> AnyElement {
             h.s.commands.push(*c);
             cx.notify();
         })))
-        .child(seek_bar("loose", PlaybackClock::paused(Duration::from_secs(5))).duration(Some(Duration::from_secs(60))).on_seek(
-            cx.listener(|h, e: &Seeked, _, cx| {
-                h.s.seeks.push(*e);
-                cx.notify();
-            }),
-        ))
+        .child(
+            seek_bar("loose", PlaybackClock::paused(Duration::from_secs(5)))
+                .duration(Some(Duration::from_secs(60)))
+                .on_seek(cx.listener(|h, e: &Seeked, _, cx| {
+                    h.s.seeks.push(*e);
+                    cx.notify();
+                })),
+        )
         .into_any_element()
 }
 
@@ -586,16 +610,27 @@ fn chat_rows_show_the_sender_once_per_run() {
         let ada = Person::new("Ada Lovelace");
         v_flex()
             .child(chat_row("m1", ChatMessage::received("Hi").sender(ada.clone()).position(RunPosition::First)))
-            .child(chat_row("m2", ChatMessage::received("Are you there?").sender(ada).position(RunPosition::Last).time("9:41")))
+            .child(chat_row(
+                "m2",
+                ChatMessage::received("Are you there?").sender(ada).position(RunPosition::Last).time("9:41"),
+            ))
             .child(chat_row(
                 "m3",
-                ChatMessage::sent("\u{1f44b}").reactions([Reaction { glyph: "\u{2764}".into(), count: 2, mine: true }]).receipt("Delivered"),
+                ChatMessage::sent("\u{1f44b}")
+                    .reactions([Reaction { glyph: "\u{2764}".into(), count: 2, mine: true }])
+                    .receipt("Delivered"),
             ))
-            .child(avatar_group([Person::new("A B"), Person::new("C"), Person::new("D"), Person::new("E")], 40.).id("group"))
+            .child(
+                avatar_group([Person::new("A B"), Person::new("C"), Person::new("D"), Person::new("E")], 40.)
+                    .id("group"),
+            )
             .into_any_element()
     });
     assert!(rig.kind_is::<ChatBubbleKind>("m1"));
-    assert!(rig.cx.semantic_tree().nodes().all(|(_, n)| n.test_id.as_deref() != Some("m1.avatar")), "not the run's end");
+    assert!(
+        rig.cx.semantic_tree().nodes().all(|(_, n)| n.test_id.as_deref() != Some("m1.avatar")),
+        "not the run's end"
+    );
     assert!(rig.kind_is::<AvatarKind>("m2.avatar"));
     assert_eq!(rig.sem("m2.avatar").name, "Ada Lovelace");
     assert_eq!(rig.props::<ChatBubbleProps>("m2").tooltip.as_deref(), Some("9:41"));

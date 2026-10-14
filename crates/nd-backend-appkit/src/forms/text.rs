@@ -26,13 +26,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAppearanceCustomization, NSAttributedStringNSExtendedStringDrawing, NSStandardKeyBindingResponding, NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEventModifierFlags, NSPasteboard, NSPasteboardType,
-    NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSAccessibility, NSActionCell, NSAttributedStringNSStringDrawing, NSBorderType, NSButton, NSCell,
+    NSAccessibility, NSActionCell, NSAppearanceCustomization, NSApplication, NSAttributedStringNSExtendedStringDrawing,
+    NSAttributedStringNSStringDrawing, NSBitmapImageFileType, NSBitmapImageRep, NSBorderType, NSButton, NSCell,
     NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
-    NSControlTextEditingDelegate, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSResponder,
+    NSControlTextEditingDelegate, NSEventModifierFlags, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
+    NSPasteboard, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSResponder,
     NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField,
-    NSSecureTextFieldCell, NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle, NSTextFieldCell,
-    NSTextFieldDelegate, NSTextView, NSTextViewDelegate, NSView,
+    NSSecureTextFieldCell, NSStandardKeyBindingResponding, NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle,
+    NSTextFieldCell, NSTextFieldDelegate, NSTextView, NSTextViewDelegate, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSPoint,
@@ -890,7 +891,8 @@ impl NdAreaView {
         let png = png.or_else(|| {
             let tiff = pboard.dataForType(unsafe { NSPasteboardTypeTIFF })?;
             let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;
-            let data = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?;
+            let data =
+                unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?;
             Some(data.to_vec())
         });
         match png {
@@ -1071,7 +1073,10 @@ impl FormControl for TextAreaControl {
                 let font = tv.font();
                 let used = font.as_deref().map_or(line, |f| {
                     let s = unsafe {
-                        NSAttributedString::new_with_attributes(&NSString::from_str(&format!("{text} ")), &attributes(f, None))
+                        NSAttributedString::new_with_attributes(
+                            &NSString::from_str(&format!("{text} ")),
+                            &attributes(f, None),
+                        )
                     };
                     let r = s.boundingRectWithSize_options_context(
                         NSSize::new(text_width.max(1.), f64::MAX),
@@ -1084,7 +1089,8 @@ impl FormControl for TextAreaControl {
             }
             None => self.props.min_lines.max(1),
         };
-        let content = NSSize::new(placeholder + 2. * (inset.width + padding), f64::from(lines) * line + 2. * inset.height);
+        let content =
+            NSSize::new(placeholder + 2. * (inset.width + padding), f64::from(lines) * line + 2. * inset.height);
         let frame = unsafe {
             NSScrollView::frameSizeForContentSize_horizontalScrollerClass_verticalScrollerClass_borderType_controlSize_scrollerStyle(
                 content,

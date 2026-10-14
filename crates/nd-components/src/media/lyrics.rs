@@ -84,10 +84,8 @@ impl LyricLine {
     }
 
     pub fn words(mut self, words: impl IntoIterator<Item = (Duration, &'static str)>) -> Self {
-        self.words = words
-            .into_iter()
-            .map(|(start, text)| LyricWord { start, text: text.into(), joins_next: false })
-            .collect();
+        self.words =
+            words.into_iter().map(|(start, text)| LyricWord { start, text: text.into(), joins_next: false }).collect();
         self
     }
 }
@@ -172,7 +170,7 @@ pub fn rows(lyrics: &Lyrics) -> Vec<Row> {
             })
             .collect();
     }
-    lines.sort_by(|a, b| a.1.start.cmp(&b.1.start));
+    lines.sort_by_key(|a| a.1.start);
     let has_ends = lines.iter().any(|(_, l)| l.end.is_some());
     let main_starts: Vec<f64> = lines.iter().filter(|(_, l)| !l.background).map(|(_, l)| secs(l.start)).collect();
     let next_main = |after: f64| main_starts.iter().copied().find(|s| *s > after);
@@ -220,9 +218,8 @@ pub fn rows(lyrics: &Lyrics) -> Vec<Row> {
             opposite: line.opposite,
         });
         if !line.background {
-            let estimate = end
-                .or_else(|| line.words.last().map(|w| secs(w.start) + LAST_WORD))
-                .unwrap_or(start + LINE_GUESS);
+            let estimate =
+                end.or_else(|| line.words.last().map(|w| secs(w.start) + LAST_WORD)).unwrap_or(start + LINE_GUESS);
             let estimate = after.map_or(estimate, |a| estimate.min(a.max(start)));
             last_end = Some(last_end.map_or(estimate, |l: f64| l.max(estimate)));
         }
@@ -262,7 +259,12 @@ fn synthesize(text: &str, start: f64, end: f64) -> Vec<RowWord> {
         let len = part.chars().count();
         let s = start + span * before as f64 / total as f64;
         let e = start + span * (before + len) as f64 / total as f64;
-        out.push(RowWord { text: SharedString::from(part.to_string()), start: s, span: e - s, space_after: i + 1 < parts.len() });
+        out.push(RowWord {
+            text: SharedString::from(part.to_string()),
+            start: s,
+            span: e - s,
+            space_after: i + 1 < parts.len(),
+        });
         before += len;
     }
     out

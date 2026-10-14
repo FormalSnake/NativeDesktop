@@ -13,8 +13,8 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use nd_ui::prelude::*;
 use nd_ui::StyleRefinement;
+use nd_ui::prelude::*;
 
 use super::image::image;
 use super::pipeline::ImageSource;
@@ -290,7 +290,16 @@ impl IntoElement for Composer {
             .w_full()
             .gap_2()
             .when(!draft.attachments.is_empty(), |col| col.child(h_flex().flex_wrap().gap_2().children(chips)))
-            .child(h_flex().w_full().items_end().gap_2().children(attach_button).child(field).child(emoji).child(send_button));
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_end()
+                    .gap_2()
+                    .children(attach_button)
+                    .child(field)
+                    .child(emoji)
+                    .child(send_button),
+            );
         nd_gpui::gpui::Refineable::refine(root.style(), &style);
         root.into_any_element()
     }

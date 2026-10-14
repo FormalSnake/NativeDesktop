@@ -43,6 +43,14 @@ pub mod prelude {
         secure_field, segmented, settings_group, sheet_layout, spinner, stepper, switch, switch_row, text_area,
         text_field,
     };
+    pub use crate::chrome::{
+        Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
+        ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,
+        LyricsView, NowPlaying, Outgoing, PastedImage, Person, PlaybackClock, PlayerBar, Reaction, RunPosition, SeekBar,
+        SeekPhase, Seeked, Shelf, ShelfArrows, ShelfHandle, ShelfScroll, ShelfScrolled, TransportCommand,
+        TransportLayout, avatar, avatar_group, chat_bubble, chat_row, composer, format_clock, image, image_placeholder,
+        lyrics_view, player_bar, seek_bar, shelf,
+    };
     pub use crate::controls::{Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas};
     pub use crate::native::{ElementId, NativeStyled};
     pub use crate::theme::{

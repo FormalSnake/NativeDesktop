@@ -273,6 +273,10 @@ impl AppKitBackend {
         state.windows.insert(id, record);
         if let Some(native) = native {
             state.apply_window_appearance(id, &native);
+            // Controls created before the window existed resolved their colours under the
+            // app's appearance; the window's may differ.
+            state.apply_theme(id);
+            state.retheme_custom(Some(id));
         }
     }
 

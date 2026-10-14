@@ -161,7 +161,10 @@ pub fn run(rig: &Rig, c: &mut Checks) {
     let notes = scroll.documentView().and_then(|v| v.downcast::<NSTextView>().ok()).expect("text view");
     // nd's NSTextView subclass, which reads pasted and dropped media when asked to.
     let area_class = class(&notes);
-    c.check(area_class.contains("NdAreaView"), &format!("text_area mounts as an NSTextView in NSScrollView ({area_class})"));
+    c.check(
+        area_class.contains("NdAreaView"),
+        &format!("text_area mounts as an NSTextView in NSScrollView ({area_class})"),
+    );
 
     // Props.
     c.check(name.placeholderString().is_some_and(|p| p.to_string() == "Name"), "placeholder reaches NSTextField");

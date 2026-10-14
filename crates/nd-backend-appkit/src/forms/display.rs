@@ -57,23 +57,29 @@ pub(crate) struct LabelControl {
     tone: std::cell::Cell<(LabelTone, Option<nd_ui::prelude::Hsla>)>,
 }
 
-/// The tone's system colour under `view`'s appearance, darkened or lightened until it reads at
-/// 4.5:1 on the window and control backgrounds: `secondaryLabelColor` and `systemRed` alone fall
-/// short on white (3.95:1, 3.57:1), and the theme holds its text tokens to that ratio.
-fn tone_color(view: &NSView, tone: LabelTone) -> Retained<NSColor> {
-    let resolved = std::cell::Cell::new(None);
-    let block = block2::RcBlock::new(|| {
-        let color = match tone {
-            LabelTone::Primary => NSColor::labelColor(),
-            LabelTone::Secondary => NSColor::secondaryLabelColor(),
-            LabelTone::Danger => NSColor::systemRedColor(),
-        };
-        let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
-        let under: Vec<_> = under.into_iter().filter_map(crate::system_colors::hsla).collect();
-        resolved.set(crate::system_colors::hsla(color).map(|c| nd_theme::color::legible(c, &under, 4.5)));
+/// The tone's system colour, darkened or lightened until it reads at 4.5:1 on the window and
+/// control backgrounds: `secondaryLabelColor` and `systemRed` alone fall short on white (3.95:1,
+/// 3.57:1), and the theme holds its text tokens to that ratio. A dynamic colour, resolved under
+/// whatever appearance draws it, so a label made before its window keeps the window's scheme.
+fn tone_color(tone: LabelTone) -> Retained<NSColor> {
+    let provider = block2::RcBlock::new(move |appearance: std::ptr::NonNull<objc2_app_kit::NSAppearance>| {
+        let resolved = std::cell::Cell::new(None);
+        let block = block2::RcBlock::new(|| {
+            let color = match tone {
+                LabelTone::Primary => NSColor::labelColor(),
+                LabelTone::Secondary => NSColor::secondaryLabelColor(),
+                LabelTone::Danger => NSColor::systemRedColor(),
+            };
+            let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
+            let under: Vec<_> = under.into_iter().filter_map(crate::system_colors::hsla).collect();
+            resolved.set(crate::system_colors::hsla(color).map(|c| nd_theme::color::legible(c, &under, 4.5)));
+        });
+        // SAFETY: AppKit hands the provider a live appearance for the duration of the call.
+        unsafe { appearance.as_ref() }.performAsCurrentDrawingAppearance(&block);
+        let color = resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color());
+        std::ptr::NonNull::new(Retained::autorelease_ptr(color)).expect("a colour")
     });
-    objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(view).performAsCurrentDrawingAppearance(&block);
-    resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color())
+    unsafe { NSColor::colorWithName_dynamicProvider(None, &provider) }
 }
 
 impl LabelControl {
@@ -122,7 +128,7 @@ impl LabelControl {
         let color = match self.tone.get() {
             (_, Some(c)) => Color::from(c).ns_color(),
             (LabelTone::Primary, None) => NSColor::labelColor(),
-            (tone, None) => tone_color(&self.field, tone),
+            (tone, None) => tone_color(tone),
         };
         self.field.setTextColor(Some(&color));
     }

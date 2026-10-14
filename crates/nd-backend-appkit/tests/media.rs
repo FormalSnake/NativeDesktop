@@ -116,7 +116,6 @@ mod media {
         None
     }
 
-
     struct Pics {
         loads: u32,
         tip: bool,
@@ -156,7 +155,10 @@ mod media {
         for _ in 0..5 {
             rig.pump();
         }
-        c.check(rig.read(&opened, |p| p.loads) == 1, "image: one ImageLoaded, the handler's own update sets nothing more");
+        c.check(
+            rig.read(&opened, |p| p.loads) == 1,
+            "image: one ImageLoaded, the handler's own update sets nothing more",
+        );
         let node = rig.node(win, "img").expect("img node");
         c.check(node.role == nd_ui::Role::Image && node.name == "Blue", "image: role and alt");
         rig.close(opened);
@@ -170,22 +172,26 @@ mod media {
     impl Render for Scrub {
         fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex().p(px(12.)).child(
-                seek_bar("seek", self.clock).duration(Some(Duration::from_secs(100))).buffered(Some(Duration::from_secs(60))).show_times().w(px(400.)).on_seek(
-                    cx.listener(|this, e: &Seeked, _, cx| {
+                seek_bar("seek", self.clock)
+                    .duration(Some(Duration::from_secs(100)))
+                    .buffered(Some(Duration::from_secs(60)))
+                    .show_times()
+                    .w(px(400.))
+                    .on_seek(cx.listener(|this, e: &Seeked, _, cx| {
                         this.log.push(*e);
                         // Echo and reentrancy: the app applies a commit at once.
                         if e.phase == SeekPhase::Committed {
                             this.clock = PlaybackClock::paused(e.position);
                         }
                         cx.notify();
-                    }),
-                ),
+                    })),
             )
         }
     }
 
     fn seek(rig: &Rig, c: &mut Checks) {
-        let opened = rig.open("seek", |_| Scrub { clock: PlaybackClock::paused(Duration::from_secs(10)), log: Vec::new() });
+        let opened =
+            rig.open("seek", |_| Scrub { clock: PlaybackClock::paused(Duration::from_secs(10)), log: Vec::new() });
         let win = opened.id();
         let view = rig.view(win, "seek");
         let w = view.bounds().size.width;
@@ -198,7 +204,10 @@ mod media {
         let commits: Vec<&Seeked> = log.iter().filter(|e| e.phase == SeekPhase::Committed).collect();
         c.check(log.first().is_some_and(|e| e.phase == SeekPhase::Scrubbing), "seek: a press scrubs");
         c.check(commits.len() == 1, &format!("seek: one commit per drag ({log:?})"));
-        c.check(commits.first().is_some_and(|e| e.position.as_secs() == 25), "seek: the commit lands where it was released");
+        c.check(
+            commits.first().is_some_and(|e| e.position.as_secs() == 25),
+            "seek: the commit lands where it was released",
+        );
         let before = rig.read(&opened, |s| s.log.len());
         for _ in 0..4 {
             rig.pump();
@@ -225,7 +234,10 @@ mod media {
         c.check(last.is_some_and(|e| e.position.as_secs() == 30), &format!("seek: Right steps 5 s ({last:?})"));
         c.check(rig.perform(win, "seek", SemanticAction::SetValue("1:00".into())).is_ok(), "seek: setValue");
         let last = rig.read(&opened, |s| s.log.last().copied());
-        c.check(last.is_some_and(|e| e.position.as_secs() == 60 && e.phase == SeekPhase::Committed), "seek: setValue commits");
+        c.check(
+            last.is_some_and(|e| e.position.as_secs() == 60 && e.phase == SeekPhase::Committed),
+            "seek: setValue commits",
+        );
         rig.close(opened);
     }
 
@@ -340,7 +352,10 @@ mod media {
             v_flex()
                 .w_full()
                 .p(px(12.))
-                .child(chat_row("m1", ChatMessage::received("Hello there, how are you doing today?").sender(Person::new("Ada Lovelace"))))
+                .child(chat_row(
+                    "m1",
+                    ChatMessage::received("Hello there, how are you doing today?").sender(Person::new("Ada Lovelace")),
+                ))
                 .child(chat_row("m2", ChatMessage::sent("Fine")))
                 .child(avatar_group([Person::new("Ada L"), Person::new("Bo"), Person::new("Cy")], 40.).id("group"))
         }
@@ -353,13 +368,20 @@ mod media {
         let bubble = rig.view(win, "m1");
         let label = find::<NSTextField>(&bubble).expect("bubble text");
         c.check(label.stringValue().to_string().starts_with("Hello"), "bubble: the text is a label");
-        c.check(bubble.frame().size.width <= f64::from(BUBBLE.max_width + BUBBLE.tail_width) + 0.5, "bubble: capped width");
+        c.check(
+            bubble.frame().size.width <= f64::from(BUBBLE.max_width + BUBBLE.tail_width) + 0.5,
+            "bubble: capped width",
+        );
         let short = rig.view(win, "m2");
         c.check(short.frame().size.width < 100., &format!("bubble: hugs short text ({})", short.frame().size.width));
         let sent_x = short.frame().origin.x + short.frame().size.width;
         c.check(sent_x > 400., &format!("bubble: sent sits trailing ({sent_x})"));
         let group = rig.view(win, "group");
-        let discs = group.layer().and_then(|l| unsafe { l.sublayers() }).and_then(|s| s.firstObject()).and_then(|g| unsafe { g.sublayers() });
+        let discs = group
+            .layer()
+            .and_then(|l| unsafe { l.sublayers() })
+            .and_then(|s| s.firstObject())
+            .and_then(|g| unsafe { g.sublayers() });
         c.check(discs.is_some_and(|d| d.count() == 3), "avatar group: one disc per person");
         rig.close(opened);
     }
@@ -400,7 +422,10 @@ mod media {
 
     /// Text in through the input system, as a keyboard delivers it.
     fn type_into(tv: &NSTextView, text: &NSString) {
-        let anywhere = nd_backend_appkit::objc2_foundation::NSRange::new(nd_backend_appkit::objc2_foundation::NSNotFound as usize, 0);
+        let anywhere = nd_backend_appkit::objc2_foundation::NSRange::new(
+            nd_backend_appkit::objc2_foundation::NSNotFound as usize,
+            0,
+        );
         unsafe { nd_backend_appkit::objc2_app_kit::NSTextInputClient::insertText_replacementRange(tv, text, anywhere) };
     }
 

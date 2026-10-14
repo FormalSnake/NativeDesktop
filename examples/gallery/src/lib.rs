@@ -4,6 +4,7 @@
 //! glass capsules. On Linux and Windows the same tree draws through GPUI.
 
 pub mod forms;
+pub mod media;
 
 use std::time::Duration;
 
@@ -21,10 +22,11 @@ pub enum Page {
     Toasts,
     Banner,
     Forms,
+    Media,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Palette, Page::SourceList, Page::Toasts, Page::Banner, Page::Forms];
+    pub const ALL: [Page; 6] = [Page::Palette, Page::SourceList, Page::Toasts, Page::Banner, Page::Forms, Page::Media];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -33,6 +35,7 @@ impl Page {
             Page::Toasts => "toasts",
             Page::Banner => "banner",
             Page::Forms => "forms",
+            Page::Media => "media",
         }
     }
 
@@ -43,6 +46,7 @@ impl Page {
             Page::Toasts => "Toasts",
             Page::Banner => "Banner",
             Page::Forms => "Forms",
+            Page::Media => "Media",
         }
     }
 
@@ -53,6 +57,7 @@ impl Page {
             Page::Toasts => Icon::Info,
             Page::Banner => Icon::TriangleAlert,
             Page::Forms => Icon::SquarePen,
+            Page::Media => Icon::Music,
         }
     }
 
@@ -61,6 +66,7 @@ impl Page {
             Page::Palette | Page::SourceList => "navigation",
             Page::Toasts | Page::Banner => "feedback",
             Page::Forms => "controls",
+            Page::Media => "content",
         }
     }
 
@@ -97,6 +103,7 @@ pub struct Gallery {
     banner: bool,
     last_event: SharedString,
     forms: Entity<forms::FormsPage>,
+    media: Entity<media::MediaPage>,
 }
 
 fn secondary_k() -> &'static str {
@@ -107,6 +114,7 @@ impl Gallery {
     pub fn new(start: &Start, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             forms: cx.new(forms::FormsPage::new),
+            media: cx.new(media::MediaPage::new),
             page: start.page,
             sidebar_collapsed: false,
             palette_open: start.palette.is_some(),
@@ -129,6 +137,7 @@ impl Gallery {
             source_section("navigation", "Navigation"),
             source_section("feedback", "Feedback"),
             source_section("controls", "Controls"),
+            source_section("content", "Content"),
         ];
         // Pages under their section, in page order: insert after the section header.
         for page in Page::ALL {
@@ -262,6 +271,7 @@ impl Gallery {
                 .into_any_element(),
             // The form scrolls itself, so it takes the height left under the title.
             Page::Forms => div().flex_1().min_h_0().w_full().child(self.forms.clone()).into_any_element(),
+            Page::Media => div().flex_1().min_h_0().w_full().child(self.media.clone()).into_any_element(),
         }
     }
 }

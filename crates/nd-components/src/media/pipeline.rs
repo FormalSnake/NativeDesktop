@@ -51,7 +51,10 @@ pub enum ImageSource {
     Url(SharedString),
     /// Bytes the app already holds (a pasted image, a thumbnail from a server). `key` names
     /// them in the caches, so two different images must not share one.
-    Bytes { key: SharedString, bytes: Arc<[u8]> },
+    Bytes {
+        key: SharedString,
+        bytes: Arc<[u8]>,
+    },
 }
 
 impl ImageSource {

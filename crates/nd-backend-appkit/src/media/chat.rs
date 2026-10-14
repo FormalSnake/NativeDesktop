@@ -53,7 +53,14 @@ fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
         CGMutablePath::move_to_point(Some(path), m, edge - out * th, bottom - th);
         CGMutablePath::add_line_to_point(Some(path), m, edge, bottom - th);
         CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., edge + out * tw, bottom);
-        CGMutablePath::add_quad_curve_to_point(Some(path), m, edge - out * tw * 0.5, bottom, edge - out * th, bottom - 3.);
+        CGMutablePath::add_quad_curve_to_point(
+            Some(path),
+            m,
+            edge - out * tw * 0.5,
+            bottom,
+            edge - out * th,
+            bottom - 3.,
+        );
     }
     CGMutablePath::close_subpath(Some(path));
 }
@@ -66,7 +73,7 @@ fn bubble_font(theme: &Theme, emoji: bool) -> Retained<NSFont> {
 fn colors(theme: &Theme, side: BubbleSide) -> (nd_ui::prelude::Hsla, nd_ui::prelude::Hsla) {
     match side {
         BubbleSide::Sent => (theme.accent, theme.text.on_accent),
-        BubbleSide::Received => (theme.surface.raised, theme.text.primary),
+        BubbleSide::Received => (theme.surface.raised_hover, theme.text.primary),
     }
 }
 
@@ -143,14 +150,18 @@ impl BubbleInner {
             let (bg, fg) = if reaction.mine {
                 (theme.accent, theme.text.on_accent)
             } else {
-                (theme.surface.raised, theme.text.primary)
+                (theme.surface.raised_hover, theme.text.primary)
             };
             pill.setBackgroundColor(Some(&cg(bg)));
             pill.setBorderColor(Some(&cg(theme.surface.base)));
             pill.setBorderWidth(2.);
             set_font(text, &font);
             text.setForegroundColor(Some(&cg(fg)));
-            let label = if reaction.count > 1 { format!("{} {}", reaction.glyph, reaction.count) } else { reaction.glyph.to_string() };
+            let label = if reaction.count > 1 {
+                format!("{} {}", reaction.glyph, reaction.count)
+            } else {
+                reaction.glyph.to_string()
+            };
             set_string(text, &label);
         }
         drop((props, theme, pills));
@@ -180,7 +191,8 @@ impl Input for BubbleInner {
     fn layout(&self) {
         let props = self.props.borrow();
         let r = self.bubble_rect();
-        let (px, py) = if props.emoji_only { (0., 0.) } else { (f64::from(BUBBLE.padding_x), f64::from(BUBBLE.padding_y)) };
+        let (px, py) =
+            if props.emoji_only { (0., 0.) } else { (f64::from(BUBBLE.padding_x), f64::from(BUBBLE.padding_y)) };
         let text = NSRect::new(
             NSPoint::new(r.origin.x + px, r.origin.y + py),
             NSSize::new((r.size.width - 2. * px).max(0.), (r.size.height - 2. * py).max(0.)),
@@ -253,11 +265,8 @@ impl CustomNative for BubbleNative {
 
     fn measure(&self, width: Option<f32>) -> Size {
         let props = self.inner.props.borrow();
-        let (px, py, tw) = if props.emoji_only {
-            (0., 0., 0.)
-        } else {
-            (BUBBLE.padding_x, BUBBLE.padding_y, BUBBLE.tail_width)
-        };
+        let (px, py, tw) =
+            if props.emoji_only { (0., 0., 0.) } else { (BUBBLE.padding_x, BUBBLE.padding_y, BUBBLE.tail_width) };
         let outer = width.unwrap_or(BUBBLE.max_width + tw).min(BUBBLE.max_width + tw);
         let max_text = f64::from(outer - tw - 2. * px);
         drop(props);
@@ -272,13 +281,27 @@ impl CustomNative for BubbleNative {
         let size = if props.emoji_only { BUBBLE.emoji_size } else { theme.type_scale.body.as_f32() };
         let mut out = Vec::new();
         if props.emoji_only {
-            out.push(CustomPaint { label: props.text.to_string(), color: theme.text.primary, under: Vec::new(), text: Some((size, 400.)) });
+            out.push(CustomPaint {
+                label: props.text.to_string(),
+                color: theme.text.primary,
+                under: Vec::new(),
+                text: Some((size, 400.)),
+            });
         } else {
             out.push(CustomPaint { label: "bubble".into(), color: fill, under: Vec::new(), text: None });
-            out.push(CustomPaint { label: props.text.to_string(), color: ink, under: vec![fill], text: Some((size, 400.)) });
+            out.push(CustomPaint {
+                label: props.text.to_string(),
+                color: ink,
+                under: vec![fill],
+                text: Some((size, 400.)),
+            });
         }
         for r in &props.reactions {
-            let (bg, fg) = if r.mine { (theme.accent, theme.text.on_accent) } else { (theme.surface.raised, theme.text.primary) };
+            let (bg, fg) = if r.mine {
+                (theme.accent, theme.text.on_accent)
+            } else {
+                (theme.surface.raised_hover, theme.text.primary)
+            };
             out.push(CustomPaint { label: "reaction".into(), color: bg, under: Vec::new(), text: None });
             if r.count > 1 {
                 out.push(CustomPaint {
@@ -444,12 +467,22 @@ impl CustomNative for AvatarNative {
         let mut out = Vec::new();
         let group = props.people.len() > 1;
         if group {
-            out.push(CustomPaint { label: "avatar group".into(), color: theme.surface.raised_hover, under: Vec::new(), text: None });
+            out.push(CustomPaint {
+                label: "avatar group".into(),
+                color: theme.surface.raised_hover,
+                under: Vec::new(),
+                text: None,
+            });
         }
         let size = if group { (props.size * nd_components::media::AVATAR_GROUP_SCALE).round() } else { props.size };
         for person in props.people.iter().take(4) {
             let under = if group { vec![theme.surface.raised_hover] } else { Vec::new() };
-            out.push(CustomPaint { label: "monogram".into(), color: theme.accent_container.bg, under: under.clone(), text: None });
+            out.push(CustomPaint {
+                label: "monogram".into(),
+                color: theme.accent_container.bg,
+                under: under.clone(),
+                text: None,
+            });
             if size >= MONOGRAM_MIN && person.image.is_none() {
                 let mut on = under;
                 on.push(theme.accent_container.bg);

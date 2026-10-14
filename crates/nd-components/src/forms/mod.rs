@@ -33,9 +33,9 @@ pub use rows::{
 };
 pub use text::{
     ComboBox, ComboBoxKind, ComboBoxProps, FieldIcon, FieldIconClicked, FieldStyle, FilesDropped, IconEdge,
-    ImagesPasted, PastedImage, TextArea, TextAreaKind, TextAreaProps, TextChanged, TextEvent, TextField,
-    TextFieldKind, TextFieldProps, TextFieldState, TextInput, TextProps, TextSubmitted, combo_box, search_field,
-    secure_field, text_area, text_field,
+    ImagesPasted, PastedImage, TextArea, TextAreaKind, TextAreaProps, TextChanged, TextEvent, TextField, TextFieldKind,
+    TextFieldProps, TextFieldState, TextInput, TextProps, TextSubmitted, combo_box, search_field, secure_field,
+    text_area, text_field,
 };
 pub use toggle::{Checkbox, CheckboxKind, CheckboxProps, Switch, SwitchKind, SwitchProps, Toggled, checkbox, switch};
 pub use value::{

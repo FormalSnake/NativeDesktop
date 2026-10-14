@@ -15,8 +15,8 @@ use nd_ui::semantics::{ActionError, SemanticAction};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSBezelStyle, NSButton, NSScrollElasticity, NSScrollView, NSView,
-    NSViewBoundsDidChangeNotification,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSBezelStyle, NSButton, NSScrollElasticity, NSScrollView,
+    NSView, NSViewBoundsDidChangeNotification,
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize, NSTimer};
 
@@ -265,6 +265,12 @@ impl ShelfInner {
 
     /// Sizes the document to the cards' extent plus the trailing padding the style gives.
     fn fit(&self) {
+        let was = self.programmatic.replace(true);
+        self.fit_inner();
+        self.programmatic.set(was);
+    }
+
+    fn fit_inner(&self) {
         let b = self.view.bounds();
         if self.scroll.frame() != b {
             self.scroll.setFrame(b);
@@ -273,7 +279,8 @@ impl ShelfInner {
             nd_ui::prelude::DefiniteLength::Absolute(a) => f64::from(crate::look::length(a)),
             nd_ui::prelude::DefiniteLength::Fraction(f) => b.size.width * f64::from(f),
         });
-        let right = self.document.subviews().iter().map(|v| v.frame().origin.x + v.frame().size.width).fold(0., f64::max);
+        let right =
+            self.document.subviews().iter().map(|v| v.frame().origin.x + v.frame().size.width).fold(0., f64::max);
         let size = NSSize::new((right + trailing).max(b.size.width), b.size.height);
         if self.document.frame().size != size {
             self.document.setFrameSize(size);

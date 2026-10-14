@@ -173,7 +173,7 @@ impl SeekModel {
         }
         let clock = props.clock.position_at(now, props.duration);
         if let Some((target, at)) = self.pending {
-            let gap = if clock > target { clock - target } else { target - clock };
+            let gap = clock.abs_diff(target);
             if gap > SEEK.caught_up && now.saturating_duration_since(at) < SEEK.settle {
                 return target;
             }
@@ -228,7 +228,8 @@ impl SeekModel {
     /// Elapsed and remaining labels for the shown position.
     pub fn times(&mut self, props: &SeekBarProps, now: Instant) -> (String, String) {
         let shown = self.shown(props, now);
-        let remaining = props.duration.map_or_else(String::new, |d| format!("-{}", format_clock(d.saturating_sub(shown))));
+        let remaining =
+            props.duration.map_or_else(String::new, |d| format!("-{}", format_clock(d.saturating_sub(shown))));
         (format_clock(shown), remaining)
     }
 }
@@ -387,13 +388,7 @@ pub struct PlayerBar {
 }
 
 pub fn player_bar(id: impl Into<SharedString>, now: NowPlaying) -> PlayerBar {
-    PlayerBar {
-        id: id.into(),
-        now,
-        layout: TransportLayout::Full,
-        on_command: None,
-        style: StyleRefinement::default(),
-    }
+    PlayerBar { id: id.into(), now, layout: TransportLayout::Full, on_command: None, style: StyleRefinement::default() }
 }
 
 impl PlayerBar {
@@ -516,19 +511,21 @@ impl IntoElement for PlayerBar {
                         .w(px(96.))
                         .on_change(move |e: &SliderChanged, w, cx| on(TransportCommand::SetVolume(e.value))(w, cx))
                 };
-                v_flex()
-                    .id(id.clone())
-                    .w_full()
-                    .gap_1()
-                    .child(seek.show_times())
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_3()
-                            .child(h_flex().gap_1().flex_none().child(previous).child(play).child(next.disabled(!now.can_next)))
-                            .child(h_flex().flex_1().min_w_0().gap_2().child(art(44.)).child(titles))
-                            .child(h_flex().flex_none().gap_1().child(mute).child(volume)),
-                    )
+                v_flex().id(id.clone()).w_full().gap_1().child(seek.show_times()).child(
+                    h_flex()
+                        .w_full()
+                        .gap_3()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .flex_none()
+                                .child(previous)
+                                .child(play)
+                                .child(next.disabled(!now.can_next)),
+                        )
+                        .child(h_flex().flex_1().min_w_0().gap_2().child(art(44.)).child(titles))
+                        .child(h_flex().flex_none().gap_1().child(mute).child(volume)),
+                )
             }
         };
         nd_gpui::gpui::Refineable::refine(root.style(), &style);

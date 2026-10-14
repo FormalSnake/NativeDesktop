@@ -4,11 +4,11 @@
 //!
 //! Neither macOS nor the GPUI platforms have a system bubble or avatar, so both are drawn from
 //! theme tokens on every backend: sent bubbles in the accent with `on_accent` text, received
-//! ones on the raised surface, monograms on the accent container. Rules from messages'
-//! `thread_rows.rs`: a run is consecutive messages from one sender; its bubbles tighten the
-//! corners they share ([`BUBBLE.tight`](BubbleMetrics::tight)), only the run's last bubble has
-//! a tail, and runs are spaced wider than bubbles inside one. One to three emoji alone are
-//! drawn large without a bubble.
+//! ones on `surface.raised_hover` (it still reads on a white window), monograms on the accent
+//! container. Rules from messages' `thread_rows.rs`: a run is consecutive messages from one
+//! sender; its bubbles tighten the corners they share ([`BUBBLE.tight`](BubbleMetrics::tight)),
+//! only the run's last bubble has a tail, and runs are spaced wider than bubbles inside one.
+//! One to three emoji alone are drawn large without a bubble.
 
 use std::panic::Location;
 
@@ -465,10 +465,11 @@ pub fn chat_row(id: impl Into<SharedString>, message: ChatMessage) -> AnyElement
         .then(|| message.sender.as_ref().map(|p| p.name.clone()))
         .flatten()
         .map(|n| {
-            label(n)
-                .text_style(TextStyle::Caption2)
-                .tone(LabelTone::Secondary)
-                .ml(px(if group { AVATAR_COLUMN + 8. + BUBBLE.padding_x } else { BUBBLE.padding_x }))
+            label(n).text_style(TextStyle::Caption2).tone(LabelTone::Secondary).ml(px(if group {
+                AVATAR_COLUMN + 8. + BUBBLE.padding_x
+            } else {
+                BUBBLE.padding_x
+            }))
         });
     let line = h_flex()
         .w_full()

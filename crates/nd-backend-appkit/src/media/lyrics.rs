@@ -20,9 +20,10 @@ use nd_ui::events::Emit;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSAttributedStringNSExtendedStringDrawing, NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSEvent, NSFont, NSFontWeightSemibold,
-    NSForegroundColorAttributeName, NSScrollView, NSScrollViewWillStartLiveScrollNotification, NSView,
-    NSViewBoundsDidChangeNotification, NSFontAttributeName, NSStringDrawingOptions,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSAttributedStringNSExtendedStringDrawing,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSEvent, NSFont, NSFontAttributeName, NSFontWeightSemibold,
+    NSForegroundColorAttributeName, NSScrollView, NSScrollViewWillStartLiveScrollNotification, NSStringDrawingOptions,
+    NSView, NSViewBoundsDidChangeNotification,
 };
 use objc2_foundation::{
     NSAttributedString, NSMutableAttributedString, NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint,
@@ -254,8 +255,13 @@ impl LyricsInner {
         let theme = self.theme.borrow();
         let synced = self.model.borrow().synced();
         let font = row_font(&theme, row.kind);
-        let (sung, unsung) = if synced { (theme.text.primary, theme.text.secondary) } else { (theme.text.primary, theme.text.primary) };
-        let text = if row.kind == LyricRowKind::Interlude { "\u{2022} \u{2022} \u{2022}".to_owned() } else { row.text.to_string() };
+        let (sung, unsung) =
+            if synced { (theme.text.primary, theme.text.secondary) } else { (theme.text.primary, theme.text.primary) };
+        let text = if row.kind == LyricRowKind::Interlude {
+            "\u{2022} \u{2022} \u{2022}".to_owned()
+        } else {
+            row.text.to_string()
+        };
         let ns_text = NSString::from_str(&text);
         let s = NSMutableAttributedString::from_nsstring(&ns_text);
         let all = NSRange::new(0, ns_text.length());
@@ -296,6 +302,13 @@ impl LyricsInner {
     }
 
     fn layout_rows(&self) {
+        // Resizing the document moves the clip view; that is not the user scrolling.
+        let was = self.programmatic.replace(true);
+        self.layout_rows_inner();
+        self.programmatic.set(was);
+    }
+
+    fn layout_rows_inner(&self) {
         let width = self.scroll.contentSize().width;
         let height = self.scroll.contentSize().height;
         let model = self.model.borrow();
@@ -346,7 +359,10 @@ impl LyricsInner {
             self.empty.setContentsScale(scale);
             let b = self.view.bounds();
             let line = (font.ascender() - font.descender()).ceil();
-            self.empty.setFrame(NSRect::new(NSPoint::new(0., ((b.size.height - line) / 2.).round()), NSSize::new(b.size.width, line)));
+            self.empty.setFrame(NSRect::new(
+                NSPoint::new(0., ((b.size.height - line) / 2.).round()),
+                NSSize::new(b.size.width, line),
+            ));
         }
         CATransaction::commit();
     }
@@ -359,7 +375,8 @@ impl LyricsInner {
         }
         let rows = self.rows.borrow();
         let height = self.scroll.contentSize().height as f32;
-        let pitch = if rows.is_empty() { 1. } else { rows.iter().map(|r| r.height).sum::<f64>() as f32 / rows.len() as f32 };
+        let pitch =
+            if rows.is_empty() { 1. } else { rows.iter().map(|r| r.height).sum::<f64>() as f32 / rows.len() as f32 };
         let above = (anchor_y(height) / pitch).max(1.);
         let below = ((height - anchor_y(height)) / pitch).max(1.);
         let animate = animated && !reduce_motion();
@@ -391,7 +408,8 @@ impl LyricsInner {
         CATransaction::setDisableActions(true);
         for (i, (row, layer)) in model.rows.iter().zip(rows.iter()).enumerate() {
             let (text, filled) = self.text_for(row, model.lit.contains(i), i == model.lit.anchor, t);
-            let key = filled + usize::from(model.lit.contains(i)) * 10_000 + usize::from(i == model.lit.anchor) * 20_000;
+            let key =
+                filled + usize::from(model.lit.contains(i)) * 10_000 + usize::from(i == model.lit.anchor) * 20_000;
             if layer.filled.get() != Some(key) {
                 let object: &AnyObject = &text;
                 unsafe { layer.layer.setString(Some(object)) };
@@ -509,9 +527,9 @@ impl Input for LyricsInner {
             size,
         ));
         self.layout_rows();
-        self.programmatic.set(true);
+        let was = self.programmatic.replace(true);
         self.follow(false);
-        self.programmatic.set(false);
+        self.programmatic.set(was);
     }
 }
 
@@ -562,9 +580,19 @@ impl CustomNative for LyricsNative {
                 text: Some((theme.type_scale.body.as_f32(), 400.)),
             }];
         }
-        let mut out = vec![CustomPaint { label: "lyric".into(), color: theme.text.primary, under: Vec::new(), text: Some((size, 600.)) }];
+        let mut out = vec![CustomPaint {
+            label: "lyric".into(),
+            color: theme.text.primary,
+            under: Vec::new(),
+            text: Some((size, 600.)),
+        }];
         if model.synced() {
-            out.push(CustomPaint { label: "lyric unlit".into(), color: theme.text.secondary, under: Vec::new(), text: Some((size, 600.)) });
+            out.push(CustomPaint {
+                label: "lyric unlit".into(),
+                color: theme.text.secondary,
+                under: Vec::new(),
+                text: Some((size, 600.)),
+            });
         }
         out
     }
