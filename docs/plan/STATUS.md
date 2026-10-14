@@ -35,7 +35,7 @@ on branch `zig`.
 
 - `main` stabilization agent running: a few tests broke after the last merges, and the full suite
   takes 47 min; target under 10.
-- Windows: hardware run done 2026-10-14 (`m2-windows-2`, TODO.md M2); open is Windows clippy, then the merge.
+- Windows: hardware run and the first WinUI pass merged 2026-10-14; open is the rest of the Fluent skin and a Windows build of main.
 - e1504g: 100k-row scroll rerun pending (was offline).
 - Not started: M12 docs site, agent docs and README template polish, ports of messages,
   youtubemusic and nativebrowser.
