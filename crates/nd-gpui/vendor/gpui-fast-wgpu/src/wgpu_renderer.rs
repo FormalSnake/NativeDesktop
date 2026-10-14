@@ -263,8 +263,15 @@ pub struct WgpuRenderer {
     device_errors: Arc<DeviceErrorState>,
     observed_error_generation: u64,
     last_surface_error: Option<String>,
+    /// The size the window shows. The surface can be larger during a live resize, see
+    /// [`WgpuRenderer::update_drawable_size_live`].
+    drawable_size: Size<DevicePixels>,
     needs_redraw: bool,
 }
+
+/// How far a live resize lets the surface outgrow the drawable before it reconfigures, in device
+/// pixels per axis.
+const LIVE_RESIZE_SLACK: u32 = 512;
 
 impl WgpuRenderer {
     fn core(&self) -> Option<&WgpuRendererCore> {
@@ -458,6 +465,10 @@ impl WgpuRenderer {
             context: gpu_context,
             compositor_gpu,
             state: RendererState::Ready { surface, core },
+            drawable_size: Size {
+                width: DevicePixels(surface_config.width as i32),
+                height: DevicePixels(surface_config.height as i32),
+            },
             surface_config,
             atlas,
             transparent_alpha_mode,
@@ -991,15 +1002,51 @@ impl WgpuRenderer {
     /// Records the new drawable size and reconfigures the surface when one is present.
     /// The size is kept even without GPU resources so that recovery restores it.
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
+        self.drawable_size = size;
+        self.configure_surface(size.width.0 as u32, size.height.0 as u32);
+    }
 
-        if width == self.surface_config.width && height == self.surface_config.height {
+    /// As [`Self::update_drawable_size`], for a size that is about to change again (an
+    /// interactive resize): the surface keeps its size while the drawable fits in it with at most
+    /// [`LIVE_RESIZE_SLACK`] to spare, and otherwise grows with that much headroom. Each surface
+    /// reconfigure idles the device and recreates the swapchain, several milliseconds on a weak
+    /// GPU, so reconfiguring per resize step halves the frame rate there. The frame covers the
+    /// surface's top left `size`; the platform crops the rest with [`Self::surface_size`] and
+    /// [`Self::drawable_size`]. Settle with `update_drawable_size` once the resize ends.
+    pub fn update_drawable_size_live(&mut self, size: Size<DevicePixels>) {
+        self.drawable_size = size;
+        let fits = |drawable: i32, surface: u32| {
+            let drawable = drawable.max(1) as u32;
+            drawable <= surface && surface - drawable <= LIVE_RESIZE_SLACK
+        };
+        if fits(size.width.0, self.surface_config.width) && fits(size.height.0, self.surface_config.height) {
             return;
         }
+        let grow = |drawable: i32| (drawable.max(1) as u32 + LIVE_RESIZE_SLACK / 2).min(self.max_texture_size);
+        self.configure_surface(grow(size.width.0), grow(size.height.0));
+    }
 
+    /// What the window shows: the top left of the surface.
+    pub fn drawable_size(&self) -> Size<DevicePixels> {
+        self.drawable_size
+    }
+
+    /// The swapchain's size, larger than [`Self::drawable_size`] during a live resize.
+    pub fn surface_size(&self) -> Size<DevicePixels> {
+        Size {
+            width: DevicePixels(self.surface_config.width as i32),
+            height: DevicePixels(self.surface_config.height as i32),
+        }
+    }
+
+    fn configure_surface(&mut self, width: u32, height: u32) {
         let clamped_width = width.min(self.max_texture_size);
         let clamped_height = height.min(self.max_texture_size);
+        if clamped_width.max(1) == self.surface_config.width
+            && clamped_height.max(1) == self.surface_config.height
+        {
+            return;
+        }
         if clamped_width != width || clamped_height != height {
             warn!(
                 "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \

@@ -46,6 +46,15 @@ use gpui::{
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
+/// Crops the buffer to `source` (buffer pixels from the top left), or shows all of it.
+fn set_viewport_source(viewport: &wp_viewport::WpViewport, source: Option<Size<DevicePixels>>) {
+    match source {
+        Some(size) => viewport.set_source(0.0, 0.0, size.width.0 as f64, size.height.0 as f64),
+        None => viewport.set_source(-1.0, -1.0, -1.0, -1.0),
+    }
+}
+
+
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -141,6 +150,12 @@ pub struct WaylandWindowState {
     /// acked size: acking it right away let the compositor draw the new window geometry around
     /// the old buffer for a frame.
     deferred_configure: Option<(u32, InProgressConfigure)>,
+    /// The compositor's last configure had the `resizing` state: the renderer keeps an oversized
+    /// surface and the viewport crops it, instead of a new swapchain per resize step.
+    live_resize: bool,
+    /// The crop last sent to the viewport, in buffer pixels; `None` while the buffer is the
+    /// window's exact size.
+    viewport_source: Option<Size<DevicePixels>>,
     last_presentation: Option<gpui::PresentationTime>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
@@ -558,6 +573,14 @@ pub struct WaylandWindowStatePtr {
 }
 
 impl WaylandWindowState {
+    /// Whether the viewport can crop an oversized buffer: buffer pixels are device pixels only
+    /// with fractional scaling, which leaves the buffer scale at 1.
+    fn can_crop(&self) -> bool {
+        self.viewport.is_some()
+            && self.globals.fractional_scale_manager.is_some()
+            && self.surface.version() >= wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE
+    }
+
     pub(crate) fn new(
         handle: AnyWindowHandle,
         surface: wl_surface::WlSurface,
@@ -635,6 +658,8 @@ impl WaylandWindowState {
             in_progress_configure: None,
             resize_throttle: false,
             deferred_configure: None,
+            live_resize: false,
+            viewport_source: None,
             last_presentation: None,
             client,
             appearance,
@@ -1151,8 +1176,18 @@ impl WaylandWindowStatePtr {
                         self.state.borrow_mut().deferred_configure = Some((serial, configure));
                         return;
                     }
+                    self.state.borrow_mut().live_resize = configure.resizing;
                     if let Some(size) = configure.size {
                         self.resize(size);
+                    }
+                    if !configure.resizing {
+                        let mut state = self.state.borrow_mut();
+                        if let Some(renderer) = &mut state.renderer
+                            && renderer.surface_size() != renderer.drawable_size()
+                        {
+                            let size = renderer.drawable_size();
+                            renderer.update_drawable_size(size);
+                        }
                     }
                 }
             }
@@ -1536,8 +1571,13 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
+            let live = state.live_resize && state.can_crop();
             if let Some(renderer) = &mut state.renderer {
-                renderer.update_drawable_size(device_bounds.size);
+                if live {
+                    renderer.update_drawable_size_live(device_bounds.size);
+                } else {
+                    renderer.update_drawable_size(device_bounds.size);
+                }
             }
             (state.bounds.size, state.scale)
         };
@@ -2064,10 +2104,27 @@ impl PlatformWindow for WaylandWindow {
         if let Some(presentation) = &state.globals.presentation {
             presentation.feedback(&state.surface, &state.globals.qh, state.surface.id());
         }
+        let source = (renderer.surface_size() != renderer.drawable_size())
+            .then(|| renderer.drawable_size());
+        let previous_source = state.viewport_source;
+        if source != previous_source
+            && let Some(viewport) = &state.viewport
+        {
+            set_viewport_source(viewport, source);
+            state.viewport_source = source;
+        }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
         } else {
+            // No buffer went with the crop; restate the one that matches the attached buffer, so a
+            // later commit without a new buffer cannot crop outside it.
+            if state.viewport_source != previous_source
+                && let Some(viewport) = &state.viewport
+            {
+                set_viewport_source(viewport, previous_source);
+                state.viewport_source = previous_source;
+            }
             state.presentation = state.presentation.failed();
             self.0.frame_loop.set(FrameLoop::PresentationFailed);
         }
