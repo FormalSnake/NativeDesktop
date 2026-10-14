@@ -8,16 +8,21 @@ publish.workspace = true
 
 [features]
 # The GPUI backend on macOS, picked with `ND_BACKEND=gpui`.
-gpui = ["nd/gpui"]
+gpui = ["nd/gpui", "nd-terminal/gpui"]
 
+# nd-terminal directly rather than nd's `terminal` feature: within one workspace build Cargo
+# unifies nd's features, so the feature would link libghostty-vt into every example.
 [dependencies]
-nd = { path = "../../crates/nd", features = ["terminal"] }
+nd = { path = "../../crates/nd" }
+nd-terminal.workspace = true
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
 
 [dev-dependencies]
-nd = { path = "../../crates/nd", features = ["audit", "terminal"] }
+nd = { path = "../../crates/nd", features = ["audit"] }
+# The audit renders on GPUI too, which needs the GPUI presenter.
+nd-terminal = { workspace = true, features = ["gpui"] }
 ndshell.workspace = true
 nd-ui.workspace = true
 
