@@ -64,6 +64,11 @@ harness = false
 name = "virtual_list"
 harness = false
 
+# Tier 2: a file drop reaches `on_file_drop` with the window it landed on.
+[[test]]
+name = "file_drop"
+harness = false
+
 [[test]]
 name = "scroll_view"
 harness = false

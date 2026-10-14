@@ -40,7 +40,7 @@ mod views;
 mod virtual_list;
 mod window;
 
-pub use app_host::{AppHost, AppJob, AppSender, defer_with_app, run, run_with};
+pub use app_host::{AppHost, AppJob, AppSender, FileDropListener, defer_with_app, on_file_drop, run, run_with};
 pub use backend::{AppKitBackend, PaletteLayout, PaletteRowLayout};
 pub use dispatch::AppKitDispatch;
 pub use frame_clock::{FrameClock, FrameTick};

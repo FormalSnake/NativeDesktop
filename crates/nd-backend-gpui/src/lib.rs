@@ -20,7 +20,7 @@ mod overlay;
 pub mod render;
 mod virtual_list;
 
-pub use backend::GpuiBackend;
+pub use backend::{ActivationListener, FileDropListener, GpuiBackend};
 pub use clock::{DisplayClock, Pacing};
 pub use host::{AppJob, AppSender, GpuiHost, HostBuilder, NdView, run, run_with};
 pub use os::{ChromeContext, FrameRequest, NoOsHooks, OsHooks};

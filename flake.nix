@@ -73,6 +73,10 @@
                 # client-decorated case (ndshell::weston).
                 labwc
                 weston
+                # nd-system's audio dlopens GStreamer; these give its tests playbin, spectrum and wavparse.
+                gst_all_1.gstreamer
+                gst_all_1.gst-plugins-base
+                gst_all_1.gst-plugins-good
               ]
               ++ gpuLibs
             );
@@ -96,6 +100,17 @@
             export LD_LIBRARY_PATH="${lib.makeLibraryPath gpuLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
             export RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-fuse-ld=mold"
+            export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.gst_all_1.gstreamer ]}:$LD_LIBRARY_PATH"
+            export GST_PLUGIN_SYSTEM_PATH_1_0="${
+              lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" (
+                with pkgs.gst_all_1;
+                [
+                  gstreamer
+                  gst-plugins-base
+                  gst-plugins-good
+                ]
+              )
+            }"
           '';
         };
 

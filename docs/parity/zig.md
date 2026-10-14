@@ -161,15 +161,15 @@ RPC (schema/rpc.json, 23 methods, errors -32001 notActionable, -32002 waitForTim
 ## 5. System APIs (packages/react/src/core/system.ts, shell.ts, paths.ts)
 
 Wire: systemRequest/systemResponse/systemEvent frames -> one `system_request` op (#22); ACL: `core:dialog`, `core:notification`, `core:recent`, `core:clipboard.write`, `core:audio` default-granted; `core:clipboard.read`, `core:credentials` need `ND_ACL_GRANTS` (`defaultWindow` or per-window `grants`) (src/acl.zig).
-- [ ] dialog.openFile / saveFile / showMessage (app-level, ACL)
-- [ ] clipboard.readText / writeText / readImage
-- [ ] notifications.show / onClick (data echoed); bundled-app requirement on macOS
-- [ ] recentDocuments.add / clear
-- [ ] credentials.set / get / delete (Keychain / dlopen'd libsecret)
-- [ ] app.isActive (sync, replayed before HelloAck), onActivate, onDeactivate, onOpenUrl, onOpenFile, onFileDrop
+- [x] dialog.openFile / saveFile / showMessage (app-level, ACL) (`nd-system`)
+- [x] clipboard.readText / writeText / readImage (`nd-system`)
+- [x] notifications.show / onClick (data echoed); bundled-app requirement on macOS (`nd-system`)
+- [x] recentDocuments.add / clear (`nd-system`)
+- [x] credentials.set / get / delete (Keychain / dlopen'd libsecret) (`nd-system`)
+- [x] app.isActive (sync, replayed before HelloAck), onActivate, onDeactivate, onOpenUrl, onOpenFile, onFileDrop (`nd-system`)
 - [ ] system.getAppearance / onAppearanceChange (appearance, accentColor)
-- [ ] audio.play({path|url, volume, spectrum}) -> handle; pause/resume/stop/seek/setVolume; onState; onSpectrum (32 log bins, ~15 Hz) (Audio.swift, src/gtk/audio.zig GStreamer dlopen)
-- [ ] openExternal / openPath / revealPath (pure TS, unsandboxed)
+- [x] audio.play({path|url, volume, spectrum}) -> handle; pause/resume/stop/seek/setVolume; onState; onSpectrum (32 log bins, ~15 Hz) (Audio.swift, src/gtk/audio.zig GStreamer dlopen) (`nd-system`)
+- [x] openExternal / openPath / revealPath (pure TS, unsandboxed) (`nd-system`)
 - [ ] getAppDataDir / ensureAppDataDir / getCefProfileDir (macOS ~/Library/Application Support/<name>, Linux $XDG_DATA_HOME/<name>)
 - [ ] hasWidget(type) / hasCommand(type, cmd) from helloAck host manifest; Platform.os / Platform.backend
 - [ ] file associations + URL schemes injected at package time (Info.plist, .desktop + shared-mime XML)
