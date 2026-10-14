@@ -4487,6 +4487,7 @@ dependencies = [
  "dispatch2",
  "futures",
  "image",
+ "libc",
  "libghostty-vt",
  "nd-backend-appkit",
  "nd-backend-gpui",

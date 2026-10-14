@@ -3,8 +3,10 @@
 //! one frame drawn per step. Timed per frame on the main thread: the scroll, libghostty's
 //! snapshot, the presenter's build and, on AppKit, the Metal pass waited for. On the GPUI
 //! presenter each step is a wheel event through the window's own input path and one headless
-//! draw. Optimized builds fail when p95 is over the 60 Hz period; debug builds report.
-//! `ND_LINES`, `ND_FRAMES` override the size of the run.
+//! draw. Optimized builds fail when the p95 of the main thread's CPU time per frame is over the
+//! 60 Hz period; debug builds report. Wall time is reported beside it: on a machine busy with
+//! other builds the scheduler, not the frame, decides its tail. `ND_LINES`, `ND_FRAMES` override
+//! the size of the run.
 
 mod support;
 
@@ -43,19 +45,36 @@ fn filled(lines: usize) -> TerminalSession {
     session
 }
 
-fn report(presenter: &str, step: isize, work: &[f64]) -> f64 {
-    let mut sorted = work.to_vec();
+/// CPU time the calling thread has used, in milliseconds.
+fn thread_cpu_ms() -> f64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    ts.tv_sec as f64 * 1000. + ts.tv_nsec as f64 / 1e6
+}
+
+/// Times one frame: wall and main-thread CPU milliseconds.
+fn timed(f: impl FnOnce()) -> (f64, f64) {
+    let (wall, cpu) = (Instant::now(), thread_cpu_ms());
+    f();
+    (wall.elapsed().as_secs_f64() * 1000., thread_cpu_ms() - cpu)
+}
+
+fn stats(values: impl Iterator<Item = f64>) -> (f64, f64, f64, f64) {
+    let mut sorted: Vec<f64> = values.collect();
     sorted.sort_by(f64::total_cmp);
-    let over = work.iter().filter(|w| **w > BUDGET_MS).count();
-    let p95 = quantile(&sorted, 0.95);
+    (quantile(&sorted, 0.5), quantile(&sorted, 0.95), quantile(&sorted, 0.99), sorted.last().copied().unwrap_or(0.))
+}
+
+/// Prints the run and returns the CPU p95.
+fn report(presenter: &str, step: isize, work: &[(f64, f64)]) -> f64 {
+    let (w50, w95, w99, wmax) = stats(work.iter().map(|w| w.0));
+    let (c50, c95, c99, cmax) = stats(work.iter().map(|w| w.1));
+    let over = work.iter().filter(|w| w.1 > BUDGET_MS).count();
     println!(
-        "nd-budget: terminal_scroll presenter={presenter} rows_per_frame={step} frames={} p50_ms={:.2} p95_ms={p95:.2} p99_ms={:.2} max_ms={:.2} over_60hz={over}",
+        "nd-budget: terminal_scroll presenter={presenter} rows_per_frame={step} frames={} cpu_p50_ms={c50:.2} cpu_p95_ms={c95:.2} cpu_p99_ms={c99:.2} cpu_max_ms={cmax:.2} cpu_over_60hz={over} wall_p50_ms={w50:.2} wall_p95_ms={w95:.2} wall_p99_ms={w99:.2} wall_max_ms={wmax:.2}",
         work.len(),
-        quantile(&sorted, 0.5),
-        quantile(&sorted, 0.99),
-        sorted.last().copied().unwrap_or(0.),
     );
-    p95
+    c95
 }
 
 fn settings() -> (usize, usize) {
@@ -68,7 +87,7 @@ fn settings() -> (usize, usize) {
 
 fn check(p95: f64) {
     if !cfg!(debug_assertions) {
-        assert!(p95 <= BUDGET_MS, "p95 frame work {p95:.2} ms is over the 60 Hz period");
+        assert!(p95 <= BUDGET_MS, "p95 frame work {p95:.2} ms of CPU is over the 60 Hz period");
     }
 }
 
@@ -88,10 +107,10 @@ mod gate_m9_terminal {
             session.scroll_to_bottom();
             let mut work = Vec::with_capacity(frames);
             for _ in 0..frames {
-                let started = Instant::now();
-                session.scroll_rows(-step);
-                surface.draw(&session);
-                work.push(started.elapsed().as_secs_f64() * 1000.);
+                work.push(timed(|| {
+                    session.scroll_rows(-step);
+                    surface.draw(&session);
+                }));
             }
             check(report("appkit", step, &work));
         }
@@ -145,22 +164,22 @@ mod gate_m9_terminal {
             session.scroll_to_bottom();
             let mut work = Vec::with_capacity(frames);
             for _ in 0..frames {
-                let started = Instant::now();
                 let event = ScrollWheelEvent {
                     position: gpui::point(px(400.), px(300.)),
                     delta: ScrollDelta::Lines(gpui::point(0., step as f32)),
                     modifiers: Modifiers::default(),
                     touch_phase: TouchPhase::Moved,
                 };
-                cx.update(|cx| {
-                    let _ = handle.update(cx, |_, window, cx| {
-                        window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+                work.push(timed(|| {
+                    cx.update(|cx| {
+                        let _ = handle.update(cx, |_, window, cx| {
+                            window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+                        });
+                        host.pump(cx);
+                        host.draw(cx);
                     });
-                    host.pump(cx);
-                    host.draw(cx);
-                });
-                cx.run_until_parked();
-                work.push(started.elapsed().as_secs_f64() * 1000.);
+                    cx.run_until_parked();
+                }));
             }
             check(report("gpui", step, &work));
         }

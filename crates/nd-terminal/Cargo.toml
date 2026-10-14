@@ -46,6 +46,7 @@ nd-theme.workspace = true
 nd-gpui = { workspace = true, features = ["platform", "test-support"] }
 nd-backend-gpui.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+libc = "0.2.190"
 
 # Tier 2 on the AppKit presenter's Metal renderer, offscreen.
 [[test]]
