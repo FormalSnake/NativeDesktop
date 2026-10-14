@@ -13,7 +13,7 @@
 
 mod choice;
 mod display;
-mod glyph;
+pub(crate) mod glyph;
 mod look;
 mod pickers;
 mod text;
@@ -70,6 +70,7 @@ pub(crate) fn takes_focus(kind: NodeKind, props: &Props) -> bool {
         DatePickerKind => DatePickerProps,
         ColorWellKind => ColorWellProps,
         LinkKind => LinkProps,
+        nd_components::SeekBarKind => nd_components::SeekBarProps,
     );
     false
 }

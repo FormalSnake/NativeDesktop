@@ -14,6 +14,7 @@ mod forms;
 mod gestures;
 mod host;
 mod input;
+mod media;
 pub mod nav;
 pub mod os;
 mod overlay;

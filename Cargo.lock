@@ -2166,6 +2166,7 @@ dependencies = [
 name = "gallery"
 version = "0.1.0"
 dependencies = [
+ "image",
  "nd",
  "ndshell",
  "png 0.17.16",
