@@ -2643,8 +2643,6 @@ dependencies = [
 [[package]]
 name = "gpui-fast-apple"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7430efcfe8fadf11c1b923bcc435a3b646566f77a8e386e0505a4827c3d08046"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2948,8 +2946,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-apple"
 version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b52f58893fe1a0836464428dfad2b5eaf42c9c303a9638f4c2aced5a69072a15"
 dependencies = [
  "anyhow",
  "async-task",
@@ -4637,6 +4633,9 @@ dependencies = [
  "nd-theme",
  "nd-ui",
  "nd-virtual",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "unicode-segmentation",
 ]
 
@@ -4982,10 +4981,16 @@ dependencies = [
  "nd-core",
  "nd-gpui",
  "notify",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-text",
+ "objc2-foundation 0.3.2",
  "serde",
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+ "yeslogic-fontconfig-sys",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@
 //! for native controls.
 
 pub mod color;
+pub mod fonts;
 pub mod matugen;
 pub mod palette;
 pub mod preset;
@@ -21,11 +22,12 @@ pub mod watcher;
 
 use std::path::PathBuf;
 
+pub use fonts::SystemFonts;
 pub use matugen::MatugenTheme;
 pub use palette::{Palette, PaletteRefinement, Scheme, SchemePalettes};
 pub use preset::{
     ControlHeights, Fonts, GlassVariant, Material, Materials, Metrics, Motion, Preset, Radii, Spacing, Spring,
-    SystemMetrics, TypeScale,
+    SystemMetrics, TextStyle, TextStyles, TypeScale, TypeStyle,
 };
 pub use refinement::{Appearance, ThemeOverride, ThemeRefinement};
 pub use registry::{NativeTheme, OsTheme, ThemeRegistry};

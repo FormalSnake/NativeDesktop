@@ -9,23 +9,7 @@ use nd_ui::{Key, Role, StyleRefinement};
 
 use super::{guard, leaf};
 
-/// The platform's text styles. On macOS each is `NSFont.preferredFont(forTextStyle:)`, so
-/// labels follow the system's sizes; GPUI skins map them onto their type scale.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum TextStyle {
-    LargeTitle,
-    Title1,
-    Title2,
-    Title3,
-    Headline,
-    Subheadline,
-    #[default]
-    Body,
-    Callout,
-    Footnote,
-    Caption1,
-    Caption2,
-}
+pub use nd_theme::TextStyle;
 
 /// A label's colour, by meaning; each backend takes it from its system palette.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

@@ -123,8 +123,9 @@ struct Opened {
 }
 
 fn registry(scheme: Scheme) -> ThemeRegistry {
+    // The GPUI look on every OS, in the OS's own fonts, as `nd` sets it up at launch.
     let mut registry = ThemeRegistry::new(Preset::Adwaita);
-    let os = OsTheme { scheme: Some(scheme), ..registry.os().clone() };
+    let os = OsTheme { scheme: Some(scheme), fonts: nd_theme::fonts::resolve(), ..registry.os().clone() };
     registry.set_os(os);
     registry
 }

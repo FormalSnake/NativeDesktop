@@ -119,8 +119,8 @@ impl TextLook {
     }
 }
 
-/// The `NSFont` for an element's text style: nd's system families (`nd_theme::preset`) become
-/// the system font with that design, any other family is looked up by name. `None` when the
+/// The `NSFont` for an element's text style: the system's families become the system font with
+/// that design, any other family is looked up by name. `None` when the
 /// style names no font, size or weight, so the control keeps its own.
 pub(crate) fn ns_font(style: &StyleRefinement, default_size: f64) -> Option<Retained<objc2_app_kit::NSFont>> {
     use objc2_app_kit::{NSFont, NSFontDescriptorSystemDesignMonospaced, NSFontDescriptorSystemDesignRounded};
@@ -140,11 +140,16 @@ pub(crate) fn ns_font(style: &StyleRefinement, default_size: f64) -> Option<Reta
     }
     .ns_weight();
     let system = NSFont::systemFontOfSize_weight(size, weight);
+    // The system's families are private (`.AppleSystemUIFont`, `..Rounded`, `..Monospaced`, as
+    // the theme's font tokens name them): NSFont builds them from a design, never by name.
     let design = match text.font_family.as_deref() {
-        None | Some(nd_theme::preset::SYSTEM_FONT) => return Some(system),
-        Some(nd_theme::preset::SYSTEM_FONT_ROUNDED) => unsafe { NSFontDescriptorSystemDesignRounded },
-        Some(nd_theme::preset::SYSTEM_FONT_MONO) => unsafe { NSFontDescriptorSystemDesignMonospaced },
-        Some(family) => return NSFont::fontWithName_size(&NSString::from_str(family), size).or(Some(system)),
+        None => return Some(system),
+        Some(family) => match family.strip_prefix(".AppleSystemUIFont") {
+            Some("") => return Some(system),
+            Some("Rounded") => unsafe { NSFontDescriptorSystemDesignRounded },
+            Some("Monospaced") => unsafe { NSFontDescriptorSystemDesignMonospaced },
+            _ => return NSFont::fontWithName_size(&NSString::from_str(family), size).or(Some(system)),
+        },
     };
     let descriptor = system.fontDescriptor().fontDescriptorWithDesign(design)?;
     NSFont::fontWithDescriptor_size(&descriptor, size).or(Some(system))

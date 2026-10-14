@@ -4,7 +4,7 @@
 
 use nd_components::forms::TextStyle;
 use nd_gpui::gpui::{FontWeight, Hsla, Pixels, px};
-use nd_theme::Theme;
+use nd_theme::{TextStyles, Theme};
 
 use crate::render::Look;
 
@@ -105,8 +105,8 @@ pub struct FormLook {
     pub indeterminate_segment: f32,
     /// Seconds for one turn of the spinner.
     pub spinner_seconds: f64,
-    /// Size, weight and line height per text style, in [`TextStyle`] declaration order.
-    pub type_scale: [(f32, FontWeight, f32); 11],
+    /// Size, weight and line height per text style: the theme's.
+    pub type_scale: TextStyles,
 }
 
 impl FormLook {
@@ -164,38 +164,13 @@ impl FormLook {
             indeterminate_seconds: 1.2,
             indeterminate_segment: 0.3,
             spinner_seconds: 0.9,
-            type_scale: [
-                (26., FontWeight::EXTRA_BOLD, 32.),
-                (20., FontWeight::EXTRA_BOLD, 26.),
-                (20., FontWeight::BOLD, 26.),
-                (17., FontWeight::BOLD, 22.),
-                (14., FontWeight::BOLD, 20.),
-                (13., FontWeight::NORMAL, 18.),
-                (14., FontWeight::NORMAL, 20.),
-                (13., FontWeight::NORMAL, 18.),
-                (12., FontWeight::NORMAL, 16.),
-                (12., FontWeight::NORMAL, 16.),
-                (11., FontWeight::NORMAL, 14.),
-            ],
+            type_scale: theme.text_styles,
         }
     }
 
     pub fn type_of(&self, style: TextStyle) -> (Pixels, FontWeight, Pixels) {
-        let index = match style {
-            TextStyle::LargeTitle => 0,
-            TextStyle::Title1 => 1,
-            TextStyle::Title2 => 2,
-            TextStyle::Title3 => 3,
-            TextStyle::Headline => 4,
-            TextStyle::Subheadline => 5,
-            TextStyle::Body => 6,
-            TextStyle::Callout => 7,
-            TextStyle::Footnote => 8,
-            TextStyle::Caption1 => 9,
-            TextStyle::Caption2 => 10,
-        };
-        let (size, weight, line_height) = self.type_scale[index];
-        (px(size), weight, px(line_height))
+        let t = self.type_scale[style];
+        (t.size, t.weight, t.line_height)
     }
 
     /// Progress of an eased transition `t` (0 to 1) along `toggle_ease`.

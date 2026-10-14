@@ -331,7 +331,11 @@ pub(crate) mod gpui_host {
         let preset = if cfg!(target_os = "macos") { Preset::Adwaita } else { Preset::current() };
         let mut registry = ThemeRegistry::new(preset);
         if let Some(backend) = cx.backend_as::<GpuiBackend>() {
-            registry.set_os(OsTheme { scheme: backend.platform_scheme(), ..OsTheme::default() });
+            registry.set_os(OsTheme {
+                scheme: backend.platform_scheme(),
+                fonts: nd_theme::fonts::resolve(),
+                ..OsTheme::default()
+            });
             backend.on_platform_scheme(|app, scheme| {
                 update_registry(app, |r| r.set_os(OsTheme { scheme: Some(scheme), ..r.os().clone() }));
             });
