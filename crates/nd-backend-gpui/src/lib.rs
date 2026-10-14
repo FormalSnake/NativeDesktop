@@ -6,6 +6,7 @@
 
 mod backend;
 mod budget;
+mod canvas;
 mod clock;
 mod drawn;
 mod gestures;

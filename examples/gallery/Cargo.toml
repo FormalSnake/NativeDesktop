@@ -16,8 +16,12 @@ nd = { path = "../../crates/nd", default-features = false, features = ["build"] 
 name = "gallery"
 path = "src/main.rs"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 nd = { path = "../../crates/nd", features = ["audit"] }
+
+# Tier 1 runs in a browser too; the tier 2 audit and the CLI stay native.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 ndshell = { path = "../../crates/ndshell" }

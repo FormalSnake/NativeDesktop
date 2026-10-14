@@ -9,12 +9,12 @@
 //! wakes the host; the list's handler renders them in the next app frame, which runs before GPUI
 //! draws again.
 
+use nd_core::time::Instant;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::Instant;
 
 use nd_core::{NodeId, Rect};
 use nd_gpui::gpui::{

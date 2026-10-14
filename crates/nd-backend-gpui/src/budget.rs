@@ -11,7 +11,7 @@
 //!   click's dispatch to the start of the display frame after the one that drew its result, an
 //!   upper bound on input to present until `wp_presentation` timestamps land (`nd-os-linux`).
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use nd_core::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nd_core::WindowId;
 
