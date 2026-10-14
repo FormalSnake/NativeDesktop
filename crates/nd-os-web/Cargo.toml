@@ -1,0 +1,40 @@
+[package]
+name = "nd-os-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Everything here is browser API; on other targets the crate is empty.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+nd-gpui.workspace = true
+nd-components.workspace = true
+nd-backend-gpui.workspace = true
+js-sys = "0.3.106"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = [
+    "Blob",
+    "BlobPropertyBag",
+    "Clipboard",
+    "console",
+    "CssStyleDeclaration",
+    "Document",
+    "Element",
+    "Event",
+    "File",
+    "FileList",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Navigator",
+    "Storage",
+    "Url",
+    "Window",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

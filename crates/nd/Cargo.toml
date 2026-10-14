@@ -16,7 +16,7 @@ build = ["dep:toml"]
 # Placeholders for APIs later milestones ship; the examples that need them gate on their own
 # milestone feature.
 settings-ui = []
-test = ["runtime", "nd-ui/test-support"]
+test = ["runtime", "nd-ui/test-support", "dep:wasm-bindgen-test"]
 # `nd::audit`, the tier 2 appearance audit: both backend kinds, the GPUI one headless.
 audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
@@ -51,6 +51,11 @@ nd-backend-gpui = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nd-os-linux = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+nd-os-web = { workspace = true }
+# `#[nd::test]` runs tier 1 tests in a browser through it.
+wasm-bindgen-test = { version = "0.3", optional = true }
 
 # Tier 2 gate: a matugen `theme.json` write recolours a running app within 100 ms. AppKit owns
 # the main thread, so libtest's harness is off.

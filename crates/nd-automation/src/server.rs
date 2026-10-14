@@ -6,6 +6,8 @@
 //! Environment: `NATIVE_AUTOMATION=1` enables it; `ND_AUTOMATION_SOCKET` sets the socket path
 //! (default `$TMPDIR/nd-automation-<pid>.sock`). Once listening the server prints
 //! `ND_AUTOMATION_LISTENING path=<path>` on stderr, which launchers wait for.
+// Without unix sockets (the web, Windows until named pipes) only `start`'s error is compiled in.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::io;
 use std::path::{Path, PathBuf};

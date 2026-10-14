@@ -56,3 +56,8 @@ harness = false
 [[test]]
 name = "virtual_list"
 harness = false
+
+# The web's single canvas, run natively in GPUI's headless app.
+[[test]]
+name = "single_canvas"
+harness = false

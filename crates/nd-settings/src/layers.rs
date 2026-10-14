@@ -188,7 +188,7 @@ pub(crate) fn load<T: Settings>(
     for (kind, path) in candidate_files(ctx) {
         let text = match substitute {
             Some((target, text)) if target == path => Some(text.to_owned()),
-            _ => match std::fs::read_to_string(&path) {
+            _ => match crate::vfs::read_to_string(&path) {
                 Ok(text) => Some(text),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(LoadError::Read { path, error }),

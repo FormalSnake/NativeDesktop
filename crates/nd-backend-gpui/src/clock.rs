@@ -7,8 +7,8 @@
 //! It also keeps the start times of recent frames, which is what `pacing` reports: the rate a
 //! window actually drew at while it had work, next to its display's rate.
 
+use nd_core::time::{Duration, Instant};
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
 
 use nd_core::FrameTime;
 

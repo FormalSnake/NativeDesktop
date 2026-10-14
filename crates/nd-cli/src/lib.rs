@@ -1,4 +1,4 @@
-//! The `nd` command line: `new`, `check`, `test`, `diagnose`, `package`, `release`.
+//! The `nd` command line: `new`, `check`, `test`, `build`, `serve`, `diagnose`, `package`, `release`.
 
 pub mod check;
 pub mod diag;
@@ -11,6 +11,7 @@ pub mod publish;
 pub mod release;
 pub mod testcmd;
 pub mod vpk;
+pub mod web;
 
 use std::process::ExitCode;
 
@@ -34,6 +35,10 @@ pub enum Command {
     Test(testcmd::TestArgs),
     /// Summarise the app's incident bundles: panics, crashes, hangs, reports.
     Diagnose(diagnose::DiagnoseArgs),
+    /// Build the app: a native release build, or with `--target web` the static web bundle.
+    Build(web::BuildArgs),
+    /// Build and serve the web bundle locally: `nd serve --target web`.
+    Serve(web::ServeArgs),
     /// Build installers: macOS .app, .pkg and .dmg; Linux AppImage; Windows Setup.exe.
     Package(package::PackageArgs),
     /// Pack, sign and publish an update feed; `serve` and `keygen` subcommands.
@@ -48,6 +53,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         Command::Check(args) => check::run(args),
         Command::Test(args) => testcmd::run(args),
         Command::Diagnose(args) => diagnose::run(args),
+        Command::Build(args) => web::run_build(args),
+        Command::Serve(args) => web::run_serve(args),
         Command::Package(args) => package::run(args).map(|()| ExitCode::SUCCESS),
         Command::Release(args) => release::run(args).map(|()| ExitCode::SUCCESS),
         Command::Diag(args) => diag::run(args),

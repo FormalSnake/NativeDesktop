@@ -24,6 +24,10 @@ pub struct CheckArgs {
     pub no_audit: bool,
     #[arg(long)]
     pub manifest_path: Option<PathBuf>,
+    /// `web` adds the web lints: std APIs that panic in a browser and unguarded web-unavailable
+    /// framework calls.
+    #[arg(long, value_enum, default_value = "native")]
+    pub target: crate::web::Target,
 }
 
 /// The framework lint table, passed on the command line so it applies to every app, whether or
@@ -74,6 +78,29 @@ fn packages(args: &CheckArgs) -> Result<Vec<Package>> {
     Ok(out)
 }
 
+/// The `src/` of `nd` and every `nd-*` package in the resolved graph, where framework items
+/// carry `#[unavailable(web)]`.
+fn framework_sources(args: &CheckArgs) -> Result<Vec<PathBuf>> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["metadata", "--format-version", "1"]);
+    if let Some(path) = &args.manifest_path {
+        cmd.arg("--manifest-path").arg(path);
+    }
+    let output = cmd.output().context("running cargo metadata")?;
+    if !output.status.success() {
+        bail!("cargo metadata failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let meta: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["name"].as_str().is_some_and(|n| n == "nd" || n.starts_with("nd-")))
+        .filter_map(|p| p["manifest_path"].as_str())
+        .filter_map(|m| Path::new(m).parent().map(|d| d.join("src")))
+        .collect())
+}
+
 fn step(label: &str, cmd: &mut Command) -> Result<bool> {
     println!("nd check: {label}");
     Ok(cmd.status().with_context(|| format!("running {label}"))?.success())
@@ -95,10 +122,20 @@ pub fn run(args: CheckArgs) -> Result<ExitCode> {
     ok &= step("fmt", &mut fmt)?;
 
     println!("nd check: framework lints");
+    let web = match args.target {
+        crate::web::Target::Web => Some(lints::unavailable_on_web(&framework_sources(&args)?)?),
+        crate::web::Target::Native => None,
+    };
     let mut findings = 0;
     for package in &packages {
-        for finding in lints::lint_dir(&package.dir, &package.dir.join("src"))? {
+        for finding in lints::lint_dir_for(&package.dir, &package.dir.join("src"), web.as_ref())? {
             // Paths print relative to the package, prefixed so a workspace run stays unambiguous.
+            // An unguarded web-unavailable call is a warning (ARCHITECTURE.md 12): matching is by
+            // name, so it cannot be sure the call is the framework's.
+            if finding.rule == "web-unavailable" {
+                println!("warning: {}/{finding}", package.name);
+                continue;
+            }
             println!("{}/{finding}", package.name);
             findings += 1;
         }
@@ -120,7 +157,14 @@ pub fn run(args: CheckArgs) -> Result<ExitCode> {
 
     if !args.no_clippy {
         let mut clippy = Command::new("cargo");
-        clippy.args(["clippy", "--all-targets", "--no-deps"]).args(package_flags(&args));
+        match args.target {
+            crate::web::Target::Native => clippy.args(["clippy", "--all-targets", "--no-deps"]),
+            // Tests and the tier 2 audit are native; the app itself must build for the browser.
+            crate::web::Target::Web => {
+                clippy.args(["clippy", "--lib", "--bins", "--no-deps", "--target", "wasm32-unknown-unknown"])
+            }
+        };
+        clippy.args(package_flags(&args));
         if let Some(path) = &args.manifest_path {
             clippy.arg("--manifest-path").arg(path);
         }
@@ -131,7 +175,7 @@ pub fn run(args: CheckArgs) -> Result<ExitCode> {
         ok &= step("clippy", &mut clippy)?;
     }
 
-    if !args.no_audit {
+    if !args.no_audit && matches!(args.target, crate::web::Target::Native) {
         for package in packages.iter().filter(|p| p.dir.join("tests/appearance.rs").is_file()) {
             let mut audit = Command::new("cargo");
             audit.args(["test", "-p", &package.name, "--test", "appearance"]);

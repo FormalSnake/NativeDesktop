@@ -1,0 +1,42 @@
+#!/bin/sh
+# Runs tier 1 tests in headless Chrome through wasm-bindgen-test: `scripts/web-test hello gallery`.
+# Tools land in ~/.cache/nd/tools, never system-wide: the wasm-bindgen-test-runner matching the
+# lockfile's wasm-bindgen (cargo install --root), and the chromedriver matching the installed
+# Chrome (Chrome for Testing). Override with CHROMEDRIVER, ND_CHROME or ND_WASM_BINDGEN_TEST_RUNNER.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+tools="${XDG_CACHE_HOME:-$HOME/.cache}/nd/tools"
+
+version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' "$root/Cargo.lock")
+runner="${ND_WASM_BINDGEN_TEST_RUNNER:-$tools/wasm-bindgen-$version/bin/wasm-bindgen-test-runner}"
+if [ ! -x "$runner" ]; then
+  echo "web-test: installing wasm-bindgen-cli $version into $tools" >&2
+  cargo install wasm-bindgen-cli --version "=$version" --locked --root "$tools/wasm-bindgen-$version"
+fi
+
+if [ -z "${CHROMEDRIVER:-}" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) platform=mac-arm64; chrome="${ND_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}" ;;
+    Darwin-*) platform=mac-x64; chrome="${ND_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}" ;;
+    *) platform=linux64; chrome="${ND_CHROME:-$(command -v google-chrome || command -v chromium)}" ;;
+  esac
+  chrome_version=$("$chrome" --version | awk '{ print $NF }')
+  CHROMEDRIVER="$tools/chromedriver-$chrome_version/chromedriver-$platform/chromedriver"
+  if [ ! -x "$CHROMEDRIVER" ]; then
+    echo "web-test: fetching chromedriver $chrome_version into $tools" >&2
+    mkdir -p "$tools/chromedriver-$chrome_version"
+    curl -sSfL -o "$tools/chromedriver-$chrome_version/driver.zip" \
+      "https://storage.googleapis.com/chrome-for-testing-public/$chrome_version/$platform/chromedriver-$platform.zip"
+    unzip -oq "$tools/chromedriver-$chrome_version/driver.zip" -d "$tools/chromedriver-$chrome_version"
+  fi
+  export CHROMEDRIVER
+fi
+
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="$runner"
+export WASM_BINDGEN_USE_BROWSER=1
+export WASM_BINDGEN_TEST_TIMEOUT="${WASM_BINDGEN_TEST_TIMEOUT:-120}"
+status=0
+for package in "$@"; do
+  cargo test --manifest-path "$root/Cargo.toml" -p "$package" --target wasm32-unknown-unknown --test tier1 || status=1
+done
+exit $status
