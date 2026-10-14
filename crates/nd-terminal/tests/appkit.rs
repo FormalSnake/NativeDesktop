@@ -1,15 +1,17 @@
 //! Tier 2 on the AppKit presenter's Metal renderer, offscreen: the `printf` golden in light and
 //! dark, drawn by the same renderer the view presents with.
 
-#![cfg(target_os = "macos")]
-
 mod support;
 
+#[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
 use nd_terminal::{SessionOptions, TerminalSession};
+#[cfg(target_os = "macos")]
 use nd_theme::{OsTheme, Preset, Scheme, ThemeRegistry};
 
+#[cfg(target_os = "macos")]
 fn wait_for_exit(session: &TerminalSession) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !(session.is_closed() && session.exit_status().is_some()) {
@@ -20,6 +22,7 @@ fn wait_for_exit(session: &TerminalSession) {
     while session.pump() {}
 }
 
+#[cfg(target_os = "macos")]
 mod gate_m9_terminal {
     use super::*;
 
@@ -45,5 +48,6 @@ mod gate_m9_terminal {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
     support::run(&[("gate_m9_terminal::appkit_printf_golden", gate_m9_terminal::appkit_printf_golden)]);
 }
