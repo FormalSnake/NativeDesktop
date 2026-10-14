@@ -61,3 +61,8 @@ harness = false
 [[test]]
 name = "single_canvas"
 harness = false
+
+# A file drop reaches `on_file_drop` with the window it landed on, in GPUI's headless app.
+[[test]]
+name = "file_drop"
+harness = false

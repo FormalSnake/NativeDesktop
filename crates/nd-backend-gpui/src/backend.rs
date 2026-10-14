@@ -40,6 +40,12 @@ pub(crate) type Deferred = Box<dyn FnOnce(&mut App)>;
 /// Told the platform's light or dark setting, with the app, when it changes.
 pub(crate) type SchemeListener = Rc<dyn Fn(&mut App, Scheme)>;
 
+/// Told of files dropped onto an app window, at a point in window coordinates.
+pub type FileDropListener = Rc<dyn Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32))>;
+
+/// Told when the app gains (`true`) or loses its last active window.
+pub type ActivationListener = Rc<dyn Fn(bool)>;
+
 pub(crate) struct State {
     pub nodes: HashMap<NodeId, Node>,
     pub windows: HashMap<WindowId, WindowRecord>,
@@ -56,6 +62,8 @@ pub(crate) struct State {
     pub theme: ThemeRegistry,
     pub platform_scheme: Option<Scheme>,
     pub scheme_listener: Option<SchemeListener>,
+    pub file_drop_listener: Option<FileDropListener>,
+    pub activation_listener: Option<ActivationListener>,
     /// What each window painted in its last build.
     pub paints: HashMap<WindowId, Vec<Paint>>,
 }
@@ -113,6 +121,8 @@ impl GpuiBackend {
                 theme: ThemeRegistry::new(Preset::current()),
                 platform_scheme: None,
                 scheme_listener: None,
+                file_drop_listener: None,
+                activation_listener: None,
                 paints: HashMap::new(),
             })),
             bounds: Rc::default(),
@@ -193,6 +203,18 @@ impl GpuiBackend {
     /// Calls `f` with the app whenever the platform's light or dark setting changes.
     pub fn on_platform_scheme(&self, f: impl Fn(&mut App, Scheme) + 'static) {
         self.state.borrow_mut().scheme_listener = Some(Rc::new(f));
+    }
+
+    /// Sets the one listener for files dropped onto any app window (`nd` routes them to
+    /// `nd-system`'s events).
+    pub fn on_file_drop(&self, f: impl Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32)) + 'static) {
+        self.state.borrow_mut().file_drop_listener = Some(Rc::new(f));
+    }
+
+    /// Sets the one listener for the app becoming active or inactive: some app window is the
+    /// platform's active window, or none is.
+    pub fn on_activation(&self, f: impl Fn(bool) + 'static) {
+        self.state.borrow_mut().activation_listener = Some(Rc::new(f));
     }
 
     /// Records the platform's scheme; true when it changed.

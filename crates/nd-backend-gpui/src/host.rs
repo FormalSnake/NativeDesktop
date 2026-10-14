@@ -19,7 +19,7 @@
 
 use nd_core::time::{Duration, Instant};
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::{Rc, Weak};
 
 use futures::StreamExt;
@@ -130,6 +130,8 @@ struct Inner {
     pacing: bool,
     debug: DebugFlags,
     subscriptions: RefCell<Vec<gpui::Subscription>>,
+    /// App windows the platform reports active; the app is active while one is.
+    active: RefCell<BTreeSet<WindowId>>,
     tasks: RefCell<Vec<gpui::Task<()>>>,
     watchdog: RefCell<Option<Watchdog>>,
     /// Every app window draws into the first GPUI window (see [`HostBuilder::single_canvas`]).
@@ -187,6 +189,7 @@ impl HostBuilder {
             pacing: std::env::var_os("ND_PACING").is_some_and(|v| v == "1"),
             debug: DebugFlags::from_env(),
             subscriptions: RefCell::default(),
+            active: RefCell::default(),
             tasks: RefCell::default(),
             watchdog: RefCell::default(),
             single_canvas: self.single_canvas,
@@ -586,6 +589,13 @@ impl Inner {
                 }
             });
             self.subscriptions.borrow_mut().push(appearance);
+            let weak = Rc::downgrade(self);
+            let activation = cx.observe_window_activation(window, move |_, window, cx| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.window_activation(id, window.is_window_active(), cx);
+                }
+            });
+            self.subscriptions.borrow_mut().push(activation);
             cx.entity()
         });
         if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
@@ -593,6 +603,28 @@ impl Inner {
             w.view = view.ok();
         }
         self.had_windows.set(true);
+    }
+
+    /// Follows one window's active state. Moving focus between two app windows deactivates one
+    /// before it activates the other, so the app-level answer is taken once the effects settle.
+    fn window_activation(self: &Rc<Self>, id: WindowId, active: bool, cx: &mut gpui::App) {
+        let was = !self.active.borrow().is_empty();
+        if active {
+            self.active.borrow_mut().insert(id);
+        } else {
+            self.active.borrow_mut().remove(&id);
+        }
+        let weak = Rc::downgrade(self);
+        cx.defer(move |_| {
+            let Some(inner) = weak.upgrade() else { return };
+            let now = !inner.active.borrow().is_empty();
+            let listener = inner.backend.state.borrow().activation_listener.clone();
+            if now != was
+                && let Some(listener) = listener
+            {
+                listener(now);
+            }
+        });
     }
 
     fn render_window(self: &Rc<Self>, id: WindowId, window: &mut gpui::Window, cx: &mut gpui::App) -> AnyElement {
@@ -786,9 +818,17 @@ impl Inner {
             Rc::downgrade(self),
         );
         let expose = self.debug.expose;
+        let drops = self.backend.clone();
         div()
             .size_full()
             .when(expose, |d| d.bg(gpui::rgb(0xff00ff)))
+            .on_drop(move |paths: &gpui::ExternalPaths, window, _cx| {
+                let listener = drops.state.borrow().file_drop_listener.clone();
+                if let Some(listener) = listener {
+                    let at = window.mouse_position();
+                    listener(id, paths.paths().to_vec(), (at.x.as_f32(), at.y.as_f32()));
+                }
+            })
             .capture_any_mouse_down(move |event, window, cx| {
                 if let Some(diag) = nd_diag::global() {
                     diag.record_input(InputRecord {

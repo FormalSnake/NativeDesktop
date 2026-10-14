@@ -4357,6 +4357,7 @@ dependencies = [
 name = "nd"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "nd",
  "nd-automation",
  "nd-backend-appkit",
@@ -4368,6 +4369,7 @@ dependencies = [
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
+ "nd-system",
  "nd-theme",
  "nd-ui",
  "nd-update",
@@ -4582,6 +4584,7 @@ dependencies = [
  "nd-gpui",
  "nd-ui",
  "ndshell",
+ "zbus",
 ]
 
 [[package]]
@@ -4666,6 +4669,7 @@ dependencies = [
  "libloading",
  "mpris-server",
  "nd-core",
+ "ndshell",
  "notify-rust",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -7387,6 +7391,14 @@ dependencies = [
  "ntapi",
  "rayon",
  "windows 0.57.0",
+]
+
+[[package]]
+name = "system-demo"
+version = "0.1.0"
+dependencies = [
+ "nd",
+ "serde_json",
 ]
 
 [[package]]

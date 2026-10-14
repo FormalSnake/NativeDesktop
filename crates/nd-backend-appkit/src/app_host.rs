@@ -164,6 +164,12 @@ impl KeyRouter for AppRouter {
         }
     }
 
+    fn files_dropped(&self, paths: Vec<std::path::PathBuf>, at: (f32, f32)) {
+        if let Some(listener) = FILE_DROP.with(|l| l.borrow().clone()) {
+            listener(self.window, paths, at);
+        }
+    }
+
     fn responder_changed(&self, window: &NdWindow) {
         let Some(host) = self.host.upgrade() else { return };
         let Some(node) = node_for_responder(&host.backend, window.firstResponder().as_deref()) else { return };
@@ -180,6 +186,16 @@ type Jobs = Arc<Mutex<VecDeque<AppJob>>>;
 
 thread_local! {
     static HOST: RefCell<Weak<Host>> = const { RefCell::new(Weak::new()) };
+    static FILE_DROP: RefCell<Option<FileDropListener>> = const { RefCell::new(None) };
+}
+
+/// Told of files dropped onto an app window, at a point in window coordinates from the top left.
+pub type FileDropListener = Rc<dyn Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32))>;
+
+/// Sets the one listener for files dropped onto any app window (`nd` routes them to
+/// `nd-system`'s events). Main thread only.
+pub fn on_file_drop(listener: impl Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32)) + 'static) {
+    FILE_DROP.with(|l| *l.borrow_mut() = Some(Rc::new(listener)));
 }
 
 /// Runs [`AppJob`]s on the main thread, between frames and outside every entity lease. Cheap to

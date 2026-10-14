@@ -70,3 +70,23 @@ impl Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Runs `future` to completion off the caller's stack: on a small shared pool of threads on
+/// the desktop, as a microtask on the web. For code that has no executor of its own; its
+/// output is the future's to deliver.
+pub fn spawn_detached(future: impl std::future::Future<Output = ()> + Send + 'static) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static POOL: std::sync::OnceLock<futures_executor::ThreadPool> = std::sync::OnceLock::new();
+        POOL.get_or_init(|| {
+            futures_executor::ThreadPool::builder()
+                .pool_size(2)
+                .name_prefix("nd-system-")
+                .create()
+                .expect("nd-system task threads")
+        })
+        .spawn_ok(future);
+    }
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_futures::spawn_local(future);
+}

@@ -31,6 +31,7 @@ nd-os-windows = { path = "crates/nd-os-windows" }
 nd-os-web = { path = "crates/nd-os-web" }
 nd-update = { path = "crates/nd-update", default-features = false }
 nd-config = { path = "crates/nd-config" }
+nd-system = { path = "crates/nd-system" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # The pinned GPUI snapshot (zed@93d7456). Bumped by `scripts/gpui-fork bump`; only nd-gpui names these.

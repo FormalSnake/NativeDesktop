@@ -18,7 +18,7 @@ const PINNED: &str = include_str!("../../../swift-toolchain.toml");
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub fn app() {
-    if let Err(message) = bake_updates() {
+    if let Err(message) = bake_identity().and_then(|()| bake_updates()) {
         println!("cargo::error=nd::build::app: {message}");
         std::process::exit(1);
     }
@@ -93,6 +93,23 @@ fn build() -> Result<(), String> {
     println!("cargo::rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     for symbol in exported_symbols(&lib)? {
         println!("cargo::rustc-link-arg=-Wl,-u,{symbol}");
+    }
+    Ok(())
+}
+
+/// Bakes `[app] id` and `display_name` as `ND_APP_ID` and `ND_APP_DISPLAY_NAME`, read back by
+/// `nd::manifest!()`: the OS services name the app by them (MPRIS bus name, notification
+/// sender, recent documents).
+fn bake_identity() -> Result<(), String> {
+    let config = PathBuf::from(var("CARGO_MANIFEST_DIR")?).join("nativedesktop.toml");
+    let Ok(text) = fs::read_to_string(&config) else { return Ok(()) };
+    println!("cargo::rerun-if-changed=nativedesktop.toml");
+    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", config.display()))?;
+    let app = table.get("app");
+    for (key, env) in [("id", "ND_APP_ID"), ("display_name", "ND_APP_DISPLAY_NAME")] {
+        if let Some(value) = app.and_then(|a| a.get(key)).and_then(|v| v.as_str()) {
+            println!("cargo::rustc-env={env}={value}");
+        }
     }
     Ok(())
 }

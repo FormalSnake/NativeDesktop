@@ -6,6 +6,9 @@
 #                                          drag region, keyboard) `runs` times (default 3) and twice in
 #                                          parallel
 #   scripts/linux-gate tiers               tier 1 + 2 for the workspace
+#   scripts/linux-gate system              nd-system's tier 2 legs on a private session bus (fake
+#                                          notification daemon, isolated gnome-keyring, headless
+#                                          Hyprland clipboard) and its audio test
 #
 # The host is `ssh g815` ($ND_LINUX_HOST). The checkout lands in ~/Developer/nativedesktop-<branch>
 # there, never in another checkout. Every lane shares one target dir ($ND_LINUX_TARGET, default
@@ -61,9 +64,17 @@ cmd_tiers() {
   remote "$(in_shell "cargo nextest run --workspace --test-threads 2 2>&1 | grep -E 'FAIL|^error|Summary'")"
 }
 
+cmd_system() {
+  cap_target
+  # A fresh data dir and control dir give gnome-keyring its own unlocked login collection,
+  # so nothing prompts and the user's own keyring is never touched.
+  remote "$(in_shell 'env XDG_DATA_HOME=$(mktemp -d) dbus-run-session -- bash -c "printf nd | gnome-keyring-daemon --unlock --components=secrets --control-directory=\$(mktemp -d) >/dev/null 2>&1; cargo test -p nd-system --test linux_native --test audio_playback 2>&1" | grep -E "^(error|ok |skip )|ND_SYSTEM|audio_playback|panicked"')"
+}
+
 case "${1:-}" in
   sync) cmd_sync ;;
+  system) cmd_system ;;
   test) shift; cmd_test "$@" ;;
   tiers) cmd_tiers ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac

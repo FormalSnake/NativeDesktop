@@ -1,0 +1,22 @@
+[package]
+name = "system-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Every nd::system service behind a button, and the OS events it receives in a log."
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+serde_json = "1.0.154"
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[[bin]]
+name = "system-demo"
+path = "src/main.rs"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }

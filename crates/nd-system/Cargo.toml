@@ -19,13 +19,13 @@ futures-executor = "0.3.34"
 tempfile = "3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures-executor = { version = "0.3.34", features = ["thread-pool"] }
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 # Keychain, the Secret Service over zbus (pure Rust crypto), Credential Manager.
 keyring = "4.2.0"
 
 [target.'cfg(any(target_os = "linux", windows))'.dependencies]
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
-futures-executor = "0.3.34"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
@@ -79,3 +79,11 @@ web-sys = { version = "0.3.106", features = ["Clipboard", "Navigator", "Window"]
 [[test]]
 name = "mac_native"
 harness = false
+
+# Tier 2 on Linux, under `dbus-run-session`: one process, sequential legs.
+[[test]]
+name = "linux_native"
+harness = false
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ndshell.workspace = true
