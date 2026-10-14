@@ -399,6 +399,22 @@ mod gate_m10 {
         )
         .unwrap();
         nd(&demo, &["release", "--key", key.to_str().unwrap()]);
+
+        // The feed and key are baked in at build time, so the 0.1.0 that updates is the released
+        // one: swap the install above for the release's Setup.exe.
+        let status = Command::new(install.join("Update.exe")).args(["--uninstall", "--silent"]).status().unwrap();
+        assert!(status.success(), "uninstall the first 0.1.0: {status}");
+        wait_until("the first 0.1.0 uninstalled", Duration::from_secs(60), || !install.join("current").exists());
+        let released = feed.join(format!("{WIN_APP_ID}-win-stable-Setup.exe"));
+        agent
+            .call(json!({ "cmd": "launch", "exe": released.display().to_string() }))
+            .expect("run the released Setup.exe");
+        let window = agent
+            .call(json!({ "cmd": "window", "title": "Demo", "timeout_ms": 120_000 }))
+            .expect("the released Setup.exe installs and launches the app");
+        assert_eq!(installed_version(&install), "0.1.0");
+        agent.call(json!({ "cmd": "close", "hwnd": window["hwnd"] })).unwrap();
+
         let bump = |from: &str, to: &str, label: &str| {
             let cargo = std::fs::read_to_string(demo.join("Cargo.toml")).unwrap();
             std::fs::write(

@@ -19,11 +19,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    EnumWindows, FindWindowExW, GetClientRect, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
     IsWindowVisible, IsZoomed, PostMessageW, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageTimeoutW,
     SetWindowPos, WM_CLOSE, WM_NCHITTEST,
 };
 use windows::core::BOOL;
+use windows::core::w;
 
 use super::capture::{EdgeProbe, Recording, Target};
 use super::input;
@@ -210,7 +211,11 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
         "click" => {
             real_input()?;
             let (x, y) = point(request, "at")?;
-            input::click(x, y)?;
+            if request["button"].as_str() == Some("right") {
+                input::right_click(x, y)?;
+            } else {
+                input::click(x, y)?;
+            }
             Ok(json!({}))
         }
         "button" => {
@@ -220,10 +225,38 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
         }
         "key" => {
             real_input()?;
+            // `mods` (virtual keys) are held around the key: [18] is Alt.
             let vk = arg_i32(request, "vk")? as u16;
+            let mods: Vec<u16> =
+                request["mods"].as_array().into_iter().flatten().filter_map(|m| m.as_u64()).map(|m| m as u16).collect();
+            for m in &mods {
+                input::key(*m, true)?;
+            }
             input::key(vk, true)?;
             input::key(vk, false)?;
+            for m in mods.iter().rev() {
+                input::key(*m, false)?;
+            }
             Ok(json!({}))
+        }
+        "post" => {
+            // A raw window message, for what only the shell sends (a taskbar button's menu).
+            let hwnd = hwnd_arg(request)?;
+            let msg = arg_i32(request, "msg")? as u32;
+            let wparam = WPARAM(request["wparam"].as_u64().unwrap_or(0) as usize);
+            let lparam = LPARAM(request["lparam"].as_i64().unwrap_or(0) as isize);
+            unsafe { PostMessageW(Some(hwnd), msg, wparam, lparam) }.map_err(|e| e.to_string())?;
+            Ok(json!({}))
+        }
+        "popup_menu" => {
+            // Whether a menu (window class #32768) is open on the desktop; a hidden one always exists.
+            let mut after = None;
+            let mut open = false;
+            while let Ok(menu) = unsafe { FindWindowExW(None, after, w!("#32768"), None) } {
+                open |= unsafe { IsWindowVisible(menu) }.as_bool();
+                after = Some(menu);
+            }
+            Ok(json!({ "open": open }))
         }
         "drag" => {
             real_input()?;

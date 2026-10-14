@@ -10,8 +10,8 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS,
-    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
-    MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
+    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VIRTUAL_KEY,
 };
 use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_PRIMARY,
@@ -89,6 +89,10 @@ pub fn button(down: bool) -> Result<(), String> {
 
 pub fn click(x: i32, y: i32) -> Result<(), String> {
     send(&[move_input(x, y), mouse(MOUSEEVENTF_LEFTDOWN, 0, 0), mouse(MOUSEEVENTF_LEFTUP, 0, 0)])
+}
+
+pub fn right_click(x: i32, y: i32) -> Result<(), String> {
+    send(&[move_input(x, y), mouse(MOUSEEVENTF_RIGHTDOWN, 0, 0), mouse(MOUSEEVENTF_RIGHTUP, 0, 0)])
 }
 
 pub fn key(vk: u16, down: bool) -> Result<(), String> {

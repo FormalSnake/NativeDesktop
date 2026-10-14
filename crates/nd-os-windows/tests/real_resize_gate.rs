@@ -362,6 +362,33 @@ mod gate {
         sleep(900);
         r.check(!hello.geometry().maximized, "a second click restores".into());
 
+        // The window menu, opened by the chrome since the window has no WS_SYSMENU: a right-click
+        // on the title row, Alt+Space, and the taskbar button's menu (WM_POPUPSYSTEMMENU).
+        let g = hello.geometry();
+        let title = (g.client[0] + g.client[2] / 2, g.client[1] + (TITLE / 2. * g.scale) as i64);
+        let menu_open = |hello: &mut Hello| {
+            hello.call(json!({ "cmd": "popup_menu" })).ok().and_then(|r| r["open"].as_bool()).unwrap_or(false)
+        };
+        let lparam = (title.1 << 16) | (title.0 & 0xffff);
+        let opens: [(&str, Value); 3] = [
+            ("a right-click on the title row", json!({ "cmd": "click", "at": [title.0, title.1], "button": "right" })),
+            ("Alt+Space", json!({ "cmd": "key", "vk": 0x20, "mods": [0x12] })),
+            (
+                "the taskbar button's menu",
+                json!({ "cmd": "post", "hwnd": hello.hwnd, "msg": 0x0313, "lparam": lparam }),
+            ),
+        ];
+        for (how, open) in opens {
+            hello.call(json!({ "cmd": "click", "at": [content.0, content.1] })).unwrap();
+            sleep(300);
+            hello.call(open).unwrap();
+            sleep(600);
+            r.check(menu_open(&mut hello), format!("{how} opens the window menu"));
+            hello.call(json!({ "cmd": "key", "vk": 0x1b })).unwrap();
+            sleep(300);
+        }
+        r.check(!menu_open(&mut hello), "Esc closes the window menu".into());
+
         // Pen through WM_POINTER.
         let g = hello.geometry();
         let (cx, cy) = (g.client[0] + g.client[2] / 4, g.client[1] + g.client[3] * 3 / 4);

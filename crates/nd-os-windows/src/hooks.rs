@@ -85,19 +85,6 @@ impl OsHooks for WindowsHooks {
         if let Err(e) = backdrop::apply(chrome.hwnd(), Backdrop::Mica, dark(gpui_window)) {
             eprintln!("nd: Mica unavailable: {e}");
         }
-        // DWM draws its own 32 px caption buttons into the extended frame of a window with a
-        // system menu, and they show through the Mica client area behind ours.
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{
-                GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-                SetWindowLongPtrW, SetWindowPos, WS_SYSMENU,
-            };
-            let hwnd = chrome.hwnd();
-            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_SYSMENU.0 as isize));
-            let flags = SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
-            let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, flags);
-        }
         let handle = gpui_window.window_handle();
         let async_cx = cx.to_async();
         let diag = self.diag;

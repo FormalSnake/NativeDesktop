@@ -4,3 +4,5 @@
 0002-gpui_wgpu-create-the-gl-backend-only-when-vulkan-alo.patch
 0003-gpui_linux-ack-a-throttled-resize-configure-with-the.patch
 0004-gpui_linux-report-wp_presentation-present-times-thro.patch
+0005-gpui_windows-draw-the-new-size-in-WM_SIZING-before-t.patch
+0006-gpui_windows-tick-each-window-with-the-vblank-of-the.patch

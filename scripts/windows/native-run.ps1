@@ -63,6 +63,11 @@ function Report($label) {
 if ($monitors.Count -ge 2) {
     Place $a $monitors[0]; Place $b $monitors[1]; Report 'a on monitor 0, b on monitor 1'
     Place $a $monitors[1]; Place $b $monitors[0]; Report 'after moving: a on monitor 1, b on monitor 0'
+    # Across the seam of two side-by-side monitors, a window draws at the faster one's rate.
+    $seam = [Math]::Max($monitors[0].rect[0], $monitors[1].rect[0])
+    $top = [Math]::Max($monitors[0].rect[1], $monitors[1].rect[1]) + 100
+    Agent ('{"cmd":"set_frame","hwnd":' + $a.hwnd + ',"rect":[' + ($seam - 240) + ',' + $top + ',480,280]}') | Out-Null
+    Report 'a across the seam, half on each monitor'
 } else {
     Report 'one monitor'
 }

@@ -11,19 +11,26 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTCLOSE, HTLEFT, HTMAXBUTTON, HTMINBUTTON, HTTOP, HTTOPLEFT, HTTOPRIGHT,
-    IsZoomed, PostMessageW, SM_CXPADDEDBORDER, SM_CYFRAME, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, ShowWindowAsync,
-    WM_CLOSE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
-    WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE,
+    EnableMenuItem, GWL_STYLE, GetSystemMenu, GetWindowLongPtrW, GetWindowRect, HMENU, HTBOTTOMRIGHT, HTCAPTION,
+    HTCLIENT, HTCLOSE, HTLEFT, HTMAXBUTTON, HTMINBUTTON, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, MF_BYCOMMAND,
+    MF_ENABLED, MF_GRAYED, PostMessageW, SC_CLOSE, SC_KEYMENU, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE,
+    SM_CXPADDEDBORDER, SM_CYFRAME, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, WM_CLOSE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONUP, WM_POINTERDOWN, WM_POINTERUP,
+    WM_POINTERUPDATE, WM_SYSCOMMAND, WS_SYSMENU,
 };
 
 use crate::caption::{CaptionButton, CaptionLayout, CaptionState, Edge, Hit};
 use crate::pointer::{self, PointerEvent, PointerKind};
+
+/// Sent by the shell for the window menu of a taskbar button; not in the SDK headers.
+const WM_POPUPSYSTEMMENU: u32 = 0x0313;
 
 /// Subclass id; one chrome per window.
 const SUBCLASS_ID: usize = 0x6e64_6368;
@@ -46,6 +53,9 @@ struct Shared {
     scale: Cell<f32>,
     installed: Cell<bool>,
     on_event: RefCell<Option<Handler>>,
+    /// The window menu, taken while the window still had `WS_SYSMENU`: `GetSystemMenu` returns
+    /// none once it is cleared. The window owns it.
+    system_menu: Cell<HMENU>,
 }
 
 impl Shared {
@@ -123,11 +133,21 @@ impl Chrome {
             scale: Cell::new(crate::dpi::scale(hwnd)),
             installed: Cell::new(true),
             on_event: RefCell::new(None),
+            system_menu: Cell::new(unsafe { GetSystemMenu(hwnd, false) }),
         });
         let data = Rc::into_raw(shared.clone()) as usize;
         if !unsafe { SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, data) }.as_bool() {
             drop(unsafe { Rc::from_raw(data as *const Shared) });
             return Err("SetWindowSubclass failed".into());
+        }
+        // With a system menu, DWM draws its own 32 px caption buttons into a frame extended into
+        // the client area, and they show through a Mica backdrop behind the drawn ones. Without
+        // it the menu is opened here instead (`show_system_menu`).
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_SYSMENU.0 as isize));
+            let flags = SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
+            let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, flags);
         }
         Ok(Self { hwnd, shared })
     }
@@ -246,6 +266,23 @@ unsafe extern "system" fn subclass_proc(
             }
             LRESULT(0)
         }
+        // Alt+Space.
+        WM_SYSCOMMAND if wparam.0 & 0xfff0 == SC_KEYMENU as usize && lparam.0 == ' ' as isize => {
+            let mut frame = RECT::default();
+            let _ = unsafe { GetWindowRect(hwnd, &mut frame) };
+            let top = (shared.layout.borrow().title_height * shared.scale.get()) as i32;
+            show_system_menu(hwnd, shared.system_menu.get(), frame.left, frame.top + top);
+            LRESULT(0)
+        }
+        WM_NCRBUTTONUP if wparam.0 == HTCAPTION as usize => {
+            show_system_menu(hwnd, shared.system_menu.get(), x_of(lparam), y_of(lparam));
+            LRESULT(0)
+        }
+        // Shift+right-click on the taskbar button.
+        WM_POPUPSYSTEMMENU => {
+            show_system_menu(hwnd, shared.system_menu.get(), x_of(lparam), y_of(lparam));
+            LRESULT(0)
+        }
         WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
             if let Some(event) = pointer::read(hwnd, msg, wparam, shared.scale.get())
                 && matches!(event.kind, PointerKind::Pen | PointerKind::Touch)
@@ -273,5 +310,39 @@ unsafe extern "system" fn subclass_proc(
             unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
         }
         _ => forward(),
+    }
+}
+
+fn x_of(lparam: LPARAM) -> i32 {
+    lparam.0 as u16 as i16 as i32
+}
+
+fn y_of(lparam: LPARAM) -> i32 {
+    (lparam.0 >> 16) as u16 as i16 as i32
+}
+
+/// The window menu at the screen point `x, y`, its items enabled for the window's state, the
+/// chosen command sent back as the `WM_SYSCOMMAND` DefWindowProc acts on.
+fn show_system_menu(hwnd: HWND, menu: HMENU, x: i32, y: i32) {
+    unsafe {
+        if menu.is_invalid() {
+            return;
+        }
+        let zoomed = IsZoomed(hwnd).as_bool();
+        let state = |on: bool| MF_BYCOMMAND | if on { MF_ENABLED } else { MF_GRAYED };
+        for (command, on) in [
+            (SC_RESTORE, zoomed),
+            (SC_MOVE, !zoomed),
+            (SC_SIZE, !zoomed),
+            (SC_MINIMIZE, true),
+            (SC_MAXIMIZE, !zoomed),
+            (SC_CLOSE, true),
+        ] {
+            let _ = EnableMenuItem(menu, command, state(on));
+        }
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, hwnd, None);
+        if command.0 != 0 {
+            let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM(command.0 as usize), LPARAM(0));
+        }
     }
 }

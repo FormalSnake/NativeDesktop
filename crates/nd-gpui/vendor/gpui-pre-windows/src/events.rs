@@ -1837,7 +1837,10 @@ fn client_size_for(proposed: RECT, window: RECT, client: RECT) -> Size<DevicePix
 
 #[cfg(test)]
 mod sizing_tests {
-    use super::*;
+    // Not `super::*`: gpui's glob brings its own `test` attribute.
+    use super::client_size_for;
+    use gpui::{DevicePixels, size};
+    use windows::Win32::Foundation::RECT;
 
     #[test]
     fn sizing_rect_maps_to_the_client_size_it_will_get() {
