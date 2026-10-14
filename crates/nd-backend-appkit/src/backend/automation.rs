@@ -444,6 +444,20 @@ impl Walk<'_> {
             return;
         }
         let node = self.owners.get(&(view as *const NSView)).copied().or(node);
+        if let Some(id) = node
+            && let Some(Native::Custom(custom)) = self.state.nodes.get(&id)
+            && std::ptr::eq(custom.view(), view)
+        {
+            for paint in custom.paints() {
+                let under = paint.under.iter().fold(background, |b, f| over(*f, b));
+                let kind = match paint.text {
+                    Some((size, weight)) => PaintKind::Text { size, weight },
+                    None => PaintKind::Fill,
+                };
+                self.push(node, kind, paint.color, under, paint.label);
+            }
+            return;
+        }
         let appearance = view.effectiveAppearance();
         let alpha = view.alphaValue() as f32;
         if let Some(layer) = view.downcast_ref::<NdLayerView>()

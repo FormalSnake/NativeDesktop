@@ -8,6 +8,7 @@ mod backend;
 mod budget;
 mod canvas;
 mod clock;
+pub mod custom;
 mod drawn;
 mod gestures;
 mod host;

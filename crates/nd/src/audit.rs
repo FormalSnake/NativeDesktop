@@ -449,5 +449,8 @@ fn tokens(theme: &Theme) -> Vec<nd_ui::prelude::Hsla> {
         t.focus_ring,
         t.scrim,
     ];
-    base.iter().flat_map(|c| [*c, t.hover(*c), t.pressed(*c), t.disabled(*c)]).collect()
+    base.iter()
+        .chain(t.terminal.ansi.iter())
+        .flat_map(|c| [*c, t.hover(*c), t.pressed(*c), t.disabled(*c)])
+        .collect()
 }

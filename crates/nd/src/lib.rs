@@ -41,6 +41,8 @@ pub use nd_macros::unavailable;
 pub use nd_ui::{actions, backend, dispatch, events, transaction};
 #[cfg(feature = "runtime")]
 pub use nd_update as update;
+#[cfg(feature = "terminal")]
+pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]
 pub use nd_virtual as virtual_list;
 

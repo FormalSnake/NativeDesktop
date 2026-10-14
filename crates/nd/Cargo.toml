@@ -21,7 +21,9 @@ test = ["runtime", "nd-ui/test-support", "dep:wasm-bindgen-test"]
 audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
 # Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
-gpui = ["dep:nd-backend-gpui"]
+gpui = ["dep:nd-backend-gpui", "nd-terminal?/gpui"]
+# `nd::terminal`: the libghostty-vt terminal widget (nd-terminal).
+terminal = ["runtime", "dep:nd-terminal"]
 # gpui-fast in place of gpui-pre for the GPUI backend (`nd-gpui/fast`), measured against it on
 # e1504g (docs/plan/baselines.md).
 fast = ["runtime", "nd-gpui/fast"]
@@ -38,6 +40,7 @@ nd-components = { workspace = true, optional = true }
 nd-virtual = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 nd-update = { workspace = true, optional = true, features = ["client"] }
+nd-terminal = { workspace = true, optional = true }
 
 [dev-dependencies]
 nd = { path = ".", features = ["audit"] }

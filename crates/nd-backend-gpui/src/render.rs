@@ -415,6 +415,9 @@ impl<'a> Build<'a> {
                 self.virtual_list(id, node, window)
             }
             NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
+            NodeKind::Widget(w) if let Some(custom) = crate::custom::lookup(w.type_id) => {
+                custom.element(&crate::custom::CustomCx::new(self, id, &node.props), window)
+            }
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
                 div().into_any_element()

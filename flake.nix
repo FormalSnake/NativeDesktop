@@ -56,6 +56,9 @@
               cargo-nextest
               just
               sccache
+              # nd-terminal's build script compiles libghostty-vt at the commit libghostty-vt-sys
+              # pins, which needs Zig 0.16.
+              zig_0_16
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux (
               [

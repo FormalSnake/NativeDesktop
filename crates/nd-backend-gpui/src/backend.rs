@@ -391,6 +391,13 @@ impl Backend for GpuiBackend {
 
     fn release(&mut self, node: NodeId) {
         self.gestures.forget(node);
+        let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
+            Some(NodeKind::Widget(w)) => crate::custom::lookup(w.type_id),
+            _ => None,
+        };
+        if let Some(custom) = custom {
+            custom.released(node);
+        }
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {

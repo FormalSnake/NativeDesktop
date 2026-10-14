@@ -9,6 +9,7 @@ mod app_host;
 mod backend;
 mod button;
 mod controls;
+pub mod custom;
 mod diag;
 mod dispatch;
 mod events;
