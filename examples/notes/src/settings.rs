@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Notes settings. Lives in `config.toml` under the app's config dir, can be set from Nix through
 /// `programs.notes.settings`, and renders as the settings sheet below.
 #[derive(Settings, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "nd::schemars")]
 #[serde(default, deny_unknown_fields)]
 pub struct NotesSettings {
     /// One-line rows without a preview.
@@ -11,13 +12,12 @@ pub struct NotesSettings {
     /// Editor text size in points, before pinch zoom.
     #[settings(range = 11.0..=24.0, step = 1.0)]
     pub editor_font_size: f32,
-    /// Underline misspelled words.
-    pub spellcheck: bool,
     /// Where new notes start.
     pub new_note_folder: NewNoteFolder,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "nd::schemars")]
 #[serde(rename_all = "kebab-case")]
 pub enum NewNoteFolder {
     /// The folder shown in the sidebar.
@@ -28,7 +28,7 @@ pub enum NewNoteFolder {
 
 impl Default for NotesSettings {
     fn default() -> Self {
-        Self { compact_rows: false, editor_font_size: 15.0, spellcheck: true, new_note_folder: NewNoteFolder::Current }
+        Self { compact_rows: false, editor_font_size: 15.0, new_note_folder: NewNoteFolder::Current }
     }
 }
 

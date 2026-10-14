@@ -4572,6 +4572,7 @@ dependencies = [
  "nd-os-linux",
  "nd-os-web",
  "nd-os-windows",
+ "nd-settings",
  "nd-system",
  "nd-terminal",
  "nd-theme",
@@ -4897,6 +4898,7 @@ dependencies = [
 name = "nd-settings-derive"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5138,7 +5140,9 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "nd",
+ "nd-test",
  "serde",
+ "tempfile",
 ]
 
 [[package]]

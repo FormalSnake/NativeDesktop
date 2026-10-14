@@ -163,6 +163,11 @@ impl Window {
         self.id
     }
 
+    /// Focuses the element given `.id(id)` in this window; see [`App::focus_id`].
+    pub fn focus_id(&self, cx: &mut App, id: &str) -> bool {
+        cx.focus_id(self.id, id)
+    }
+
     pub fn title(&self) -> &SharedString {
         &self.title
     }

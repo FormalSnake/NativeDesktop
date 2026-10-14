@@ -217,6 +217,12 @@ pub struct App {
     pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
     pub(crate) current_window: Option<WindowId>,
+    /// Actions dispatched while their window was leased to a handler (a click handler's
+    /// `dispatch`): their listeners need the window, so they run when it is back.
+    deferred_actions: VecDeque<(WindowId, Box<dyn Action>)>,
+    /// Focus requests by element id made while the window's dispatch tree was leased to an action
+    /// listener, which is also when an app asks for the editor to be focused.
+    deferred_focus: VecDeque<(WindowId, String)>,
     /// Views that moved to another window in this frame; a second move is a render bug.
     moved: HashSet<EntityId>,
     /// Frames run so far.
@@ -249,6 +255,8 @@ impl App {
             propagate_action: false,
             rendering: Vec::new(),
             current_window: None,
+            deferred_actions: VecDeque::new(),
+            deferred_focus: VecDeque::new(),
             moved: HashSet::new(),
             frames: 0,
             retitled: HashMap::new(),
@@ -466,6 +474,11 @@ impl App {
     /// Bubbles `action` from the window's focused node to its root. Menus and toolbar items
     /// dispatch through here. Returns whether a listener handled it.
     pub fn dispatch_action(&mut self, window: WindowId, action: &dyn Action) -> bool {
+        // Listeners take the window, which a handler running for it holds: wait for it.
+        if self.windows.get(&window).is_some_and(|w| w.window.is_none()) {
+            self.deferred_actions.push_back((window, action.boxed_clone()));
+            return true;
+        }
         self.with_dispatch(window, false, |tree, app| tree.dispatch_action(action, app))
     }
 
@@ -506,6 +519,18 @@ impl App {
     /// follows in the next frame.
     pub fn focus(&mut self, window: WindowId, node: NodeId) -> bool {
         self.with_dispatch(window, false, |tree, _| tree.focus(node))
+    }
+
+    /// Moves the window's focus to the element given `.id(id)`. False when none is mounted or it
+    /// is not focusable.
+    pub fn focus_id(&mut self, window: WindowId, id: &str) -> bool {
+        // Inside an action listener the tree is out; the request lands once it is back.
+        if self.windows.get(&window).is_some_and(|w| w.tree.is_none()) {
+            self.deferred_focus.push_back((window, id.to_owned()));
+            return true;
+        }
+        let node = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.node_with_id(id));
+        node.is_some_and(|node| self.focus(window, node))
     }
 
     pub fn blur(&mut self, window: WindowId) {
@@ -601,6 +626,7 @@ impl App {
         if let Some(slot) = self.windows.get_mut(&id) {
             slot.window = Some(window);
         }
+        self.run_deferred_actions();
         result
     }
 
@@ -714,6 +740,27 @@ impl App {
         self.drain_events();
     }
 
+    /// Dispatches the actions that waited for their window to come back from a handler.
+    fn run_deferred_actions(&mut self) {
+        let mut waiting = VecDeque::new();
+        while let Some((window, action)) = self.deferred_actions.pop_front() {
+            if !self.windows.contains_key(&window) {
+                continue;
+            }
+            if self.windows[&window].window.is_none() {
+                waiting.push_back((window, action));
+            } else {
+                self.dispatch_action(window, &*action);
+            }
+        }
+        self.deferred_actions.append(&mut waiting);
+        while let Some((window, id)) = self.deferred_focus.pop_front() {
+            if self.windows.get(&window).is_some_and(|w| w.tree.is_some()) {
+                self.focus_id(window, &id);
+            }
+        }
+    }
+
     /// Delivers queued native events to their nodes' handlers, outside every entity lease.
     /// Hosts also call it when a nested run loop (menu tracking, a modal) returns.
     pub fn drain_events(&mut self) {
@@ -738,6 +785,7 @@ impl App {
                     tree.reaffirm.insert(event.node);
                 }
             }
+            self.run_deferred_actions();
             self.flush_effects();
         }
     }
