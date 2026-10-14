@@ -115,6 +115,9 @@ struct FontKey {
 pub struct TermIvars {
     id: u64,
     term: RefCell<Option<Term>>,
+    /// A draw is queued for the next main queue turn.
+    scheduled: StdCell<bool>,
+    presented: StdCell<u64>,
 }
 
 define_class!(
@@ -367,7 +370,7 @@ define_class!(
                 session.commit_text(&text);
                 self.after_input();
             }
-            self.setNeedsDisplay(true);
+            self.redraw();
         }
 
         #[unsafe(method(doCommandBySelector:))]
@@ -379,13 +382,13 @@ define_class!(
         fn set_marked_text(&self, string: &AnyObject, _selected: NSRange, _replacement: NSRange) {
             let text = string_of(string);
             self.with_term(|t| t.marked = (!text.is_empty()).then_some(text));
-            self.setNeedsDisplay(true);
+            self.redraw();
         }
 
         #[unsafe(method(unmarkText))]
         fn unmark_text(&self) {
             self.with_term(|t| t.marked = None);
-            self.setNeedsDisplay(true);
+            self.redraw();
         }
 
         #[unsafe(method(selectedRange))]
@@ -491,7 +494,12 @@ impl NdTerminalView {
             in_key_down: false,
             focused: false,
         };
-        let this = Self::alloc(mtm).set_ivars(TermIvars { id, term: RefCell::new(Some(term)) });
+        let this = Self::alloc(mtm).set_ivars(TermIvars {
+            id,
+            term: RefCell::new(Some(term)),
+            scheduled: StdCell::new(false),
+            presented: StdCell::new(0),
+        });
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         this.setWantsLayer(true);
         this.setLayerContentsRedrawPolicy(NSViewLayerContentsRedrawPolicy::DuringViewResize);
@@ -532,9 +540,32 @@ impl NdTerminalView {
         self.with_term(|t| t.guard = Some(guard));
     }
 
+    /// Frames this view has presented, for tests.
+    pub fn frames_presented(&self) -> u64 {
+        self.ivars().presented.get()
+    }
+
+    /// Draws on the next main queue turn, once however many requests arrive before it. The
+    /// layer is drawn directly rather than through `setNeedsDisplay`: Core Animation does not
+    /// ask a `CAMetalLayer` to display, and a grid that changes faster than the display stalls
+    /// on `nextDrawable` instead of queueing frames.
+    fn redraw(&self) {
+        if self.ivars().scheduled.replace(true) {
+            return;
+        }
+        let id = self.ivars().id;
+        DispatchQueue::main().exec_async(move || {
+            let view = VIEWS.with(|v| v.borrow().get(&id).and_then(Weak::load));
+            if let Some(view) = view {
+                view.ivars().scheduled.set(false);
+                view.draw();
+            }
+        });
+    }
+
     fn output_ready(&self) {
         self.pump();
-        self.setNeedsDisplay(true);
+        self.redraw();
     }
 
     /// Parses waiting output and delivers the session's events. True when more is waiting.
@@ -556,7 +587,7 @@ impl NdTerminalView {
         {
             wake.wake();
         }
-        self.setNeedsDisplay(true);
+        self.redraw();
     }
 
     fn set_props(&self, props: TerminalProps, tokens: &Theme) {
@@ -574,7 +605,7 @@ impl NdTerminalView {
             self.watch_output();
         }
         self.layout_grid();
-        self.setNeedsDisplay(true);
+        self.redraw();
     }
 
     fn set_theme(&self, tokens: &Theme) {
@@ -583,7 +614,7 @@ impl NdTerminalView {
             t.theme = TerminalTheme::from_theme(tokens, &t.props.colors);
             t.session.set_theme(&t.theme);
         });
-        self.setNeedsDisplay(true);
+        self.redraw();
     }
 
     fn paints(&self) -> Vec<CustomPaint> {
@@ -634,7 +665,10 @@ impl NdTerminalView {
                 bounds.size.height * scale,
             ));
         }
-        self.setNeedsDisplay(true);
+        // Inside the resize's layout pass: this frame presents with the new size.
+        if self.window().is_some() {
+            self.draw();
+        }
     }
 
     fn draw(&self) {
@@ -664,9 +698,10 @@ impl NdTerminalView {
         // The layer presents with the Core Animation transaction this display pass is in.
         command_buffer.waitUntilScheduled();
         drawable.present();
+        self.ivars().presented.set(self.ivars().presented.get() + 1);
         drop(term);
         if more {
-            self.setNeedsDisplay(true);
+            self.redraw();
         }
     }
 
@@ -680,7 +715,7 @@ impl NdTerminalView {
         session.set_focused(focused);
         emit.emit(FocusChanged { focused });
         wake.wake();
-        self.setNeedsDisplay(true);
+        self.redraw();
     }
 
     /// Device pixels from the grid's top left.
@@ -775,7 +810,7 @@ impl NdTerminalView {
             changed
         });
         if changed == Some(true) {
-            self.setNeedsDisplay(true);
+            self.redraw();
             let cursor = if hover.is_some() { NSCursor::pointingHandCursor() } else { NSCursor::IBeamCursor() };
             cursor.set();
         }

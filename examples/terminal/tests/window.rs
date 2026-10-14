@@ -28,9 +28,10 @@ mod window {
     use std::time::{Duration, Instant};
 
     use nd::appkit::AppHost;
-    use nd::appkit::objc2::Message;
     use nd::appkit::objc2::rc::Retained;
+    use nd::appkit::objc2::{Message, msg_send};
     use nd::appkit::objc2_app_kit::{NSResponder, NSView};
+    use nd::appkit::objc2_foundation::{NSNotFound, NSRange, NSString};
     use nd::terminal::{Command, SessionOptions, TerminalSession};
     use nd_ui::semantics::{MouseButton, PointerPhase, SyntheticInput};
     use nd_ui::{Keystroke, Point};
@@ -85,6 +86,9 @@ mod window {
         let view = find_terminal(&frame).expect("the terminal is an NdTerminalView in the window");
         let layer = view.layer().expect("layer-backed");
         assert!(layer.class().name().to_str().is_ok_and(|n| n.contains("CAMetalLayer")), "drawn by Metal");
+        let terminal_view =
+            view.downcast_ref::<nd::terminal::appkit::NdTerminalView>().expect("the terminal's own view class");
+        assert!(terminal_view.frames_presented() > 0, "the view presented a frame");
 
         // Click the middle of the terminal, in the content view's top-left coordinates.
         let r = view.convertRect_toView(view.bounds(), Some(&content));
@@ -107,12 +111,76 @@ mod window {
             "the terminal view is first responder"
         );
 
+        let before = terminal_view.frames_presented();
         for key in ["h", "i", "enter"] {
             let keystroke = Keystroke::parse(key).expect("keystroke");
             host.update(|app| app.synthesize(main.id(), &SyntheticInput::Key(keystroke))).expect("posted");
             pump(&host, Duration::from_millis(30));
         }
         pump_until(&host, "cat's echo", || session.screen_text() == "hi\nhi");
+
+        // Output redraws the view.
+        pump_until(&host, "a frame for the echo", || terminal_view.frames_presented() > before);
+
+        // An input method composes, then commits: marked text stays out of the program until
+        // `insertText:` arrives.
+        let marked = NSString::from_str("にほ");
+        let committed = NSString::from_str("日本");
+        let none = NSRange::new(NSNotFound as usize, 0);
+        let _: () = unsafe {
+            msg_send![&*view, setMarkedText: &*marked, selectedRange: NSRange::new(2, 0), replacementRange: none]
+        };
+        let has_marked: bool = unsafe { msg_send![&*view, hasMarkedText] };
+        assert!(has_marked, "composing text is marked");
+        pump(&host, Duration::from_millis(100));
+        assert_eq!(session.screen_text(), "hi\nhi", "nothing reaches the program while composing");
+        let _: () = unsafe { msg_send![&*view, insertText: &*committed, replacementRange: none] };
+        let has_marked: bool = unsafe { msg_send![&*view, hasMarkedText] };
+        assert!(!has_marked, "the commit ends the composition");
+        let enter = Keystroke::parse("enter").expect("keystroke");
+        host.update(|app| app.synthesize(main.id(), &SyntheticInput::Key(enter))).expect("posted");
+        pump_until(&host, "the committed text's echo", || session.screen_text() == "hi\nhi\n日本\n日本");
+
+        // A drag selects; the selection is the text under it. A cell joins it once the pointer
+        // passes its middle.
+        let (cell_w, cell_h) = {
+            let size = session.size();
+            let scale = window.backingScaleFactor();
+            (f64::from(size.cell_width) / scale, f64::from(size.cell_height) / scale)
+        };
+        let top = if flipped { r.origin.y } else { content.bounds().size.height - r.origin.y - r.size.height };
+        let row_y = |row: f64| (top + 6. + cell_h * (row + 0.5)) as f32;
+        let col_x = |col: f64| (r.origin.x + 6. + cell_w * (col + 0.5)) as f32;
+        host.update(|app| {
+            let drag = SyntheticInput::Drag {
+                from: Point { x: col_x(0.), y: row_y(0.) },
+                to: Point { x: col_x(1.4), y: row_y(1.) },
+                steps: 4,
+            };
+            app.synthesize(main.id(), &drag).expect("posted");
+        });
+        pump_until(&host, "the drag's selection", || session.selection_text().as_deref() == Some("hi\nhi"));
+
+        // A smaller window is a narrower grid.
+        let cols = session.size().cols;
+        let mut frame = window.frame();
+        frame.size.width -= 200.;
+        window.setFrame_display(frame, true);
+        pump_until(&host, "the grid to follow the window", || session.size().cols < cols);
+        // `ND_TERMINAL_HOLD=<seconds>` keeps the window up after the checks, printing its screen
+        // frame, for a look or a region capture.
+        if let Some(secs) = std::env::var("ND_TERMINAL_HOLD").ok().and_then(|v| v.parse::<u64>().ok()) {
+            let f = window.frame();
+            let screen = window.screen().map_or(0., |s| s.frame().size.height);
+            println!(
+                "ND_TERMINAL_FRAME {} {} {} {}",
+                f.origin.x,
+                screen - f.origin.y - f.size.height,
+                f.size.width,
+                f.size.height
+            );
+            pump(&host, Duration::from_secs(secs));
+        }
         let _ = std::fs::remove_dir_all(&dir);
         println!("ND_TERMINAL_WINDOW_OK");
         std::process::exit(0);

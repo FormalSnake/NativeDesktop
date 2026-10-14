@@ -92,4 +92,26 @@ mod gate_m9_terminal {
         pump_until(&s, "the exit", |s| s.exit_status().is_some());
         assert_eq!(s.exit_status().unwrap().code, 3);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_over_a_socket_is_a_remote_terminal() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+
+        let (local, mut remote) = UnixStream::pair().expect("socket pair");
+        let reader = local.try_clone().expect("clone");
+        let s =
+            TerminalSession::connect(Box::new(reader), Box::new(local), SessionOptions::default()).expect("connect");
+        remote.write_all(b"\x1b]0;remote\x07\x1b[32mremote$\x1b[0m ").expect("server writes");
+        pump_until(&s, "the server's prompt", |s| s.screen_text() == "remote$");
+        assert!(s.take_events().contains(&SessionEvent::TitleChanged("remote".into())));
+        assert!(s.key(&KeyInput::typed(Key::L, Mods::empty(), "l")));
+        let mut got = [0u8; 1];
+        remote.read_exact(&mut got).expect("the typed key reaches the server");
+        assert_eq!(&got, b"l");
+        // The server hanging up ends the session.
+        drop(remote);
+        pump_until(&s, "the hang-up", TerminalSession::is_closed);
+    }
 }
