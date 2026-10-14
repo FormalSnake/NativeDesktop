@@ -5,7 +5,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use nd::test::{Size, TestApp};
-use nd_test::{Role, TestHarness, expect};
+use nd_test::{TestHarness, expect};
 use notes::app::Notes;
 
 fn harness() -> TestHarness {
@@ -32,10 +32,4 @@ fn the_new_note_shortcut_works_from_the_editor() {
     expect(&app.get_by_test_id("body")).to_be_focused().unwrap();
     app.get_by_test_id("body").type_text("Plan the week").unwrap();
     expect(&app.get_by_test_id("note-5")).to_contain_text("Plan the week").unwrap();
-}
-
-#[test]
-fn the_toolbar_button_is_named_by_its_tooltip() {
-    let app = harness();
-    expect(&app.get_by_role(Role::Button).name("New Note")).to_be_attached().unwrap();
 }

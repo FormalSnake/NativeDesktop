@@ -289,16 +289,7 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
         NodeKind::Canvas => (Role::Canvas, "canvas".to_owned(), String::new()),
         NodeKind::Image => (Role::Image, "image".to_owned(), String::new()),
         NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Button>() => {
-            // An icon-only button is named by its tooltip, else its icon.
-            let label = props
-                .downcast_ref::<ButtonProps>()
-                .map(|p| match (&p.tooltip, &p.icon) {
-                    _ if !p.label.is_empty() => p.label.to_string(),
-                    (Some(tooltip), _) => tooltip.to_string(),
-                    (None, Some(icon)) => icon.to_string(),
-                    (None, None) => String::new(),
-                })
-                .unwrap_or_default();
+            let label = props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string()).unwrap_or_default();
             (Role::Button, "Button".to_owned(), label)
         }
         NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
