@@ -1,11 +1,10 @@
 //! The terminal's colours, taken from the nd theme: the default background and foreground are
-//! `surface.base` and `text.primary`, the selection is `selection`, and the eight ANSI hues map
-//! to the semantic tokens where one exists (red `danger`, green `success`, yellow `warning`, blue
-//! `accent`). Magenta and cyan have no token; they turn the accent's hue and keep its lightness,
-//! so they read at the accent's contrast. The 240 cube and grey entries stay xterm's.
+//! `surface.base` and `text.primary`, the selection is `selection`, and the 16 ANSI colours are
+//! the theme's `terminal.ansi` tokens (the semantic hues, made legible as text). The 240 cube
+//! and grey entries stay xterm's.
 
 use nd_theme::Theme;
-use nd_theme::color::{mix, over, with_alpha};
+use nd_theme::color::{over, with_alpha};
 use nd_ui::prelude::{Hsla, Rgba};
 
 /// An opaque sRGB colour, the form libghostty works in.
@@ -83,7 +82,7 @@ impl TerminalTheme {
         let background = overrides.background.unwrap_or(theme.surface.base);
         let foreground = overrides.foreground.unwrap_or(theme.text.primary);
         let base = with_alpha(background, 1.);
-        let ansi = overrides.ansi.unwrap_or_else(|| derive_ansi(theme, base, foreground));
+        let ansi = overrides.ansi.unwrap_or(theme.terminal.ansi);
         let ansi_rgb = ansi.map(|c| Rgb::from_hsla(c, base));
         Self {
             dark,
@@ -117,44 +116,4 @@ impl TerminalTheme {
         }
         self.ink(rgb)
     }
-}
-
-fn derive_ansi(theme: &Theme, base: Hsla, foreground: Hsla) -> [Hsla; 16] {
-    let fg = over(foreground, base);
-    let accent = over(theme.accent, base);
-    let turn = |degrees: f32| Hsla { h: (accent.h + degrees / 360.).rem_euclid(1.), ..accent };
-    let red = theme.danger;
-    let green = theme.success;
-    let yellow = theme.warning;
-    let blue = theme.accent;
-    let magenta = turn(80.);
-    let cyan = turn(-40.);
-    // Black and white swap ends with the scheme, as every light terminal theme does: "black" is
-    // the colour farthest from the background, "white" the nearest.
-    let (black, white) =
-        if theme.is_dark() { (mix(base, fg, 0.18), mix(base, fg, 0.78)) } else { (fg, mix(fg, base, 0.82)) };
-    let (bright_black, bright_white) =
-        if theme.is_dark() { (mix(base, fg, 0.45), fg) } else { (mix(fg, base, 0.4), mix(fg, base, 0.92)) };
-    let brighten = |c: Hsla| {
-        let c = over(c, base);
-        if theme.is_dark() { mix(c, fg, 0.25) } else { mix(c, fg, 0.2) }
-    };
-    [
-        black,
-        red,
-        green,
-        yellow,
-        blue,
-        magenta,
-        cyan,
-        white,
-        bright_black,
-        brighten(red),
-        brighten(green),
-        brighten(yellow),
-        brighten(blue),
-        brighten(magenta),
-        brighten(cyan),
-        bright_white,
-    ]
 }

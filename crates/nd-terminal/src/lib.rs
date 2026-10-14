@@ -10,6 +10,8 @@
 //! terminal("shell", &session).size_full().on_title_changed(|e, _, _| println!("{}", e.title))
 //! ```
 
+#[cfg(target_os = "macos")]
+pub mod appkit;
 mod element;
 pub mod frame;
 pub mod glyph;
@@ -19,6 +21,7 @@ pub mod icons;
 pub mod input;
 mod io;
 pub mod links;
+mod paint;
 mod session;
 pub mod sprite;
 pub mod theme;
@@ -41,4 +44,6 @@ pub fn register_presenters() {
     }
     #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
     gpui::register();
+    #[cfg(target_os = "macos")]
+    appkit::register();
 }

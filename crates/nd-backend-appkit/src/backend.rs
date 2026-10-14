@@ -24,7 +24,7 @@ use nd_components::{
     ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
-use nd_theme::{NativeTheme, Scheme, ThemeRefinement};
+use nd_theme::{NativeTheme, Scheme, Theme, ThemeRefinement, ThemeRegistry};
 use nd_ui::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch, SurfaceOp};
 use nd_ui::events::EventQueue;
 use nd_ui::{Button, ButtonProps, DivProps, RootProps, WindowControls, WindowControlsProps};
@@ -92,6 +92,8 @@ enum Native {
     /// An `nd-virtual` list, table or tree.
     List(ListNative),
     Form(FormNative),
+    /// A widget a crate outside the backend registered (`crate::custom`).
+    Custom(Box<dyn crate::custom::CustomNative>),
     /// Logical: the form draws sections and rows; these hold what goes in them.
     FormSection(FormSectionProps, Vec<NodeId>),
     FormRow(FormRowProps, Option<NodeId>),
@@ -120,6 +122,7 @@ impl Native {
             Native::Banner(b) => Some(b.view()),
             Native::List(l) => Some(l.view()),
             Native::Form(f) => Some(&f.outer),
+            Native::Custom(c) => Some(c.view()),
             Native::FormSection(..) | Native::FormRow(..) => None,
             Native::Toolbar(_) | Native::SystemItem | Native::ToolbarTab(_) | Native::Inset(..) => None,
         }
@@ -172,6 +175,8 @@ struct State {
     /// `overflow_*_scroll()` divs: the scroll view inside the div's layer view and the document
     /// their children go in.
     scrolls: HashMap<NodeId, crate::scroll_view::ScrollBox>,
+    /// The app's resolved themes, for custom widgets that draw their own content.
+    registry: Option<ThemeRegistry>,
     weak: Weak<RefCell<State>>,
 }
 
@@ -233,6 +238,7 @@ impl AppKitBackend {
                 row_tags: HashMap::new(),
                 cell_tags: HashMap::new(),
                 scrolls: HashMap::new(),
+                registry: None,
                 weak: weak.clone(),
             })
         });
@@ -383,6 +389,13 @@ impl AppKitBackend {
                 state.apply_dirty_themes();
             }
         }
+    }
+
+    /// The app's theme registry, which custom widgets draw their own content from.
+    pub fn set_theme_registry(&self, registry: ThemeRegistry) {
+        let mut state = self.0.borrow_mut();
+        state.registry = Some(registry);
+        state.retheme_custom(None);
     }
 
     /// The app's forced appearance (`NSApp.appearance`); `None` follows the system.
@@ -835,8 +848,59 @@ impl State {
 
     fn apply_dirty_themes(&mut self) {
         let windows: Vec<WindowId> = self.theme_dirty.drain().collect();
+        for window in &windows {
+            self.apply_theme(*window);
+        }
         for window in windows {
-            self.apply_theme(window);
+            self.retheme_custom(Some(window));
+        }
+    }
+
+    /// The theme in effect at `node`: its window's, under every subtree scope above it.
+    fn theme_of(&self, node: NodeId, window: WindowId) -> Theme {
+        let fallback;
+        let registry = match &self.registry {
+            Some(r) => r,
+            None => {
+                fallback = ThemeRegistry::default();
+                &fallback
+            }
+        };
+        let mut chain = Vec::new();
+        let mut at = Some(node);
+        while let Some(id) = at {
+            if let Some(refinement) = self.scopes.get(&id).and_then(|s| s.theme.clone()) {
+                chain.push(refinement);
+            }
+            at = self.parents.get(&id).copied();
+        }
+        let mut composed: Option<ThemeRefinement> = None;
+        for refinement in chain.into_iter().rev() {
+            composed = Some(match composed {
+                Some(outer) => refinement.over(&outer),
+                None => refinement,
+            });
+        }
+        match composed {
+            Some(r) => registry.resolve_subtree(Some(window), &r),
+            None => registry.window_theme(window).clone(),
+        }
+    }
+
+    /// Hands custom widgets in `window` (every window for `None`) the theme at their node.
+    fn retheme_custom(&mut self, window: Option<WindowId>) {
+        let nodes: Vec<(NodeId, WindowId)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| matches!(n, Native::Custom(_)))
+            .filter_map(|(id, _)| Some((*id, *self.node_window.get(id)?)))
+            .filter(|(_, w)| window.is_none_or(|x| x == *w))
+            .collect();
+        for (node, window) in nodes {
+            let theme = self.theme_of(node, window);
+            if let Some(Native::Custom(c)) = self.nodes.get_mut(&node) {
+                c.set_theme(&theme);
+            }
         }
     }
 
@@ -987,6 +1051,18 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<FormRow>(w) => {
                 Native::FormRow(props::<FormRowProps>(p, "FormRow").clone(), None)
             }
+            NodeKind::Widget(w) if let Some(custom) = crate::custom::lookup(w.type_id) => {
+                let cx = crate::custom::CustomCx {
+                    mtm,
+                    node,
+                    window,
+                    props: p,
+                    emit: emit(),
+                    wake: crate::custom::Waker(state.wake.clone()),
+                    theme: state.theme_of(node, window),
+                };
+                Native::Custom(custom.create(&cx))
+            }
             NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
                 panic!("the AppKit backend has no {kind:?} yet")
             }
@@ -1040,7 +1116,24 @@ impl Backend for AppKitBackend {
         let mut recreate_select = None;
         let mut form_changed = false;
         let mut scroll_axes = None;
+        let custom_cx = match (state.nodes.get(&node), window) {
+            (Some(Native::Custom(_)), Some(window)) => Some(crate::custom::CustomCx {
+                mtm: state.mtm,
+                node,
+                window,
+                props: &patch.new,
+                emit: events.emitter(node),
+                wake: crate::custom::Waker(wake.clone()),
+                theme: state.theme_of(node, window),
+            }),
+            _ => None,
+        };
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
+            Native::Custom(c) => {
+                if let Some(cx) = &custom_cx {
+                    c.update(cx);
+                }
+            }
             Native::Layer(v) => {
                 let div = props::<DivProps>(&patch.new, "View");
                 v.set_props(&ViewLook::from_style(&div.style, expose));
@@ -1287,6 +1380,7 @@ impl Backend for AppKitBackend {
             Native::Select(s) => s.measure(),
             Native::Slider(s) => s.measure(),
             Native::Banner(b) => b.measure(),
+            Native::Custom(c) => c.measure(width),
             Native::Separator(b, vertical) => {
                 let s = b.fittingSize();
                 if *vertical {

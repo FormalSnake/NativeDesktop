@@ -43,6 +43,14 @@ pub struct AccentContainer {
 /// Fonts by role. `body` is what text uses when it names none.
 pub type FontTokens = crate::preset::Fonts;
 
+/// The 16 ANSI colours a terminal draws program output with, black through bright white. The
+/// hues are the semantic tokens (red `danger`, green `success`, yellow `warning`, blue `accent`;
+/// magenta and cyan turn the accent's hue), each made legible as text on the base surface.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalTokens {
+    pub ansi: [Hsla; 16],
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     pub preset: Preset,
@@ -68,6 +76,7 @@ pub struct Theme {
     pub fonts: FontTokens,
     pub motion: Motion,
     pub materials: Materials,
+    pub terminal: TerminalTokens,
     /// The base colours this theme was derived from.
     pub palette: Palette,
 }
@@ -120,6 +129,7 @@ impl Theme {
             fonts: metrics.fonts,
             motion: metrics.motion,
             materials: metrics.materials,
+            terminal: terminal_tokens(scheme, &p, text_primary),
             palette,
         }
     }
@@ -170,5 +180,41 @@ impl Theme {
         let towards =
             if is_dark(over(color, self.surface.base)) { nd_gpui::gpui::white() } else { nd_gpui::gpui::black() };
         mix(color, with_alpha(towards, color.a), amount)
+    }
+}
+
+/// See [`TerminalTokens`]. Black and white swap ends with the scheme, as every light terminal
+/// theme does: black is the colour farthest from the background, white the nearest.
+fn terminal_tokens(scheme: Scheme, p: &Palette, text: Hsla) -> TerminalTokens {
+    let base = with_alpha(p.surface, 1.);
+    let fg = over(text, base);
+    let dark = scheme.is_dark();
+    let text_on = |c: Hsla| legible(over(c, base), &[base], 4.5);
+    let accent = over(p.accent, base);
+    let turn = |degrees: f32| Hsla { h: (accent.h + degrees / 360.).rem_euclid(1.), ..accent };
+    let hues = [p.danger, p.success, p.warning, p.accent, turn(80.), turn(-40.)].map(text_on);
+    let bright = hues.map(|c| text_on(mix(c, fg, if dark { 0.25 } else { 0.2 })));
+    let (black, white) = if dark { (mix(base, fg, 0.18), mix(base, fg, 0.78)) } else { (fg, mix(fg, base, 0.82)) };
+    let (bright_black, bright_white) =
+        if dark { (text_on(mix(base, fg, 0.55)), fg) } else { (text_on(mix(fg, base, 0.4)), mix(fg, base, 0.92)) };
+    TerminalTokens {
+        ansi: [
+            black,
+            hues[0],
+            hues[1],
+            hues[2],
+            hues[3],
+            hues[4],
+            hues[5],
+            white,
+            bright_black,
+            bright[0],
+            bright[1],
+            bright[2],
+            bright[3],
+            bright[4],
+            bright[5],
+            bright_white,
+        ],
     }
 }

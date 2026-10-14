@@ -30,6 +30,7 @@ use crate::glyph::{self, Ink, SYMBOLS_FAMILY, SYMBOLS_FONT};
 use crate::icons;
 use crate::input::{Key, KeyAction, KeyInput, Mods, MouseButton, key_for_name, unshifted_us};
 use crate::links::Link;
+use crate::paint::{self, cell_colors};
 use crate::session::{GridSize, TerminalSession, WakerGuard};
 use crate::sprite;
 use crate::theme::{Rgb, TerminalTheme};
@@ -166,57 +167,14 @@ impl CustomWidget for GpuiTerminal {
     }
 }
 
-/// What the appearance audit reads: the background, each distinct fill and each distinct text
-/// colour on what it sits on.
+/// What the appearance audit reads.
 fn record_paints(cx: &CustomCx<'_>, session: &TerminalSession, theme: &TerminalTheme, font_size: f32) {
-    cx.record_fill("terminal", theme.background, &[]);
-    session.frame(|frame| {
-        let mut fills: Vec<Hsla> = Vec::new();
-        let mut texts: Vec<(Hsla, Option<Hsla>, bool)> = Vec::new();
-        for row in &frame.rows {
-            for cell in &row.cells {
-                let (fg, bg) = cell_colors(cell, theme, frame);
-                if let Some(bg) = bg
-                    && !fills.contains(&bg)
-                {
-                    fills.push(bg);
-                    cx.record_fill("cell background", bg, &[theme.background]);
-                }
-                if cell.is_blank() || cell.attrs.contains(Attrs::INVISIBLE) {
-                    continue;
-                }
-                let bold = cell.attrs.contains(Attrs::BOLD);
-                if !texts.contains(&(fg, bg, bold)) {
-                    texts.push((fg, bg, bold));
-                    let under: Vec<Hsla> = std::iter::once(theme.background).chain(bg).collect();
-                    let weight = if bold { 700. } else { 400. };
-                    cx.record_text(row.grapheme(cell), fg, &under, font_size, weight);
-                }
-            }
+    for mark in session.frame(|frame| paint::marks(frame, theme, font_size)) {
+        match mark.text {
+            Some((size, weight)) => cx.record_text(&mark.label, mark.color, &mark.under, size, weight),
+            None => cx.record_fill(&mark.label, mark.color, &mark.under),
         }
-        if let Some(cursor) = frame.cursor {
-            let color = cursor.color.map_or(theme.cursor, Rgb::to_hsla);
-            cx.record_fill("cursor", color, &[theme.background]);
-        }
-    });
-}
-
-/// The colours a cell draws with: its text, and its fill when it has one of its own.
-fn cell_colors(cell: &crate::frame::Cell, theme: &TerminalTheme, frame: &Frame) -> (Hsla, Option<Hsla>) {
-    if cell.attrs.contains(Attrs::SELECTED) {
-        return (theme.foreground, Some(theme.selection));
     }
-    let mut fg = match cell.fg {
-        Some(rgb) if rgb == frame.foreground => theme.foreground,
-        Some(rgb) => theme.ink(rgb),
-        None if frame.foreground == theme.foreground_rgb => theme.foreground,
-        None => frame.foreground.to_hsla(),
-    };
-    if cell.attrs.contains(Attrs::FAINT) {
-        fg = with_alpha(fg, fg.a * 0.5);
-    }
-    let bg = cell.bg.map(|rgb| if rgb == theme.background_rgb { theme.background } else { theme.fill(rgb) });
-    (fg, bg)
 }
 
 struct TerminalElement {

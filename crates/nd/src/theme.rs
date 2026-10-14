@@ -58,6 +58,7 @@ pub(crate) fn sync(cx: &mut App) {
         let app = registry.app_native();
         let system = registry.system_scheme();
         if let Some(backend) = cx.backend_as::<nd_backend_appkit::AppKitBackend>() {
+            backend.set_theme_registry(registry.clone());
             backend.set_system_scheme(system);
             backend.set_default_theme(app.clone());
             backend.set_app_appearance(app.appearance);
