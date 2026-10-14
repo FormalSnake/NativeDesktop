@@ -6,15 +6,17 @@
 //! The lock is an advisory `flock` on `real-input.lock` under `~/Library/Caches/nd/` (macOS),
 //! `%LOCALAPPDATA%\nd\` (Windows), `$XDG_CACHE_HOME/nd/` or `~/.cache/nd/` elsewhere;
 //! `ND_LOCK_DIR` overrides the directory. The
-//! holder writes its pid, worktree and purpose into the file, and a waiting run prints them. The
-//! OS drops the lock when the holder exits, crashed or not.
+//! holder writes its pid, worktree and purpose into `real-input.holder` beside it, and a waiting
+//! run prints them (a separate file because Windows locks are mandatory: nobody else can read a
+//! locked file). The OS drops the lock when the holder exits, crashed or not.
 
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const LOCK_FILE: &str = "real-input.lock";
+pub const HOLDER_FILE: &str = "real-input.holder";
 
 pub fn lock_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ND_LOCK_DIR") {
@@ -43,6 +45,7 @@ fn worktree() -> String {
 pub struct MachineLock {
     file: File,
     path: PathBuf,
+    holder: PathBuf,
 }
 
 impl MachineLock {
@@ -53,7 +56,7 @@ impl MachineLock {
 
 impl Drop for MachineLock {
     fn drop(&mut self) {
-        let _ = self.file.set_len(0);
+        let _ = std::fs::write(&self.holder, "");
         let _ = self.file.unlock();
     }
 }
@@ -65,7 +68,7 @@ pub fn holder() -> String {
 
 pub fn holder_in(dir: &Path) -> String {
     let mut text = String::new();
-    if let Ok(mut file) = File::open(dir.join(LOCK_FILE)) {
+    if let Ok(mut file) = File::open(dir.join(HOLDER_FILE)) {
         let _ = file.read_to_string(&mut text);
     }
     text.trim().to_owned()
@@ -79,12 +82,13 @@ fn open(dir: &Path) -> io::Result<(File, PathBuf)> {
     Ok((file, path))
 }
 
-fn record(file: &mut File, purpose: &str) -> io::Result<()> {
+/// Names the new holder; returns the file it wrote, which the lock empties when it drops.
+fn record(dir: &Path, purpose: &str) -> io::Result<PathBuf> {
     let since = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    file.set_len(0)?;
-    file.seek(SeekFrom::Start(0))?;
-    writeln!(file, "pid={} worktree={} purpose={purpose} since={since}", std::process::id(), worktree())?;
-    file.flush()
+    let path = dir.join(HOLDER_FILE);
+    let line = format!("pid={} worktree={} purpose={purpose} since={since}\n", std::process::id(), worktree());
+    std::fs::write(&path, line)?;
+    Ok(path)
 }
 
 /// Takes the lock, waiting for the current holder if there is one. While waiting it prints
@@ -95,7 +99,7 @@ pub fn acquire(purpose: &str) -> io::Result<MachineLock> {
 
 /// [`acquire`] on a lock file in `dir`.
 pub fn acquire_in(dir: &Path, purpose: &str) -> io::Result<MachineLock> {
-    let (mut file, path) = open(dir)?;
+    let (file, path) = open(dir)?;
     match file.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => {
@@ -106,8 +110,8 @@ pub fn acquire_in(dir: &Path, purpose: &str) -> io::Result<MachineLock> {
         }
         Err(TryLockError::Error(e)) => return Err(e),
     }
-    record(&mut file, purpose)?;
-    Ok(MachineLock { file, path })
+    let holder = record(dir, purpose)?;
+    Ok(MachineLock { file, path, holder })
 }
 
 /// How long [`window_test`] waits for the lock before failing, in seconds. Under nextest the
@@ -116,7 +120,7 @@ pub const WINDOW_WAIT_SECS: u64 = 600;
 
 /// [`acquire_in`] that gives up after `timeout` with a `TimedOut` error naming the holder.
 pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::Result<MachineLock> {
-    let (mut file, path) = open(dir)?;
+    let (file, path) = open(dir)?;
     let start = Instant::now();
     let mut announced = false;
     loop {
@@ -146,8 +150,8 @@ pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::R
             Err(TryLockError::Error(e)) => return Err(e),
         }
     }
-    record(&mut file, purpose)?;
-    Ok(MachineLock { file, path })
+    let holder = record(dir, purpose)?;
+    Ok(MachineLock { file, path, holder })
 }
 
 /// The lock a test holds for as long as it has an on-screen window or needs key status, taken
@@ -178,11 +182,11 @@ pub fn try_acquire(purpose: &str) -> io::Result<Option<MachineLock>> {
 }
 
 pub fn try_acquire_in(dir: &Path, purpose: &str) -> io::Result<Option<MachineLock>> {
-    let (mut file, path) = open(dir)?;
+    let (file, path) = open(dir)?;
     match file.try_lock() {
         Ok(()) => {
-            record(&mut file, purpose)?;
-            Ok(Some(MachineLock { file, path }))
+            let holder = record(dir, purpose)?;
+            Ok(Some(MachineLock { file, path, holder }))
         }
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(e)) => Err(e),

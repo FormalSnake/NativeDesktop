@@ -46,10 +46,23 @@ fn filled(lines: usize) -> TerminalSession {
 }
 
 /// CPU time the calling thread has used, in milliseconds.
+#[cfg(unix)]
 fn thread_cpu_ms() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
     ts.tv_sec as f64 * 1000. + ts.tv_nsec as f64 / 1e6
+}
+
+/// CPU time the calling thread has used, in milliseconds (kernel plus user, 100 ns units).
+#[cfg(windows)]
+fn thread_cpu_ms() -> f64 {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let (mut created, mut exited, mut kernel, mut user) =
+        (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+    let _ = unsafe { GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user) };
+    let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32 | u64::from(t.dwLowDateTime)) as f64;
+    (ticks(kernel) + ticks(user)) / 10_000.
 }
 
 /// Times one frame: wall and main-thread CPU milliseconds.

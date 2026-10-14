@@ -248,6 +248,12 @@ mod gate_m2 {
     }
 
     pub fn capture_renders_the_window() {
+        // GPUI renders headless only on macOS (Metal) and Linux (wgpu); Windows captures arrive
+        // with the Fluent goldens (M3).
+        if nd_gpui::gpui_platform::current_headless_renderer().ok().flatten().is_none() {
+            println!("skipped: GPUI has no headless renderer on this OS");
+            return;
+        }
         // The headless app has to outlive the capture.
         let Opened { cx: _cx, host, window, .. } = open_counter();
         let capture = host.job(|app| app.capture(window)).expect("capture");

@@ -408,6 +408,12 @@ mod gate_m6 {
     }
 
     pub fn gpui_layout_goldens() {
+        // GPUI renders headless only on macOS (Metal) and Linux (wgpu); Windows captures arrive
+        // with the Fluent goldens (M3).
+        if nd_gpui::gpui_platform::current_headless_renderer().ok().flatten().is_none() {
+            println!("skipped: GPUI has no headless renderer on this OS");
+            return;
+        }
         let mut failed = Vec::new();
         for scheme in [Scheme::Light, Scheme::Dark] {
             for view in ["split", "status", "alert", "about"] {

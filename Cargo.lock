@@ -955,6 +955,7 @@ name = "chrome"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "ndshell",
 ]
 
 [[package]]
@@ -4578,6 +4579,7 @@ dependencies = [
  "nd-update",
  "nd-virtual",
  "nd-webview",
+ "ndshell",
  "toml 0.9.12+spec-1.1.0",
  "wasm-bindgen-test",
 ]
@@ -4586,6 +4588,7 @@ dependencies = [
 name = "nd-automation"
 version = "0.1.0"
 dependencies = [
+ "interprocess",
  "nd-core",
  "nd-ui",
  "serde",
@@ -4846,7 +4849,9 @@ name = "nd-os-windows"
 version = "0.1.0"
 dependencies = [
  "nd-backend-gpui",
+ "nd-core",
  "nd-gpui",
+ "nd-ui",
  "ndshell",
  "raw-window-handle",
  "serde_json",
@@ -4958,12 +4963,14 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "portable-pty",
  "swash",
+ "windows 0.62.2",
 ]
 
 [[package]]
 name = "nd-test"
 version = "0.1.0"
 dependencies = [
+ "interprocess",
  "nd-automation",
  "nd-core",
  "nd-gpui",
@@ -5943,6 +5950,7 @@ name = "overrides"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "ndshell",
  "png 0.17.16",
 ]
 
