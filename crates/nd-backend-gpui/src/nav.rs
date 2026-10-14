@@ -744,6 +744,9 @@ impl GpuiBackend {
     /// (Tab, the arrows, Return, Esc and typing) and secondary-Return before nd's bindings, as
     /// a native field would; other secondary shortcuts still reach nd.
     pub(crate) fn drawn_claims_key(&self, keystroke: &Keystroke, window: &gpui::Window) -> bool {
+        if self.dialog_claims_key(keystroke, window) {
+            return true;
+        }
         let m = &keystroke.modifiers;
         if (m.platform || m.control) && keystroke.key != "enter" {
             return false;
@@ -759,6 +762,9 @@ impl GpuiBackend {
     /// Whether a presented palette covers `window`: its scrim takes every press, so nd's gesture
     /// recognizers under it see none.
     pub(crate) fn palette_covers(&self, window: WindowId) -> bool {
+        if self.dialog_covers(window) {
+            return true;
+        }
         self.drawn.borrow().iter().any(|(node, d)| {
             d.try_borrow().is_ok_and(|d| matches!(&*d, Drawn::Palette(p) if p.model.is_presented()))
                 && self.window_of(*node) == Some(window)
@@ -773,6 +779,7 @@ impl GpuiBackend {
     /// before the window builds: focus moves into an opened palette and back out of a closed
     /// one, a shown toast starts its timeout. Needs GPUI's app, which building does not have.
     pub(crate) fn prepare_drawn(&self, window_id: nd_core::WindowId, window: &mut gpui::Window, cx: &mut gpui::App) {
+        self.prepare_dialogs(window_id, window, cx);
         let nodes: Vec<(NodeId, nd_ui::backend::Props, bool)> = {
             let Ok(state) = self.state.try_borrow() else { return };
             state

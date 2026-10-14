@@ -19,6 +19,12 @@ pub mod prelude {
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
     pub use crate::chrome::fuzzy;
+    pub use crate::chrome::panes::{self, PaneResized, dock_view, pane_tree, tiles_view};
+    pub use crate::chrome::{
+        AboutPanel, AlertPresentation, Split, SplitPane, SplitResized, StatusPage, TabAddRequested, TabChanged,
+        TabCloseRequested, TabPage, TabStrip, TabStyle, TabView, open_tab, split, split_pane, status_page, tab_page,
+        tab_strip, tab_view,
+    };
     pub use crate::chrome::{
         ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
         PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,
@@ -88,6 +94,10 @@ pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 pub struct Manifest {
     pub name: &'static str,
     pub version: &'static str,
+    /// `[app] id` of `nativedesktop.toml`, baked in by `nd::build::app()`.
+    pub id: Option<&'static str>,
+    /// `[app] display_name`, likewise.
+    pub display_name: Option<&'static str>,
     pub updates: Option<nd_update::UpdateConfig>,
 }
 
@@ -97,6 +107,8 @@ macro_rules! manifest {
         $crate::Manifest {
             name: env!("CARGO_PKG_NAME"),
             version: env!("CARGO_PKG_VERSION"),
+            id: ::core::option_env!("ND_APP_ID"),
+            display_name: ::core::option_env!("ND_APP_DISPLAY_NAME"),
             updates: $crate::update::build_config!(),
         }
     };
@@ -207,11 +219,13 @@ impl Application {
         {
             nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "appkit"));
             start_updates(&self.manifest);
+            crate::system::identify(&self.manifest);
             let files = crate::theme::ThemeFiles::for_app(self.manifest.name);
             let watched = files.clone();
             nd_backend_appkit::run_with(
                 move |cx| {
                     mac::install(cx, &files, self.theme.unwrap_or_default(), self.patterns);
+                    nd_backend_appkit::on_file_drop(crate::system::file_dropped);
                     init(cx);
                     crate::theme::sync(cx);
                 },
@@ -220,6 +234,8 @@ impl Application {
                     if let Err(e) = nd_automation::start_from_env(move |job| jobs.send(job)) {
                         eprintln!("nd: automation socket: {e}");
                     }
+                    let jobs = sender.clone();
+                    crate::system::connect(move |job| jobs.send(job));
                     sources::watch(&watched, move |job| sender.send(job));
                 },
             )
@@ -232,6 +248,7 @@ impl Application {
     fn run_gpui<R>(self, init: impl FnOnce(&mut nd_ui::App) -> R + 'static) -> Result {
         nd_diag::init(nd_diag::Config::new(self.manifest.name, self.manifest.version, "gpui"));
         start_updates(&self.manifest);
+        crate::system::identify(&self.manifest);
         let files = crate::theme::ThemeFiles::for_app(self.manifest.name);
         let watched = files.clone();
         let app_theme = self.theme.unwrap_or_default();
@@ -246,9 +263,20 @@ impl Application {
             hooks,
             move |cx| {
                 gpui_host::install(cx, &files, app_theme, patterns);
-                if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>() {
-                    let chrome = nd_backend_gpui::GpuiChrome::new(backend.clone());
-                    cx.set_global(nd_components::Chrome(chrome));
+                if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>().cloned() {
+                    cx.set_global(nd_components::Chrome(nd_backend_gpui::GpuiChrome::new(backend.clone())));
+                    backend.on_file_drop(crate::system::file_dropped);
+                    // AppKit's own notifications report activation on macOS.
+                    if !cfg!(target_os = "macos") {
+                        backend.on_activation(|active| {
+                            let event = if active {
+                                crate::system::SystemEvent::Activated
+                            } else {
+                                crate::system::SystemEvent::Deactivated
+                            };
+                            crate::system::system().emit(event);
+                        });
+                    }
                 }
                 init(cx);
                 crate::theme::sync(cx);
@@ -258,6 +286,8 @@ impl Application {
                 if let Err(e) = nd_automation::start_from_env(move |job| jobs.send(job)) {
                     eprintln!("nd: automation socket: {e}");
                 }
+                let jobs = sender.clone();
+                crate::system::connect(move |job| jobs.send(job));
                 // A browser tab has no theme files to watch.
                 #[cfg(not(target_arch = "wasm32"))]
                 sources::watch(&watched, move |job| sender.send(job));

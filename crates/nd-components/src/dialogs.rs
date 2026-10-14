@@ -1,6 +1,7 @@
-//! Alerts and file pickers. Each backend shows the platform's own (`NSAlert`, `NSOpenPanel` on
-//! macOS; task dialogs and `IFileDialog` on Windows; the portal on Linux); results come back
-//! through a callback run outside every native callback (ARCHITECTURE.md 3.13).
+//! Alerts, the about panel and file pickers. Each backend shows the platform's own (`NSAlert`,
+//! the standard about panel and `NSOpenPanel` on macOS; task dialogs and `IFileDialog` on
+//! Windows; a drawn libadwaita alert dialog and the portal on Linux); results come back through
+//! a callback run outside every native callback (ARCHITECTURE.md 3.13).
 
 use std::path::PathBuf;
 
@@ -28,6 +29,17 @@ pub struct AlertButton {
     pub role: ButtonRole,
 }
 
+/// Where an alert shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AlertPresentation {
+    /// Attached to its window: a sheet on macOS, a dialog over a scrim in the window elsewhere.
+    /// Only that window waits for the answer.
+    #[default]
+    Sheet,
+    /// Its own window in front of the app, which waits for the answer.
+    Modal,
+}
+
 /// An alert. The first button is the default; with none, the platform's OK is shown.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Alert {
@@ -35,6 +47,7 @@ pub struct Alert {
     pub message: Option<SharedString>,
     pub style: AlertStyle,
     pub buttons: Vec<AlertButton>,
+    pub presentation: AlertPresentation,
 }
 
 impl Alert {
@@ -64,6 +77,75 @@ impl Alert {
 
     pub fn destructive(mut self, label: impl Into<SharedString>) -> Self {
         self.buttons.push(AlertButton { label: label.into(), role: ButtonRole::Destructive });
+        self
+    }
+
+    /// Shows the alert in front of the whole app instead of attached to its window.
+    pub fn modal(mut self) -> Self {
+        self.presentation = AlertPresentation::Modal;
+        self
+    }
+
+    /// Asks before a destructive action: `action` styled destructive (red on macOS, the theme's
+    /// danger colour elsewhere) and a Cancel that Esc presses. Index 0 of the response is the
+    /// action, 1 is Cancel.
+    pub fn confirm(title: impl Into<SharedString>, action: impl Into<SharedString>) -> Self {
+        Self::new(title).style(AlertStyle::Warning).destructive(action).cancel("Cancel")
+    }
+
+    /// The index the platform reports when the user dismisses the alert (Esc, a click on the
+    /// scrim where that closes it): the cancel button, else the last.
+    pub fn cancel_index(&self) -> usize {
+        self.buttons.iter().position(|b| b.role == ButtonRole::Cancel).unwrap_or(self.buttons.len().saturating_sub(1))
+    }
+}
+
+/// What the about panel shows. Fields left empty come from the app's bundle (macOS) or its
+/// package metadata.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AboutPanel {
+    pub name: Option<SharedString>,
+    pub version: Option<SharedString>,
+    /// The build, shown after the version in parentheses on macOS.
+    pub build: Option<SharedString>,
+    pub copyright: Option<SharedString>,
+    /// A line or two under the version: credits, a tagline.
+    pub credits: Option<SharedString>,
+    pub website: Option<SharedString>,
+}
+
+impl AboutPanel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn name(mut self, name: impl Into<SharedString>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn version(mut self, version: impl Into<SharedString>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    pub fn build(mut self, build: impl Into<SharedString>) -> Self {
+        self.build = Some(build.into());
+        self
+    }
+
+    pub fn copyright(mut self, copyright: impl Into<SharedString>) -> Self {
+        self.copyright = Some(copyright.into());
+        self
+    }
+
+    pub fn credits(mut self, credits: impl Into<SharedString>) -> Self {
+        self.credits = Some(credits.into());
+        self
+    }
+
+    pub fn website(mut self, website: impl Into<SharedString>) -> Self {
+        self.website = Some(website.into());
         self
     }
 }

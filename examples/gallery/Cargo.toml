@@ -39,6 +39,11 @@ harness = false
 name = "forms_goldens"
 harness = false
 
+# Tier 2 on macOS: the player bar drives real playback through nd::system.
+[[test]]
+name = "audio"
+harness = false
+
 # Tier 2 goldens of the media page on macOS.
 [[test]]
 name = "media_goldens"

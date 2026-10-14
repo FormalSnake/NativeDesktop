@@ -99,6 +99,14 @@ impl Transaction {
         self.ops.is_empty()
     }
 
+    /// Drops a pending detach of `node`, for a node another window's transaction detaches
+    /// instead. True when one was pending.
+    pub(crate) fn take_remove(&mut self, node: NodeId) -> bool {
+        let before = self.ops.len();
+        self.ops.retain(|op| !matches!(op, Op::Remove { node: n } if *n == node));
+        self.ops.len() != before
+    }
+
     pub fn push(&mut self, op: Op) {
         // Only the last focus request of a frame reaches the platform.
         if matches!(op, Op::Focus { .. }) {

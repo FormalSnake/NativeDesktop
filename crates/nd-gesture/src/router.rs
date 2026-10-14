@@ -188,6 +188,17 @@ impl GestureRouter {
         self.rows.get(&node)
     }
 
+    /// Moves the node's scroll and swipe state to `to`, for a view that moved to another
+    /// window's router.
+    pub fn hand_over(&mut self, node: NodeId, to: &mut GestureRouter) {
+        if let Some(scroller) = self.scrollers.remove(&node) {
+            to.scrollers.insert(node, scroller);
+        }
+        if let Some(row) = self.rows.remove(&node) {
+            to.rows.insert(node, row);
+        }
+    }
+
     /// The node was released: its physics go with it.
     pub fn forget(&mut self, node: NodeId) {
         self.scrollers.remove(&node);

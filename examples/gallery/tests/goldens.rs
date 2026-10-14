@@ -1,8 +1,9 @@
 //! Tier 2 goldens of the navigation and feedback components in the macOS look, light and
 //! dark: the gallery window on the real AppKit backend, captured as the window server
 //! composites it (`screencapture -l`, so the palette's and toasts' glass is in it) and compared
-//! with `tests/goldens/macos-<view>-<scheme>@<scale>x.png`. Two views: the source list with a
-//! banner and a toast, and the command palette open over it. Holds the ndshell machine lock
+//! with `tests/goldens/macos-<view>-<scheme>@<scale>x.png`. The views: the source list with a
+//! banner and a toast, the command palette open over it, and the tabs, split view and status
+//! page pages. Holds the ndshell machine lock
 //! (activation and capture share one window server). Needs Screen Recording for the process
 //! that runs the test (`ndshell grant` on CI).
 //!
@@ -147,11 +148,18 @@ mod goldens {
     }
 
     fn check(host: &nd::appkit::AppHost, view: &str, appearance: Appearance, scheme: &str) -> Result<(), String> {
+        let page = match view {
+            "tabs" => gallery::Page::Tabs,
+            "split" => gallery::Page::Split,
+            "status" => gallery::Page::StatusPage,
+            _ => gallery::Page::SourceList,
+        };
         let start = gallery::Start {
-            page: gallery::Page::SourceList,
+            page,
             palette: (view == "palette").then(|| "to".into()),
-            toast: true,
+            toast: page == gallery::Page::SourceList,
             appearance: Some(appearance),
+            ..gallery::Start::default()
         };
         let handle = host.update(|cx| gallery::open(cx, start));
         settle(host);
@@ -216,7 +224,7 @@ mod goldens {
         }
         let host = gallery::app().host(|_cx| {});
         let mut failed = 0;
-        for view in ["sidebar", "palette"] {
+        for view in ["sidebar", "palette", "tabs", "split", "status"] {
             for (appearance, scheme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {
                 if let Err(e) = check(&host, view, appearance, scheme) {
                     println!("FAIL {e}");

@@ -11,6 +11,7 @@ links = "nd-swift-appkit"
 nd-core.workspace = true
 nd-gesture.workspace = true
 nd-ui.workspace = true
+nd-gpui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
 nd-components.workspace = true
@@ -49,6 +50,16 @@ harness = false
 name = "nav_components"
 harness = false
 
+# Tier 2: tabs, split, status page and the scaffold inspector mapped to AppKit's own classes.
+[[test]]
+name = "layout_widgets"
+harness = false
+
+# Tier 2: native window tabs, held closes, cross-window view moves, alerts and the about panel.
+[[test]]
+name = "layout_windows"
+harness = false
+
 # Tier 2: the media family (images, seek bar, lyrics, shelf, chat, the composer's field).
 [[test]]
 name = "media"
@@ -67,6 +78,11 @@ harness = false
 
 [[test]]
 name = "virtual_list"
+harness = false
+
+# Tier 2: a file drop reaches `on_file_drop` with the window it landed on.
+[[test]]
+name = "file_drop"
 harness = false
 
 [[test]]

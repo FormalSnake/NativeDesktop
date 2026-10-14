@@ -48,6 +48,17 @@ impl TestApp {
         handle
     }
 
+    /// Opens a window with `options` and runs its first frame.
+    pub fn open_window_with<V: Render>(
+        &mut self,
+        options: WindowOptions,
+        build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+    ) -> WindowHandle<V> {
+        let handle = self.app.open_window(options, build);
+        self.app.run_until_idle();
+        handle
+    }
+
     /// Emits `event` from `node` as its native widget would, then settles.
     pub fn emit<E: 'static>(&mut self, node: NodeId, event: E) {
         self.app.events().emitter(node).emit(event);

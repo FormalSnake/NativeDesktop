@@ -52,6 +52,7 @@ fn write_bundle(data: &Path) {
         main: true,
         visible: true,
         frame: None,
+        tab_group: None,
         root: node(1, Role::Window, "root", "Demo", vec![node(2, Role::Button, "Button", "Add one", vec![])]),
     };
     diag.record_frame(

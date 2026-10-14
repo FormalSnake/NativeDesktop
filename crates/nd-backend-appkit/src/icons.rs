@@ -56,6 +56,10 @@ const SYMBOLS: &[(&str, &str)] = &[
 
 /// The SF Symbol for a Lucide name; `None` when nd has no mapping for it.
 pub(crate) fn symbol(lucide: &str) -> Option<Retained<NSImage>> {
-    let (_, name) = SYMBOLS.iter().find(|(l, _)| *l == lucide)?;
-    NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)
+    NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(symbol_name(lucide)?), None)
+}
+
+/// The SF Symbol's name for a Lucide name, for SwiftUI's `systemImage:`.
+pub(crate) fn symbol_name(lucide: &str) -> Option<&'static str> {
+    SYMBOLS.iter().find(|(l, _)| *l == lucide).map(|(_, name)| *name)
 }

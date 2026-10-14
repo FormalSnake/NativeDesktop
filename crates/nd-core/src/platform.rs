@@ -58,14 +58,30 @@ pub enum Feature {
     ClipboardReadAnytime,
     /// Native widgets without a drawn implementation (`NativeWidget::backends`).
     NativeOnlyWidgets,
+    /// App-level alerts and file dialogs that are not attached to a window (`nd::system`).
+    Dialogs,
+    /// Clipboard text. On the web reads may still need a user gesture.
+    Clipboard,
+    /// Images and file lists on the clipboard.
+    ClipboardRich,
+    /// The OS recent documents list.
+    RecentDocuments,
+    /// Opening paths and revealing them in the file manager. URLs open on every target.
+    Shell,
+    /// The OS media controls and media keys (Now Playing, MPRIS, SMTC).
+    MediaSession,
+    /// Audio playback with a spectrum (`nd::system`).
+    Audio,
 }
 
 /// Whether `feature` works on the running target.
 pub const fn has(feature: Feature) -> bool {
     match target() {
-        Target::Web => false,
+        Target::Web => matches!(feature, Feature::Clipboard),
         Target::MacOs => true,
-        Target::Windows | Target::Linux => !matches!(feature, Feature::MenuBar | Feature::NativeOnlyWidgets),
+        Target::Linux => !matches!(feature, Feature::MenuBar | Feature::NativeOnlyWidgets),
+        // nd-system has no Windows audio player yet.
+        Target::Windows => !matches!(feature, Feature::MenuBar | Feature::NativeOnlyWidgets | Feature::Audio),
     }
 }
 

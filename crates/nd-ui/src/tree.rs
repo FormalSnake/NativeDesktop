@@ -77,6 +77,17 @@ struct ViewSlot {
     depth: u32,
 }
 
+/// A mounted view's retained subtree, lifted out of one window's tree for another to adopt.
+pub(crate) struct Lifted {
+    top: EntityId,
+    /// Its root is still attached in the window it left.
+    attached: bool,
+    /// The lifted view first, then the views under it.
+    views: Vec<(EntityId, ViewSlot)>,
+    nodes: Vec<(NodeId, RNode)>,
+    overlays: Vec<NodeId>,
+}
+
 pub(crate) struct Tree {
     window: WindowId,
     root: NodeId,
@@ -92,6 +103,12 @@ pub(crate) struct Tree {
     /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
     /// so a view that moved to a parent reconciled later is adopted there, not rebuilt.
     orphans: Vec<EntityId>,
+    /// Orphans kept, detached, until every window drew this frame, so another window can adopt
+    /// them with their native nodes (a view moved between windows never rebuilds, so a web view
+    /// in it never reloads). Only while the app has more than one window.
+    parked: Vec<EntityId>,
+    /// The app frame this tree last drew in.
+    drawn_in: u64,
     /// Views rendered in this frame, mounted or re-rendered. One that notifies itself while
     /// rendering stays dirty for the next frame instead of rendering again in this one.
     rendered: HashSet<EntityId>,
@@ -238,6 +255,8 @@ impl Tree {
             insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
+            parked: Vec::new(),
+            drawn_in: 0,
             reaffirm: HashSet::new(),
             rendered: HashSet::new(),
             dispatch,
@@ -309,6 +328,7 @@ impl Tree {
         for slot in slots {
             self.unmount(slot);
         }
+        self.orphans.append(&mut self.parked);
         self.release_orphans(app);
         self.sync_children(root);
         self.tx.push(Op::Release { node: root });
@@ -406,6 +426,13 @@ impl Tree {
         assert!(self.placed.insert(id), "{id:?} is rendered in two places");
         if self.views.contains_key(&id) {
             self.adopt(id, ident, parent, depth);
+            return Slot::View(id);
+        }
+        if let Some(&from) = app.view_windows.get(&id)
+            && from != self.window
+            && let Some(lifted) = app.lift_view(from, id)
+        {
+            self.implant(lifted, ident, parent, depth, app);
             return Slot::View(id);
         }
         app.view_windows.insert(id, self.window);
@@ -542,7 +569,7 @@ impl Tree {
                     let fresh = !self.dispatch.contains(n);
                     self.dispatch.place(parent, n, before);
                     if fresh {
-                        self.bind_dispatch(n);
+                        self.bind_dispatch_subtree(n);
                     }
                 }
                 Some(i) if list.get(i + 1).copied() != before => {
@@ -609,6 +636,18 @@ impl Tree {
         node.dispatch = el.dispatch;
         self.bind_dispatch(n);
         self.reconcile_children(n, el.children, depth, window, app);
+    }
+
+    /// Binds `n` and the native nodes under it that the dispatch tree does not hold yet: a
+    /// subtree adopted from another window arrives with its children in place.
+    fn bind_dispatch_subtree(&mut self, n: NodeId) {
+        self.bind_dispatch(n);
+        for child in self.nodes[&n].native.clone() {
+            if !self.dispatch.contains(child) {
+                self.dispatch.place(n, child, None);
+                self.bind_dispatch_subtree(child);
+            }
+        }
     }
 
     /// Hands the node's key context and action listeners to the dispatch tree, replacing the
@@ -710,6 +749,111 @@ impl Tree {
         self.sync_fresh(new);
     }
 
+    /// Takes a mounted view out of this window with everything under it, for another window
+    /// to adopt. Its native nodes stay alive; a root still attached here is detached by the
+    /// adopting window's transaction, so the backend never sees it in two places. `None` for the
+    /// window's root view.
+    pub(crate) fn lift(&mut self, id: EntityId, frame: u64) -> Option<Lifted> {
+        if id == self.root_view.entity_id() {
+            return None;
+        }
+        assert!(!(self.drawn_in == frame && self.placed.contains(&id)), "{id:?} is rendered in two windows");
+        let view = self.views.get(&id)?;
+        let (parent, root) = (view.parent, view.root.and_then(|r| self.native_of(r)));
+        let mut attached = false;
+        if let Some(i) = self.parked.iter().position(|e| *e == id) {
+            self.parked.swap_remove(i);
+        } else if let Some(i) = self.orphans.iter().position(|e| *e == id) {
+            self.orphans.swap_remove(i);
+        } else if self.nodes.get(&parent).is_some_and(|n| n.slots.contains(&Slot::View(id))) {
+            self.nodes.get_mut(&parent).expect("node").slots.retain(|s| *s != Slot::View(id));
+            self.sync_children(parent);
+            attached = root.is_some_and(|root| self.tx.take_remove(root));
+        }
+        if let Some(root) = root
+            && self.dispatch.contains(root)
+        {
+            self.dispatch.remove(root);
+        }
+        let mut lifted = Lifted { top: id, attached, views: Vec::new(), nodes: Vec::new(), overlays: Vec::new() };
+        self.lift_slot(Slot::View(id), &mut lifted);
+        self.needs_layout = true;
+        Some(lifted)
+    }
+
+    fn lift_slot(&mut self, slot: Slot, out: &mut Lifted) {
+        match slot {
+            Slot::View(e) => {
+                let view = self.views.remove(&e).expect("view");
+                let root = view.root;
+                out.views.push((e, view));
+                if let Some(root) = root {
+                    self.lift_slot(root, out);
+                }
+            }
+            Slot::Node(n) => {
+                let node = self.nodes.remove(&n).expect("node");
+                let _ = self.taffy.remove(node.taffy);
+                if let Some(i) = self.overlays.iter().position(|o| *o == n) {
+                    self.overlays.remove(i);
+                    out.overlays.push(n);
+                }
+                self.reaffirm.remove(&n);
+                let slots = node.slots.clone();
+                out.nodes.push((n, node));
+                for s in slots {
+                    self.lift_slot(s, out);
+                }
+            }
+        }
+    }
+
+    /// Mounts a view lifted from another window at `parent`, keeping its native nodes.
+    fn implant(&mut self, lifted: Lifted, ident: Ident, parent: NodeId, depth: u32, app: &mut App) {
+        let Lifted { top, attached, views, nodes, overlays } = lifted;
+        let moved: Vec<NodeId> = nodes.iter().map(|(n, _)| *n).collect();
+        for (n, mut node) in nodes {
+            node.frame = None;
+            node.boundary = None;
+            node.fresh = false;
+            let style = self.taffy_style(&node.layout, &node.props, None);
+            let taffy =
+                if node.measured { self.taffy.new_leaf_with_context(style, n) } else { self.taffy.new_leaf(style) };
+            node.taffy = taffy.expect("taffy node");
+            self.nodes.insert(n, node);
+        }
+        for n in moved {
+            let children: Vec<taffy::NodeId> = self.nodes[&n].native.iter().map(|c| self.nodes[c].taffy).collect();
+            self.taffy.set_children(self.nodes[&n].taffy, &children).expect("taffy children");
+        }
+        let delta = views.first().map_or(0, |(_, v)| depth as i64 - v.depth as i64);
+        for (e, mut view) in views {
+            if e == top {
+                view.ident = ident.clone();
+                view.parent = parent;
+            }
+            view.depth = (view.depth as i64 + delta) as u32;
+            app.view_windows.insert(e, self.window);
+            self.views.insert(e, view);
+        }
+        self.overlays.extend(overlays);
+        if attached && let Some(root) = self.view_node(top) {
+            self.tx.push(Op::Remove { node: root });
+        }
+        self.needs_layout = true;
+    }
+
+    /// Releases the views no window adopted this frame, in a transaction of their own.
+    pub(crate) fn release_parked(&mut self, app: &mut App) {
+        if self.parked.is_empty() {
+            return;
+        }
+        self.orphans.append(&mut self.parked);
+        self.release_orphans(app);
+        let tx = mem::replace(&mut self.tx, Transaction::new(self.window));
+        tx.commit(&mut *app.backend, &mut app.measure_cache);
+    }
+
     fn layout(&mut self, backend: &mut dyn Backend, cache: &mut MeasureCache) -> Vec<Op> {
         if !self.needs_layout {
             return Vec::new();
@@ -783,6 +927,7 @@ impl App {
         let outer = self.current_window.replace(id);
         tree.placed.clear();
         tree.rendered.clear();
+        tree.drawn_in = self.frames;
         let root_view = tree.root_view.clone();
         tree.placed.insert(root_view.entity_id());
         if !tree.views.contains_key(&root_view.entity_id()) {
@@ -819,7 +964,11 @@ impl App {
                 }
             }
         }
-        tree.release_orphans(self);
+        if self.windows.len() > 1 {
+            tree.parked.append(&mut tree.orphans);
+        } else {
+            tree.release_orphans(self);
+        }
         tree.dispatch.settle_scopes();
         tree.push_focus_change();
         let mut reaffirm: Vec<NodeId> = tree.reaffirm.drain().filter(|n| tree.nodes.contains_key(n)).collect();

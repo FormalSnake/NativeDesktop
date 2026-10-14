@@ -1,0 +1,10 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "dev.formalsnake.system-demo"
+display_name = "System Demo"
+url_schemes = ["nd-system-demo"]
+
+[[app.file_associations]]
+ext = ["ndsys"]
+name = "System Demo Note"
+role = "viewer"

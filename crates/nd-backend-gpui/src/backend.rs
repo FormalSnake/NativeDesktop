@@ -43,6 +43,12 @@ pub(crate) type Deferred = Box<dyn FnOnce(&mut App)>;
 /// Told the platform's light or dark setting, with the app, when it changes.
 pub(crate) type SchemeListener = Rc<dyn Fn(&mut App, Scheme)>;
 
+/// Told of files dropped onto an app window, at a point in window coordinates.
+pub type FileDropListener = Rc<dyn Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32))>;
+
+/// Told when the app gains (`true`) or loses its last active window.
+pub type ActivationListener = Rc<dyn Fn(bool)>;
+
 pub(crate) struct State {
     pub nodes: HashMap<NodeId, Node>,
     pub windows: HashMap<WindowId, WindowRecord>,
@@ -65,6 +71,8 @@ pub(crate) struct State {
     pub theme: ThemeRegistry,
     pub platform_scheme: Option<Scheme>,
     pub scheme_listener: Option<SchemeListener>,
+    pub file_drop_listener: Option<FileDropListener>,
+    pub activation_listener: Option<ActivationListener>,
     /// What each window painted in its last build.
     pub paints: HashMap<WindowId, Vec<Paint>>,
 }
@@ -97,6 +105,12 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
+    /// Split divider drags in progress, by split node.
+    pub(crate) splits: crate::split::SplitDrags,
+    /// The drawn alerts and about panels showing ([`crate::dialogs`]).
+    pub(crate) dialogs: crate::dialogs::Dialogs,
+    /// What the host and the seam share about tabs ([`crate::window_tabs`]).
+    pub(crate) tab_seam: Rc<RefCell<crate::window_tabs::TabSeam>>,
 }
 
 impl Default for GpuiBackend {
@@ -135,6 +149,8 @@ impl GpuiBackend {
                 theme: ThemeRegistry::new(Preset::current()),
                 platform_scheme: None,
                 scheme_listener: None,
+                file_drop_listener: None,
+                activation_listener: None,
                 paints: HashMap::new(),
             })),
             bounds: Rc::default(),
@@ -147,6 +163,9 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
+            splits: Rc::default(),
+            dialogs: Rc::default(),
+            tab_seam: Rc::default(),
         }
     }
 
@@ -221,6 +240,18 @@ impl GpuiBackend {
         self.state.borrow_mut().scheme_listener = Some(Rc::new(f));
     }
 
+    /// Sets the one listener for files dropped onto any app window (`nd` routes them to
+    /// `nd-system`'s events).
+    pub fn on_file_drop(&self, f: impl Fn(WindowId, Vec<std::path::PathBuf>, (f32, f32)) + 'static) {
+        self.state.borrow_mut().file_drop_listener = Some(Rc::new(f));
+    }
+
+    /// Sets the one listener for the app becoming active or inactive: some app window is the
+    /// platform's active window, or none is.
+    pub fn on_activation(&self, f: impl Fn(bool) + 'static) {
+        self.state.borrow_mut().activation_listener = Some(Rc::new(f));
+    }
+
     /// Records the platform's scheme; true when it changed.
     pub(crate) fn set_platform_scheme(&self, scheme: Scheme) -> bool {
         let mut state = self.state.borrow_mut();
@@ -247,6 +278,7 @@ impl GpuiBackend {
 
     pub(crate) fn forget_window(&self, window: WindowId) {
         self.gestures.forget_window(window);
+        self.forget_dialogs(window);
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
@@ -273,8 +305,30 @@ impl GpuiBackend {
     /// The nd window a GPUI window shows.
     pub fn window_for(&self, handle: AnyWindowHandle) -> Option<WindowId> {
         // One GPUI window shows several app windows on a single canvas (the web); the newest
-        // is on top and takes the keys.
-        self.state.borrow().windows.iter().filter(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id).max()
+        // is on top and takes the keys. A group window shows its selected tab only.
+        let hidden = &self.tab_seam.borrow().hidden;
+        self.state
+            .borrow()
+            .windows
+            .iter()
+            .filter(|(id, r)| r.handle == Some(handle) && !hidden.contains(id))
+            .map(|(id, _)| *id)
+            .max()
+    }
+
+    /// Where a drawn tab strip's tabs, close buttons and `+` were painted, in window coordinates.
+    pub fn tab_strip_layout(&self, node: NodeId) -> Option<crate::tab_bar::BarLayout> {
+        Some(self.tab_seam.borrow().strips.get(&node)?.borrow().clone())
+    }
+
+    /// A tab group window's hidden tabs are neither visible nor key.
+    fn tab_state(&self, window: WindowId, mut state: WindowState) -> WindowState {
+        if self.tab_seam.borrow().hidden.contains(&window) {
+            state.visible = false;
+            state.key = false;
+            state.main = false;
+        }
+        state
     }
 
     /// The `nd-virtual` lists drawn so far, by node.
@@ -375,6 +429,22 @@ impl Backend for GpuiBackend {
         let at = before.and_then(|b| siblings.iter().position(|c| *c == b)).unwrap_or(siblings.len());
         siblings.insert(at, node);
         state.nodes.get_mut(&node).expect("live node").parent = Some(parent);
+        // A subtree another window let go of keeps its per-node state (bounds, drawn controls,
+        // lists); its scroll and swipe physics move to this window's gesture router.
+        let from = self.tab_seam.borrow_mut().detached.remove(&node);
+        if let (Some(from), Some(to)) = (from, state.open)
+            && from != to
+        {
+            let mut subtree = vec![node];
+            let mut i = 0;
+            while let Some(at) = subtree.get(i).copied() {
+                subtree.extend(state.nodes.get(&at).map_or(&[][..], |n| &n.children[..]).iter().copied());
+                i += 1;
+            }
+            state.dirty.insert(from);
+            drop(state);
+            self.gestures.hand_over(from, to, &subtree);
+        }
     }
 
     fn move_node(&mut self, node: NodeId, parent: NodeId, before: Option<NodeId>) {
@@ -383,10 +453,17 @@ impl Backend for GpuiBackend {
     }
 
     fn remove(&mut self, node: NodeId) {
+        let window = self.window_of(node);
         let mut state = self.state.borrow_mut();
         let Some(parent) = state.nodes.get_mut(&node).and_then(|n| n.parent.take()) else { return };
         if let Some(p) = state.nodes.get_mut(&parent) {
             p.children.retain(|c| *c != node);
+        }
+        // A view moving to another window is detached in either window's transaction; the one
+        // it left redraws without it.
+        if let Some(window) = window {
+            state.dirty.insert(window);
+            self.tab_seam.borrow_mut().detached.insert(node, window);
         }
     }
 
@@ -422,6 +499,7 @@ impl Backend for GpuiBackend {
 
     fn release(&mut self, node: NodeId) {
         self.form_drawn.borrow_mut().remove(&node);
+        self.splits.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
             Some(NodeKind::Widget(w)) => crate::custom::lookup(w.type_id),
@@ -445,6 +523,9 @@ impl Backend for GpuiBackend {
         self.bounds.borrow_mut().remove(&node);
         self.surface_counts.borrow_mut().remove(&node);
         self.drawn.borrow_mut().remove(&node);
+        let mut tabs = self.tab_seam.borrow_mut();
+        tabs.strips.remove(&node);
+        tabs.detached.remove(&node);
     }
 
     fn commit(&mut self, window: WindowId) {
@@ -490,9 +571,22 @@ impl Backend for GpuiBackend {
 
     fn window_state(&self, window: WindowId) -> Option<WindowState> {
         if let Ok(fresh) = self.with_window(window, |w, _| crate::host::window_state(w)) {
-            return Some(fresh);
+            return Some(self.tab_state(window, fresh));
         }
-        Some(self.state.try_borrow().ok()?.windows.get(&window)?.state.clone())
+        let state = self.state.try_borrow().ok()?.windows.get(&window)?.state.clone();
+        Some(self.tab_state(window, state))
+    }
+
+    /// Recorded for the host, which carries it out on its next pump with the app free.
+    fn window_command(&mut self, window: WindowId, command: nd_ui::backend::WindowCommand) {
+        self.tab_seam.borrow_mut().commands.push((window, command));
+        let (app, wake) = {
+            let state = self.state.borrow();
+            (state.app.clone(), state.wake.clone())
+        };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
     }
 
     /// A button's click is the same `ClickEvent` its pointer handler emits, without moving a

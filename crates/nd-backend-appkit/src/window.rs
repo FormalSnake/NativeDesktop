@@ -4,9 +4,33 @@ use std::rc::Rc;
 use nd_ui::Keystroke;
 use nd_ui::dispatch::KeyDispatch;
 use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
-use objc2_app_kit::{NSBackingStoreType, NSEvent, NSEventType, NSResponder, NSView, NSWindow, NSWindowStyleMask};
-use objc2_foundation::{MainThreadMarker, NSRect};
+use objc2::runtime::{AnyClass, ProtocolObject};
+use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send};
+use objc2_app_kit::{
+    NSBackingStoreType, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSPasteboardTypeFileURL, NSResponder,
+    NSView, NSWindow, NSWindowStyleMask,
+};
+use objc2_foundation::{MainThreadMarker, NSArray, NSRect, NSURL};
+
+fn drag_operation(info: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+    if dropped_files(info).is_empty() { NSDragOperation::None } else { NSDragOperation::Copy }
+}
+
+/// The file paths on a drag's pasteboard.
+fn dropped_files(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<std::path::PathBuf> {
+    let classes: Retained<NSArray<AnyClass>> = NSArray::from_slice(&[NSURL::class()]);
+    // SAFETY: NSURL is a pasteboard-readable class; no options.
+    let Some(objects) = (unsafe { info.draggingPasteboard().readObjectsForClasses_options(&classes, None) }) else {
+        return Vec::new();
+    };
+    objects
+        .iter()
+        .filter_map(|o| o.downcast::<NSURL>().ok())
+        .filter(|u| u.isFileURL())
+        .filter_map(|u| u.path())
+        .map(|p| std::path::PathBuf::from(p.to_string()))
+        .collect()
+}
 
 /// What an [`NdWindow`] calls into. Implemented by [`crate::AppKitDispatch`].
 pub trait KeyRouter {
@@ -18,6 +42,8 @@ pub trait KeyRouter {
     fn window_updated(&self, _window: &NdWindow) {}
     /// A primary press anywhere in the window: focus rings hide until the keyboard moves focus.
     fn pointer_down(&self) {}
+    /// Files dropped onto the window, at `at` in window points from the top left.
+    fn files_dropped(&self, _paths: Vec<std::path::PathBuf>, _at: (f32, f32)) {}
 }
 
 #[derive(Default)]
@@ -74,6 +100,21 @@ define_class!(
             changed
         }
 
+        #[unsafe(method(draggingEntered:))]
+        fn dragging_entered(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            drag_operation(sender)
+        }
+
+        #[unsafe(method(draggingUpdated:))]
+        fn dragging_updated(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            drag_operation(sender)
+        }
+
+        #[unsafe(method(performDragOperation:))]
+        fn perform_drag_operation(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+            self.drop_files(sender)
+        }
+
         #[unsafe(method(update))]
         fn update(&self) {
             let _: () = unsafe { msg_send![super(self), update] };
@@ -98,6 +139,9 @@ impl NdWindow {
         };
         // The Rust side owns the window; AppKit releasing it on close would double free.
         unsafe { this.setReleasedWhenClosed(false) };
+        // Files dropped anywhere no view claims reach `files_dropped`.
+        // SAFETY: a framework constant.
+        this.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]));
         this
     }
 
@@ -119,6 +163,16 @@ impl NdWindow {
         self.ivars().nd_focus.set(true);
         self.makeFirstResponder(view.map(|v| &**v));
         self.ivars().nd_focus.set(false);
+    }
+
+    /// Hands a drop's files to the router; false when the drag carried none.
+    fn drop_files(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+        let paths = dropped_files(sender);
+        let Some(router) = self.router().filter(|_| !paths.is_empty()) else { return false };
+        let at = sender.draggingLocation();
+        let height = self.contentView().map_or(0., |v| v.frame().size.height);
+        router.files_dropped(paths, (at.x as f32, (height - at.y) as f32));
+        true
     }
 
     fn router(&self) -> Option<Rc<dyn KeyRouter>> {

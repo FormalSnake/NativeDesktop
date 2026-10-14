@@ -18,6 +18,7 @@ nd-gpui.workspace = true
 nd-ui.workspace = true
 nd-macros.workspace = true
 nd-theme.workspace = true
+serde.workspace = true
 # The image pipeline decodes off the main thread at display size; GPUI already links it.
 image = { version = "0.25", default-features = false, features = ["gif", "webp", "png", "jpeg"] }
 
@@ -27,5 +28,5 @@ ureq = "3.4"
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }
 schemars = "1.2.3"
-serde.workspace = true
+serde_json.workspace = true
 tempfile = "3"

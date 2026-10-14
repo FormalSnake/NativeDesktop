@@ -18,9 +18,10 @@ use std::rc::{Rc, Weak};
 use nd_components::{
     BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
     FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
-    ScaffoldProps, SeparatorKind, SeparatorProps, SourceTreeKind, SourceTreeProps, SubtreeScope, SystemItemProps,
-    Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, ToastOverlayKind, ToastOverlayProps, Toolbar,
-    ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
+    ScaffoldProps, SeparatorKind, SeparatorProps, SourceTreeKind, SourceTreeProps, SplitKind, SplitPaneKind,
+    SplitPaneProps, SplitProps, StatusPageKind, StatusPageProps, SubtreeScope, SystemItemProps, Titlebar,
+    TitlebarInset, TitlebarInsetProps, TitlebarProps, ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem,
+    ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_theme::{NativeTheme, Scheme, Theme, ThemeRefinement, ThemeRegistry};
@@ -48,6 +49,8 @@ use crate::overlay::OverlayNative;
 use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
 use crate::source_list::SourceTreeNative;
+use crate::split::{SplitNative, SplitPaneNative};
+use crate::status_page::StatusPageNative;
 use crate::surface::SurfaceNative;
 use crate::system_colors::appearance_for;
 use crate::toast::{BannerNative, ToastNative};
@@ -105,6 +108,10 @@ enum Native {
     /// Its own window above the owner; never a subview of its parent, which is its anchor.
     Overlay(OverlayNative),
     Surface(SurfaceNative),
+    /// `split()`: an `NSSplitView`; its two panes are layout boundaries it frames.
+    Split(SplitNative),
+    SplitPane(SplitPaneNative),
+    StatusPage(StatusPageNative),
 }
 
 pub(crate) struct ControlNode {
@@ -137,6 +144,9 @@ impl Native {
             Native::Form(f) => Some(&f.outer),
             Native::Surface(s) => Some(s.view()),
             Native::Custom(c) => Some(c.view()),
+            Native::Split(s) => Some(&s.view),
+            Native::SplitPane(p) => Some(&p.host),
+            Native::StatusPage(p) => Some(p.view()),
             Native::FormSection(..) | Native::FormRow(..) | Native::Overlay(_) => None,
             Native::Toolbar(_) | Native::SystemItem | Native::ToolbarTab(_) | Native::Inset(..) => None,
         }
@@ -152,6 +162,9 @@ impl Native {
             Native::Scaffold(s) => Some(&s.host),
             Native::ToolbarItem(i) => Some(&i.host),
             Native::Overlay(o) => Some(&o.content),
+            // NSSplitView arranges every subview it is given.
+            Native::Split(s) => Some(&s.view),
+            Native::SplitPane(p) => Some(&p.content),
             Native::Custom(c) => c.container(),
             _ => None,
         }
@@ -357,6 +370,15 @@ impl AppKitBackend {
         Some(rgba.into())
     }
 
+    /// Times the split placed its panes for a ratio the app set; a ratio fed back from the
+    /// split's own report places nothing.
+    pub fn split_placements(&self, split: NodeId) -> Option<usize> {
+        match self.0.borrow().nodes.get(&split)? {
+            Native::Split(s) => Some(s.placements()),
+            _ => None,
+        }
+    }
+
     /// The window's NSWindow, once its host is open.
     pub fn ns_window(&self, window: WindowId) -> Option<Retained<NdWindow>> {
         self.0.borrow().windows.get(&window).map(|r| r.window.clone())
@@ -370,6 +392,27 @@ impl AppKitBackend {
             .iter()
             .find(|(_, r)| std::ptr::eq::<objc2_app_kit::NSWindow>(&**r.window, window))
             .map(|(id, _)| *id)
+    }
+
+    /// The app windows sharing `window`'s native tab group, in AppKit's tab order; just the
+    /// window itself when it has no tabs.
+    pub fn tab_group_windows(&self, window: WindowId) -> Vec<WindowId> {
+        let Some(ns) = self.ns_window(window) else { return Vec::new() };
+        match ns.tabGroup().map(|g| g.windows()) {
+            Some(windows) if windows.count() > 0 => windows.iter().filter_map(|w| self.window_id_of(&w)).collect(),
+            _ => vec![window],
+        }
+    }
+
+    /// The app window whose tab `window`'s tab group shows.
+    pub fn selected_tab(&self, window: WindowId) -> Option<WindowId> {
+        let selected = self.ns_window(window)?.tabGroup()?.selectedWindow()?;
+        self.window_id_of(&selected)
+    }
+
+    /// The window a node lives in now.
+    pub fn node_window(&self, node: NodeId) -> Option<WindowId> {
+        self.0.borrow().node_window.get(&node).copied()
     }
 
     /// The scheme windows follow when nothing forces one; subtree overrides resolve against it.
@@ -562,8 +605,62 @@ impl State {
         }
     }
 
+    /// `node` and every node under it now live in window `to`: nd moved a view between windows
+    /// and kept its native nodes, so their views move rather than being recreated.
+    fn move_to_window(&mut self, node: NodeId, from: WindowId, to: WindowId) {
+        let under = |mut n: NodeId| loop {
+            if n == node {
+                return true;
+            }
+            match self.parents.get(&n) {
+                Some(p) => n = *p,
+                None => return false,
+            }
+        };
+        let moved: Vec<NodeId> =
+            self.node_window.iter().filter(|(n, w)| **w == from && under(**n)).map(|(n, _)| *n).collect();
+        for n in &moved {
+            self.node_window.insert(*n, to);
+        }
+        self.theme_dirty.insert(from);
+        self.theme_dirty.insert(to);
+        let Some(owner) = self.windows.get(&to).map(|r| r.window.clone()) else { return };
+        let old_owner = self.windows.get(&from).map(|r| r.window.clone());
+        for n in moved {
+            match self.nodes.get_mut(&n) {
+                Some(Native::WindowControls { window, .. }) => *window = to,
+                Some(Native::Toolbar(toolbar)) if n != node => {
+                    if let Some(old) = &old_owner {
+                        old.setToolbar(None);
+                    }
+                    toolbar.attach_to(&owner);
+                    toolbar.dirty.set(true);
+                }
+                _ => {}
+            }
+            // The moved node's own overlay is attached by the caller; nested ones follow here.
+            if n != node
+                && let Some(Native::Overlay(overlay)) = self.nodes.get(&n)
+            {
+                let anchor = self
+                    .parents
+                    .get(&n)
+                    .and_then(|p| self.nodes.get(p))
+                    .and_then(|p| p.view().or(p.container()))
+                    .map(|v| v.retain());
+                overlay.detach();
+                overlay.attach(anchor, owner.clone());
+            }
+        }
+    }
+
     fn attach(&mut self, parent: NodeId, node: NodeId, before: Option<NodeId>) {
         self.parents.insert(node, parent);
+        if let (Some(from), Some(to)) = (self.node_window.get(&node).copied(), self.node_window.get(&parent).copied())
+            && from != to
+        {
+            self.move_to_window(node, from, to);
+        }
         if !self.node_window.contains_key(&node)
             && let Some(window) = self.node_window.get(&parent).copied()
         {
@@ -812,11 +909,14 @@ impl State {
                     _ => None,
                 })
                 .collect();
-            let split = self.parents.get(node).and_then(|p| match self.nodes.get(p) {
-                Some(Native::Scaffold(s)) if s.has_sidebar() => Some(s.controller.splitView()),
+            let scaffold = self.parents.get(node).and_then(|p| match self.nodes.get(p) {
+                Some(Native::Scaffold(s)) => Some(s),
                 _ => None,
             });
-            toolbar.rebuild(entries, split.as_deref());
+            let split = scaffold.map(|s| s.controller.splitView());
+            let sidebar = split.as_deref().filter(|_| scaffold.is_some_and(|s| s.has_sidebar()));
+            let inspector = split.as_deref().zip(scaffold.and_then(|s| s.inspector_divider()));
+            toolbar.rebuild(entries, sidebar, inspector);
         }
     }
 
@@ -864,6 +964,7 @@ impl State {
                     v.set_surface(flips.then_some(Color::WindowBackground));
                 }
                 Some(Native::Pane(p)) => p.content.set_radius_scale(theme.radius_scale),
+                Some(Native::SplitPane(p)) => p.content.set_radius_scale(theme.radius_scale),
                 Some(Native::Glass(g)) => {
                     g.set_radius_scale(theme.radius_scale);
                     g.content.set_radius_scale(theme.radius_scale);
@@ -1090,6 +1191,22 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<NativeSurface>(w) => {
                 Native::Surface(SurfaceNative::new(mtm, props::<SurfaceProps>(p, "NativeSurface")))
             }
+            NodeKind::Widget(w) if is::<SplitKind>(w) => Native::Split(SplitNative::new(
+                mtm,
+                props::<SplitProps>(p, "Split"),
+                emit(),
+                state.wake.clone(),
+                state.pane_hook(),
+            )),
+            NodeKind::Widget(w) if is::<SplitPaneKind>(w) => Native::SplitPane(SplitPaneNative::new(
+                mtm,
+                props::<SplitPaneProps>(p, "SplitPane"),
+                state.expose,
+                state.pane_hook(),
+            )),
+            NodeKind::Widget(w) if is::<StatusPageKind>(w) => {
+                Native::StatusPage(StatusPageNative::new(mtm, props::<StatusPageProps>(p, "StatusPage")))
+            }
             NodeKind::Widget(w) if is::<FormSection>(w) => {
                 Native::FormSection(props::<FormSectionProps>(p, "FormSection").clone(), Vec::new())
             }
@@ -1238,6 +1355,9 @@ impl Backend for AppKitBackend {
                     recreate_surface = Some(p.clone());
                 }
             }
+            Native::Split(s) => s.update(props(&patch.new, "Split")),
+            Native::SplitPane(p) => p.update(props(&patch.new, "SplitPane"), expose),
+            Native::StatusPage(p) => p.update(props(&patch.new, "StatusPage")),
             Native::Root(_) | Native::External(_) | Native::Scaffold(_) => {}
         });
         if let Some(Native::ToolbarItem(_)) = state.nodes.get(&node)
@@ -1369,6 +1489,13 @@ impl Backend for AppKitBackend {
                 }
                 return;
             }
+            Some(Native::SplitPane(p)) => {
+                let rect = ns_rect(frame);
+                if p.content.frame() != rect {
+                    p.content.setFrame(rect);
+                }
+                return;
+            }
             Some(Native::ToolbarItem(item)) => {
                 item.host.set_size(objc2_foundation::NSSize::new(frame.size.width.into(), frame.size.height.into()));
                 return;
@@ -1484,6 +1611,7 @@ impl Backend for AppKitBackend {
             Native::Control(c) => c.control.measure(width),
             Native::Banner(b) => b.measure(),
             Native::Custom(c) => c.measure(width),
+            Native::StatusPage(p) => p.measure(width),
             Native::Separator(b, vertical) => {
                 let s = b.fittingSize();
                 if *vertical {
@@ -1508,6 +1636,7 @@ impl Backend for AppKitBackend {
     fn boundary_size(&self, node: NodeId) -> Option<Size> {
         match self.0.try_borrow().ok()?.nodes.get(&node)? {
             Native::Pane(p) if p.role != PaneRole::Overlay => Some(p.boundary()),
+            Native::SplitPane(p) => Some(p.boundary()),
             _ => None,
         }
     }
@@ -1554,6 +1683,26 @@ impl Backend for AppKitBackend {
         input: &nd_ui::semantics::SyntheticInput,
     ) -> Result<(), nd_ui::semantics::ActionError> {
         self.post(window, input)
+    }
+
+    fn window_command(&mut self, window: WindowId, command: nd_ui::backend::WindowCommand) {
+        let Some(ns) = self.ns_window(window) else { return };
+        match command {
+            nd_ui::backend::WindowCommand::Activate => {
+                if let Some(group) = ns.tabGroup() {
+                    group.setSelectedWindow(Some(&ns));
+                }
+                ns.makeKeyAndOrderFront(None);
+            }
+            nd_ui::backend::WindowCommand::ToggleTabOverview => ns.toggleTabOverview(None),
+            _ => {}
+        }
+    }
+
+    fn set_window_title(&mut self, window: WindowId, title: &str) {
+        if let Some(ns) = self.ns_window(window) {
+            ns.setTitle(&objc2_foundation::NSString::from_str(title));
+        }
     }
 
     fn haptic(&mut self, haptic: nd_gesture::Haptic) {

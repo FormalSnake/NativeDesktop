@@ -39,6 +39,12 @@ impl Tree {
             node.frame.map(|f| Rect::new(origin.x + f.origin.x, origin.y + f.origin.y, f.size.width, f.size.height))
         };
         let child_origin = laid_out.map_or(origin, |r| r.origin);
+        // A hidden container (a tab page not selected) keeps its layout box but shows nothing.
+        let hidden = node
+            .props
+            .downcast_ref::<crate::DivProps>()
+            .is_some_and(|d| d.style.visibility == Some(nd_gpui::gpui::Visibility::Hidden));
+        let window_visible = window_visible && !hidden;
         let probe = backend.probe(id);
         let bounds = probe.bounds.or(laid_out);
         let visible = window_visible
@@ -108,6 +114,7 @@ impl Tree {
             main: state.main,
             visible: state.visible,
             frame: state.frame,
+            tab_group: window.options().tab_group.as_ref().map(|g| g.to_string()),
             root,
         }
     }
