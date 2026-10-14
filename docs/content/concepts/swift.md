@@ -32,23 +32,26 @@ Three pieces connect an app's Swift package to the Rust build.
 
 `nd::build::app()` collects the framework's Swift packages and the app's own, generates one
 aggregate SwiftPM package in `OUT_DIR`, builds one static library and links it into the binary.
-`NDKit`, the Swift side of the framework, is compiled once and nothing is written into your source
-tree. The package is built only through that script: its `Package.swift` finds `NDKit` through
-the `ND_KIT_PATH` environment variable the script sets.
+Nothing is written into your source tree. The app's `Package.swift` declares a plain static
+library with no dependencies; the script passes the framework's own package (`NDSwift`) to the
+aggregate through `ND_SWIFT_PATH`.
 
 ## The Swift view
 
-A widget conforms to `NDSwiftWidget` and is exported with `#ndExport`. `make` creates the view,
-`update` applies new props, `measure` reports its size and `value` is the semantic value
-automation reads. `Props` and `Event` are `Codable`; `Never` pairs with Rust's `Infallible`.
+The Swift side exports C functions with `@_cdecl`, the same shape the framework's own Swift
+uses: `create` returns a +1 retained view built from JSON props, `update` applies new props and
+`measure` reports the fitting size. Props cross as JSON, which is fine because a widget's props
+cross only when they change. `GaugeProps` has the same field names on both sides.
 
 <!-- docs:snippet examples/native-widget/swift/Widgets/Sources/Widgets/Gauge.swift#swift-widget -->
 
-The props struct in Swift mirrors the Rust props (`GaugeProps` on both sides, same field names).
-Props and events cross as JSON, which is fine because a widget's props cross only when they
-change. After that, layout, focus, input, overlays, semantics and the override modifiers work as
-they do for an objc2 widget. Pass universal state (enabled, tooltip, focus) into SwiftUI state
-yourself: a hosting view is not the control the user sees.
+Pass universal state (enabled, tooltip, focus) into SwiftUI state yourself: a hosting view is not
+the control the user sees.
+
+Status: the Swift package builds and links, but the AppKit backend does not mount app-defined
+native widgets yet ([crates/nd/src/native.rs](../../../crates/nd/src/native.rs)), so Places
+stops at startup on macOS with "the AppKit backend has no Widget(places::gauge::GaugeWidget)".
+Its macOS capture stays "not captured yet" until that bridge lands.
 
 ## Toolchain
 

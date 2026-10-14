@@ -12,6 +12,10 @@ built-in control in `nd-components` is written against this same trait.
 The Places example has a map and a gauge. On macOS the map is MapKit's `MKMapView` through
 objc2 and the gauge is a SwiftUI `Gauge` ([Swift](swift.md)). Elsewhere both are drawn.
 
+Status: the trait, the drawn path and the objc2 and Swift implementations compile, but the AppKit
+backend does not mount app-defined widgets yet, so Places stops at startup on macOS. Built-in
+controls are unaffected.
+
 <!-- docs:example native-widget -->
 
 ## The trait
