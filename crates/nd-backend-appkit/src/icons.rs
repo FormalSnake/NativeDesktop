@@ -5,9 +5,9 @@
 use block2::RcBlock;
 use nd_icons::{Icon, Seg};
 use objc2::rc::Retained;
+use objc2::runtime::Bool;
 use objc2_app_kit::{NSBezierPath, NSColor, NSImage, NSLineCapStyle, NSLineJoinStyle};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-use objc2::runtime::Bool;
 
 /// Side of the drawn fallback, in points; an image view scales it to fit.
 const DRAWN: f64 = 24.;
@@ -39,7 +39,9 @@ fn drawn(icon: Icon) -> Option<Retained<NSImage>> {
                 match *seg {
                     Seg::Move(x, y) => path.moveToPoint(at(x, y)),
                     Seg::Line(x, y) => path.lineToPoint(at(x, y)),
-                    Seg::Cubic(a, b, c, d, x, y) => path.curveToPoint_controlPoint1_controlPoint2(at(x, y), at(a, b), at(c, d)),
+                    Seg::Cubic(a, b, c, d, x, y) => {
+                        path.curveToPoint_controlPoint1_controlPoint2(at(x, y), at(a, b), at(c, d))
+                    }
                     Seg::Close => path.closePath(),
                 }
             }

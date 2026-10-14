@@ -7,14 +7,17 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use nd::components::services::{AlertCallback, Chrome, ChromeServices, OpenCallback, SaveCallback};
-use nd::components::{Alert, ContextMenu, ContextMenuRequested, Menu, MenuItem, OpenDialog, PaletteActivated, PaletteQueryChanged, SaveDialog, SourceSelected};
+use nd::components::{
+    Alert, ContextMenu, ContextMenuRequested, Menu, MenuItem, OpenDialog, PaletteActivated, PaletteQueryChanged,
+    SaveDialog, SourceSelected,
+};
 use nd::core::{NodeId, WindowId};
 use nd::prelude::*;
-use nd::virtual_list::{RowActionInvoked, RowEdge, RowId, RowsSelected};
 use nd::test::{SemanticAction, SemanticNode, Size, TestApp, by_test_id, click, text, tree};
+use nd::virtual_list::{RowActionInvoked, RowEdge, RowId, RowsSelected};
 use notes::actions::{DeleteNote, OpenPalette};
-use notes::model::NoteId;
 use notes::app::Notes;
+use notes::model::NoteId;
 
 const WINDOW: Size = Size { width: 960., height: 640. };
 
@@ -81,7 +84,8 @@ impl Rig {
 
     fn node(&mut self, test_id: &str) -> SemanticNode {
         let id = self.id();
-        by_test_id(&mut self.cx, id, test_id).unwrap_or_else(|| panic!("no `{test_id}` in\n{}", self.cx.semantic_tree().snapshot()))
+        by_test_id(&mut self.cx, id, test_id)
+            .unwrap_or_else(|| panic!("no `{test_id}` in\n{}", self.cx.semantic_tree().snapshot()))
     }
 
     /// The notes in the list, top to bottom.
@@ -90,9 +94,7 @@ impl Rig {
         let id = self.id();
         let root = tree(&mut self.cx, id);
         let list = root.iter().find(|n| n.test_id.as_deref() == Some("notes")).expect("the list").clone();
-        list.iter()
-            .filter_map(|n| n.test_id.as_deref().filter(|t| t.starts_with("note-")).map(str::to_owned))
-            .collect()
+        list.iter().filter_map(|n| n.test_id.as_deref().filter(|t| t.starts_with("note-")).map(str::to_owned)).collect()
     }
 
     fn act(&mut self, test_id: &str, action: SemanticAction) {

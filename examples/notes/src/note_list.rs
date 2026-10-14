@@ -167,6 +167,6 @@ impl Render for NoteList {
                 Some(keys) => format!("Press {keys} to write one."),
                 None => "Use the New Note button to write one.".to_owned(),
             }))
-            // docs:end list
+        // docs:end list
     }
 }

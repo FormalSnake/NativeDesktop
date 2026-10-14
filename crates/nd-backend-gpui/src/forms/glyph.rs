@@ -4,8 +4,8 @@
 use std::f32::consts::PI;
 
 use nd_components::Icon;
-use nd_icons::Seg;
 use nd_gpui::gpui::{self, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, canvas, point};
+use nd_icons::Seg;
 
 /// An icon drawn as GPUI paths: Lucide's strokes (round caps and joins), tinted by the caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

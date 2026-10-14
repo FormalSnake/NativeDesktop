@@ -256,8 +256,7 @@ impl Library {
     }
 
     fn recount(&mut self) {
-        self.counts =
-            Folder::ALL.iter().map(|f| (*f, self.rows.values().filter(|r| f.contains(r)).count())).collect();
+        self.counts = Folder::ALL.iter().map(|f| (*f, self.rows.values().filter(|r| f.contains(r)).count())).collect();
     }
 }
 
