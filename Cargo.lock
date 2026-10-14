@@ -4569,6 +4569,7 @@ dependencies = [
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
+ "nd-os-windows",
  "nd-system",
  "nd-terminal",
  "nd-theme",
@@ -4818,7 +4819,6 @@ dependencies = [
  "nd-test",
  "nd-ui",
  "ndshell",
- "zbus",
 ]
 
 [[package]]
@@ -4841,6 +4841,7 @@ dependencies = [
 name = "nd-os-windows"
 version = "0.1.0"
 dependencies = [
+ "nd-backend-gpui",
  "nd-gpui",
  "ndshell",
  "raw-window-handle",

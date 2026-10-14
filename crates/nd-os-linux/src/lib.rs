@@ -8,3 +8,6 @@ mod hooks;
 pub mod window;
 
 pub use hooks::{LinuxHooks, TITLEBAR_HEIGHT};
+/// The backend a Linux app runs on, for `nd`, which reaches it only through this crate so that
+/// an app's build script (`nd` with `build` alone) compiles no GPUI.
+pub use nd_backend_gpui;

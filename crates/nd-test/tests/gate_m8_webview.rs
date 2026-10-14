@@ -1,6 +1,6 @@
 //! M8/M9 web view gates on macOS (ARCHITECTURE.md 6.3, 8, 16), each on WKWebView and on CEF:
 //!
-//! - `parity_*`: `examples/browser` with `BROWSER_SCENE=parity` runs every event and command of
+//! - `real_parity_*`: `examples/browser` with `BROWSER_SCENE=parity` runs every event and command of
 //!   `nd::webview` against a local test page and must print `ND_WEBVIEW_PARITY_OK`.
 //! - `real_overlay_leak_*`: the M4 overlay leak scenario with the page in a `webview()`: a
 //!   popover, a modal panel and a context menu over a native button and a live page that counts
@@ -43,12 +43,12 @@ mod gate_m8_webview {
     }
 
     #[test]
-    fn parity_wkwebview() {
+    fn real_parity_wkwebview() {
         parity("system");
     }
 
     #[test]
-    fn parity_cef() {
+    fn real_parity_cef() {
         parity("cef");
     }
 

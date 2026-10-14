@@ -26,7 +26,7 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 # which a loaded machine would push past its 100 ms budget. The appearance audits open AppKit
 # windows that would take key from them.
 [[profile.default.overrides]]
-filter = "binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/) | test(/^gate_m9_terminal::appkit_window_/)"
+filter = "binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/) | test(/^gate_m9_terminal::appkit_window_/) | binary(mac_native)"
 test-group = "real-window"
 
 # Tiers 1 and 2 only, what `just test` and CI's first step run.

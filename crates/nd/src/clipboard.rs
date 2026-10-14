@@ -7,7 +7,7 @@ use nd_ui::App;
 pub fn write_text(cx: &mut App, text: impl Into<String>) {
     let text = text.into();
     #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
-    if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>() {
+    if let Some(backend) = cx.backend_as::<crate::gpui_backend::GpuiBackend>() {
         backend.write_clipboard_text(text);
         return;
     }
@@ -18,7 +18,7 @@ pub fn write_text(cx: &mut App, text: impl Into<String>) {
 
 pub fn read_text(cx: &mut App, done: impl FnOnce(Option<String>, &mut App) + 'static) {
     #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
-    if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>() {
+    if let Some(backend) = cx.backend_as::<crate::gpui_backend::GpuiBackend>() {
         backend.read_clipboard_text(done);
         return;
     }

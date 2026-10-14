@@ -206,9 +206,7 @@ pub mod window {
 
     /// A callback for the chrome services and the future it resolves; `cancelled` when the
     /// service drops the callback unanswered.
-    fn bridge<T: Send + 'static>(
-        cancelled: T,
-    ) -> (Callback<T>, impl Future<Output = T> + Send + 'static) {
+    fn bridge<T: Send + 'static>(cancelled: T) -> (Callback<T>, impl Future<Output = T> + Send + 'static) {
         let (tx, rx) = oneshot::channel();
         let done: Callback<T> = Box::new(move |value, _app| {
             let _ = tx.send(value);

@@ -266,13 +266,13 @@ impl Application {
         #[cfg(target_arch = "wasm32")]
         let hooks = nd_os_web::WebHooks;
         #[cfg(not(any(target_os = "linux", target_arch = "wasm32")))]
-        let hooks = nd_backend_gpui::NoOsHooks;
-        nd_backend_gpui::run_with(
+        let hooks = crate::gpui_backend::NoOsHooks;
+        crate::gpui_backend::run_with(
             hooks,
             move |cx| {
                 gpui_host::install(cx, &files, app_theme, patterns);
-                if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>().cloned() {
-                    cx.set_global(nd_components::Chrome(nd_backend_gpui::GpuiChrome::new(backend.clone())));
+                if let Some(backend) = cx.backend_as::<crate::gpui_backend::GpuiBackend>().cloned() {
+                    cx.set_global(nd_components::Chrome(crate::gpui_backend::GpuiChrome::new(backend.clone())));
                     backend.on_file_drop(crate::system::file_dropped);
                     // AppKit's own notifications report activation on macOS.
                     if !cfg!(target_os = "macos") {
@@ -310,7 +310,7 @@ impl Application {
 /// The theme registry and services of an app on the GPUI backend.
 #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
 pub(crate) mod gpui_host {
-    use nd_backend_gpui::GpuiBackend;
+    use crate::gpui_backend::GpuiBackend;
     use nd_theme::{OsTheme, Preset, ThemeFiles, ThemeRefinement, ThemeRegistry};
     use nd_ui::App;
 
