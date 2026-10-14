@@ -13,20 +13,25 @@ visibility, not merged unless noted):
 
 | Branch | State | Next step |
 | --- | --- | --- |
-| `gpui-polish` | user feedback for the GPUI look: e1504g resize lag, spacing, field contrast, OS fonts (SF exactly on macOS, desktop font on Linux), title in empty titlebar, matugen discovery, chrome settings cmd-comma panic | check its final report in TODO.md, finish, merge |
-| `mac-polish` | user feedback for AppKit: titlebar/traffic-light alignment, rounded fields, centred status page, visible window tabs, Mail toolbar, title in empty titlebar | same |
-| `icons-notes` | Lucide icons on GPUI/web, SF Symbols on macOS, empty icon slots collapse, notes as the flagship example | same |
-| `port-gaps` | framework gaps from the messages port: rich text, animation and hover, role colours (SMS green), video and canvas, SVG, font override, focus by id, out-of-tree `nd new`, automation visibility | same; messages parity depends on it |
-| `linux-webview` | Linux web engine = CEF off-screen via nd-cef (WPE is not in nixpkgs; WebKitGTK cannot embed in a GPUI Wayland window). One wip commit, never compiled | `scripts/linux-gate run 'cargo check -p nd-cef -p nd-webview -p nd-os-linux --tests'`, fix, then gates and an e1504g screenshot (TODO.md M8) |
-| `m2-windows-2` | Windows: workspace builds in the g815 VM, OsHooks with Mica, drawn caption buttons, Snap Layouts; main merged in | nd-update apply on Windows, Setup.exe + signed update, the resize frame lag (fork patch), native run on real hardware |
+| `gpui-polish` (ae5e4de1) | done: e1504g resize lag fixed (fork patch 0006, 30-40 to 58-60 fps), FormalShell theme.json read for matugen, chrome settings panic, field fill, libadwaita spacing, title in empty titlebar, OS fonts (SF exact on macOS) | re-record GPUI goldens on g815 (`ND_UPDATE_GOLDENS=1` on nd-backend-gpui forms, nav, media) and macOS, check by eye, test for patch 0006, make the resize gate catch slow-GPU lag, merge |
+| `mac-polish` (21f5a387) | done: titlebar centre line, rounded multi-line field, centred status page, cmd-T crash fixed with tab bar at 2+ tabs, Mail inspector toggle trailing, title in empty titlebar; overrides goldens re-recorded | re-record gallery status-page and forms goldens, dark recaptures, check hello's title, clippy/fmt, merge |
+| `port-gaps` (f968d503, one wip commit) | rich text, animation/hover, role fills, GPUI canvas, SVG, font override, focus by id, automation rows written, mostly never compiled | `cargo test --no-run -p nd-components -p nd-backend-appkit`, fix; then video, AppKit canvas, out-of-tree `nd new` |
+| `linux-webview` (6349761d, wip) | Linux engine = CEF off-screen via nd-cef (no WPE in nixpkgs; WebKitGTK cannot embed in GPUI on Wayland), never compiled | `scripts/linux-gate run 'cargo check -p nd-cef -p nd-webview -p nd-os-linux --tests'`, fix, gates, e1504g screenshot (TODO.md M8) |
+| `m2-windows-2` (275dd12d) | VM builds and tier 1+2, OsHooks with Mica, caption buttons, Snap Layouts; native run script ready, never run. UNCOMMITTED in its worktree `nativedesktop-wt-windows2`: nd-update Windows apply fix, packaging + signed-update test, resize fix copy of GPUI's Windows crate (also uncommitted in g815 `~/.cache/nd-m2-windows/zed`) | commit those after building them in the VM, move the resize fix into `scripts/gpui-fork`, Setup.exe + update in the VM, native hardware run (needs the user's PIN) |
+| `port-ytm-fixes` (402a0efa) | Wayland app id from `[app] id`, `nd new --nd-path` writes the GPUI patch block; untested | test, merge |
+
+Merged into main this session: icons on every backend (`nd-icons`, Lucide + SF Symbols), the notes
+example, docs app (35 pages, macOS captures), the messages-port fixes, the e1504g scroll budget.
 
 Ports (separate repos under `~/Developer/ecosystem/`, never merged until a written parity checklist
 is fully checked; then the nd branch becomes the app's main and the nix config switches to it):
 - messages: branch `nd-port` (worktree `messages-nd`), macOS works on demo data, 63 of 89 parity items
   (`docs/nd-parity.md` there); waits on `port-gaps`; Linux leg not run.
-- youtubemusic: branch `nd-port` (worktree `youtubemusic-nd`), macOS green incl. tier 3 test; the user's
-  "library isn't fully loading" bug is fixed in the port (a dead session read as an empty library);
-  Linux leg and Nix package not run.
+- youtubemusic: branch `nd-port` (88728dd, worktree `youtubemusic-nd`), macOS green incl. tier 3 test;
+  the user's "library isn't fully loading" bug: their YouTube session cookies are dead; the port now
+  reads the sign-in answer as signed out and prompts. Linux leg, Nix package and switch not run; nix
+  edits wait on branch `formalmusic-nd` (worktree `~/.config/nix-wt-formalmusic`); framework gaps in
+  its `docs/port-parity.md` (dispatch buttons, media icons, drag reorder, container hover, menu button).
 - nativebrowser: not started; needs the Linux engine and Chrome-style extensions (M15).
 
 ## Machines
