@@ -43,6 +43,9 @@ pub use runtime::*;
 pub use nd_components as components;
 #[cfg(feature = "runtime")]
 pub use nd_core as core;
+/// Icons by Lucide name, and `icons::register` for an app's own.
+#[cfg(feature = "runtime")]
+pub use nd_icons as icons;
 /// Capability checks: `nd::platform::has(Feature::MultiWindow)`.
 #[cfg(feature = "runtime")]
 pub use nd_core::platform;

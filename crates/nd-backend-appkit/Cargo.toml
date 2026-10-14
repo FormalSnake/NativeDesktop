@@ -15,6 +15,7 @@ nd-gpui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
 nd-components.workspace = true
+nd-icons.workspace = true
 nd-virtual.workspace = true
 serde_json = "1.0.154"
 

@@ -4567,6 +4567,7 @@ dependencies = [
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
@@ -4605,6 +4606,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4634,6 +4636,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4693,6 +4696,7 @@ dependencies = [
  "image",
  "nd-core",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-settings",
  "nd-theme",
@@ -4781,6 +4785,10 @@ dependencies = [
  "taffy 0.13.0",
  "taffy 0.14.0",
 ]
+
+[[package]]
+name = "nd-icons"
+version = "0.1.0"
 
 [[package]]
 name = "nd-ipc"
