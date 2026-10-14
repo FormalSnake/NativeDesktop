@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/*"]
+members = ["crates/*", "examples/*", "docs/app"]
 # Published GPUI crates with nd's patch queue applied, written by scripts/gpui-fork.
 exclude = ["crates/nd-gpui/vendor", "crates/nd-terminal/vendor"]
 
@@ -21,7 +21,7 @@ nd-ui = { path = "crates/nd-ui" }
 nd-backend-appkit = { path = "crates/nd-backend-appkit" }
 nd-backend-gpui = { path = "crates/nd-backend-gpui" }
 ndshell = { path = "crates/ndshell" }
-nd-automation = { path = "crates/nd-automation" }
+nd-automation = { path = "crates/nd-automation", default-features = false }
 nd-test = { path = "crates/nd-test" }
 nd-theme = { path = "crates/nd-theme" }
 nd-components = { path = "crates/nd-components" }
@@ -35,6 +35,7 @@ nd-terminal = { path = "crates/nd-terminal" }
 nd-system = { path = "crates/nd-system" }
 nd-webview = { path = "crates/nd-webview" }
 nd-cef = { path = "crates/nd-cef" }
+nd-docs = { path = "crates/nd-docs" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # The pinned GPUI snapshot (zed@93d7456). Bumped by `scripts/gpui-fork bump`; only nd-gpui names these.

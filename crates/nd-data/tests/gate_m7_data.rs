@@ -3,6 +3,7 @@ mod gate_m7_data {
     use nd_data::{Database, Error, Migration, OpenOptions, SqliteExecutor, Statement, StepResult, Value, params};
     use serde::Deserialize;
 
+    // docs:begin migrations
     const MIGRATIONS: &[Migration] = &[
         Migration { version: 1, sql: "CREATE TABLE note (id INTEGER PRIMARY KEY, title TEXT NOT NULL, body BLOB)" },
         Migration { version: 2, sql: "ALTER TABLE note ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" },
@@ -14,6 +15,7 @@ mod gate_m7_data {
         title: String,
         pinned: i64,
     }
+    // docs:end migrations
 
     async fn db() -> Database {
         let db = Database::open_memory().await.unwrap();
@@ -23,6 +25,7 @@ mod gate_m7_data {
 
     #[test]
     fn query_mutate_and_typed_rows() {
+        // docs:begin query
         block_on(async {
             let db = db().await;
             let run =
@@ -38,6 +41,7 @@ mod gate_m7_data {
                 db.query_as("SELECT id, title, pinned FROM note WHERE pinned = ?", params![1]).await.unwrap();
             assert_eq!(notes, [Note { id: 2, title: "b".into(), pinned: 1 }]);
         });
+        // docs:end query
     }
 
     #[test]

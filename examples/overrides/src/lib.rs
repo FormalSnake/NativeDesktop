@@ -19,6 +19,7 @@ impl Render for Showcase {
         v_flex()
             .size_full()
             .bg(tokens.surface.base)
+            // docs:begin titlebar
             // Pattern override: a custom titlebar even on macOS. `titlebar()` reserves the OS
             // controls' side and size (traffic lights left on macOS, caption buttons right on
             // Windows, nothing on Hyprland), so no margin is tuned by hand.
@@ -26,6 +27,7 @@ impl Render for Showcase {
                 titlebar()
                     .title("Overrides")
                     .trailing(
+                        // docs:begin per-platform
                         // Per platform: glass bezel on macOS, accent style on Windows, pill on Linux.
                         button("share", "Share")
                             .icon(Icon::Share)
@@ -34,15 +36,18 @@ impl Render for Showcase {
                             .on_windows(|b| b.accent())
                             .on_linux(|b| b.rounded_full().px_4())
                             .on_web(|b| b.outline()),
+                        // docs:end per-platform
                     )
                     // Coordinates instead of the default slot, macOS only.
                     .on_macos(|t| t.controls(window_controls().at(point(px(18.), px(20.))))),
             )
+            // docs:end titlebar
             .child(
                 v_flex()
                     .p(tokens.spacing.content_margin)
                     .gap_4()
                     .max_w(tokens.spacing.content_width)
+                    // docs:begin element-style
                     // Element style on a native control: tint and font map to bezelColor and NSFont
                     // on macOS; a radius AppKit cannot draw is ignored with a dev warning.
                     .child(
@@ -52,6 +57,8 @@ impl Render for Showcase {
                             .text_color(tokens.text.on_accent)
                             .font(tokens.fonts.rounded.clone()),
                     )
+                    // docs:end element-style
+                    // docs:begin mapping
                     // Mapping override: the composed (drawn) slider on every OS, for a look the
                     // native control cannot express.
                     .child(slider("volume", self.volume).range(0.0..=1.0).drawn().h(px(28.)).rounded_full().on_change(
@@ -70,6 +77,8 @@ impl Render for Showcase {
                                 cx.notify();
                             })),
                     )
+                    // docs:end mapping
+                    // docs:begin subtree
                     // Subtree theme override: everything inside uses a warm accent and larger radii.
                     .child(
                         glass()
@@ -87,10 +96,12 @@ impl Render for Showcase {
                             .context_menu(|menu, _window, _cx| menu.item("Rename…", Rename).item("Share", Share))
                             .pattern(Pattern::Drawn),
                     ),
+                // docs:end subtree
             )
     }
 }
 
+// docs:begin app
 /// The app with its app-level overrides.
 pub fn app() -> Application {
     Application::new(nd::manifest!())
@@ -99,6 +110,7 @@ pub fn app() -> Application {
         // App-level pattern override; nativedesktop.toml [patterns] sits below this.
         .patterns(Patterns { tooltips: Pattern::Drawn, ..Patterns::default() })
 }
+// docs:end app
 
 /// The colours `theme.rs` names on purpose, which the appearance audit accepts as tokens.
 pub fn theme_colors() -> [Hsla; 2] {
@@ -110,6 +122,7 @@ pub fn app_theme() -> ThemeOverride {
     theme::app()
 }
 
+// docs:begin window
 /// Opens the showcase window, forced to `appearance`.
 pub fn open(cx: &mut App, appearance: Appearance) -> WindowHandle<Showcase> {
     cx.open_window(
@@ -121,3 +134,4 @@ pub fn open(cx: &mut App, appearance: Appearance) -> WindowHandle<Showcase> {
         },
     )
 }
+// docs:end window
