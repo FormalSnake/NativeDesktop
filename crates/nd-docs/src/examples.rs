@@ -58,7 +58,8 @@ pub struct Example {
 #[serde(deny_unknown_fields)]
 pub struct Motion {
     pub seconds: f32,
-    /// Automation calls made while recording, one every `interval_ms`: `{ method, params }`.
+    /// Steps made while recording, one every `interval_ms`: an automation call `{ method, params }`,
+    /// or `{ method = "wheel", params = { dy } }` for real scroll-wheel input over the window.
     #[serde(default)]
     pub steps: Vec<Step>,
     #[serde(default = "default_interval")]

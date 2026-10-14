@@ -50,7 +50,7 @@ title = "Scroll"
 summary = "A virtualized list of 100 000 rows with heights from 28 to 124 points, the list `nd diag scroll` measures."
 web = true
 env = { ND_ROWS = "100000" }
-motion = { seconds = 3.0, interval_ms = 50, steps = [{ method = "scroll", params = { testId = "rows", dy = 240 } }] }
+motion = { seconds = 3.0, interval_ms = 80, steps = [{ method = "wheel", params = { dy = -160 } }] }
 
 [[example]]
 name = "overlays"

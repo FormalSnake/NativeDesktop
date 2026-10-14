@@ -595,22 +595,48 @@ mod capture {
         std::thread::sleep(Duration::from_millis(400));
         ndshell::window_list::capture(info.number, png).map_err(anyhow::Error::msg)?;
         let Some((motion, gif)) = motion else { return Ok(false) };
-        let mov = png.with_extension("mov");
-        let mut recorder =
-            ndshell::window_list::record(info.bounds, motion.seconds, &mov).map_err(anyhow::Error::msg)?;
-        // screencapture takes a moment to start recording.
-        std::thread::sleep(Duration::from_millis(600));
+        // Frames of the window alone (`screencapture -l`), so nothing else on screen, such as
+        // a system alert, ends up in the recording. Wheel steps post from their own thread while
+        // this one captures; automation steps run between frames.
+        if gif.exists() {
+            std::fs::remove_file(gif)?;
+        }
+        let frames = png.with_extension("frames");
+        crate::project::fresh_dir(&frames)?;
         let end = Instant::now() + Duration::from_secs_f32(motion.seconds);
-        let mut steps = motion.steps.iter().cycle();
-        while Instant::now() < end && !motion.steps.is_empty() {
-            if let Some(step) = steps.next() {
+        let wheel: Vec<i32> = motion
+            .steps
+            .iter()
+            .filter(|s| s.method == "wheel")
+            .map(|s| s.params["dy"].as_i64().unwrap_or(-120) as i32)
+            .collect();
+        let (x, y, w, h) = info.bounds;
+        let interval = Duration::from_millis(motion.interval_ms);
+        let poster = std::thread::spawn(move || {
+            let mut steps = wheel.iter().cycle();
+            while Instant::now() < end {
+                if let Some(dy) = steps.next() {
+                    ndshell::input::scroll((x + w / 2., y + h / 2.), *dy, 4);
+                }
+                std::thread::sleep(interval);
+            }
+        });
+        let mut calls = motion.steps.iter().filter(|s| s.method != "wheel").cycle();
+        let has_calls = motion.steps.iter().any(|s| s.method != "wheel");
+        let started = Instant::now();
+        let mut count = 0u32;
+        while Instant::now() < end {
+            if has_calls && let Some(step) = calls.next() {
                 client.call(&step.method, step.params.clone())?;
             }
-            std::thread::sleep(Duration::from_millis(motion.interval_ms));
+            ndshell::window_list::capture(info.number, &frames.join(format!("{count:04}.png")))
+                .map_err(anyhow::Error::msg)?;
+            count += 1;
         }
-        recorder.wait()?;
-        let made = to_gif(&mov, gif);
-        let _ = std::fs::remove_file(&mov);
+        let _ = poster.join();
+        let fps = f64::from(count) / started.elapsed().as_secs_f64();
+        let made = to_gif(&frames, fps, gif);
+        std::fs::remove_dir_all(&frames)?;
         made
     }
 
@@ -628,18 +654,18 @@ mod capture {
     }
 
     #[cfg(target_os = "macos")]
-    fn to_gif(mov: &Path, gif: &Path) -> Result<bool> {
+    fn to_gif(frames: &Path, fps: f64, gif: &Path) -> Result<bool> {
         let ffmpeg = Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status();
         if !ffmpeg.is_ok_and(|s| s.success()) {
             println!("  no ffmpeg on PATH: recording skipped");
             return Ok(false);
         }
         let status = Command::new("ffmpeg")
-            .args(["-y", "-loglevel", "error", "-i"])
-            .arg(mov)
+            .args(["-y", "-loglevel", "error", "-framerate", &format!("{fps:.2}"), "-i"])
+            .arg(frames.join("%04d.png"))
             .args([
                 "-vf",
-                "fps=15,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse",
+                "scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse",
             ])
             .arg(gif)
             .status()

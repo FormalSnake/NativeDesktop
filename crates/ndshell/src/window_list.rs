@@ -66,13 +66,3 @@ pub fn capture(number: u32, png: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-
-/// Starts a video recording of a screen rectangle for `seconds`; wait on the child to finish it.
-pub fn record(bounds: (f64, f64, f64, f64), seconds: f32, mov: &Path) -> Result<std::process::Child, String> {
-    let (x, y, w, h) = bounds;
-    Command::new("/usr/sbin/screencapture")
-        .args(["-x", "-v", "-V", &format!("{seconds}"), "-R", &format!("{x},{y},{w},{h}")])
-        .arg(mov)
-        .spawn()
-        .map_err(|e| format!("screencapture -v: {e}"))
-}
