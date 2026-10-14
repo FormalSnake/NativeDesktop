@@ -209,7 +209,7 @@ impl SlotState {
                     self.shown.set(None);
                     self.started.set(Instant::now());
                 }
-                self.frame(0);
+                self.show_frame(0);
                 self.layer.setBackgroundColor(None);
                 self.animate_if_needed();
                 Loaded::Ready(decoded)
@@ -221,7 +221,7 @@ impl SlotState {
         }
     }
 
-    fn frame(&self, index: usize) {
+    fn show_frame(&self, index: usize) {
         if self.shown.get() == Some(index) {
             return;
         }
@@ -249,7 +249,7 @@ impl SlotState {
             let Some(me) = me.upgrade() else { return false };
             let Some(decoded) = me.decoded.borrow().clone() else { return false };
             let index = decoded.frame_at(me.started.get().elapsed());
-            me.frame(index);
+            me.show_frame(index);
             if let Some(request) = me.request.borrow().as_ref() {
                 ImagePipeline::global().touch(request);
             }
