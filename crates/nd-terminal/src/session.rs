@@ -305,7 +305,9 @@ impl TerminalSession {
         if drained.closed {
             state.closed = true;
         }
-        let exited = drained.exit.filter(|_| state.exit.is_none());
+        // The exit is reported once the output before it is parsed: the stream closed, or
+        // nothing is left to read (a background job can hold the pty open past the exit).
+        let exited = drained.exit.filter(|_| state.exit.is_none() && (drained.closed || !drained.more));
         if let Some(exit) = &exited {
             state.exit = Some(exit.clone());
         }

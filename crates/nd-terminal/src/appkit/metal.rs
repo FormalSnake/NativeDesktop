@@ -6,9 +6,11 @@
 //! for ordinary text, tinted per instance, or the glyph's own colours for emoji. Sprites and
 //! Nerd Font icons come from `sprite` and `icons`, the same masks the GPUI presenter draws.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 use nd_ui::prelude::Hsla;
 use objc2::rc::Retained;
@@ -105,6 +107,8 @@ fn rgba(c: Hsla) -> [f32; 4] {
 
 /// The grid's faces at the device scale, and the cell they define.
 pub(crate) struct Fonts {
+    /// Identifies the face, size and scale in the shared atlas's keys.
+    pub id: u64,
     regular: CFRetained<CTFont>,
     bold: CFRetained<CTFont>,
     italic: CFRetained<CTFont>,
@@ -162,7 +166,15 @@ impl Fonts {
         let (ascent, descent, leading) = unsafe { (regular.ascent(), regular.descent(), regular.leading()) };
         let cell_height = (ascent + descent + leading).ceil().max(1.) as u32;
         let baseline = (ascent + leading / 2.).ceil() as f32;
+        let id = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            unsafe { regular.post_script_name() }.to_string().hash(&mut h);
+            size.to_bits().hash(&mut h);
+            h.finish()
+        };
         Self {
+            id,
             regular,
             bold,
             italic,
@@ -222,10 +234,10 @@ struct Entry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
-    Text { text: String, bold: bool, italic: bool, cells: u16 },
-    Sprite(char),
-    Icon { c: char, cells: u16 },
-    Curly(u16),
+    Text { face: u64, text: String, bold: bool, italic: bool, cells: u16 },
+    Sprite { face: u64, c: char },
+    Icon { face: u64, c: char, cells: u16 },
+    Curly { face: u64, cells: u16 },
 }
 
 /// A shelf packer over one RGBA texture.
@@ -442,7 +454,23 @@ pub(crate) struct Renderer {
     instances: Vec<Instance>,
 }
 
+thread_local! {
+    static SHARED: RefCell<Option<Rc<RefCell<Renderer>>>> = const { RefCell::new(None) };
+}
+
 impl Renderer {
+    /// The main thread's renderer, which every terminal view draws with: one device, pipeline
+    /// and atlas however many terminals are open.
+    pub fn shared() -> Option<Rc<RefCell<Renderer>>> {
+        SHARED.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.is_none() {
+                *s = Self::new().map(|r| Rc::new(RefCell::new(r)));
+            }
+            s.clone()
+        })
+    }
+
     pub fn new() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
         let queue = device.newCommandQueue()?;
@@ -589,7 +617,7 @@ impl Renderer {
         if let (Some(marked), Some(c)) = (overlay.marked, cursor) {
             let (px, py) = at(c.col, c.row);
             let cells = marked.chars().count().max(1) as u16 * 2;
-            let key = Key::Text { text: marked.to_owned(), bold: false, italic: false, cells };
+            let key = Key::Text { face: fonts.id, text: marked.to_owned(), bold: false, italic: false, cells };
             let font = fonts.regular.clone();
             let (bw, bh, base) = (u32::from(cells) * fonts.cell_width, fonts.cell_height, fonts.baseline);
             if let Some(e) = self.glyph(key, || rasterize_text(marked, &font, bw, bh, base, false)) {
@@ -618,9 +646,9 @@ impl Renderer {
         let (cw, ch) = (fonts.cell_width, fonts.cell_height);
         if let Some(c) = single.filter(|c| sprite::is_sprite(*c)) {
             let stroke = fonts.stroke;
-            if let Some(e) =
-                self.glyph(Key::Sprite(c), || sprite::draw(c, cw, ch, stroke).map(|m| Image::from_mask(&m)))
-            {
+            if let Some(e) = self.glyph(Key::Sprite { face: fonts.id, c }, || {
+                sprite::draw(c, cw, ch, stroke).map(|m| Image::from_mask(&m))
+            }) {
                 self.push_entry(e, px, py, fg);
             }
             return;
@@ -628,7 +656,7 @@ impl Renderer {
         let cells = glyph::box_cells(row, x);
         if let Some(c) = single.filter(|c| glyph::is_symbol(*c) && icons::covers(*c) && !fonts.covers(*c)) {
             let (ppem, base) = (fonts.size as f32, fonts.baseline);
-            let key = Key::Icon { c, cells };
+            let key = Key::Icon { face: fonts.id, c, cells };
             if let Some(e) =
                 self.glyph(key, || icons::mask(c, ppem, u32::from(cells) * cw, ch, base).map(|m| Image::from_mask(&m)))
             {
@@ -638,7 +666,7 @@ impl Renderer {
         }
         let bold = cell.attrs.contains(Attrs::BOLD);
         let italic = cell.attrs.contains(Attrs::ITALIC);
-        let key = Key::Text { text: g.to_owned(), bold, italic, cells };
+        let key = Key::Text { face: fonts.id, text: g.to_owned(), bold, italic, cells };
         let font = fonts.pick(cell.attrs).retain();
         let symbol = single.is_some_and(glyph::is_symbol);
         let (bw, base) = (u32::from(cells) * cw, fonts.baseline);
@@ -661,9 +689,9 @@ impl Renderer {
             }
             Underline::Curly => {
                 let (cw, h, stroke) = (fonts.cell_width, (s * 3.) as u32, fonts.stroke);
-                if let Some(e) =
-                    self.glyph(Key::Curly(cell.width()), || Some(Image::from_mask(&curly_mask(cw, h, stroke))))
-                {
+                if let Some(e) = self.glyph(Key::Curly { face: fonts.id, cells: cell.width() }, || {
+                    Some(Image::from_mask(&curly_mask(cw, h, stroke)))
+                }) {
                     for i in 0..cell.width() {
                         self.push_entry(e, px + f32::from(i) * cw as f32, under - s, color);
                     }

@@ -119,6 +119,14 @@ mod window {
         }
         pump_until(&host, "cat's echo", || session.screen_text() == "hi\nhi");
 
+        // Tab is nd's focus traversal everywhere else; the focused terminal keeps it.
+        for key in ["a", "tab", "b", "enter"] {
+            let keystroke = Keystroke::parse(key).expect("keystroke");
+            host.update(|app| app.synthesize(main.id(), &SyntheticInput::Key(keystroke))).expect("posted");
+            pump(&host, Duration::from_millis(30));
+        }
+        pump_until(&host, "the tab's echo", || session.screen_text() == "hi\nhi\na       b\na       b");
+
         // Output redraws the view.
         pump_until(&host, "a frame for the echo", || terminal_view.frames_presented() > before);
 
@@ -133,13 +141,19 @@ mod window {
         let has_marked: bool = unsafe { msg_send![&*view, hasMarkedText] };
         assert!(has_marked, "composing text is marked");
         pump(&host, Duration::from_millis(100));
-        assert_eq!(session.screen_text(), "hi\nhi", "nothing reaches the program while composing");
+        assert_eq!(
+            session.screen_text(),
+            "hi\nhi\na       b\na       b",
+            "nothing reaches the program while composing"
+        );
         let _: () = unsafe { msg_send![&*view, insertText: &*committed, replacementRange: none] };
         let has_marked: bool = unsafe { msg_send![&*view, hasMarkedText] };
         assert!(!has_marked, "the commit ends the composition");
         let enter = Keystroke::parse("enter").expect("keystroke");
         host.update(|app| app.synthesize(main.id(), &SyntheticInput::Key(enter))).expect("posted");
-        pump_until(&host, "the committed text's echo", || session.screen_text() == "hi\nhi\n日本\n日本");
+        pump_until(&host, "the committed text's echo", || {
+            session.screen_text() == "hi\nhi\na       b\na       b\n日本\n日本"
+        });
 
         // A drag selects; the selection is the text under it. A cell joins it once the pointer
         // passes its middle.

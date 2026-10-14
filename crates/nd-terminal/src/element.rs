@@ -1,7 +1,10 @@
 //! `terminal(id, &session)`: the element that shows a session, and the events it reports.
 
+use nd_ui::actions::{Cancel, FocusNext, FocusPrevious};
 use nd_ui::prelude::*;
-use nd_ui::{App, InteractiveElement, Key, NativeElement, StyleRefinement, Window};
+use nd_ui::{App, InteractiveElement, NativeElement, StyleRefinement, Window};
+
+use crate::input::{Key, KeyInput, Mods};
 
 use crate::session::TerminalSession;
 use crate::theme::TerminalColors;
@@ -69,7 +72,7 @@ pub struct FocusChanged {
 }
 
 /// Shows `session`. Its size follows the element's: the grid takes as many cells as fit.
-pub fn terminal(id: impl Into<Key>, session: &TerminalSession) -> Terminal {
+pub fn terminal(id: impl Into<nd_ui::Key>, session: &TerminalSession) -> Terminal {
     Terminal(NativeElement::new::<TerminalWidget>(
         id,
         TerminalProps {
@@ -159,7 +162,23 @@ impl IntoElement for Terminal {
         crate::register_presenters();
         let style = self.0.style().clone();
         self.0.props_mut().style = style;
-        self.0.into_any_element()
+        // Focused, the terminal keeps the keys nd binds for itself: Tab and Shift-Tab traverse
+        // focus, Return activates a default button and Escape dismisses a scope everywhere else.
+        let key = |key: Key, mods: Mods| {
+            let session = self.0.props().session.clone();
+            move || {
+                session.key(&KeyInput::press(key, mods));
+            }
+        };
+        let (tab, back_tab, escape) =
+            (key(Key::Tab, Mods::empty()), key(Key::Tab, Mods::SHIFT), key(Key::Escape, Mods::empty()));
+        self.0
+            .focusable()
+            .takes_return()
+            .on_action(move |_: &FocusNext, _, _| tab())
+            .on_action(move |_: &FocusPrevious, _, _| back_tab())
+            .on_action(move |_: &Cancel, _, _| escape())
+            .into_any_element()
     }
 }
 

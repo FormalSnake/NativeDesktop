@@ -70,7 +70,7 @@ struct NodeState {
     coverage: RefCell<HashMap<(SharedString, char), bool>>,
     /// Shaped and placed graphemes, for the font, size and scale in `shaped_for`.
     shapes: RefCell<HashMap<ShapeKey, Rc<[Placed]>>>,
-    shaped_for: RefCell<Option<(SharedString, f32, f32, usize)>>,
+    shaped_for: RefCell<Option<(SharedString, f32, f32)>>,
 }
 
 /// A grapheme, its bold and italic bits and the cells its box spans.
@@ -152,16 +152,16 @@ impl CustomWidget for GpuiTerminal {
             // draw through `icons` instead; registering keeps a user's fallback lookups sane.
             let _ = window.text_system().add_fonts(vec![Cow::Borrowed(SYMBOLS_FONT)]);
         }
-        let state = self
-            .nodes
-            .borrow_mut()
-            .entry(cx.node())
-            .or_insert_with(|| Rc::new(NodeState::new(props.session.clone())))
-            .clone();
-        if *state.session.borrow() != props.session {
-            *state.session.borrow_mut() = props.session.clone();
-            state.waking.borrow_mut().take();
-        }
+        // A node showing another session starts over: its caches hold the old one's state, and
+        // in tests the old one's app (font ids belong to a text system).
+        let state = {
+            let mut nodes = self.nodes.borrow_mut();
+            let fresh = nodes.get(&cx.node()).is_none_or(|s| *s.session.borrow() != props.session);
+            if fresh {
+                nodes.insert(cx.node(), Rc::new(NodeState::new(props.session.clone())));
+            }
+            nodes[&cx.node()].clone()
+        };
         let theme_tokens = cx.theme();
         let theme = TerminalTheme::from_theme(&theme_tokens, &props.colors);
         let session = state.session();
@@ -361,10 +361,7 @@ impl Element for TerminalElement {
         );
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, self.theme.background));
-            // Font ids belong to one text system; a node id can outlive its app in tests.
-            let system = Arc::as_ptr(window.text_system()) as usize;
-            let shaped_for =
-                (prepainted.fonts.regular.family.clone(), prepainted.fonts.size.as_f32(), layout.scale, system);
+            let shaped_for = (prepainted.fonts.regular.family.clone(), prepainted.fonts.size.as_f32(), layout.scale);
             if self.state.shaped_for.borrow().as_ref() != Some(&shaped_for) {
                 self.state.shapes.borrow_mut().clear();
                 *self.state.shaped_for.borrow_mut() = Some(shaped_for);

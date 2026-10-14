@@ -93,7 +93,7 @@ struct Term {
     theme: TerminalTheme,
     emit: nd_ui::events::Emit,
     wake: Waker,
-    renderer: Option<Renderer>,
+    renderer: Option<std::rc::Rc<RefCell<Renderer>>>,
     fonts: Option<(FontKey, Fonts)>,
     guard: Option<WakerGuard>,
     marked: Option<String>,
@@ -143,7 +143,7 @@ define_class!(
             if let Some(term) = self.ivars().term.borrow().as_ref()
                 && let Some(renderer) = &term.renderer
             {
-                layer.setDevice(Some(renderer.device()));
+                layer.setDevice(Some(renderer.borrow().device()));
             }
             Retained::into_super(layer)
         }
@@ -473,7 +473,7 @@ impl NdTerminalView {
             theme,
             emit,
             wake,
-            renderer: Renderer::new(),
+            renderer: Renderer::shared(),
             fonts: None,
             guard: None,
             marked: None,
@@ -620,13 +620,19 @@ impl NdTerminalView {
         self.redraw();
     }
 
+    /// The backend calls this after every transaction in the window; only a change redraws.
     fn set_theme(&self, tokens: &Theme) {
-        self.with_term(|t| {
+        let changed = self.with_term(|t| {
+            let theme = TerminalTheme::from_theme(tokens, &t.props.colors);
+            let changed = theme != t.theme || t.tokens.fonts.mono != tokens.fonts.mono;
             t.tokens = tokens.clone();
-            t.theme = TerminalTheme::from_theme(tokens, &t.props.colors);
+            t.theme = theme;
             t.session.set_theme(&t.theme);
+            changed
         });
-        self.redraw();
+        if changed == Some(true) {
+            self.redraw();
+        }
     }
 
     fn paints(&self) -> Vec<CustomPaint> {
@@ -694,7 +700,8 @@ impl NdTerminalView {
         let mut term = self.ivars().term.borrow_mut();
         let Some(t) = term.as_mut() else { return };
         self.ensure_fonts(t);
-        let (Some(renderer), Some((_, fonts))) = (t.renderer.as_mut(), t.fonts.as_ref()) else { return };
+        let (Some(renderer), Some((_, fonts))) = (t.renderer.clone(), t.fonts.as_ref()) else { return };
+        let mut renderer = renderer.borrow_mut();
         if layer.device().is_none() {
             layer.setDevice(Some(renderer.device()));
         }
