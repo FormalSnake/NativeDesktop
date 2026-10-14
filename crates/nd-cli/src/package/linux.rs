@@ -15,6 +15,9 @@ use crate::project::{Project, fresh_dir, write, xml_escape};
 use crate::vpk;
 
 pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
+    if super::cef::enabled(project) {
+        bail!("[webview] engine = \"cef\": bundling Chromium for Linux is not implemented yet (macOS only)");
+    }
     let formats = &project.config.linux.formats;
     if let Some(other) = formats.iter().find(|f| **f != LinuxFormat::Appimage) {
         bail!("linux.formats: {other:?} is not built by nd package yet; only appimage is");

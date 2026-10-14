@@ -134,6 +134,9 @@ impl AppKitBackend {
         if let Native::Surface(s) = native {
             probe.value = s.value();
         }
+        if let Native::Custom(c) = native {
+            c.probe(&mut probe);
+        }
         state.probe_nav(native, content.map(|c| &**c), &mut probe);
         if let Native::Button(b) = native {
             probe.enabled = Some(b.button.isEnabled());
@@ -242,9 +245,9 @@ impl AppKitBackend {
                 let (window, view) = {
                     let state = self.0.borrow();
                     let view =
-                        state.nodes.get(&node).and_then(Native::view).ok_or_else(|| not_actionable("no view"))?;
+                        state.nodes.get(&node).and_then(Native::key_view).ok_or_else(|| not_actionable("no view"))?;
                     let window = view.window().ok_or_else(|| not_actionable("not in a window"))?;
-                    (window, view.retain())
+                    (window, view)
                 };
                 if !view.acceptsFirstResponder() {
                     return Err(ActionError::Unsupported(format!("{node:?} takes no keyboard focus")));

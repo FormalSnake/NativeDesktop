@@ -1,0 +1,20 @@
+[package]
+name = "browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Chromium as well as WKWebView; the engine is `[webview] engine` or `ND_WEBVIEW_ENGINE`.
+cef = ["nd/cef"]
+# The GPUI backend on macOS, picked with `ND_BACKEND=gpui`.
+gpui = ["nd/gpui"]
+
+[dependencies]
+nd = { path = "../../crates/nd", features = ["webview"] }
+serde_json.workspace = true
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }

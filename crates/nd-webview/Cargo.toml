@@ -1,0 +1,34 @@
+[package]
+name = "nd-webview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+nd-theme.workspace = true
+serde_json.workspace = true
+bitflags = "2.13.2"
+tracing = "0.1.44"
+
+[features]
+# The GPUI presenter on macOS too, for apps that run the GPUI backend there (`nd/gpui`).
+gpui = ["dep:nd-backend-gpui", "dep:nd-gpui"]
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+nd-backend-gpui.workspace = true
+nd-gpui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nd-backend-appkit.workspace = true
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-web-kit = "0.3.2"
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+nd-backend-gpui = { workspace = true, optional = true }
+nd-gpui = { workspace = true, optional = true }

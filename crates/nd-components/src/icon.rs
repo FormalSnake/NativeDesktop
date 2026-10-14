@@ -37,6 +37,9 @@ pub enum Icon {
     User,
     X,
     CircleX,
+    RotateCw,
+    Code,
+    Download,
 }
 
 impl Icon {
@@ -75,6 +78,9 @@ impl Icon {
             Icon::User => "user",
             Icon::X => "x",
             Icon::CircleX => "circle-x",
+            Icon::RotateCw => "rotate-cw",
+            Icon::Code => "code",
+            Icon::Download => "download",
         }
     }
 }

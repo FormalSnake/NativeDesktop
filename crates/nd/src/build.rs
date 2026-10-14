@@ -18,7 +18,7 @@ const PINNED: &str = include_str!("../../../swift-toolchain.toml");
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub fn app() {
-    if let Err(message) = bake_updates() {
+    if let Err(message) = bake_updates().and_then(|()| bake_webview()) {
         println!("cargo::error=nd::build::app: {message}");
         std::process::exit(1);
     }
@@ -115,6 +115,25 @@ fn bake_updates() -> Result<(), String> {
     if let (Some(feed), Some(key)) = (get("feed"), get("public_key")) {
         println!("cargo::rustc-env=ND_UPDATE_FEED={feed}");
         println!("cargo::rustc-env=ND_UPDATE_PUBLIC_KEY={key}");
+    }
+    Ok(())
+}
+
+/// Bakes `[webview] engine` into the app as `ND_WEBVIEW_ENGINE`, read back by
+/// `nd::manifest!()`. `ND_WEBVIEW_ENGINE` in the build's environment wins, as it does at run
+/// time (`ND_WEBVIEW_ENGINE=cef nd package` builds a Chromium package of the same app).
+fn bake_webview() -> Result<(), String> {
+    println!("cargo::rerun-if-env-changed=ND_WEBVIEW_ENGINE");
+    if let Ok(engine) = env::var("ND_WEBVIEW_ENGINE") {
+        println!("cargo::rustc-env=ND_WEBVIEW_ENGINE={engine}");
+        return Ok(());
+    }
+    let config = PathBuf::from(var("CARGO_MANIFEST_DIR")?).join("nativedesktop.toml");
+    let Ok(text) = fs::read_to_string(&config) else { return Ok(()) };
+    println!("cargo::rerun-if-changed=nativedesktop.toml");
+    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", config.display()))?;
+    if let Some(engine) = table.get("webview").and_then(|w| w.get("engine")).and_then(|e| e.as_str()) {
+        println!("cargo::rustc-env=ND_WEBVIEW_ENGINE={engine}");
     }
     Ok(())
 }

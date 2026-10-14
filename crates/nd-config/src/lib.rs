@@ -91,14 +91,26 @@ pub enum SettingsWindow {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Webview {
+    /// The engine pages use unless code picks one. `cef` needs nd's `cef` feature; packaging
+    /// bundles Chromium only then.
+    pub engine: WebviewEngine,
     pub cef: Cef,
 }
 
-/// CEF is opt-in per app. Without it the binary carries no Chromium bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum WebviewEngine {
+    /// The OS engine: WKWebView, WebView2, WPE WebKit. Ships no browser.
+    #[default]
+    System,
+    /// Chromium (CEF), off-screen and composited into the window.
+    Cef,
+}
+
+/// Chromium options, read when `engine = "cef"`. Without it the app carries no Chromium bytes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cef {
-    pub enabled: bool,
     pub style: CefStyle,
 }
 
@@ -110,6 +122,13 @@ pub enum CefStyle {
     Osr,
     /// Windowed Chrome-style browser with extensions.
     Chrome,
+}
+
+impl Config {
+    /// Whether packaging bundles Chromium.
+    pub fn uses_cef(&self) -> bool {
+        self.webview.engine == WebviewEngine::Cef
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

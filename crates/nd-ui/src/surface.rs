@@ -3,9 +3,9 @@
 //! lockstep with the window. Overlays always sit above it and its input stops at their edges
 //! (6.3).
 //!
-//! What it shows is a [`SurfaceSource`]: a web page (WKWebView on macOS today; WebView2 and WPE
-//! arrive with M8) or a test pattern drawn on the GPU, which the overlay and resize gates use
-//! where no web engine is wired up yet.
+//! What it shows is a [`SurfaceSource`]: a fixed page in a bare WKWebView on macOS, or a test
+//! pattern drawn on the GPU, which the overlay and resize gates use. Apps show web pages with
+//! `nd::webview` (nd-webview), which carries the full engine API.
 //!
 //! With `.count_input()` its semantic value counts the pointer input it received, as
 //! `down=N up=N move=N wheel=N`, so a test can prove that nothing reached it through an overlay.
@@ -92,11 +92,6 @@ pub fn native_surface(id: impl Into<SharedString>, source: SurfaceSource) -> Sur
         Key::Id(id.into()),
         SurfaceProps { source, count_input: false, style: StyleRefinement::default() },
     ))
-}
-
-/// A web page in a native surface.
-pub fn webview(id: impl Into<SharedString>, url: impl Into<SharedString>) -> Surface {
-    native_surface(id, SurfaceSource::Url(url.into()))
 }
 
 impl Surface {
