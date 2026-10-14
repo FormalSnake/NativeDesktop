@@ -3,14 +3,17 @@
 //! backend exports the way a panel and `playerctl` would, round-trips a secret through the
 //! Secret Service when one runs there, edits an isolated `recently-used.xbel`, and copies
 //! through a headless Hyprland's clipboard. Run it as
-//! `dbus-run-session -- cargo test -p nd-system --test linux_native`.
+//! `dbus-run-session -- cargo test -p nd-system --test linux_native -- --ignored`.
 
-#[cfg(not(target_os = "linux"))]
-fn main() {}
+mod harness;
 
-#[cfg(target_os = "linux")]
+/// Ignored by default: it needs the private session bus `scripts/linux-gate system` starts.
 fn main() {
-    linux::run();
+    let test = harness::Test { name: "gate_m7::linux_native", here: cfg!(target_os = "linux"), ignored: true };
+    #[cfg(target_os = "linux")]
+    harness::main(test, linux::run);
+    #[cfg(not(target_os = "linux"))]
+    harness::main(test, || {});
 }
 
 #[cfg(target_os = "linux")]

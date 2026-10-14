@@ -3,12 +3,14 @@
 //! answered by code (a panel cancelled or confirmed, an alert stopped), never left open.
 //! The test touches the user's clipboard and restores its text afterwards.
 
-#[cfg(not(target_os = "macos"))]
-fn main() {}
+mod harness;
 
-#[cfg(target_os = "macos")]
 fn main() {
-    mac::run();
+    let test = harness::Test { name: "gate_m7::mac_native", here: cfg!(target_os = "macos"), ignored: false };
+    #[cfg(target_os = "macos")]
+    harness::main(test, mac::run);
+    #[cfg(not(target_os = "macos"))]
+    harness::main(test, || {});
 }
 
 #[cfg(target_os = "macos")]

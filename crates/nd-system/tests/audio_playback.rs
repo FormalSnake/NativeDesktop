@@ -5,13 +5,16 @@
 //! On Linux without GStreamer, play must fail with "audio unavailable"; `ND_AUDIO_REQUIRE=1`
 //! turns that into a failure, for a run where GStreamer is known to be present.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn main() {
-    real::run();
-}
+mod harness;
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn main() {}
+fn main() {
+    let here = cfg!(any(target_os = "macos", target_os = "linux"));
+    let test = harness::Test { name: "gate_m7::audio_playback", here, ignored: false };
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    harness::main(test, real::run);
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    harness::main(test, || {});
+}
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod real {
@@ -25,9 +28,14 @@ mod real {
 
     const RATE: u32 = 44_100;
     const TONE_HZ: f64 = 1_000.;
-    const SECONDS: f64 = 1.5;
+    /// Long enough that a loaded machine still sees five spectrum frames before it ends; the test
+    /// seeks to the last second instead of waiting the rest out.
+    const SECONDS: f64 = 4.;
     /// Silent: both backends analyze the sound before the player's volume applies.
     const VOLUME: f32 = 0.;
+    /// How long any one expected event may take. A passing run never waits it out; it only
+    /// bounds a failure, so a machine loaded by a whole-workspace run gets the room it needs.
+    const PATIENCE: Duration = Duration::from_secs(30);
 
     pub fn run() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -50,16 +58,20 @@ mod real {
         };
         let id = player.id();
 
-        let playing = wait_state(&mut events, id, Duration::from_secs(5));
+        let playing = wait_state(&mut events, id, PATIENCE);
         assert_eq!(playing.0, AudioState::Playing, "first transition");
         assert_eq!(playing.2.map(|d| (d.as_secs_f64() * 10.).round() / 10.), Some(SECONDS), "duration");
 
         let expected = band_of(TONE_HZ);
         let mut lit = 0;
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + PATIENCE;
         while lit < 5 {
-            assert!(Instant::now() < deadline, "only {lit} lit spectrum frames in 3 s");
-            if let Some(AudioEvent::Spectrum(bins)) = next_for(&mut events, id, deadline) {
+            assert!(Instant::now() < deadline, "only {lit} lit spectrum frames in {PATIENCE:?}");
+            let event = next_for(&mut events, id, deadline);
+            if let Some(AudioEvent::State { state, .. }) = &event {
+                panic!("{state:?} after only {lit} lit spectrum frames");
+            }
+            if let Some(AudioEvent::Spectrum(bins)) = event {
                 assert_eq!(bins.len(), BINS);
                 let (loudest, level) = loudest(&bins);
                 if level > 0.1 {
@@ -73,7 +85,7 @@ mod real {
         }
 
         block_on(player.pause()).expect("pause");
-        assert_eq!(wait_state(&mut events, id, Duration::from_secs(2)).0, AudioState::Paused);
+        assert_eq!(wait_state(&mut events, id, PATIENCE).0, AudioState::Paused);
         pump(Duration::from_millis(300));
         while events.try_next().is_some() {}
         pump(Duration::from_millis(400));
@@ -85,22 +97,22 @@ mod real {
         }
 
         block_on(player.set_volume(0.)).expect("set_volume");
-        block_on(player.seek(Duration::from_millis(500))).expect("seek");
+        block_on(player.seek(Duration::from_secs_f64(SECONDS - 1.))).expect("seek");
         block_on(player.resume()).expect("resume");
-        assert_eq!(wait_state(&mut events, id, Duration::from_secs(2)).0, AudioState::Playing);
-        let ended = wait_state(&mut events, id, Duration::from_secs(5));
+        assert_eq!(wait_state(&mut events, id, PATIENCE).0, AudioState::Playing);
+        let ended = wait_state(&mut events, id, PATIENCE);
         assert_eq!(ended.0, AudioState::Ended);
-        assert!(ended.1 >= Duration::from_millis(1_400), "ended at {:?}", ended.1);
+        assert!(ended.1 >= Duration::from_secs_f64(SECONDS - 0.1), "ended at {:?}", ended.1);
 
         block_on(player.stop()).expect("stop");
-        assert_eq!(wait_state(&mut events, id, Duration::from_secs(2)).0, AudioState::Stopped);
+        assert_eq!(wait_state(&mut events, id, PATIENCE).0, AudioState::Stopped);
         assert!(matches!(block_on(player.pause()), Err(Error::NotFound)), "a stopped player is gone");
         assert!(matches!(block_on(player.stop()), Err(Error::NotFound)));
 
         let junk = dir.path().join("junk.wav");
         std::fs::write(&junk, b"RIFF this is not audio at all, just bytes").expect("write junk");
         let bad = block_on(system.audio().play(PlayOptions::path(&junk).volume(0.))).expect("play junk");
-        let failed = wait_state(&mut events, bad.id(), Duration::from_secs(5));
+        let failed = wait_state(&mut events, bad.id(), PATIENCE);
         assert_eq!(failed.0, AudioState::Error);
         assert!(failed.3.is_some_and(|m| !m.is_empty()), "error carries a message");
         block_on(bad.stop()).expect("stop the failed player");

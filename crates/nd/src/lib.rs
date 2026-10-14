@@ -4,6 +4,16 @@
 //! (elsewhere, and on macOS with the `gpui` feature and `ND_BACKEND=gpui`); the theme is
 //! `nd-theme`'s; the chrome intents, `glass()`, menus and dialogs are `nd-components`'.
 
+/// The GPUI backend, whichever crate brings it on this target (Cargo.toml says why).
+#[cfg(all(target_os = "macos", feature = "gpui"))]
+pub(crate) use nd_backend_gpui as gpui_backend;
+#[cfg(all(target_os = "linux", feature = "runtime"))]
+pub(crate) use nd_os_linux::nd_backend_gpui as gpui_backend;
+#[cfg(all(target_arch = "wasm32", feature = "runtime"))]
+pub(crate) use nd_os_web::nd_backend_gpui as gpui_backend;
+#[cfg(all(windows, feature = "runtime"))]
+pub(crate) use nd_os_windows::nd_backend_gpui as gpui_backend;
+
 #[cfg(feature = "audit")]
 pub mod audit;
 #[cfg(feature = "build")]
@@ -39,12 +49,12 @@ pub use nd_core::platform;
 pub use nd_core::time;
 #[cfg(feature = "runtime")]
 pub use nd_macros::unavailable;
+#[cfg(feature = "terminal")]
+pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]
 pub use nd_ui::{actions, backend, dispatch, events, transaction};
 #[cfg(feature = "runtime")]
 pub use nd_update as update;
-#[cfg(feature = "terminal")]
-pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]
 pub use nd_virtual as virtual_list;
 

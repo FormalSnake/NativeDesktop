@@ -14,6 +14,8 @@ mod fonts;
 pub mod storage;
 
 pub use chrome::WebChrome;
+/// The backend a web app runs on, for `nd`, which reaches it only through this crate.
+pub use nd_backend_gpui;
 
 use nd_backend_gpui::OsHooks;
 use nd_gpui::gpui;

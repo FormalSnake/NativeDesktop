@@ -11,11 +11,6 @@ nd-core.workspace = true
 nd-ui.workspace = true
 nd-gpui.workspace = true
 nd-backend-gpui.workspace = true
-# Not used here. An app's build script takes `nd`, which on Linux reaches GPUI and so zbus as a
-# host build; `zbus_macros` is one proc-macro build shared by that and the app's zbus, which
-# nd-system's Secret Service and MPRIS crates build with `blocking-api`. Without the feature on
-# the host side too, the host zbus fails to compile the blocking proxies the macros emit.
-zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ndshell.workspace = true

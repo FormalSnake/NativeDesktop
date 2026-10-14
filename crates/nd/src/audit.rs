@@ -331,7 +331,7 @@ impl Audit {
     fn gpui(&self) -> Vec<String> {
         use std::sync::Arc;
 
-        use nd_backend_gpui::GpuiHost;
+        use crate::gpui_backend::GpuiHost;
         use nd_gpui::gpui::HeadlessAppContext;
 
         let application = (self.app)();
@@ -383,7 +383,7 @@ fn settle_appkit(host: &nd_backend_appkit::AppHost) {
     host.platform().pump(Duration::from_millis(50), Duration::from_millis(200));
 }
 
-fn settle_gpui(cx: &mut nd_gpui::gpui::HeadlessAppContext, host: &nd_backend_gpui::GpuiHost) {
+fn settle_gpui(cx: &mut nd_gpui::gpui::HeadlessAppContext, host: &crate::gpui_backend::GpuiHost) {
     for _ in 0..4 {
         cx.run_until_parked();
         cx.update(|gcx| {
@@ -450,8 +450,5 @@ fn tokens(theme: &Theme) -> Vec<nd_ui::prelude::Hsla> {
         t.focus_ring,
         t.scrim,
     ];
-    base.iter()
-        .chain(t.terminal.ansi.iter())
-        .flat_map(|c| [*c, t.hover(*c), t.pressed(*c), t.disabled(*c)])
-        .collect()
+    base.iter().chain(t.terminal.ansi.iter()).flat_map(|c| [*c, t.hover(*c), t.pressed(*c), t.disabled(*c)]).collect()
 }

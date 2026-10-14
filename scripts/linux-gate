@@ -68,7 +68,7 @@ cmd_system() {
   cap_target
   # A fresh data dir and control dir give gnome-keyring its own unlocked login collection,
   # so nothing prompts and the user's own keyring is never touched.
-  remote "$(in_shell 'env XDG_DATA_HOME=$(mktemp -d) dbus-run-session -- bash -c "printf nd | gnome-keyring-daemon --unlock --components=secrets --control-directory=\$(mktemp -d) >/dev/null 2>&1; cargo test -p nd-system --test linux_native --test audio_playback 2>&1" | grep -E "^(error|ok |skip )|ND_SYSTEM|audio_playback|panicked"')"
+  remote "$(in_shell 'env XDG_DATA_HOME=$(mktemp -d) dbus-run-session -- bash -c "printf nd | gnome-keyring-daemon --unlock --components=secrets --control-directory=\$(mktemp -d) >/dev/null 2>&1; cargo test -p nd-system --test linux_native -- --ignored 2>&1; cargo test -p nd-system --test audio_playback 2>&1" | grep -E "^(error|ok |skip )|ND_SYSTEM|audio_playback|panicked"')"
 }
 
 case "${1:-}" in
