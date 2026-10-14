@@ -4568,10 +4568,12 @@ dependencies = [
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
  "nd-os-windows",
+ "nd-settings",
  "nd-system",
  "nd-terminal",
  "nd-theme",
@@ -4608,6 +4610,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4637,6 +4640,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4700,6 +4704,7 @@ dependencies = [
  "js-sys",
  "nd-core",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-settings",
  "nd-theme",
@@ -4822,6 +4827,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-icons"
+version = "0.1.0"
+
+[[package]]
 name = "nd-ipc"
 version = "0.1.0"
 dependencies = [
@@ -4928,6 +4937,7 @@ dependencies = [
 name = "nd-settings-derive"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5169,8 +5179,7 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "nd",
- "nd-settings",
- "schemars",
+ "nd-test",
  "serde",
  "tempfile",
 ]

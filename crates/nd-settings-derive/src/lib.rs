@@ -18,6 +18,7 @@ pub fn derive_settings(input: TokenStream) -> TokenStream {
 }
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let krate = settings_crate();
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(&input.ident, "#[derive(Settings)] needs a struct"));
     };
@@ -46,17 +47,17 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 quote! {}
             } else {
                 quote! {
-                    out.push(::nd_settings::FieldMeta {
+                    out.push(#krate::FieldMeta {
                         path: ::std::string::String::from(#key),
                         range: ::core::option::Option::None,
                         step: ::core::option::Option::None,
-                        reload: ::nd_settings::Reload::Live,
+                        reload: #krate::Reload::Live,
                     });
                 }
             };
             pushes.push(quote! {
                 #own
-                for mut m in <#ty as ::nd_settings::Settings>::field_meta() {
+                for mut m in <#ty as #krate::Settings>::field_meta() {
                     m.path = #prefix;
                     out.push(m);
                 }
@@ -71,11 +72,11 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 None => quote! { ::core::option::Option::None },
             };
             let reload = match attrs.reload.as_deref() {
-                Some("restart") => quote! { ::nd_settings::Reload::Restart },
-                _ => quote! { ::nd_settings::Reload::Live },
+                Some("restart") => quote! { #krate::Reload::Restart },
+                _ => quote! { #krate::Reload::Live },
             };
             pushes.push(quote! {
-                out.push(::nd_settings::FieldMeta {
+                out.push(#krate::FieldMeta {
                     path: ::std::string::String::from(#key),
                     range: #range,
                     step: #step,
@@ -87,8 +88,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics ::nd_settings::Settings for #name #ty_generics #where_clause {
-            fn field_meta() -> ::std::vec::Vec<::nd_settings::FieldMeta> {
+        impl #impl_generics #krate::Settings for #name #ty_generics #where_clause {
+            fn field_meta() -> ::std::vec::Vec<#krate::FieldMeta> {
                 let mut out = ::std::vec::Vec::new();
                 #(#pushes)*
                 out
@@ -207,5 +208,24 @@ fn apply_rename(ident: &str, rule: Option<&str>) -> String {
         Some("SCREAMING-KEBAB-CASE") => words.join("-").to_uppercase(),
         Some("lowercase") => ident.to_lowercase(),
         _ => ident.to_owned(),
+    }
+}
+
+/// Where `nd_settings` is reachable from the crate being compiled: its own name when the app
+/// depends on it, else through `nd`, which re-exports it as `nd::settings`.
+fn settings_crate() -> TokenStream2 {
+    use proc_macro_crate::{FoundCrate, crate_name};
+    match (crate_name("nd-settings"), crate_name("nd")) {
+        // `nd-settings` names itself `nd_settings` (`extern crate self`), in tests as well.
+        (Ok(FoundCrate::Itself), _) => quote! { ::nd_settings },
+        (Ok(FoundCrate::Name(name)), _) => {
+            let ident = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
+            quote! { ::#ident }
+        }
+        (Err(_), Ok(FoundCrate::Name(name))) => {
+            let ident = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
+            quote! { ::#ident::settings }
+        }
+        _ => quote! { ::nd_settings },
     }
 }
