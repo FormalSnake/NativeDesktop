@@ -157,6 +157,11 @@ pub struct LayerIvars {
     gestures: RefCell<Option<GestureHost>>,
     /// The last Force Touch stage seen, so a force click fires once per press.
     stage: Cell<isize>,
+    /// Pointer enter and exit are reported here (`.on_hover`).
+    hover_emit: RefCell<Option<(nd_ui::events::Emit, crate::events::Wake)>>,
+    /// The pointer is over the view, which paints its hover look then.
+    hovered: Cell<bool>,
+    tracking: RefCell<Option<Retained<objc2_app_kit::NSTrackingArea>>>,
 }
 
 impl Default for LayerIvars {
@@ -170,6 +175,9 @@ impl Default for LayerIvars {
             surface: Cell::new(None),
             gestures: RefCell::new(None),
             stage: Cell::new(0),
+            hover_emit: RefCell::new(None),
+            hovered: Cell::new(false),
+            tracking: RefCell::new(None),
         }
     }
 }
@@ -283,12 +291,55 @@ define_class!(
             }
         }
 
+        #[unsafe(method(updateTrackingAreas))]
+        fn update_tracking_areas(&self) {
+            if let Some(old) = self.ivars().tracking.borrow_mut().take() {
+                self.removeTrackingArea(&old);
+            }
+            if self.tracks_hover() {
+                use objc2_app_kit::{NSTrackingArea, NSTrackingAreaOptions};
+                let options = NSTrackingAreaOptions::MouseEnteredAndExited
+                    | NSTrackingAreaOptions::ActiveInKeyWindow
+                    | NSTrackingAreaOptions::InVisibleRect;
+                let area = unsafe {
+                    NSTrackingArea::initWithRect_options_owner_userInfo(
+                        NSTrackingArea::alloc(),
+                        NSRect::ZERO,
+                        options,
+                        Some(self),
+                        None,
+                    )
+                };
+                self.addTrackingArea(&area);
+                *self.ivars().tracking.borrow_mut() = Some(area);
+            }
+            let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
+        }
+
+        #[unsafe(method(mouseEntered:))]
+        fn mouse_entered(&self, _event: &NSEvent) {
+            self.set_hovered(true);
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            self.set_hovered(false);
+        }
+
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            if !self.ivars().props.borrow().transform.is_identity() {
+                self.apply_transform();
+            }
+        }
+
         // Runs under the view's effective appearance, so system colours resolve for it here and
         // again whenever the appearance changes.
         #[unsafe(method(updateLayer))]
         fn update_layer(&self) {
             let Some(layer) = self.layer() else { return };
-            let props = self.ivars().props.borrow();
+            let props = self.current_look();
             let background = props.background.or(self.ivars().surface.get()).map(|c| c.ns_color().CGColor());
             layer.setBackgroundColor(background.as_deref());
             let radius = props.corner_radius * self.ivars().radius_scale.get();
@@ -316,7 +367,7 @@ impl NdLayerView {
 
     /// What the view paints, the scope surface included.
     pub(crate) fn look(&self) -> ViewLook {
-        let mut look = self.ivars().props.borrow().clone();
+        let mut look = self.current_look();
         look.background = look.background.or(self.ivars().surface.get());
         look
     }
@@ -366,20 +417,85 @@ impl NdLayerView {
     }
 
     pub(crate) fn set_props(&self, props: &ViewLook) {
-        self.setAlphaValue(props.opacity.into());
         // AppKit skips a hidden view and its subviews in hit testing and the key view loop, and
         // moves first responder out of it.
         if self.isHidden() != props.hidden {
             self.setHidden(props.hidden);
         }
+        let had_hover = self.tracks_hover();
+        let moved = self.ivars().props.borrow().transform != props.transform;
         *self.ivars().props.borrow_mut() = props.clone();
+        self.setAlphaValue(self.current_look().opacity.into());
+        if moved {
+            self.apply_transform();
+        }
+        if had_hover != self.tracks_hover() {
+            self.updateTrackingAreas();
+        }
         self.setNeedsDisplay(true);
+    }
+
+    /// Reports pointer enter and exit through `emit` (`.on_hover`); `None` stops.
+    pub(crate) fn set_hover_target(&self, target: Option<(nd_ui::events::Emit, crate::events::Wake)>) {
+        let had = self.tracks_hover();
+        *self.ivars().hover_emit.borrow_mut() = target;
+        if had != self.tracks_hover() {
+            self.updateTrackingAreas();
+        }
+    }
+
+    fn tracks_hover(&self) -> bool {
+        self.ivars().props.borrow().hover.is_some() || self.ivars().hover_emit.borrow().is_some()
+    }
+
+    fn set_hovered(&self, hovered: bool) {
+        if self.ivars().hovered.replace(hovered) == hovered {
+            return;
+        }
+        if self.ivars().props.borrow().hover.is_some() {
+            self.setAlphaValue(self.current_look().opacity.into());
+            self.setNeedsDisplay(true);
+        }
+        if let Some((emit, wake)) = self.ivars().hover_emit.borrow().as_ref() {
+            emit.emit(nd_ui::HoverChanged { hovered });
+            wake.wake();
+        }
+    }
+
+    /// The look in effect: the hover look while the pointer is over the view.
+    fn current_look(&self) -> ViewLook {
+        let props = self.ivars().props.borrow();
+        match (&props.hover, self.ivars().hovered.get()) {
+            (Some(hover), true) => (**hover).clone(),
+            _ => props.clone(),
+        }
+    }
+
+    /// The layer's transform: the offset, and the scale about the view's centre (the layer's
+    /// anchor is its origin, as AppKit sets it for a layer-backed view).
+    fn apply_transform(&self) {
+        let Some(layer) = self.layer() else { return };
+        let t = self.ivars().props.borrow().transform;
+        let size = self.bounds().size;
+        let s = f64::from(t.scale);
+        layer.setAffineTransform(objc2_core_foundation::CGAffineTransform {
+            a: s,
+            b: 0.,
+            c: 0.,
+            d: s,
+            tx: f64::from(t.offset.0) + size.width * (1. - s) / 2.,
+            ty: f64::from(t.offset.1) + size.height * (1. - s) / 2.,
+        });
     }
 }
 
 #[derive(Default)]
 pub struct TextIvars {
     props: RefCell<Option<TextLook>>,
+    /// The family the theme sets text in, in place of the system font.
+    family: RefCell<Option<String>>,
+    /// Where a click on a link run is reported, when the text has links.
+    links: RefCell<Option<(nd_ui::events::Emit, crate::events::Wake)>>,
 }
 
 define_class!(
@@ -398,7 +514,28 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
             if let Some(props) = self.ivars().props.borrow().as_ref() {
-                attributed(props).drawWithRect_options_context(self.bounds(), draw_options(), None);
+                attributed(props, self.family().as_deref()).drawWithRect_options_context(
+                    self.bounds(),
+                    draw_options(),
+                    None,
+                );
+            }
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            if !self.click_link(event) {
+                let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+            }
+        }
+
+        #[unsafe(method(resetCursorRects))]
+        fn reset_cursor_rects(&self) {
+            let props = self.ivars().props.borrow();
+            let Some(props) = props.as_ref().filter(|p| p.has_links()) else { return };
+            let text = attributed(props, self.family().as_deref());
+            for rect in crate::rich::link_rects(&props.runs, &text, self.bounds().size.width) {
+                self.addCursorRect_cursor(rect, &objc2_app_kit::NSCursor::pointingHandCursor());
             }
         }
 
@@ -436,21 +573,62 @@ impl NdTextView {
 
     pub(crate) fn set_props(&self, props: &TextLook) {
         self.setAlphaValue(props.opacity.into());
+        let links = props.has_links();
         *self.ivars().props.borrow_mut() = Some(props.clone());
+        if links
+            && let Some(window) = self.window()
+        {
+            window.invalidateCursorRectsForView(self);
+        }
         self.setNeedsDisplay(true);
+    }
+
+    fn family(&self) -> Option<String> {
+        self.ivars().family.borrow().clone()
+    }
+
+    /// Sets the text in `family` (a theme's font override); `None` is the system font.
+    pub(crate) fn set_family(&self, family: Option<&str>) {
+        let family = family.map(str::to_owned);
+        if *self.ivars().family.borrow() != family {
+            *self.ivars().family.borrow_mut() = family;
+            self.setNeedsDisplay(true);
+        }
+    }
+
+    /// Clicks on link runs report [`nd_ui::LinkClicked`] through `emit`.
+    pub(crate) fn set_link_target(&self, target: Option<(nd_ui::events::Emit, crate::events::Wake)>) {
+        *self.ivars().links.borrow_mut() = target;
+    }
+
+    fn click_link(&self, event: &NSEvent) -> bool {
+        let Some(props) = self.ivars().props.borrow().clone().filter(TextLook::has_links) else { return false };
+        let at = self.convertPoint_fromView(event.locationInWindow(), None);
+        let text = attributed(&props, self.family().as_deref());
+        let Some(link) = crate::rich::link_at(&text, self.bounds().size.width, at) else {
+            return false;
+        };
+        if let Some((emit, wake)) = self.ivars().links.borrow().as_ref() {
+            emit.emit(nd_ui::LinkClicked { link: link.clone().into() });
+            wake.wake();
+        }
+        if props.opens_links {
+            crate::rich::open(&link);
+        }
+        true
     }
 
     /// The size the text takes when wrapped at `width` (unbounded when `None`), in points,
     /// rounded up so the last glyph is never clipped.
     pub(crate) fn measure(&self, width: Option<f32>) -> Size {
         let Some(props) = self.ivars().props.borrow().clone() else { return Size::default() };
-        measure_text(&props, width)
+        measure_text(&props, self.family().as_deref(), width)
     }
 }
 
-pub(crate) fn measure_text(props: &TextLook, width: Option<f32>) -> Size {
+pub(crate) fn measure_text(props: &TextLook, family: Option<&str>, width: Option<f32>) -> Size {
     let bound = NSSize::new(width.map_or(f64::MAX, f64::from), f64::MAX);
-    let rect = attributed(props).boundingRectWithSize_options_context(bound, draw_options(), None);
+    let rect = attributed(props, family).boundingRectWithSize_options_context(bound, draw_options(), None);
     Size { width: rect.size.width.ceil() as f32, height: rect.size.height.ceil() as f32 }
 }
 
@@ -458,9 +636,15 @@ fn draw_options() -> NSStringDrawingOptions {
     NSStringDrawingOptions::UsesLineFragmentOrigin | NSStringDrawingOptions::UsesFontLeading
 }
 
-fn attributed(props: &TextLook) -> Retained<NSAttributedString> {
+fn attributed(props: &TextLook, family: Option<&str>) -> Retained<NSAttributedString> {
+    if !props.runs.is_empty() {
+        return crate::rich::attributed(&props.runs, props.tabular_nums, &props.color.ns_color(), family);
+    }
     let size = props.size.map_or_else(NSFont::systemFontSize, f64::from);
-    let font = if props.tabular_nums {
+    let weight = props.weight.map_or(400., |w| w.0);
+    let font = if let Some(font) = family.and_then(|f| crate::rich::family_font(f, size, weight, false)) {
+        font
+    } else if props.tabular_nums {
         NSFont::monospacedDigitSystemFontOfSize_weight(size, props.ns_weight())
     } else {
         NSFont::systemFontOfSize_weight(size, props.ns_weight())

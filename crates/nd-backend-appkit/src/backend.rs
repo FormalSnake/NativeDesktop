@@ -213,6 +213,8 @@ struct State {
     /// `overflow_*_scroll()` divs: the scroll view inside the div's layer view and the document
     /// their children go in.
     scrolls: HashMap<NodeId, crate::scroll_view::ScrollBox>,
+    /// Text nodes with rich text, whose colour tokens resolve again when their theme changes.
+    rich_text: HashMap<NodeId, Props>,
     /// The app's resolved themes, for custom widgets that draw their own content.
     registry: Option<ThemeRegistry>,
     weak: Weak<RefCell<State>>,
@@ -277,6 +279,7 @@ impl AppKitBackend {
                 row_tags: HashMap::new(),
                 cell_tags: HashMap::new(),
                 scrolls: HashMap::new(),
+                rich_text: HashMap::new(),
                 registry: None,
                 weak: weak.clone(),
             })
@@ -989,8 +992,10 @@ impl State {
                 Some(Native::Button(b)) => b.set_accent(theme.accent),
                 Some(Native::Control(c)) => {
                     c.control.set_accent(theme.accent);
+                    c.control.set_font_family(theme.font.as_deref());
                     c.control.appearance_changed();
                 }
+                Some(Native::Text(v)) => v.set_family(theme.font.as_deref()),
                 _ => {}
             }
         }
@@ -1003,6 +1008,36 @@ impl State {
         }
         for window in windows {
             self.retheme_custom(Some(window));
+            self.retheme_text(window);
+        }
+    }
+
+    /// What a text node draws. Rich text resolves its colour tokens under the node's theme,
+    /// which plain text never needs.
+    fn text_look(&mut self, node: NodeId, window: WindowId, p: &Props) -> TextLook {
+        let text: &nd_ui::TextProps = props(p, "Text");
+        let theme = text.rich.is_some().then(|| self.theme_of(node, window));
+        match theme {
+            Some(_) => self.rich_text.insert(node, p.clone()),
+            None => self.rich_text.remove(&node),
+        };
+        TextLook::from_props(text, theme.as_ref())
+    }
+
+    /// Re-resolves the colour tokens of every rich text node in `window`, after its theme
+    /// changed.
+    fn retheme_text(&mut self, window: WindowId) {
+        let nodes: Vec<(NodeId, Props)> = self
+            .rich_text
+            .iter()
+            .filter(|(n, _)| self.node_window.get(n) == Some(&window))
+            .map(|(n, p)| (*n, p.clone()))
+            .collect();
+        for (node, p) in nodes {
+            let look = self.text_look(node, window, &p);
+            if let Some(Native::Text(view)) = self.nodes.get(&node) {
+                view.set_props(&look);
+            }
         }
     }
 
@@ -1090,6 +1125,7 @@ impl Backend for AppKitBackend {
         let mut state = self.0.borrow_mut();
         let mtm = state.mtm;
         let window = state.open.expect("inside a transaction");
+        let text_look = (kind == NodeKind::Text).then(|| state.text_look(node, window, p));
         let emit = || state.events.emitter(node);
         let native = match kind {
             NodeKind::Root => {
@@ -1098,14 +1134,20 @@ impl Backend for AppKitBackend {
             }
             NodeKind::View => {
                 let div = props::<DivProps>(p, "View");
-                let view = NdLayerView::new(mtm, &ViewLook::from_style(&div.style, state.expose));
+                let view = NdLayerView::new(mtm, &ViewLook::of_div(div, state.expose));
                 view.set_gestures(gesture_host(div, emit(), &state.wake));
+                view.set_hover_target(div.tracks_hover.then(|| (emit(), state.wake.clone())));
                 if div.gestures.scroll.any() {
                     state.scrolls.insert(node, crate::scroll_view::ScrollBox::new(mtm, &view, div.gestures.scroll));
                 }
                 Native::Layer(view)
             }
-            NodeKind::Text => Native::Text(NdTextView::new(mtm, &TextLook::from_props(props(p, "Text")))),
+            NodeKind::Text => {
+                let look = text_look.expect("a text node's look");
+                let view = NdTextView::new(mtm, &look);
+                view.set_link_target(look.has_links().then(|| (emit(), state.wake.clone())));
+                Native::Text(view)
+            }
             NodeKind::Widget(w) if is::<Button>(w) => {
                 Native::Button(NativeButtonView::new(mtm, emit(), state.wake.clone(), props(p, "Button")))
             }
@@ -1305,6 +1347,11 @@ impl Backend for AppKitBackend {
             }),
             _ => None,
         };
+        let is_text = matches!(state.nodes.get(&node), Some(Native::Text(_)));
+        let text_look = match window {
+            Some(window) if is_text => Some(state.text_look(node, window, &patch.new)),
+            _ => None,
+        };
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
             Native::Custom(c) => {
                 if let Some(cx) = &custom_cx {
@@ -1313,7 +1360,10 @@ impl Backend for AppKitBackend {
             }
             Native::Layer(v) => {
                 let div = props::<DivProps>(&patch.new, "View");
-                v.set_props(&ViewLook::from_style(&div.style, expose));
+                v.set_props(&ViewLook::of_div(div, expose));
+                if props::<DivProps>(&patch.old, "View").tracks_hover != div.tracks_hover {
+                    v.set_hover_target(div.tracks_hover.then(|| (events.emitter(node), wake.clone())));
+                }
                 if props::<DivProps>(&patch.old, "View").gestures != div.gestures {
                     v.set_gestures(gesture_host(div, events.emitter(node), &wake));
                     scroll_axes = Some(div.gestures.scroll);
@@ -1322,7 +1372,11 @@ impl Backend for AppKitBackend {
             Native::Titlebar(v) => {
                 v.set_props(&ViewLook::from_style(&props::<TitlebarProps>(&patch.new, "Titlebar").style, false))
             }
-            Native::Text(v) => v.set_props(&TextLook::from_props(props(&patch.new, "Text"))),
+            Native::Text(v) => {
+                let look = text_look.clone().expect("a text node's look");
+                v.set_link_target(look.has_links().then(|| (events.emitter(node), wake.clone())));
+                v.set_props(&look);
+            }
             Native::Button(b) => b.update(props::<ButtonProps>(&patch.old, "Button"), props(&patch.new, "Button")),
             Native::WindowControls { window, props: wc, .. } => {
                 *wc = props::<WindowControlsProps>(&patch.new, "WindowControls").clone();
@@ -1558,6 +1612,7 @@ impl Backend for AppKitBackend {
         state.row_tags.remove(&node);
         state.cell_tags.remove(&node);
         state.scrolls.remove(&node);
+        state.rich_text.remove(&node);
         if let Some(Native::Scaffold(_)) = &native
             && let Some(record) = state.open.and_then(|w| state.windows.get(&w))
         {

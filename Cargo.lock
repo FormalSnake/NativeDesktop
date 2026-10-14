@@ -4696,6 +4696,7 @@ dependencies = [
 name = "nd-components"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "image",
  "js-sys",
  "nd-core",
@@ -4704,6 +4705,7 @@ dependencies = [
  "nd-settings",
  "nd-theme",
  "nd-ui",
+ "resvg",
  "schemars",
  "serde",
  "serde_json",

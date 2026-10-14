@@ -493,7 +493,7 @@ impl<C: 'static> DispatchTree<C> {
         }
     }
 
-    fn is_focusable(&self, node: NodeId) -> bool {
+    pub(crate) fn is_focusable(&self, node: NodeId) -> bool {
         self.nodes.get(&node).is_some_and(|n| n.focusable.is_some())
     }
 

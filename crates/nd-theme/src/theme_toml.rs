@@ -5,6 +5,7 @@
 //! appearance = "dark"        # system | light | dark
 //! radius_scale = 1.25
 //! accent = "#3d6bff"
+//! font = "Inter"             # text family; mono_font for monospaced text
 //! [dark]
 //! "surface.base" = "#101014"
 //! ```
@@ -33,7 +34,7 @@ impl std::error::Error for TomlError {}
 
 fn colours(table: &toml::Table, into: &mut PaletteRefinement, section: &str) -> Result<(), TomlError> {
     for (key, value) in table {
-        if value.is_table() || matches!(key.as_str(), "appearance" | "radius_scale") {
+        if value.is_table() || matches!(key.as_str(), "appearance" | "radius_scale" | "font" | "mono_font") {
             continue;
         }
         let text = value.as_str().ok_or_else(|| TomlError::Invalid(format!("{section}{key} is not a string")))?;
@@ -65,6 +66,14 @@ pub fn parse(text: &str) -> Result<ThemeRefinement, TomlError> {
             .ok_or_else(|| TomlError::Invalid(format!("radius_scale = {value} is not a positive number")))?;
         refinement.radius_scale = Some(scale as f32);
     }
+    for key in ["font", "mono_font"] {
+        let Some(value) = table.get(key) else { continue };
+        let family = value.as_str().ok_or_else(|| TomlError::Invalid(format!("{key} = {value} is not a string")))?;
+        refinement = match key {
+            "font" => refinement.font(family.to_owned()),
+            _ => refinement.mono_font(family.to_owned()),
+        };
+    }
     let mut both = PaletteRefinement::default();
     colours(&table, &mut both, "")?;
     for scheme in [Scheme::Light, Scheme::Dark] {
@@ -81,7 +90,7 @@ pub fn parse(text: &str) -> Result<ThemeRefinement, TomlError> {
         }
     }
     for key in table.keys() {
-        let known = matches!(key.as_str(), "appearance" | "radius_scale" | "light" | "dark")
+        let known = matches!(key.as_str(), "appearance" | "radius_scale" | "font" | "mono_font" | "light" | "dark")
             || crate::palette::KEYS.contains(&key.as_str());
         if !known {
             return Err(TomlError::Invalid(format!("unknown key {key}")));
@@ -112,6 +121,15 @@ mod tests {
         assert_eq!(r.light.accent, parse_hex("#3d6bff"));
         assert_eq!(r.dark.accent, parse_hex("#ff8a3d"));
         assert_eq!(r.dark.surface, parse_hex("#101014"));
+    }
+
+    #[test]
+    fn fonts_are_families() {
+        let r = parse(r##"font = "Inter"
+mono_font = "Iosevka""##).unwrap();
+        assert_eq!(r.font.as_deref(), Some("Inter"));
+        assert_eq!(r.mono_font.as_deref(), Some("Iosevka"));
+        assert!(parse("font = 12").is_err());
     }
 
     #[test]

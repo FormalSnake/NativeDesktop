@@ -353,6 +353,72 @@ pub(crate) fn force_click(at: Point) -> GestureEvent {
 
 /// A scroll view's child, laid out where Taffy put it and painted shifted by the scroll offset.
 /// Its unshifted bounds feed the scroll view's content extent.
+/// `child` painted (and hit) `by` away from where layout put it.
+pub(crate) fn offset(child: AnyElement, by: gpui::Point<Pixels>) -> AnyElement {
+    Offset { by, inner: child }.into_any_element()
+}
+
+struct Offset {
+    by: gpui::Point<Pixels>,
+    inner: AnyElement,
+}
+
+impl IntoElement for Offset {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for Offset {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.inner.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) {
+        window.with_element_offset(self.by, |window| self.inner.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) {
+        self.inner.paint(window, cx);
+    }
+}
+
 struct Shifted {
     scroller: NodeId,
     offset: Point,

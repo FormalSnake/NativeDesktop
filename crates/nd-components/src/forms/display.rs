@@ -5,7 +5,7 @@ use std::panic::Location;
 
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Response, SemanticAction, Semantics, WidgetSemantics};
-use nd_ui::{Key, Role, StyleRefinement};
+use nd_ui::{Key, LinkClicked, RichText, Role, StyleRefinement};
 
 use super::{guard, leaf};
 
@@ -50,6 +50,10 @@ pub struct LabelProps {
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
+    /// Runs with their own style; `text` is their concatenation.
+    pub rich: Option<RichText>,
+    /// A link click opens the link with the system, besides reporting [`LinkClicked`].
+    pub opens_links: bool,
 }
 
 /// Widget kind of `label`.
@@ -76,6 +80,8 @@ pub fn label(text: impl Into<SharedString>) -> Label {
         enabled: true,
         tooltip: None,
         style: StyleRefinement::default(),
+        rich: None,
+        opens_links: true,
     };
     Label(NativeElement::described::<LabelKind>(Key::Site(Location::caller()), props))
 }
@@ -108,6 +114,21 @@ impl Label {
 
     pub fn wraps(mut self) -> Self {
         self.0.props_mut().wraps = true;
+        self
+    }
+
+    /// Replaces the text with runs of their own style, in the label's text style.
+    pub fn rich(mut self, rich: RichText) -> Self {
+        let props = self.0.props_mut();
+        props.text = rich.text().clone();
+        props.rich = (!rich.is_plain()).then_some(rich);
+        self
+    }
+
+    /// Handles a click on a link run; the system no longer opens it.
+    pub fn on_link(mut self, handler: impl Fn(&LinkClicked, &mut Window, &mut App) + 'static) -> Self {
+        self.0.props_mut().opens_links = false;
+        self.0 = self.0.on(handler);
         self
     }
 }

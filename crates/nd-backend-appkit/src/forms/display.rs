@@ -26,7 +26,7 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSNumber, NSRect, NSSize, NSString, NSURL};
 
 use super::{Ctx, FormControl, NdControlTarget, apply_common, fitting, props, send_action, set_accessibility_label};
-use crate::look::{Color, ns_font};
+use crate::look::{Color, SystemText, ns_font};
 
 fn text_style(style: TextStyle) -> &'static NSFontTextStyle {
     unsafe {
@@ -51,41 +51,151 @@ pub(crate) fn preferred_font(style: TextStyle) -> Retained<NSFont> {
     unsafe { NSFont::preferredFontForTextStyle_options(text_style(style), &NSDictionary::new()) }
 }
 
-pub(crate) struct LabelControl {
-    field: Retained<NSTextField>,
-    /// The tone and explicit colour last applied, to resolve again when the appearance changes.
-    tone: std::cell::Cell<(LabelTone, Option<nd_ui::prelude::Hsla>)>,
+#[derive(Default)]
+pub(crate) struct LabelIvars {
+    /// The runs of rich text, as drawn; empty for plain text.
+    runs: RefCell<Vec<crate::rich::RunLook>>,
+    /// Reports link clicks; `.1` opens the link with the system too.
+    links: RefCell<Option<(Ctx, bool)>>,
 }
 
-/// The tone's system colour, darkened or lightened until it reads at 4.5:1 on the window and
-/// control backgrounds: `secondaryLabelColor` and `systemRed` alone fall short on white (3.95:1,
-/// 3.57:1), and the theme holds its text tokens to that ratio. A dynamic colour, resolved under
-/// whatever appearance draws it, so a label made before its window keeps the window's scheme.
+define_class!(
+    // SAFETY: NSTextField has no subclassing requirements beyond calling super, and this type
+    // does not implement Drop.
+    #[unsafe(super(NSTextField))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = LabelIvars]
+    pub(crate) struct NdLabelField;
+
+    impl NdLabelField {
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &objc2_app_kit::NSEvent) {
+            if !self.click_link(event) {
+                let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+            }
+        }
+
+        #[unsafe(method(resetCursorRects))]
+        fn reset_cursor_rects(&self) {
+            let runs = self.ivars().runs.borrow();
+            if runs.iter().all(|r| r.link.is_none()) {
+                return;
+            }
+            let (origin, width) = self.text_frame();
+            let text = self.attributedStringValue();
+            for mut rect in crate::rich::link_rects(&runs, &text, width) {
+                rect.origin.x += origin.x;
+                rect.origin.y += origin.y;
+                self.addCursorRect_cursor(rect, &NSCursor::pointingHandCursor());
+            }
+        }
+    }
+);
+
+impl NdLabelField {
+    pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(LabelIvars::default());
+        let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
+        // What `labelWithString:` sets up.
+        this.setStringValue(&NSString::from_str(text));
+        this.setBezeled(false);
+        this.setDrawsBackground(false);
+        this.setEditable(false);
+        this.setSelectable(false);
+        this.setLineBreakMode(NSLineBreakMode::ByClipping);
+        this
+    }
+
+    /// A label that wraps onto as many lines as its width needs, as `wrappingLabelWithString:`.
+    pub(crate) fn new_wrapping(mtm: MainThreadMarker, text: &str) -> Retained<Self> {
+        let this = Self::new(mtm, text);
+        this.setSelectable(true);
+        this.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
+        this.setMaximumNumberOfLines(0);
+        if let Some(cell) = this.cell() {
+            cell.setUsesSingleLineMode(false);
+            cell.setWraps(true);
+        }
+        this
+    }
+
+    /// Draws `runs` as the label's text, runs without a colour of their own in `base`. Empty
+    /// runs leave the plain string value alone.
+    pub(crate) fn set_runs(&self, runs: Vec<crate::rich::RunLook>, base: &NSColor, family: Option<&str>) {
+        if !runs.is_empty() {
+            self.setAttributedStringValue(&crate::rich::attributed(&runs, false, base, family));
+        }
+        *self.ivars().runs.borrow_mut() = runs;
+        if let Some(window) = self.window() {
+            window.invalidateCursorRectsForView(self);
+        }
+    }
+
+    /// Where clicks on link runs are reported, and whether the system opens the link too.
+    pub(crate) fn set_link_target(&self, target: Option<(Ctx, bool)>) {
+        *self.ivars().links.borrow_mut() = target;
+    }
+
+    /// Where the cell draws the text in the field, and the width it wraps at.
+    fn text_frame(&self) -> (objc2_foundation::NSPoint, f64) {
+        let bounds = self.bounds();
+        let rect = self.cell().map_or(bounds, |c| c.drawingRectForBounds(bounds));
+        // The cell's text container keeps its default line fragment padding on each side.
+        (objc2_foundation::NSPoint::new(rect.origin.x + 2., rect.origin.y), (rect.size.width - 4.).max(1.))
+    }
+
+    fn click_link(&self, event: &objc2_app_kit::NSEvent) -> bool {
+        if self.ivars().runs.borrow().iter().all(|r| r.link.is_none()) {
+            return false;
+        }
+        let (origin, width) = self.text_frame();
+        let at = self.convertPoint_fromView(event.locationInWindow(), None);
+        let at = objc2_foundation::NSPoint::new(at.x - origin.x, at.y - origin.y);
+        let Some(link) = crate::rich::link_at(&self.attributedStringValue(), width, at) else { return false };
+        if let Some((cx, open)) = self.ivars().links.borrow().as_ref() {
+            cx.send(nd_ui::LinkClicked { link: link.clone().into() });
+            if *open {
+                crate::rich::open(&link);
+            }
+        }
+        true
+    }
+}
+
+pub(crate) struct LabelControl {
+    field: Retained<NdLabelField>,
+    cx: Ctx,
+    /// The tone and explicit colour last applied, to resolve again when the appearance changes.
+    tone: std::cell::Cell<(LabelTone, Option<nd_ui::prelude::Hsla>)>,
+    /// A theme override of the accent here, which link and mention runs take.
+    accent: std::cell::Cell<Option<nd_ui::prelude::Hsla>>,
+    /// A theme's font family in place of the system font, and the props the font came from.
+    family: RefCell<Option<String>>,
+    font_props: RefCell<Option<(TextStyle, nd_ui::StyleRefinement)>>,
+    rich: RefCell<Option<(nd_ui::RichText, TextStyle, Option<nd_ui::prelude::FontWeight>)>>,
+}
+
+/// The tone's system colour, legible on the window and control backgrounds.
 fn tone_color(tone: LabelTone) -> Retained<NSColor> {
-    let provider = block2::RcBlock::new(move |appearance: std::ptr::NonNull<objc2_app_kit::NSAppearance>| {
-        let resolved = std::cell::Cell::new(None);
-        let block = block2::RcBlock::new(|| {
-            let color = match tone {
-                LabelTone::Primary => NSColor::labelColor(),
-                LabelTone::Secondary => NSColor::secondaryLabelColor(),
-                LabelTone::Danger => NSColor::systemRedColor(),
-            };
-            let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
-            let under: Vec<_> = under.into_iter().filter_map(crate::system_colors::hsla).collect();
-            resolved.set(crate::system_colors::hsla(color).map(|c| nd_theme::color::legible(c, &under, 4.5)));
-        });
-        // SAFETY: AppKit hands the provider a live appearance for the duration of the call.
-        unsafe { appearance.as_ref() }.performAsCurrentDrawingAppearance(&block);
-        let color = resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color());
-        std::ptr::NonNull::new(Retained::autorelease_ptr(color)).expect("a colour")
-    });
-    unsafe { NSColor::colorWithName_dynamicProvider(None, &provider) }
+    match tone {
+        LabelTone::Primary => NSColor::labelColor(),
+        LabelTone::Secondary => Color::Legible(SystemText::Secondary).ns_color(),
+        LabelTone::Danger => Color::Legible(SystemText::Danger).ns_color(),
+    }
 }
 
 impl LabelControl {
     pub fn new(cx: Ctx, props: &LabelProps) -> Self {
-        let field = NSTextField::labelWithString(&NSString::from_str(&props.text), cx.mtm);
-        let this = Self { field, tone: std::cell::Cell::new((props.tone, props.style.text.color)) };
+        let field = NdLabelField::new(cx.mtm, &props.text);
+        let this = Self {
+            field,
+            cx,
+            tone: std::cell::Cell::new((props.tone, props.style.text.color)),
+            accent: std::cell::Cell::new(None),
+            family: RefCell::new(None),
+            font_props: RefCell::new(None),
+            rich: RefCell::new(None),
+        };
         this.apply(None, props);
         this
     }
@@ -96,12 +206,20 @@ impl LabelControl {
             f.setStringValue(&NSString::from_str(&new.text));
         }
         if old.is_none_or(|o| o.text_style != new.text_style || o.style.text != new.style.text) {
-            let preferred = preferred_font(new.text_style);
-            f.setFont(Some(&ns_font(&new.style, preferred.pointSize()).unwrap_or(preferred)));
+            *self.font_props.borrow_mut() = Some((new.text_style, new.style.clone()));
+            self.apply_font();
         }
         if old.is_none_or(|o| o.tone != new.tone || o.style.text.color != new.style.text.color) {
             self.tone.set((new.tone, new.style.text.color));
             self.apply_tone();
+        }
+        let rich_changed = old.is_none_or(|o| {
+            o.rich != new.rich || o.text_style != new.text_style || o.style.text != new.style.text || o.tone != new.tone
+        });
+        if rich_changed {
+            *self.rich.borrow_mut() = new.rich.clone().map(|r| (r, new.text_style, new.style.text.font_weight));
+            self.field.set_link_target(Some((self.cx.clone(), new.opens_links)));
+            self.apply_rich();
         }
         if old.is_none_or(|o| o.selectable != new.selectable) {
             f.setSelectable(new.selectable);
@@ -124,13 +242,43 @@ impl LabelControl {
 }
 
 impl LabelControl {
-    fn apply_tone(&self) {
-        let color = match self.tone.get() {
+    fn tone_ns_color(&self) -> Retained<NSColor> {
+        match self.tone.get() {
             (_, Some(c)) => Color::from(c).ns_color(),
-            (LabelTone::Primary, None) => NSColor::labelColor(),
             (tone, None) => tone_color(tone),
+        }
+    }
+
+    fn apply_tone(&self) {
+        self.field.setTextColor(Some(&self.tone_ns_color()));
+    }
+
+    /// The text style's system font, or the theme's family at its size and weight, under any
+    /// font the element's style sets.
+    fn apply_font(&self) {
+        let Some((style, element)) = self.font_props.borrow().clone() else { return };
+        let preferred = preferred_font(style);
+        let size = preferred.pointSize();
+        let font = ns_font(&element, size).or_else(|| {
+            let family = self.family.borrow().clone()?;
+            let weight = if style == TextStyle::Headline { 700. } else { 400. };
+            crate::rich::family_font(&family, size, weight, false)
+        });
+        self.field.setFont(Some(&font.unwrap_or(preferred)));
+    }
+
+    /// Draws the rich text as an attributed string in the field's font and tone; plain text
+    /// keeps the string value `apply` set.
+    fn apply_rich(&self) {
+        let rich = self.rich.borrow();
+        let Some((rich, style, weight)) = rich.as_ref() else {
+            self.field.set_runs(Vec::new(), &self.tone_ns_color(), None);
+            return;
         };
-        self.field.setTextColor(Some(&color));
+        let size = self.field.font().map_or(NSFont::systemFontSize(), |f| f.pointSize()) as f32;
+        let base = weight.map_or(if *style == TextStyle::Headline { 700. } else { 400. }, |w| w.0);
+        let runs = crate::rich::resolve_system(rich, size, base, self.accent.get());
+        self.field.set_runs(runs, &self.tone_ns_color(), self.family.borrow().as_deref());
     }
 }
 
@@ -141,6 +289,22 @@ impl FormControl for LabelControl {
 
     fn appearance_changed(&self) {
         self.apply_tone();
+        self.apply_rich();
+    }
+
+    fn set_accent(&self, accent: Option<nd_ui::prelude::Hsla>) {
+        if self.accent.replace(accent) != accent {
+            self.apply_rich();
+        }
+    }
+
+    fn set_font_family(&self, family: Option<&str>) {
+        let family = family.map(str::to_owned);
+        if *self.family.borrow() != family {
+            *self.family.borrow_mut() = family;
+            self.apply_font();
+            self.apply_rich();
+        }
     }
 
     fn update(&mut self, old: &Props, new: &Props) -> bool {

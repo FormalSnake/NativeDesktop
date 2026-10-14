@@ -99,3 +99,25 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 - [ ] M14 youtubemusic (after M7; daemon on `nd-ipc`)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
+
+## Port gaps (branch port-gaps, wip commit, nothing verified on a backend yet)
+
+Written, tier 1 only partly run (nd-theme green, nd-ui lib green after one float fix; nd-ui
+integration tests, nd-components, both backends and `nd` not yet compiled):
+- Rich text: `rich_text`/`span`, `label().rich`, `chat_bubble().rich`, link clicks; AppKit via
+  `rich.rs` (NSAttributedString, NdLabelField), GPUI via `rich.rs` (StyledText, word rows for
+  mixed sizes).
+- Animation and hover: `.animate`, `.enter_from`, `.offset`, `.scale`, `.hover`, `.on_hover`,
+  reduce motion, `on_animation_end`; AppKit layer transform and tracking areas, GPUI offset
+  element and `.hover`. Scale is drawn unscaled on GPUI.
+- `FillRole` and `theme.fill(role)`, `role_fills`, `text.accent/success/warning`; bubble `.role`.
+- Canvas display list (`nd_ui::canvas`), GPUI renderer `media/paint.rs`; AppKit canvas view not written.
+- SVG, `data:` URLs and tints in the image pipeline; image `.tint`.
+- Font override: `ThemeRefinement::font/mono_font`, `theme.toml` keys, `NativeTheme.font`, AppKit text,
+  labels and bubbles; `App::remeasure` after theme sync.
+- `window.focus(id)`, `App::global_mut/try_global_mut/update_global`.
+- Automation: `Probe.visible` (AppKit `visibleRect`/hidden ancestors), semantic click on AppKit list rows.
+
+Not started: video surface (AVPlayerLayer, GStreamer appsink), AppKit canvas view, `nd new`
+out-of-tree build (GPUI `[patch]` table, `linker = "/usr/bin/clang"`), backend tests, appearance
+audit runs, g815 gate (merge main 46effc1e first for the flocked `scripts/linux-gate`).

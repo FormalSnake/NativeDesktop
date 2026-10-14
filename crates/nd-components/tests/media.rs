@@ -74,20 +74,20 @@ fn decode_scales_down_to_the_box_and_never_up() {
     let source = ImageSource::bytes("wide", bytes.clone());
     let cover = decode(
         &bytes,
-        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover },
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover, tint: None },
         1 << 30,
     )
     .unwrap();
     assert_eq!((cover.width, cover.height), (256, 128), "cover fills the shorter side");
     let contain = decode(
         &bytes,
-        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain },
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain, tint: None },
         1 << 30,
     )
     .unwrap();
     assert_eq!((contain.width, contain.height), (128, 64), "contain fits the longer side");
     let big =
-        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover }, 1 << 30).unwrap();
+        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover, tint: None }, 1 << 30).unwrap();
     assert_eq!((big.width, big.height), (800, 400), "never scaled up");
     assert_eq!((big.source_width, big.source_height), (800, 400));
     assert_eq!(big.frames.len(), 1);
@@ -98,7 +98,7 @@ fn decode_scales_down_to_the_box_and_never_up() {
 fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
     let bytes = gif(16, 16, 4, 10);
     let request =
-        DecodeRequest { source: ImageSource::bytes("gif", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
+        DecodeRequest { source: ImageSource::bytes("gif", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
     let d = decode(&bytes, &request, 1 << 30).unwrap();
     assert!(d.is_animated());
     assert_eq!(d.frames.len(), 4);
@@ -112,7 +112,7 @@ fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
 fn an_animation_over_budget_drops_frames_and_keeps_its_length() {
     let bytes = gif(16, 16, 8, 50);
     let request =
-        DecodeRequest { source: ImageSource::bytes("gif8", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover };
+        DecodeRequest { source: ImageSource::bytes("gif8", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
     let one_frame = 16 * 16 * 4;
     let d = decode(&bytes, &request, one_frame * 3).unwrap();
     assert_eq!(d.frames.len(), 2, "8 frames thinned by 4 to fit 3 frames' budget");
@@ -171,7 +171,7 @@ fn downloads_land_on_disk_and_a_new_process_reads_them_back() {
         })
     };
     let url = ImageSource::url("https://example.com/art.png");
-    let request = DecodeRequest { source: url.clone(), width: 0, height: 0, fit: ImageFit::Cover };
+    let request = DecodeRequest { source: url.clone(), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
     load(&make(fetches.clone()), request.clone()).unwrap();
     let second = make(fetches.clone());
     assert_eq!(second.intrinsic_size(&url), Some((20, 10)), "the header reads from the disk cache");
@@ -196,6 +196,7 @@ fn a_failure_is_remembered_instead_of_retried_at_once() {
         width: 0,
         height: 0,
         fit: ImageFit::Cover,
+        tint: None,
     };
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
@@ -217,6 +218,7 @@ fn memory_evicts_least_recent_but_never_what_was_just_shown() {
         width: 0,
         height: 0,
         fit: ImageFit::Cover,
+        tint: None,
     };
     load(&p, req("a")).unwrap();
     load(&p, req("b")).unwrap();
@@ -711,4 +713,30 @@ fn dropped_files_preview_images_by_extension() {
     assert!(d.attachments[1].preview.is_none());
     assert_eq!(d.attachments[1].name, "notes.pdf");
     assert_ne!(d.attachments[0].id, d.attachments[1].id);
+}
+
+#[test]
+fn svg_data_urls_render_at_the_box_size_and_take_a_tint() {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="20"><rect width="10" height="20" fill="#ff0000"/></svg>"##;
+    let source = ImageSource::from(format!("data:image/svg+xml;utf8,{}", svg.replace('#', "%23")).as_str());
+    let ImageSource::Bytes { bytes, .. } = &source else { panic!("a data URL is bytes") };
+    assert_eq!(&bytes[..], svg.as_bytes());
+    let p = ImagePipeline::new(PipelineConfig { disk_dir: None, workers: 1, ..PipelineConfig::default() });
+    assert_eq!(p.intrinsic_size(&source), Some((10, 20)), "the header of an SVG is its size");
+
+    let request = DecodeRequest::at(source.clone(), 64., 64., 1., ImageFit::Contain);
+    let d = decode(bytes, &request, 1 << 30).unwrap();
+    assert_eq!((d.width, d.height), (32, 64), "a vector scales up to its box");
+    assert_eq!(&d.frames[0].rgba[..4], &[255, 0, 0, 255]);
+
+    let tinted = decode(bytes, &request.clone().tinted(Some(hsla(0.6, 1., 0.5, 1.))), 1 << 30).unwrap();
+    let px = &tinted.frames[0].rgba[..4];
+    assert!(px[2] > 200 && px[0] < 40 && px[3] == 255, "every pixel takes the tint: {px:?}");
+    assert_ne!(request, request.clone().tinted(Some(hsla(0.6, 1., 0.5, 1.))), "a tint is its own cache entry");
+
+    use base64::Engine;
+    let b64 = format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg));
+    let ImageSource::Bytes { bytes, .. } = ImageSource::from(b64.as_str()) else { panic!() };
+    assert_eq!(&bytes[..], svg.as_bytes());
+    assert_eq!(load(&p, request).unwrap().width, 32, "the pipeline decodes it off the main thread");
 }

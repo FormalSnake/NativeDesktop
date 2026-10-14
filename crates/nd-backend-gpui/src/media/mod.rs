@@ -7,6 +7,7 @@
 mod chat;
 mod image;
 mod lyrics;
+pub(crate) mod paint;
 mod seek;
 mod shelf;
 

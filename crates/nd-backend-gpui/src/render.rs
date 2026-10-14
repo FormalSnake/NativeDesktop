@@ -466,6 +466,14 @@ impl<'a> Build<'a> {
                 let element = self.painted(id, own.or(surface), props.style.text.color, "view", || {
                     self.view(id, props, surface, children(window, cx), window)
                 });
+                // GPUI has no element transforms: the offset moves the painted element, a scale
+                // is drawn unscaled.
+                let (x, y) = props.transform.offset;
+                let element = if (x, y) == (0., 0.) {
+                    element
+                } else {
+                    crate::gestures::offset(element, gpui::point(px(x), px(y)))
+                };
                 if props.style.visibility == Some(gpui::Visibility::Hidden) {
                     self.paints.borrow_mut().truncate(painted);
                     return HiddenSubtree(element).into_any_element();
@@ -474,6 +482,9 @@ impl<'a> Build<'a> {
             }
             NodeKind::Text => {
                 let props = node.props.downcast_ref::<TextProps>().expect("Text node needs TextProps");
+                if let Some(rich) = &props.rich {
+                    return self.rich_text(id, props, rich);
+                }
                 let mut d = div();
                 d.style().refine(&props.style);
                 if props.tabular_nums {
@@ -508,11 +519,57 @@ impl<'a> Build<'a> {
             NodeKind::Widget(w) if let Some(custom) = crate::custom::lookup(w.type_id) => {
                 custom.element(&crate::custom::CustomCx::new(self, id, &node.props), window)
             }
-            NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
+            NodeKind::Canvas => {
+                let props = node.props.downcast_ref::<nd_ui::CanvasProps>().expect("Canvas node needs CanvasProps");
+                crate::media::paint::canvas(self, id, props, window, cx)
+            }
+            NodeKind::Image | NodeKind::Widget(_) => {
                 // Not mapped yet (canvas and images land with M4 and M6); keeps its layout box.
                 div().into_any_element()
             }
         }
+    }
+
+    /// Reports a click on a link run of `node` and, unless the app handles it, opens the link
+    /// with the system.
+    pub(crate) fn link_handler(&self, node: NodeId, opens: bool) -> crate::rich::OnLink {
+        let emit = self.backend.state.borrow().events.emitter(node);
+        let wake = self.wake.clone();
+        Rc::new(move |link: gpui::SharedString, _, cx: &mut App| {
+            if opens {
+                cx.open_url(&link);
+            }
+            emit.emit(nd_ui::LinkClicked { link });
+            wake(cx);
+        })
+    }
+
+    /// Records each run of rich text as its own text paint.
+    pub(crate) fn rich_runs(&self, node: NodeId, rich: &nd_ui::RichText, base: &crate::rich::Base<'_>, fill: Option<Hsla>) {
+        for span in rich.spans().iter().filter(|s| !s.text.trim().is_empty()) {
+            let run = Run { size: base.size.as_f32() * span.style.scale(), weight: span.style.weight(base.weight) };
+            self.text_run(node, &span.text, run, Some(base.color(&span.style)), fill);
+        }
+    }
+
+    fn rich_text(&self, id: NodeId, props: &TextProps, rich: &nd_ui::RichText) -> AnyElement {
+        let theme = self.theme();
+        let run = run_of(&props.style);
+        let opacity = props.style.opacity.unwrap_or(1.);
+        let color = props.style.text.color.unwrap_or(self.top().text);
+        let base = crate::rich::Base {
+            theme: &theme,
+            size: px(run.size),
+            leading: 1.25,
+            weight: run.weight,
+            color: with_alpha(color, color.a * opacity),
+            ink: None,
+        };
+        self.rich_runs(id, rich, &base, solid(&props.style));
+        let on_link = rich.has_links().then(|| self.link_handler(id, props.opens_links));
+        let mut d = div();
+        d.style().refine(&props.style);
+        d.child(crate::rich::element(ElementId::Integer(id.0), rich, &base, on_link)).into_any_element()
     }
 
     fn virtual_list(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
@@ -608,6 +665,12 @@ impl<'a> Build<'a> {
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);
+            if let Some(hover) = props.hover.clone() {
+                d = d.hover(move |mut s| {
+                    s.refine(&hover);
+                    s
+                });
+            }
             if menu {
                 let emit = self.backend.state.borrow().events.emitter(id);
                 let (wake, bounds) = (self.wake.clone(), self.backend.bounds.clone());
@@ -618,6 +681,18 @@ impl<'a> Build<'a> {
                     wake(cx);
                     cx.stop_propagation();
                 });
+            }
+            if props.tracks_hover {
+                let emit = self.backend.state.borrow().events.emitter(id);
+                let wake = self.wake.clone();
+                return d
+                    .id(ElementId::NamedInteger("hover".into(), id.0))
+                    .on_hover(move |hovered: &bool, _, cx| {
+                        emit.emit(nd_ui::HoverChanged { hovered: *hovered });
+                        wake(cx);
+                    })
+                    .children(children)
+                    .into_any_element();
             }
             return d.children(children).into_any_element();
         }

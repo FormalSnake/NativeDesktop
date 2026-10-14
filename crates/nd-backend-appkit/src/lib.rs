@@ -26,6 +26,7 @@ mod media;
 mod overlay;
 mod palette;
 mod platform;
+mod rich;
 mod scaffold;
 mod scroll_view;
 mod services;

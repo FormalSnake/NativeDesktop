@@ -14,7 +14,8 @@ use std::panic::Location;
 
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Semantics, WidgetSemantics};
-use nd_ui::{Key, Role, StyleRefinement};
+use nd_theme::FillRole;
+use nd_ui::{Key, LinkClicked, RichText, Role, StyleRefinement};
 
 use super::pipeline::ImageSource;
 use crate::forms::{LabelTone, TextStyle, label, leaf};
@@ -166,7 +167,12 @@ fn is_emoji(c: char) -> bool {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatBubbleProps {
+    /// The plain text; with `rich`, its runs concatenated.
     pub text: SharedString,
+    /// Runs with their own style (bold, links, mentions, Big and Small effects).
+    pub rich: Option<RichText>,
+    /// What the bubble's fill means; `None` follows the side (accent sent, neutral received).
+    pub role: Option<FillRole>,
     pub side: BubbleSide,
     pub position: RunPosition,
     pub reactions: Vec<Reaction>,
@@ -177,6 +183,8 @@ pub struct ChatBubbleProps {
     pub enabled: bool,
     /// The time, shown on hover.
     pub tooltip: Option<SharedString>,
+    /// A link click opens the link with the system, besides reporting [`LinkClicked`].
+    pub opens_links: bool,
     pub style: StyleRefinement,
 }
 
@@ -187,6 +195,14 @@ impl ChatBubbleProps {
 
     pub fn corners(&self) -> [f32; 4] {
         bubble_corners(self.side, self.position)
+    }
+
+    /// The role whose fill and ink the bubble draws in.
+    pub fn fill_role(&self) -> FillRole {
+        self.role.unwrap_or(match self.side {
+            BubbleSide::Sent => FillRole::Accent,
+            BubbleSide::Received => FillRole::Neutral,
+        })
     }
 }
 
@@ -216,12 +232,15 @@ pub fn chat_bubble(text: impl Into<SharedString>, side: BubbleSide) -> ChatBubbl
     let props = ChatBubbleProps {
         emoji_only: is_emoji_only(&text, BUBBLE.emoji_max),
         text,
+        rich: None,
+        role: None,
         side,
         position: RunPosition::Single,
         reactions: Vec::new(),
         selectable: true,
         enabled: true,
         tooltip: None,
+        opens_links: true,
         style: StyleRefinement::default(),
     };
     ChatBubble(NativeElement::described::<ChatBubbleKind>(Key::Site(Location::caller()), props))
@@ -246,6 +265,30 @@ impl ChatBubble {
     /// The time, shown on hover.
     pub fn time(mut self, time: impl Into<SharedString>) -> Self {
         self.0.props_mut().tooltip = Some(time.into());
+        self
+    }
+
+    /// Replaces the text with runs of their own style. A link run reports [`LinkClicked`]
+    /// (`.on_link`); text that is all emoji still draws large without a bubble.
+    pub fn rich(mut self, rich: RichText) -> Self {
+        let props = self.0.props_mut();
+        props.text = rich.text().clone();
+        props.emoji_only = is_emoji_only(&props.text, BUBBLE.emoji_max);
+        props.rich = (!rich.is_plain()).then_some(rich);
+        self
+    }
+
+    /// Fills the bubble by meaning instead of by side: `FillRole::Success` is an SMS
+    /// message's green. Fill and ink come from the theme.
+    pub fn role(mut self, role: FillRole) -> Self {
+        self.0.props_mut().role = Some(role);
+        self
+    }
+
+    /// Handles a click on a link run; the system no longer opens it.
+    pub fn on_link(mut self, handler: impl Fn(&LinkClicked, &mut Window, &mut App) + 'static) -> Self {
+        self.0.props_mut().opens_links = false;
+        self.0 = self.0.on(handler);
         self
     }
 }

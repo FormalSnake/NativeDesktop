@@ -15,7 +15,9 @@ use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_gpui::gpui::{KeyBinding, StyleRefinement};
 use nd_gpui::taffy::{self, TaffyTree, prelude::TaffyMaxContent};
 
+use crate::animation::{self, MotionSpec, MotionState, Transform, Values};
 use crate::app::{AnyView, App, EntityId};
+use crate::canvas::{self, CanvasProps, PaintFn};
 use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKind, Props, PropsPatch};
 use crate::dispatch::DispatchTree;
 use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
@@ -65,6 +67,33 @@ struct RNode {
     /// The box a native layout container gives this node (3.15 layout boundaries); its own
     /// style's position and size are replaced by it.
     boundary: Option<Boundary>,
+    /// A `div` that animates: its motions and what its element last asked for. `props` and
+    /// `layout` above are what is presented.
+    motion: Option<Animated>,
+    /// A canvas's paint closure; its props hold what it painted, for the size they name.
+    paint: Option<PaintFn>,
+}
+
+/// The size a canvas lays out at before its first frame: its style's, when given in points.
+fn styled_size(layout: &StyleRefinement) -> (f32, f32) {
+    let v = animation::values(layout, &Transform::default());
+    (v[4].unwrap_or(0.) as f32, v[5].unwrap_or(0.) as f32)
+}
+
+/// See [`RNode::motion`].
+struct Animated {
+    state: MotionState,
+    props: Props,
+    layout: StyleRefinement,
+}
+
+/// A div's props and layout with `values` presented in place of its own.
+fn present_div(props: &Props, layout: &StyleRefinement, values: &Values) -> (Props, StyleRefinement) {
+    let mut div = props.downcast_ref::<DivProps>().expect("only divs animate").clone();
+    animation::present(&mut div.style, &mut div.transform, values);
+    let mut layout = layout.clone();
+    animation::present(&mut layout, &mut Transform::default(), values);
+    (Rc::new(div), layout)
 }
 
 struct ViewSlot {
@@ -120,6 +149,10 @@ pub(crate) struct Tree {
     /// Open overlays, oldest first. Their focus (save, trap, restore, Escape) is the dispatch
     /// tree's focus scopes; this list serves app deactivation.
     overlays: Vec<NodeId>,
+    /// Nodes with a motion in flight; the window needs frames while there are any.
+    animating: HashSet<NodeId>,
+    /// The motion [`Tree::animate`] built for the node being mounted or reconciled.
+    pending_motion: Option<Animated>,
 }
 
 fn idents(elements: &[AnyElement]) -> Vec<Ident> {
@@ -239,6 +272,8 @@ impl Tree {
                 frame: None,
                 fresh: false,
                 boundary: None,
+                motion: None,
+                paint: None,
             },
         );
         let mut dispatch = DispatchTree::new(bindings);
@@ -261,6 +296,8 @@ impl Tree {
             rendered: HashSet::new(),
             dispatch,
             overlays: Vec::new(),
+            animating: HashSet::new(),
+            pending_motion: None,
         }
     }
 
@@ -281,8 +318,136 @@ impl Tree {
         self.nodes.get(&node)?.props.downcast_ref::<OverlayProps>().map(|p| p.modality)
     }
 
+    /// The node `window.focus(id)` lands on: the first node keyed `id` in tree order that is
+    /// focusable or has a focusable descendant, which is then the one focused.
+    fn focus_target(&self, id: &str) -> Option<NodeId> {
+        fn first_focusable(tree: &Tree, node: NodeId) -> Option<NodeId> {
+            if tree.dispatch.is_focusable(node) {
+                return Some(node);
+            }
+            tree.nodes.get(&node)?.native.iter().find_map(|c| first_focusable(tree, *c))
+        }
+        let mut stack = vec![self.root];
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[&n];
+            if matches!(&node.ident.key, Key::Id(k) if k.as_ref() == id)
+                && let Some(target) = first_focusable(self, n)
+            {
+                return Some(target);
+            }
+            stack.extend(node.native.iter().rev().copied());
+        }
+        None
+    }
+
     pub(crate) fn needs_frame(&self) -> bool {
-        self.needs_layout || !self.tx.is_empty() || !self.reaffirm.is_empty()
+        self.needs_layout || !self.tx.is_empty() || !self.reaffirm.is_empty() || !self.animating.is_empty()
+    }
+
+    /// `el` as presented at `now`: a div that animates gets its motions started or retargeted
+    /// and the sampled values in place of its own. `node` is its retained node, if it has one.
+    fn animate(&mut self, node: Option<NodeId>, id: NodeId, mut el: NodeElement, now: f64, reduce: bool) -> NodeElement {
+        let previous = node.and_then(|n| self.nodes.get_mut(&n)).and_then(|n| n.motion.take());
+        let (Some(spec), Some(div)) = (el.motion, el.props.downcast_ref::<DivProps>()) else {
+            self.animating.remove(&id);
+            return el;
+        };
+        let targets = animation::values(&el.layout, &div.transform);
+        let mut state = match previous {
+            Some(mut previous) => {
+                previous.state.retarget(spec.animation, targets, now, reduce);
+                previous.state
+            }
+            // Only a node mounting now comes in from its enter pose.
+            None if node.is_some() => MotionState::new(MotionSpec { enter: None, ..spec }, targets, now, reduce),
+            None => MotionState::new(spec, targets, now, reduce),
+        };
+        state.settle(now);
+        let base = (el.props.clone(), el.layout.clone());
+        if state.is_moving() {
+            (el.props, el.layout) = present_div(&el.props, &el.layout, &state.sample(now));
+            self.animating.insert(id);
+        } else {
+            self.animating.remove(&id);
+        }
+        self.pending_motion = Some(Animated { state, props: base.0, layout: base.1 });
+        el
+    }
+
+    /// Advances every motion in flight to `now`: presented values reach the backend as
+    /// updates. Returns the nodes whose motions all came to rest.
+    pub(crate) fn step_motion(&mut self, now: f64) -> Vec<NodeId> {
+        let mut ended = Vec::new();
+        let mut ids: Vec<NodeId> = self.animating.iter().copied().collect();
+        ids.sort();
+        for id in ids {
+            let Some(node) = self.nodes.get_mut(&id) else {
+                self.animating.remove(&id);
+                continue;
+            };
+            let Some(anim) = node.motion.as_mut() else {
+                self.animating.remove(&id);
+                continue;
+            };
+            if anim.state.settle(now) {
+                ended.push(id);
+            }
+            let moving = anim.state.is_moving();
+            let (props, layout) = present_div(&anim.props, &anim.layout, &anim.state.sample(now));
+            if !node.props.props_eq(&*props) {
+                let patch = PropsPatch { old: mem::replace(&mut node.props, props), new: node.props.clone() };
+                self.tx.push(Op::Update { node: id, patch });
+            }
+            if node.layout != layout {
+                node.layout = layout;
+                let node = &self.nodes[&id];
+                let style = self.taffy_style(&node.layout, &node.props, node.boundary);
+                self.taffy.set_style(node.taffy, style).expect("taffy node");
+                self.needs_layout = true;
+            }
+            if !moving {
+                self.animating.remove(&id);
+            }
+        }
+        ended
+    }
+
+    /// Paints canvas `n` again for `width` x `height`, when that is not the size it was painted
+    /// for.
+    pub(crate) fn repaint_canvas(&mut self, n: NodeId, width: f32, height: f32, app: &mut App) {
+        let Some(node) = self.nodes.get(&n) else { return };
+        let Some(paint) = node.paint.clone() else { return };
+        if node.props.downcast_ref::<CanvasProps>().is_some_and(|p| (p.width, p.height) == (width, height)) {
+            return;
+        }
+        let props: Props = Rc::new(canvas::record(&paint, node.layout.clone(), width, height, app));
+        let node = self.nodes.get_mut(&n).expect("node");
+        let patch = PropsPatch { old: mem::replace(&mut node.props, props), new: node.props.clone() };
+        self.tx.push(Op::Update { node: n, patch });
+    }
+
+    /// Canvases laid out at a size they were not painted for, with that size.
+    fn stale_canvases(&self) -> Vec<(NodeId, f32, f32)> {
+        let mut out: Vec<(NodeId, f32, f32)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.paint.is_some())
+            .filter_map(|(id, n)| {
+                let f = n.frame?;
+                let p = n.props.downcast_ref::<CanvasProps>()?;
+                ((p.width, p.height) != (f.size.width, f.size.height)).then_some((*id, f.size.width, f.size.height))
+            })
+            .collect();
+        out.sort_by_key(|c| c.0);
+        out
+    }
+
+    /// Marks every measured node for measuring again.
+    pub(crate) fn remeasure(&mut self) {
+        for node in self.nodes.values().filter(|n| n.measured) {
+            let _ = self.taffy.mark_dirty(node.taffy);
+        }
+        self.needs_layout = true;
     }
 
     pub(crate) fn view_node(&self, view: EntityId) -> Option<NodeId> {
@@ -383,6 +548,12 @@ impl Tree {
 
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
+        let mut el = self.animate(None, id, el, window.now(), app.reduce_motion);
+        let motion = self.pending_motion.take();
+        if let Some(paint) = &el.paint {
+            let (w, h) = styled_size(&el.layout);
+            el.props = Rc::new(canvas::record(paint, el.layout.clone(), w, h, app));
+        }
         if is_overlay(el.kind) {
             self.overlays.push(id);
         }
@@ -404,6 +575,8 @@ impl Tree {
                 frame: None,
                 fresh: true,
                 boundary: None,
+                motion,
+                paint: el.paint,
             },
         );
         let children: Vec<AnyElement> = el.children.into_iter().map(|c| c.resolve(window, app)).collect();
@@ -500,6 +673,7 @@ impl Tree {
                 let node = self.nodes.remove(&n).expect("node");
                 let _ = self.taffy.remove(node.taffy);
                 self.overlays.retain(|o| *o != n);
+                self.animating.remove(&n);
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {
                     if let Slot::View(e) = s {
@@ -613,7 +787,19 @@ impl Tree {
     }
 
     fn reconcile_node(&mut self, n: NodeId, el: NodeElement, depth: u32, window: &mut Window, app: &mut App) {
+        let mut el = self.animate(Some(n), n, el, window.now(), app.reduce_motion);
+        let motion = self.pending_motion.take();
+        if let Some(paint) = &el.paint {
+            let node = &self.nodes[&n];
+            let (w, h) = match node.props.downcast_ref::<CanvasProps>() {
+                Some(p) if p.width > 0. || p.height > 0. => (p.width, p.height),
+                _ => styled_size(&el.layout),
+            };
+            el.props = Rc::new(canvas::record(paint, el.layout.clone(), w, h, app));
+        }
         let node = self.nodes.get_mut(&n).expect("node");
+        node.motion = motion;
+        node.paint = el.paint.clone();
         let mut restyle = false;
         if !node.props.props_eq(&*el.props) {
             restyle = pads(&node.props) || pads(&el.props);
@@ -799,6 +985,7 @@ impl Tree {
                     out.overlays.push(n);
                 }
                 self.reaffirm.remove(&n);
+                self.animating.remove(&n);
                 let slots = node.slots.clone();
                 out.nodes.push((n, node));
                 for s in slots {
@@ -820,6 +1007,9 @@ impl Tree {
             let taffy =
                 if node.measured { self.taffy.new_leaf_with_context(style, n) } else { self.taffy.new_leaf(style) };
             node.taffy = taffy.expect("taffy node");
+            if node.motion.as_ref().is_some_and(|m| m.state.is_moving()) {
+                self.animating.insert(n);
+            }
             self.nodes.insert(n, node);
         }
         for n in moved {
@@ -928,6 +1118,11 @@ impl App {
         tree.placed.clear();
         tree.rendered.clear();
         tree.drawn_in = self.frames;
+        for node in tree.step_motion(window.now()) {
+            if tree.handler(node, std::any::TypeId::of::<crate::AnimationEnded>()).is_some() {
+                self.events().emitter(node).emit(crate::AnimationEnded);
+            }
+        }
         let root_view = tree.root_view.clone();
         tree.placed.insert(root_view.entity_id());
         if !tree.views.contains_key(&root_view.entity_id()) {
@@ -970,6 +1165,9 @@ impl App {
             tree.release_orphans(self);
         }
         tree.dispatch.settle_scopes();
+        if let Some(node) = window.focus_request.take().and_then(|id| tree.focus_target(&id)) {
+            tree.dispatch.focus(node);
+        }
         tree.push_focus_change();
         let mut reaffirm: Vec<NodeId> = tree.reaffirm.drain().filter(|n| tree.nodes.contains_key(n)).collect();
         reaffirm.sort();
@@ -983,6 +1181,11 @@ impl App {
         tx.commit_with(&mut *self.backend, &mut self.measure_cache, force, |backend, cache| {
             tree.layout(backend, cache)
         });
+        // A retained backend's frames are known now; canvases laid out at a new size paint
+        // again, and the next frame sends what they painted.
+        for (node, width, height) in tree.stale_canvases() {
+            tree.repaint_canvas(node, width, height, self);
+        }
         self.current_window = outer;
         let slot = self.windows.get_mut(&id).expect("window");
         slot.window = Some(window);

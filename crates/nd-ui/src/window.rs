@@ -112,6 +112,8 @@ pub struct Window {
     clock: FrameTime,
     options: WindowOptions,
     insets: TitlebarInsets,
+    /// An element id to focus once the frame has rendered; see [`Window::focus`].
+    pub(crate) focus_request: Option<SharedString>,
     pub(crate) should_close: Option<ShouldClose>,
     pub(crate) new_tab: Option<NewTab>,
 }
@@ -129,6 +131,7 @@ impl Window {
             clock: FrameTime::default(),
             options: options.clone(),
             insets: TitlebarInsets::default(),
+            focus_request: None,
             should_close: None,
             new_tab: None,
         }
@@ -197,6 +200,14 @@ impl Window {
     /// When the frame being prepared will be presented, in seconds. Animations sample here.
     pub fn now(&self) -> f64 {
         self.clock.target
+    }
+
+    /// Focuses the element keyed `id` (`.id(..)`, or the id a widget constructor takes) once
+    /// this frame has rendered, so an element the same handler mounts can take it. When the
+    /// element is not focusable itself, its first focusable descendant in tree order does. A
+    /// later request in the same frame replaces this one; an id nothing carries is dropped.
+    pub fn focus(&mut self, id: impl Into<SharedString>) {
+        self.focus_request = Some(id.into());
     }
 
     pub(crate) fn set_frame_time(&mut self, time: FrameTime) {

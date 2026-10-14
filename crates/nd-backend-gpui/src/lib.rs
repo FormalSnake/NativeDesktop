@@ -20,6 +20,7 @@ pub mod nav;
 pub mod os;
 mod overlay;
 pub mod render;
+mod rich;
 mod split;
 pub mod status;
 pub mod tab_bar;

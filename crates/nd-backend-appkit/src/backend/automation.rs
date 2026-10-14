@@ -122,6 +122,11 @@ impl AppKitBackend {
             if let Some(record) = state.record_of_view(view) {
                 let root = record.root.content();
                 probe.bounds = Some(rect(root.convertRect_fromView(view.bounds(), Some(view))));
+                // AppKit's own answer: a row scrolled out of its table, a collapsed split pane
+                // or a view under a hidden ancestor shows nothing, whatever its frame says.
+                let shown = view.visibleRect();
+                probe.visible =
+                    Some(!view.isHiddenOrHasHiddenAncestor() && shown.size.width > 0. && shown.size.height > 0.);
                 content = Some(root);
             } else if let Some(record) = state.node_window.get(&node).and_then(|w| state.windows.get(w))
                 && let Some(screen) = crate::overlay::screen_rect(view)
@@ -228,6 +233,17 @@ impl AppKitBackend {
         {
             l.scroll_by(f64::from(*dx), f64::from(*dy));
             return Ok(());
+        }
+        if let SemanticAction::Click | SemanticAction::DoubleClick = action {
+            let state = self.0.borrow();
+            let activate = *action == SemanticAction::DoubleClick;
+            let clicked = state.nodes.values().find_map(|n| match n {
+                Native::List(l) if l.is_row(node) => l.click_row(node, activate),
+                _ => None,
+            });
+            if clicked.is_some() {
+                return Ok(());
+            }
         }
         if !matches!(action, SemanticAction::Focus)
             && let Some(result) = self.perform_control(node, action)
@@ -533,7 +549,15 @@ impl Walk<'_> {
             }
         }
         if let Some(text) = view.downcast_ref::<NdTextView>() {
-            if let Some(look) = text.look()
+            let look = text.look();
+            let base = look.as_ref().map_or(crate::look::Color::Label, |l| l.color);
+            for run in look.iter().flat_map(|l| &l.runs).filter(|r| !r.text.trim().is_empty()) {
+                if let Some(color) = resolve(&run.color.unwrap_or(base).ns_color(), &appearance) {
+                    let kind = PaintKind::Text { size: run.size, weight: run.weight };
+                    self.push(node, kind, with_alpha(color, color.a * alpha), background, run.text.clone());
+                }
+            }
+            if let Some(look) = look.filter(|l| l.runs.is_empty())
                 && let Some(color) = resolve(&look.color.ns_color(), &appearance)
             {
                 let size = look.size.unwrap_or(NSFont::systemFontSize() as f32);

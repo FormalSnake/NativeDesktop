@@ -227,6 +227,8 @@ pub struct App {
     pub(crate) frames: u64,
     /// Titles set while a handler or a frame held the window, applied once it is back.
     retitled: HashMap<WindowId, SharedString>,
+    /// The user asked for less motion: element animations jump instead of moving.
+    pub(crate) reduce_motion: bool,
 }
 
 impl App {
@@ -257,6 +259,39 @@ impl App {
             moved: HashSet::new(),
             frames: 0,
             retitled: HashMap::new(),
+            reduce_motion: false,
+        }
+    }
+
+    /// Follows the user's reduce motion setting: animated offsets, scales and sizes jump to
+    /// their targets, and only opacity still fades. Hosts set it from the OS.
+    pub fn set_reduce_motion(&mut self, reduce: bool) {
+        self.reduce_motion = reduce;
+    }
+
+    pub fn reduce_motion(&self) -> bool {
+        self.reduce_motion
+    }
+
+    /// A backend laid canvas `node` out at `width` x `height`: it paints again for that size.
+    fn repaint_canvas(&mut self, node: NodeId, width: f32, height: f32) {
+        let Some(id) = self.windows.iter().find(|(_, w)| w.tree.as_ref().is_some_and(|t| t.contains(node))).map(|(id, _)| *id)
+        else {
+            return;
+        };
+        let Some(mut tree) = self.windows.get_mut(&id).and_then(|w| w.tree.take()) else { return };
+        tree.repaint_canvas(node, width, height, self);
+        if let Some(slot) = self.windows.get_mut(&id) {
+            slot.tree = Some(tree);
+        }
+    }
+
+    /// Drops every measured size and lays the windows out again in the next frame: what a
+    /// backend measures changed without its props (a theme's font).
+    pub fn remeasure(&mut self) {
+        self.measure_cache = MeasureCache::default();
+        for tree in self.windows.values_mut().filter_map(|w| w.tree.as_mut()) {
+            tree.remeasure();
         }
     }
 
@@ -317,6 +352,27 @@ impl App {
 
     pub fn global<G: 'static>(&self) -> &G {
         self.try_global().unwrap_or_else(|| panic!("no global {}", type_name::<G>()))
+    }
+
+    /// The global of type `G`, mutably. Panics when none is set, like [`App::global`].
+    pub fn global_mut<G: 'static>(&mut self) -> &mut G {
+        self.try_global_mut().unwrap_or_else(|| panic!("no global {}", type_name::<G>()))
+    }
+
+    pub fn try_global_mut<G: 'static>(&mut self) -> Option<&mut G> {
+        self.globals.get_mut(&TypeId::of::<G>()).and_then(|g| g.downcast_mut())
+    }
+
+    /// Runs `f` with the global of type `G` and the app, GPUI's `update_global`. Panics when
+    /// none is set. The global is out of the app while `f` runs, so `f` cannot read it again.
+    pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut App) -> R) -> R {
+        let mut global = self
+            .globals
+            .remove(&TypeId::of::<G>())
+            .unwrap_or_else(|| panic!("no global {}", type_name::<G>()));
+        let result = f(global.downcast_mut().expect("global type"), self);
+        self.globals.insert(TypeId::of::<G>(), global);
+        result
     }
 
     pub fn has_global<G: 'static>(&self) -> bool {
@@ -697,6 +753,7 @@ impl App {
     /// True when a frame would do work: a mounted view is dirty or a window needs layout.
     pub fn needs_frame(&self) -> bool {
         self.dirty.iter().any(|e| self.view_windows.contains_key(e))
+            || self.windows.values().any(|w| w.window.as_ref().is_some_and(|w| w.focus_request.is_some()))
             || self.windows.values().any(|w| w.tree.as_ref().is_some_and(|t| t.needs_frame()))
     }
 
@@ -744,6 +801,10 @@ impl App {
                 }
             };
             let any: &dyn Any = &*event.event;
+            if let Some(resized) = any.downcast_ref::<crate::canvas::CanvasResized>() {
+                self.repaint_canvas(event.node, resized.width, resized.height);
+                continue;
+            }
             let type_id = any.type_id();
             let found = self.windows.iter().find_map(|(id, slot)| {
                 let tree = slot.tree.as_ref()?;
