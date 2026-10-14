@@ -201,4 +201,37 @@ mod gate_m4 {
         assert_eq!(cx.backend().haptics(), [Haptic::Alignment]);
         let _ = handle;
     }
+
+    use nd_gpui::gpui;
+    gpui::actions!(focus_tests, [Compose]);
+
+    /// A toolbar-style button whose click dispatches a command handled at the root.
+    struct Dispatcher {
+        log: Log,
+    }
+
+    impl Render for Dispatcher {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let log = self.log.clone();
+            v_flex().on_action(move |_: &Compose, _, _| log.push("compose")).child(
+                button("compose", "Compose").on_click(|_: &ClickEvent, window, cx| {
+                    let window = window.id();
+                    cx.dispatch_action(window, &Compose);
+                }),
+            )
+        }
+    }
+
+    #[test]
+    fn a_click_handler_can_dispatch_an_action_to_an_ancestor() {
+        let log = Log::default();
+        let mut cx = TestApp::new();
+        let l = log.clone();
+        let handle = cx.open_window(WINDOW, move |_, cx| cx.new(|_| Dispatcher { log: l }));
+        let compose = node(&cx, "compose");
+        cx.emit(compose, ClickEvent);
+        cx.run_until_idle();
+        assert_eq!(log.take(), ["compose"], "the window was lent to the click handler, so the action waits for it");
+        let _ = handle;
+    }
 }

@@ -213,6 +213,10 @@ pub struct App {
     bindings: Vec<KeyBinding>,
     /// Set by [`App::propagate`] inside an `on_action` listener.
     pub(crate) propagate_action: bool,
+    /// Actions dispatched while their window was lent to a native event handler (a button's
+    /// click dispatching a menu command): listeners need that window, so they run once the
+    /// handler hands it back.
+    deferred_actions: Vec<(WindowId, Box<dyn Action>)>,
     /// The views rendering now, innermost last.
     pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
@@ -247,6 +251,7 @@ impl App {
             events,
             bindings: Vec::new(),
             propagate_action: false,
+            deferred_actions: Vec::new(),
             rendering: Vec::new(),
             current_window: None,
             moved: HashSet::new(),
@@ -466,6 +471,10 @@ impl App {
     /// Bubbles `action` from the window's focused node to its root. Menus and toolbar items
     /// dispatch through here. Returns whether a listener handled it.
     pub fn dispatch_action(&mut self, window: WindowId, action: &dyn Action) -> bool {
+        if self.windows.get(&window).is_some_and(|slot| slot.window.is_none()) {
+            self.deferred_actions.push((window, action.boxed_clone()));
+            return true;
+        }
         self.with_dispatch(window, false, |tree, app| tree.dispatch_action(action, app))
     }
 
@@ -737,6 +746,9 @@ impl App {
                 if let Some(tree) = slot.tree.as_mut() {
                     tree.reaffirm.insert(event.node);
                 }
+            }
+            for (window, action) in std::mem::take(&mut self.deferred_actions) {
+                self.dispatch_action(window, &*action);
             }
             self.flush_effects();
         }
