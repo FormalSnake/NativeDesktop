@@ -48,8 +48,9 @@ pub struct Example {
     /// Pixels the capture window is resized to, so every OS shows the same frame.
     #[serde(default)]
     pub size: Option<(u32, u32)>,
-    /// The source hash, filled in when the site loads.
-    #[serde(default, skip_deserializing)]
+    /// The source hash, filled in when the site loads (over any value examples.toml gives). Read
+    /// back from the docs app's build-time JSON.
+    #[serde(default)]
     pub hash: String,
 }
 

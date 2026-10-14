@@ -12,6 +12,31 @@ gpui = ["nd/gpui"]
 
 [dependencies]
 nd = { path = "../../crates/nd" }
+nd-docs = { path = "../../crates/nd-docs" }
+serde.workspace = true
+serde_json.workspace = true
+# The examples the Web tab runs live, in this process.
+hello = { path = "../../examples/hello" }
+gallery = { path = "../../examples/gallery" }
+overrides = { path = "../../examples/overrides" }
+scroll-bench = { path = "../../examples/scroll" }
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+nd-docs = { path = "../../crates/nd-docs" }
+serde_json.workspace = true
+
+[[bin]]
+name = "nd-docs-app"
+path = "src/main.rs"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }
+
+# Tier 2: the appearance audit (`nd::audit`) over every page, light, dark and matugen.
+[[test]]
+name = "appearance"
+harness = false
