@@ -19,8 +19,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
-    SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_NCHITTEST,
+    EnumWindows, GetClientRect, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, IsZoomed, PostMessageW, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageTimeoutW,
+    SetWindowPos, WM_CLOSE, WM_NCHITTEST,
 };
 use windows::core::BOOL;
 
@@ -156,18 +157,38 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
             Ok(json!({}))
         }
         "window" => {
-            let pid = arg_i32(request, "pid")? as u32;
+            // By the process that owns it, or by its exact title (an app another process started).
+            let pid = request["pid"].as_u64().map(|p| p as u32);
+            let title = request["title"].as_str().map(str::to_owned);
+            if pid.is_none() && title.is_none() {
+                return Err("`window` needs `pid` or `title`".into());
+            }
             let timeout = Duration::from_millis(request["timeout_ms"].as_u64().unwrap_or(10_000));
             let end = Instant::now() + timeout;
             loop {
-                if let Some(hwnd) = top_window(pid) {
+                if let Some(hwnd) = top_window(pid, title.as_deref()) {
                     return Ok(window_info(hwnd));
                 }
                 if Instant::now() > end {
-                    return Err(format!("no visible window for pid {pid}"));
+                    return Err(format!("no visible window for pid {pid:?}, title {title:?}"));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+        }
+        "set_frame" => {
+            // Moves and sizes a window in screen pixels: onto another monitor, for pacing runs.
+            let hwnd = hwnd_arg(request)?;
+            let r = &request["rect"];
+            let v = |i: usize| r[i].as_i64().map(|v| v as i32).ok_or("`rect` must be [x, y, w, h]");
+            unsafe { SetWindowPos(hwnd, None, v(0)?, v(1)?, v(2)?, v(3)?, SWP_NOZORDER | SWP_NOACTIVATE) }
+                .map_err(|e| e.to_string())?;
+            Ok(window_info(hwnd))
+        }
+        "close" => {
+            // What the user's close does: the app gets WM_CLOSE and quits through its own path.
+            let hwnd = hwnd_arg(request)?;
+            unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| e.to_string())?;
+            Ok(json!({}))
         }
         "window_info" => Ok(window_info(hwnd_arg(request)?)),
         "hit_test" => {
@@ -331,22 +352,32 @@ fn launch(agent: &mut Agent, request: &Value) -> Result<Value, String> {
     Ok(json!({ "pid": pid }))
 }
 
-/// The largest visible, non-minimised top-level window `pid` owns.
-fn top_window(pid: u32) -> Option<HWND> {
-    struct Search {
-        pid: u32,
+/// The largest visible top-level window `pid` owns, or titled `title`.
+fn top_window(pid: Option<u32>, title: Option<&str>) -> Option<HWND> {
+    struct Search<'a> {
+        pid: Option<u32>,
+        title: Option<&'a str>,
         found: Vec<HWND>,
     }
     unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            return BOOL::from(true);
+        }
         let mut owner = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner)) };
-        if owner == search.pid && unsafe { IsWindowVisible(hwnd) }.as_bool() {
+        let pid_ok = search.pid.is_none_or(|p| p == owner);
+        let title_ok = search.title.is_none_or(|t| {
+            let mut buf = [0u16; 256];
+            let n = unsafe { GetWindowTextW(hwnd, &mut buf) }.max(0) as usize;
+            String::from_utf16_lossy(&buf[..n]) == t
+        });
+        if pid_ok && title_ok {
             search.found.push(hwnd);
         }
         BOOL::from(true)
     }
-    let mut search = Search { pid, found: Vec::new() };
+    let mut search = Search { pid, title, found: Vec::new() };
     let _ = unsafe { EnumWindows(Some(each), LPARAM(&raw mut search as isize)) };
     search.found.into_iter().max_by_key(|&hwnd| {
         let r = frame(hwnd);

@@ -66,8 +66,15 @@ pub trait OsHooks: 'static {
 
     /// Drawn above the window's content and below its menus on every frame, whether or not the
     /// app placed a `window_controls()` node: chrome the OS expects on every window, such as the
-    /// caption buttons of a window whose title bar the app draws (Windows).
-    fn window_overlay(&self, _window: WindowId, _look: Look, _gpui_window: &mut gpui::Window) -> Option<AnyElement> {
+    /// caption buttons of a window whose title bar the app draws (Windows). `title_height` is
+    /// the bottom of the app's title rows as last laid out, 0 when it has none.
+    fn window_overlay(
+        &self,
+        _window: WindowId,
+        _look: Look,
+        _title_height: f32,
+        _gpui_window: &mut gpui::Window,
+    ) -> Option<AnyElement> {
         None
     }
 

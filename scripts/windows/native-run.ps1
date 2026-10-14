@@ -28,7 +28,8 @@ if ($Cleanup) {
 
 New-Item -ItemType Directory -Force $out | Out-Null
 function Log($text) { $text | Tee-Object -FilePath (Join-Path $out 'run.log') -Append }
-function Agent($json) { & $agent agent call $json | ConvertFrom-Json }
+# Windows PowerShell 5.1 drops the double quotes inside an argument to a native exe.
+function Agent($json) { & $agent agent call ($json -replace '"', '\"') | ConvertFrom-Json }
 
 Log "== agent"
 & "$bin\ndshell.exe" agent install 2>&1 | ForEach-Object { Log "$_" }
@@ -73,7 +74,9 @@ if (Test-Path (Join-Path $Root 'src')) {
     $env:RUSTUP_TOOLCHAIN = '1.95.0-x86_64-pc-windows-msvc'
     $env:CARGO_TARGET_DIR = Join-Path $Root 'target'
     $env:CARGO_BUILD_BUILD_DIR = Join-Path $Root 'target\build'
-    $env:Path = "$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.nd-tools\zig-x86_64-windows-0.16.0;$env:Path"
+    # nd fetches Velopack's vpk with the .NET SDK in .nd-tools (dotnet-install.ps1 put it there).
+    $env:DOTNET_ROOT = "$env:USERPROFILE\.nd-tools\dotnet"
+    $env:Path = "$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.nd-tools\zig-x86_64-windows-0.16.0;$env:DOTNET_ROOT;$env:Path"
     cargo test --config "build.rustc-wrapper=''" -p nd-cli --test gate_m10 real_package_windows -- --nocapture 2>&1 |
         ForEach-Object { Log "$_" }
     Pop-Location

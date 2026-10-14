@@ -1,17 +1,20 @@
-//! M10 gate: `nd new` + `nd package mac` gives a launching `.app`; 0.1.0 updates to 0.1.1
-//! through `nd release serve` with a signed delta, applied on quit; a tampered feed is refused;
-//! every publisher writes to a local target.
+//! M10 gate: `nd new` + `nd package mac` gives a launching `.app` (`nd package windows` a
+//! branded Setup.exe that installs and launches it); 0.1.0 updates to 0.1.1 through
+//! `nd release serve` with a signed delta, applied on quit; a tampered feed is refused; every
+//! publisher writes to a local target.
 
 mod gate_m10 {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     use std::path::{Path, PathBuf};
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex};
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     use std::time::{Duration, Instant};
 
-    use nd_cli::publish::{self, GhCommand, S3Target};
+    #[cfg(unix)]
+    use nd_cli::publish::GhCommand;
+    use nd_cli::publish::{self, S3Target};
     use nd_config::Publish;
 
     fn feed_dir() -> tempfile::TempDir {
@@ -117,7 +120,7 @@ mod gate_m10 {
     #[cfg(target_os = "macos")]
     const APP_ID: &str = "dev.formalsnake.ndgatem10";
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     fn nd(dir: &Path, args: &[&str]) -> String {
         let output = Command::new(env!("CARGO_BIN_EXE_nd")).args(args).current_dir(dir).output().expect("spawn nd");
         assert!(
@@ -151,18 +154,18 @@ mod gate_m10 {
         PathBuf::from(std::env::var_os("HOME").unwrap()).join("Library/Caches/velopack").join(APP_ID)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     fn free_port() -> u16 {
         std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     struct Serve {
         child: Child,
         log: PathBuf,
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     impl Serve {
         fn start(dir: &Path, root: &Path, port: u16, log: PathBuf) -> Self {
             let out = std::fs::File::create(&log).unwrap();
@@ -187,7 +190,7 @@ mod gate_m10 {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     impl Drop for Serve {
         fn drop(&mut self) {
             let _ = self.child.kill();
@@ -203,7 +206,7 @@ mod gate_m10 {
         .expect("launch the packaged app")
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     fn wait_until(what: &str, timeout: Duration, mut done: impl FnMut() -> bool) {
         let start = Instant::now();
         while !done() {
@@ -312,5 +315,159 @@ mod gate_m10 {
 
         drop(serve);
         let _ = std::fs::remove_dir_all(velopack_packages());
+    }
+
+    #[cfg(windows)]
+    const WIN_APP_ID: &str = "dev.formalsnake.ndgatem10win";
+
+    /// Velopack's version of the install in `dir`, from `current\sq.version`.
+    #[cfg(windows)]
+    fn installed_version(dir: &Path) -> String {
+        let nuspec = std::fs::read_to_string(dir.join("current").join("sq.version")).unwrap_or_default();
+        nuspec.split("<version>").nth(1).and_then(|v| v.split('<').next()).unwrap_or_default().to_owned()
+    }
+
+    /// The app's output so far, read from the agent that launched it.
+    #[cfg(windows)]
+    fn output(agent: &mut ndshell::agent::Client, pid: i64) -> Vec<String> {
+        let reply = agent.call(serde_json::json!({ "cmd": "output", "pid": pid })).unwrap_or_default();
+        reply["lines"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_owned)).collect()
+    }
+
+    /// The Windows leg, through the agent in the logged-in session (Setup.exe and the app need a
+    /// desktop): `nd package windows` gives a branded Setup.exe that installs and launches the app;
+    /// the installed 0.1.0 takes a signed delta to 0.1.1 from `nd release serve` and applies it
+    /// when it closes; a tampered feed is refused before any download.
+    #[cfg(windows)]
+    #[test]
+    fn real_package_windows_then_signed_delta_update() {
+        use serde_json::json;
+
+        if std::env::var_os("NEXTEST").is_none() && std::env::var_os("ND_REAL").is_none_or(|v| v != "1") {
+            println!("skipped: opens real windows through the agent; run with nextest --profile real or ND_REAL=1");
+            return;
+        }
+        let mut agent = ndshell::agent::Client::connect().expect("the agent (ndshell agent install)");
+        agent.set_timeout(Some(Duration::from_secs(60)));
+        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("nd-m10-win");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let install = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()).join(WIN_APP_ID);
+        let _ = std::fs::remove_dir_all(&install);
+        let nd_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd");
+
+        // nd new demo, branded, nd package windows: Setup.exe installs and launches it.
+        nd(&base, &["new", "demo", "--standalone", "--id", WIN_APP_ID, "--nd-path", nd_crate.to_str().unwrap()]);
+        let demo = base.join("demo");
+        // nd builds into a shared CARGO_TARGET_DIR when one is set, and its feed goes there too.
+        let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| demo.join("target"), PathBuf::from);
+        let feed = target.join("nd/releases");
+        let _ = std::fs::remove_dir_all(&feed);
+        let config = std::fs::read_to_string(demo.join("nativedesktop.toml")).unwrap();
+        std::fs::write(
+            demo.join("nativedesktop.toml"),
+            format!(
+                "{config}\n[windows]\npublisher = \"FormalSnake\"\naccent = \"#3366ff\"\ninstaller = {{ shortcuts = [\"start\"] }}\n"
+            ),
+        )
+        .unwrap();
+        let out = nd(&demo, &["package", "windows"]);
+        let setup = out
+            .lines()
+            .find_map(|l| l.strip_prefix("installer: "))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("no Setup.exe: {out}"));
+        assert!(setup.exists(), "{}", setup.display());
+        agent.call(json!({ "cmd": "launch", "exe": setup.display().to_string() })).expect("run Setup.exe");
+        let window = agent
+            .call(json!({ "cmd": "window", "title": "Demo", "timeout_ms": 120_000 }))
+            .expect("Setup.exe installs and launches the app");
+        assert_eq!(installed_version(&install), "0.1.0");
+        let shortcut =
+            PathBuf::from(std::env::var_os("APPDATA").unwrap()).join("Microsoft/Windows/Start Menu/Programs/Demo.lnk");
+        assert!(shortcut.exists(), "the branded Start menu shortcut {}", shortcut.display());
+        agent.call(json!({ "cmd": "close", "hwnd": window["hwnd"] })).unwrap();
+
+        // Signing key and feed; 0.1.0 and 0.1.1 released, the second with a delta.
+        let port = free_port();
+        let key = base.join("signing.key");
+        let keygen = nd(&demo, &["release", "keygen", "--out", key.to_str().unwrap()]);
+        let config = std::fs::read_to_string(demo.join("nativedesktop.toml")).unwrap();
+        std::fs::write(
+            demo.join("nativedesktop.toml"),
+            format!("{config}\n[updates]\nfeed = \"http://127.0.0.1:{port}\"\n{keygen}"),
+        )
+        .unwrap();
+        nd(&demo, &["release", "--key", key.to_str().unwrap()]);
+        let bump = |from: &str, to: &str, label: &str| {
+            let cargo = std::fs::read_to_string(demo.join("Cargo.toml")).unwrap();
+            std::fs::write(
+                demo.join("Cargo.toml"),
+                cargo.replacen(&format!("version = \"{from}\""), &format!("version = \"{to}\""), 1),
+            )
+            .unwrap();
+            let app = std::fs::read_to_string(demo.join("src/app.rs")).unwrap();
+            std::fs::write(demo.join("src/app.rs"), app.replace("text(\"clicks\")", &format!("text(\"{label}\")")))
+                .unwrap();
+        };
+        bump("0.1.0", "0.1.1", "clicks in 0.1.1");
+        let notes = base.join("notes.md");
+        std::fs::write(&notes, "The counter label names its version.\n").unwrap();
+        nd(&demo, &["release", "--key", key.to_str().unwrap(), "--notes", notes.to_str().unwrap()]);
+        let delta = format!("{WIN_APP_ID}-0.1.1-win-stable-delta.nupkg");
+        let full_011 = format!("{WIN_APP_ID}-0.1.1-win-stable-full.nupkg");
+        assert!(feed.join(&delta).exists(), "no delta in {:?}", nd_cli::package::listing(&feed));
+
+        // The installed 0.1.0 finds 0.1.1, downloads the delta, applies it once it closes.
+        let serve = Serve::start(&demo, &feed, port, base.join("serve.log"));
+        let exe = install.join("current").join("demo.exe");
+        let launched = agent
+            .call(json!({ "cmd": "launch", "exe": exe.display().to_string(), "env": { "ND_UPDATE_DELAY_MS": "200" } }))
+            .unwrap();
+        let pid = launched["pid"].as_i64().unwrap();
+        let start = Instant::now();
+        loop {
+            let lines = output(&mut agent, pid);
+            if lines.iter().any(|l| l.contains("update 0.1.1 ready")) {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(90),
+                "timed out waiting for update 0.1.1 ready\napp: {lines:?}\nfeed: {:?}",
+                serve.requests()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let window = agent.call(json!({ "cmd": "window", "pid": pid })).unwrap();
+        agent.call(json!({ "cmd": "close", "hwnd": window["hwnd"] })).unwrap();
+        wait_until("0.1.1 applied after the app closed", Duration::from_secs(90), || {
+            installed_version(&install) == "0.1.1"
+        });
+        let requests = serve.requests();
+        assert!(requests.contains(&"GET /releases.win-stable.json.sig 200".to_string()), "{requests:?}");
+        assert!(requests.contains(&format!("GET /{delta} 200")), "{requests:?}");
+        assert!(!requests.iter().any(|r| r.contains(&full_011)), "fell back to the full package: {requests:?}");
+
+        // 0.1.2 released, then its feed edited under the same signature: refused before any download.
+        bump("0.1.1", "0.1.2", "clicks in 0.1.2");
+        nd(&demo, &["release", "--key", key.to_str().unwrap()]);
+        let json_path = feed.join("releases.win-stable.json");
+        let text = std::fs::read_to_string(&json_path).unwrap();
+        std::fs::write(&json_path, text.replace("0.1.2", "0.1.3")).unwrap();
+        let before = serve.requests().len();
+        let launched = agent
+            .call(json!({ "cmd": "launch", "exe": exe.display().to_string(), "env": { "ND_UPDATE_DELAY_MS": "200" } }))
+            .unwrap();
+        let pid = launched["pid"].as_i64().unwrap();
+        wait_until("the update check", Duration::from_secs(60), || {
+            output(&mut agent, pid).iter().any(|l| l.contains("nd: update") || l.contains("does not match"))
+        });
+        let line = output(&mut agent, pid).into_iter().find(|l| l.contains("does not match"));
+        assert!(line.is_some(), "no refusal: {:?}", output(&mut agent, pid));
+        let after = serve.requests();
+        assert!(after[before..].iter().all(|r| !r.contains(".nupkg")), "downloaded from a tampered feed: {after:?}");
+        let _ = agent.call(json!({ "cmd": "kill", "pid": pid }));
+        assert_eq!(installed_version(&install), "0.1.1");
+        drop(serve);
     }
 }

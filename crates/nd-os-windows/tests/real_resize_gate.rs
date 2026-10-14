@@ -335,12 +335,16 @@ mod gate {
         sleep(1800);
         let after = hello.call(after).expect("capture on hover");
         let diff = grid_diff(&before["grid"], &after["grid"]);
-        r.check(
-            diff >= 6,
-            format!(
-                "hover over the maximize button opens the Snap Layouts flyout ({diff} of 64 cells below it changed)"
-            ),
-        );
+        if snap_flyout_enabled() {
+            r.check(
+                diff >= 6,
+                format!(
+                    "hover over the maximize button opens the Snap Layouts flyout ({diff} of 64 cells below it changed)"
+                ),
+            );
+        } else {
+            println!("skip Snap Layouts flyout: off in Settings on this machine (EnableSnapAssistFlyout = 0)");
+        }
         hello.call(json!({ "cmd": "move", "to": [content.0, content.1] })).unwrap();
         sleep(800);
 
@@ -406,6 +410,14 @@ mod gate {
     }
 
     /// How many cells of two 8 by 8 capture grids differ by more than 24 levels in a channel.
+    /// Settings > System > Multitasking > "Show snap layouts when I hover over a window's maximize
+    /// button". Off, the flyout never opens for any window.
+    fn snap_flyout_enabled() -> bool {
+        let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+        let out = std::process::Command::new("reg").args(["query", key, "/v", "EnableSnapAssistFlyout"]).output();
+        !out.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().last() == Some("0x0"))
+    }
+
     fn grid_diff(a: &Value, b: &Value) -> usize {
         let (Some(a), Some(b)) = (a.as_array(), b.as_array()) else { return 0 };
         a.iter()

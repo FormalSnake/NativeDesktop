@@ -1085,7 +1085,8 @@ impl Inner {
             None => element,
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
-        let overlay = self.hooks.window_overlay(id, crate::render::Look::of(state.theme.window_theme(id)), window);
+        let look = crate::render::Look::of(state.theme.window_theme(id));
+        let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
         let paints = build.take_paints();
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);

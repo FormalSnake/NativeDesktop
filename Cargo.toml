@@ -68,6 +68,7 @@ gpui-fast = { path = "crates/nd-gpui/vendor/gpui-fast" }
 gpui-pre-linux = { path = "crates/nd-gpui/vendor/gpui-pre-linux" }
 gpui-fast-linux = { path = "crates/nd-gpui/vendor/gpui-fast-linux" }
 gpui-pre-wgpu = { path = "crates/nd-gpui/vendor/gpui-pre-wgpu" }
+gpui-pre-windows = { path = "crates/nd-gpui/vendor/gpui-pre-windows" }
 gpui-fast-wgpu = { path = "crates/nd-gpui/vendor/gpui-fast-wgpu" }
 # gpui-fork: end
 

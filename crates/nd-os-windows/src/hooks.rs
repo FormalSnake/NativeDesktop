@@ -49,13 +49,14 @@ impl WindowsHooks {
         self.chrome.borrow().get(&window).cloned()
     }
 
-    /// The title row for the window's current size; empty in full screen, where the app gets
-    /// the whole window.
-    fn layout(gpui_window: &gpui::Window) -> CaptionLayout {
+    /// The title row for the window's current size, its buttons as tall as the app's title rows
+    /// (never below the Fluent 32); empty in full screen, where the app gets the whole window.
+    fn layout(gpui_window: &gpui::Window, title_height: f32) -> CaptionLayout {
         if gpui_window.is_fullscreen() {
             return CaptionLayout::default();
         }
-        let mut layout = CaptionLayout::fluent(gpui_window.viewport_size().width.as_f32(), FLUENT_TITLE_HEIGHT);
+        let height = title_height.max(FLUENT_TITLE_HEIGHT);
+        let mut layout = CaptionLayout::fluent(gpui_window.viewport_size().width.as_f32(), height);
         layout.title_drags = false;
         layout
     }
@@ -74,7 +75,7 @@ impl OsHooks for WindowsHooks {
     }
 
     fn window_opened(&self, window: WindowId, gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
-        let chrome = match Chrome::install(gpui_window, Self::layout(gpui_window)) {
+        let chrome = match Chrome::install(gpui_window, Self::layout(gpui_window, 0.)) {
             Ok(chrome) => chrome,
             Err(e) => {
                 eprintln!("nd: window {} has no Windows chrome: {e}", window.0);
@@ -83,6 +84,19 @@ impl OsHooks for WindowsHooks {
         };
         if let Err(e) = backdrop::apply(chrome.hwnd(), Backdrop::Mica, dark(gpui_window)) {
             eprintln!("nd: Mica unavailable: {e}");
+        }
+        // DWM draws its own 32 px caption buttons into the extended frame of a window with a
+        // system menu, and they show through the Mica client area behind ours.
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                SetWindowLongPtrW, SetWindowPos, WS_SYSMENU,
+            };
+            let hwnd = chrome.hwnd();
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_SYSMENU.0 as isize));
+            let flags = SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
+            let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, flags);
         }
         let handle = gpui_window.window_handle();
         let async_cx = cx.to_async();
@@ -108,9 +122,11 @@ impl OsHooks for WindowsHooks {
     }
 
     fn titlebar_insets(&self, window: WindowId, gpui_window: &gpui::Window) -> Option<TitlebarInsets> {
-        let layout = Self::layout(gpui_window);
-        let insets = TitlebarInsets { leading: 0., trailing: layout.trailing_inset(), height: layout.title_height };
-        if let Some(chrome) = self.chrome(window) {
+        let chrome = self.chrome(window);
+        let measured = chrome.as_ref().map_or(0., |c| c.layout().title_height);
+        let layout = Self::layout(gpui_window, measured);
+        let insets = TitlebarInsets { leading: 0., trailing: layout.trailing_inset(), height: FLUENT_TITLE_HEIGHT };
+        if let Some(chrome) = chrome {
             chrome.set_layout(layout);
         }
         Some(insets)
@@ -120,10 +136,21 @@ impl OsHooks for WindowsHooks {
         Some(div().absolute().into_any_element())
     }
 
-    fn window_overlay(&self, window: WindowId, look: Look, gpui_window: &mut gpui::Window) -> Option<AnyElement> {
+    fn window_overlay(
+        &self,
+        window: WindowId,
+        look: Look,
+        title_height: f32,
+        gpui_window: &mut gpui::Window,
+    ) -> Option<AnyElement> {
         let chrome = self.chrome(window)?;
         if gpui_window.is_fullscreen() {
             return None;
+        }
+        let layout = Self::layout(gpui_window, title_height);
+        let height = layout.title_height;
+        if layout != chrome.layout() {
+            chrome.set_layout(layout);
         }
         let state = chrome.caption_state();
         let maximized = gpui_window.is_maximized();
@@ -131,7 +158,7 @@ impl OsHooks for WindowsHooks {
             .absolute()
             .top_0()
             .right_0()
-            .h(px(FLUENT_TITLE_HEIGHT))
+            .h(px(height))
             .flex()
             .flex_row()
             .child(caption_button(CaptionButton::Minimize, state, look, maximized))

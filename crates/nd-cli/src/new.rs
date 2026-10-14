@@ -98,11 +98,14 @@ impl Vars {
         let (nd_dep, nd_dev_dep, nd_build_dep) = match nd_path {
             Some(path) => {
                 let path = std::fs::canonicalize(path).with_context(|| format!("--nd-path {}", path.display()))?;
-                let path = path.display();
+                // A TOML literal string, so Windows backslashes stay as written; canonicalize's
+                // verbatim `\\?\` prefix goes, since build scripts mishandle it.
+                let path = path.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
                 (
-                    format!("{{ path = \"{path}\" }}"),
-                    format!("{{ path = \"{path}\", features = [\"test\", \"audit\"] }}"),
-                    format!("{{ path = \"{path}\", default-features = false, features = [\"build\"] }}"),
+                    format!("{{ path = '{path}' }}"),
+                    format!("{{ path = '{path}', features = [\"test\", \"audit\"] }}"),
+                    format!("{{ path = '{path}', default-features = false, features = [\"build\"] }}"),
                 )
             }
             None => (

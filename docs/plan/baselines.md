@@ -115,3 +115,13 @@ in `WM_SIZE` and draws on its next timer tick, so DWM shows a grown window with 
 frame. A forced draw from the window subclass inside `WM_SIZE` did not remove it; the fix belongs
 in the fork's Windows renderer (5.2: draw in `WM_WINDOWPOSCHANGED`, one DirectComposition
 commit), and is to be re-measured on hardware since WARP rendering in the guest adds latency.
+
+## Windows on g815 hardware (2026-10-14)
+
+g815 booted into Windows 11, RTX 5070 Laptop with the Intel iGPU, a 2560x1600 240 Hz panel and a
+2560x1440 144 Hz monitor, debug builds made on the machine. Resize gate with the `WM_SIZING` fix
+(vendored `gpui-pre-windows`): 1 to 3 of 100 captured frames show the content one drag step
+(4 to 5 px) short of the edge, never magenta; the deferred-layout control is caught in 102 to 105
+of about 114 frames. Pacing: GPUI reports 240 and 144 Hz for the two monitors and swaps them when
+the windows move, but both windows draw at 235 to 252 Hz wherever they sit, so the 144 Hz one
+overdraws by about 100 frames a second.
