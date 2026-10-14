@@ -4,3 +4,4 @@
 0002-gpui_wgpu-create-the-gl-backend-only-when-vulkan-alo.patch
 0003-gpui_linux-ack-a-throttled-resize-configure-with-the.patch
 0004-gpui_linux-report-wp_presentation-present-times-thro.patch
+0005-gpui_apple-nudge-the-font-size-only-of-a-run-continu.patch

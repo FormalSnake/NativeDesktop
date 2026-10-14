@@ -127,7 +127,9 @@ impl Fonts {
     pub fn new(family: Option<&str>, points: f64, scale: f64) -> Self {
         let size = points * scale;
         let regular = family
-            .filter(|f| !f.is_empty() && !f.starts_with(".SystemUIFont"))
+            // CoreText will not open the system's private families (`.AppleSystemUIFont..`) by
+            // name; the monospaced one is what `system_mono` builds.
+            .filter(|f| !f.is_empty() && !f.starts_with('.'))
             .and_then(|f| {
                 let name = CFString::from_str(f);
                 let font = unsafe { CTFont::with_name(&name, size, std::ptr::null()) };

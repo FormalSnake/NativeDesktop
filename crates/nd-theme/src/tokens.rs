@@ -6,7 +6,7 @@ use nd_gpui::gpui::{Font, Hsla, Pixels};
 
 use crate::color::{contrast, is_dark, legible, mix, over, with_alpha};
 use crate::palette::{Palette, Scheme};
-use crate::preset::{ControlHeights, Materials, Metrics, Motion, Preset, Radii, Spacing, TypeScale};
+use crate::preset::{ControlHeights, Materials, Metrics, Motion, Preset, Radii, Spacing, TextStyles, TypeScale};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceTokens {
@@ -79,6 +79,7 @@ pub struct Theme {
     pub radius_scale: f32,
     pub control: ControlHeights,
     pub type_scale: TypeScale,
+    pub text_styles: TextStyles,
     pub fonts: FontTokens,
     pub motion: Motion,
     pub materials: Materials,
@@ -134,6 +135,7 @@ impl Theme {
             radius_scale,
             control: metrics.control,
             type_scale: metrics.type_scale,
+            text_styles: metrics.text_styles,
             fonts: metrics.fonts,
             motion: metrics.motion,
             materials: metrics.materials,

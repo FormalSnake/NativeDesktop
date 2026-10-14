@@ -15,6 +15,7 @@ pub const RULES: &[(&str, &str)] = &[
     ("framework-internals", "gpui and objc2 are named only in native widget modules or cfg(target_os) items"),
     ("cfg-target-os", "cfg(target_os) outside a native widget module needs a reason comment"),
     ("colour-literal", "colour constructors belong in theme files; read tokens from `cx.theme()`"),
+    ("font-family-literal", "font families come from the OS through `cx.theme().fonts`; never name one"),
     ("clock-in-ui", "Instant::now, thread::sleep and smol::Timer are banned in UI code; use executor timers"),
     ("inline-svg", "no inline SVG; use the icon set"),
     ("scroll-list", "a scrolling container fed by `.children(..)` is a hand-rolled list; use `list()`"),
@@ -331,6 +332,18 @@ impl Linter<'_> {
     }
 }
 
+/// A string literal, bare or through `.into()` / `SharedString::from(..)`: the family the app
+/// hardcodes. An empty string names none.
+fn names_a_family(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => !s.value().is_empty(),
+        syn::Expr::MethodCall(call) if call.args.is_empty() => names_a_family(&call.receiver),
+        syn::Expr::Call(call) if call.args.len() == 1 => names_a_family(&call.args[0]),
+        syn::Expr::Reference(r) => names_a_family(&r.expr),
+        _ => false,
+    }
+}
+
 fn is_target_os_cfg(attr: &syn::Attribute) -> bool {
     (attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
         && attr.meta.require_list().is_ok_and(|list| list.tokens.to_string().contains("target_os"))
@@ -408,6 +421,13 @@ impl<'ast> Visit<'ast> for Linter<'_> {
                     format!("`{name}(..)` outside a theme file; use a token"),
                 );
             }
+            if name == "font" && call.args.first().is_some_and(names_a_family) && !self.theme_file {
+                self.report(
+                    last.ident.span(),
+                    "font-family-literal",
+                    "`font(\"..\")` names a font family; use a font token",
+                );
+            }
             if matches!(name.as_str(), "deferred" | "anchored") {
                 self.report(last.ident.span(), "floating-element", format!("`{name}(..)` creates a floating element"));
             }
@@ -422,6 +442,13 @@ impl<'ast> Visit<'ast> for Linter<'_> {
             if !self.has_reason(line) {
                 self.report(call.method.span(), "drawn-reason", "`.drawn()` without a reason comment");
             }
+        }
+        if call.method == "font_family" && call.args.first().is_some_and(names_a_family) && !self.theme_file {
+            self.report(
+                call.method.span(),
+                "font-family-literal",
+                "`.font_family(\"..\")` names a font family; use a font token",
+            );
         }
         self.check_unavailable(&call.method);
         let mut scroll = None;
@@ -442,6 +469,24 @@ impl<'ast> Visit<'ast> for Linter<'_> {
             self.report(span, "scroll-list", "scrolling container with `.children(..)`; use `list()`");
         }
         syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_struct(&mut self, expr: &'ast syn::ExprStruct) {
+        let is_font = expr.path.segments.last().is_some_and(|s| s.ident == "Font");
+        for field in &expr.fields {
+            if is_font
+                && matches!(&field.member, syn::Member::Named(m) if m == "family")
+                && names_a_family(&field.expr)
+                && !self.theme_file
+            {
+                self.report(
+                    field.expr.span(),
+                    "font-family-literal",
+                    "`Font { family }` names a font family; use a font token",
+                );
+            }
+        }
+        syn::visit::visit_expr_struct(self, expr);
     }
 
     fn visit_expr_lit(&mut self, lit: &'ast syn::ExprLit) {
@@ -491,6 +536,19 @@ mod tests {
     fn flags_colour_literals_except_in_theme_files() {
         assert_eq!(rules("fn f() { let c = rgb(0xff0000); }"), ["colour-literal"]);
         assert!(lint_source(Path::new("src/theme.rs"), "fn f() { let c = rgb(0xff0000); }").is_empty());
+    }
+
+    #[test]
+    fn flags_hardcoded_font_families_except_in_theme_files() {
+        assert_eq!(rules("fn f() { div().font_family(\"Inter\"); }"), ["font-family-literal"]);
+        assert_eq!(rules("fn f() { let f = font(\"SF Pro\"); }"), ["font-family-literal"]);
+        assert_eq!(
+            rules("fn f() { let f = Font { family: \"Menlo\".into(), ..font(\"\") }; }"),
+            ["font-family-literal"]
+        );
+        assert!(rules("fn f(cx: &App) { div().font_family(cx.theme().fonts.mono.family.clone()); }").is_empty());
+        assert!(rules("fn f(t: &Theme) { div().font(t.fonts.body.clone()); }").is_empty());
+        assert!(lint_source(Path::new("src/theme.rs"), "fn f() { let f = font(\"Inter\"); }").is_empty());
     }
 
     #[test]

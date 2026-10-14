@@ -586,7 +586,13 @@ How tokens reach controls:
   so composed content follows the OS too.
 - Windows: the Fluent skin reads Fluent 2 token values, with accent, Mica and high contrast from
   the OS (`UISettings`, DWM).
-- Linux: the GPUI preset with libadwaita metrics, Noto Sans bundled, palette from matugen.
+- Linux: the GPUI preset with libadwaita metrics, palette from matugen.
+
+Font tokens (`theme.fonts.body`, `.mono`, `.rounded`) name the family the OS uses
+(`nd_theme::fonts::resolve`): the system font and its designs on macOS, with every text style's
+size, weight and line height; on Linux the desktop's interface fonts (dconf, GTK `settings.ini`,
+GSettings), else fontconfig's `sans-serif` and `monospace`; Segoe UI Variable on Windows. Only
+the web falls back to the bundled Noto Sans.
 
 `glass()` is a first-class container element (`glass().rounded_lg().p_3().child(..)`) with
 `.variant(GlassVariant::Regular | Clear)`, `.tint(color)`, `.interactive()` and `glass_group()`
@@ -1135,7 +1141,7 @@ outside tests and `main`, `dbg_macro`, `todo`, `print_stdout` denied), and frame
 by a `syn`-based checker inside `nd check` (stable toolchain, no dylint, file and line output);
 rules that need types run as tier 1 audits instead. Syntactic rules: `gpui`
 or objc2 named outside allowed places; `cfg(target_os)` outside native widget modules without a
-reason comment; colour literals outside theme files; `Instant::now`, `thread::sleep`,
+reason comment; colour literals and font family names outside theme files; `Instant::now`, `thread::sleep`,
 `smol::Timer` in UI code; inline SVG; hand-rolled scroll lists; floating elements not created
 through overlays; web-unavailable APIs without a `supports` check and direct `std::time`,
 `std::thread` or `std::fs` (`--target web`); px margins or paddings placed beside

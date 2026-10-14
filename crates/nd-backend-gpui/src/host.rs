@@ -632,6 +632,7 @@ impl Inner {
             }
         }
         for (id, title, size, group) in wanted {
+            self.backend.state.borrow_mut().windows.entry(id).or_default().title = title.clone();
             if self.windows.borrow().contains_key(&id) {
                 continue;
             }
@@ -1085,6 +1086,7 @@ impl Inner {
             None => element,
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
+        let body_font = state.theme.window_theme(id).fonts.body.clone();
         let paints = build.take_paints();
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
@@ -1107,6 +1109,7 @@ impl Inner {
         let drops = self.backend.clone();
         div()
             .size_full()
+            .font(body_font)
             // A new press starts clean: a release owed to an earlier consumed press that never
             // arrived (the compositor dropped it) must not eat this press's release.
             .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))

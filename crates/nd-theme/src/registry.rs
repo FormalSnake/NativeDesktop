@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use nd_core::WindowId;
 use nd_gpui::gpui::Hsla;
 
+use crate::fonts::SystemFonts;
 use crate::matugen::MatugenTheme;
 use crate::palette::{Palette, Scheme, SchemePalettes};
 use crate::preset::{Metrics, Preset, SystemMetrics};
@@ -25,6 +26,7 @@ pub struct OsTheme {
     /// Semantic colours resolved under each appearance.
     pub palettes: SchemePalettes,
     pub metrics: SystemMetrics,
+    pub fonts: SystemFonts,
 }
 
 /// What native controls need from a resolved theme: only what differs from the OS, since a
@@ -211,7 +213,7 @@ impl ThemeRegistry {
             palette = palette.over(*matugen.palettes.get(scheme));
         }
         let palette = palette.over(*self.os.palettes.get(scheme)).complete(&Palette::baked(scheme));
-        let metrics = Metrics::preset(self.preset).with_system(&self.os.metrics);
+        let metrics = Metrics::preset(self.preset).with_system(&self.os.metrics).with_fonts(&self.os.fonts);
         Theme::derive(self.preset, scheme, palette, metrics, stack.radius_scale.unwrap_or(1.))
     }
 
