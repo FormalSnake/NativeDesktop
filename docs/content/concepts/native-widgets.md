@@ -12,9 +12,10 @@ built-in control in `nd-components` is written against this same trait.
 The Places example has a map and a gauge. On macOS the map is MapKit's `MKMapView` through
 objc2 and the gauge is a SwiftUI `Gauge` ([Swift](swift.md)). Elsewhere both are drawn.
 
-Status: the trait, the drawn path and the objc2 and Swift implementations compile, but the AppKit
-backend does not mount app-defined widgets yet, so Places stops at startup on macOS. Built-in
-controls are unaffected.
+On AppKit a widget with an objc2 or Swift implementation mounts as its own view, which the
+backend frames, measures and updates like a built-in control. Everywhere else, and on AppKit
+when a Swift widget's symbols are not in the binary, the element mounts its drawn tree inside a
+container that takes the element's id, layout style and semantics.
 
 <!-- docs:example native-widget -->
 

@@ -717,7 +717,23 @@ impl App {
     /// Delivers queued native events to their nodes' handlers, outside every entity lease.
     /// Hosts also call it when a nested run loop (menu tracking, a modal) returns.
     pub fn drain_events(&mut self) {
-        while let Some(event) = self.events.pop() {
+        while let Some(queued) = self.events.pop() {
+            let event = match queued {
+                crate::events::Queued::Event(event) => event,
+                crate::events::Queued::Call(window_id, call) => {
+                    let Some(mut window) = self.windows.get_mut(&window_id).and_then(|slot| slot.window.take()) else {
+                        continue;
+                    };
+                    let outer = self.current_window.replace(window_id);
+                    call(&mut window, self);
+                    self.current_window = outer;
+                    if let Some(slot) = self.windows.get_mut(&window_id) {
+                        slot.window = Some(window);
+                    }
+                    self.flush_effects();
+                    continue;
+                }
+            };
             let any: &dyn Any = &*event.event;
             let type_id = any.type_id();
             let found = self.windows.iter().find_map(|(id, slot)| {

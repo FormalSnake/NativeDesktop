@@ -41,17 +41,24 @@ aggregate through `ND_SWIFT_PATH`.
 The Swift side exports C functions with `@_cdecl`, the same shape the framework's own Swift
 uses: `create` returns a +1 retained view built from JSON props, `update` applies new props and
 `measure` reports the fitting size. Props cross as JSON, which is fine because a widget's props
-cross only when they change. `GaugeProps` has the same field names on both sides.
+cross only when they change. `GaugeProps` has the same field names on both sides, and the Rust
+props derive `serde::Serialize`, which `Backends::swift` requires.
+
+The name given to `SwiftWidget::named` picks the symbols: `"Gauge"` is `nd_widget_gauge_create`,
+`nd_widget_gauge_update` and `nd_widget_gauge_measure`, and a name of several words joins them
+with underscores (`"MapView"` is `nd_widget_map_view_create`). The AppKit backend looks the
+three up in the running binary the first time the widget mounts. When they are missing, because
+the package is not in `swift_packages` or `build.rs` does not call `nd::build::app()`, it prints
+the symbol it wanted and draws the widget instead.
 
 <!-- docs:snippet examples/native-widget/swift/Widgets/Sources/Widgets/Gauge.swift#swift-widget -->
 
 Pass universal state (enabled, tooltip, focus) into SwiftUI state yourself: a hosting view is not
 the control the user sees.
 
-Status: the Swift package builds and links, but the AppKit backend does not mount app-defined
-native widgets yet ([crates/nd/src/native.rs](../../../crates/nd/src/native.rs)), so Places
-stops at startup on macOS with "the AppKit backend has no Widget(places::gauge::GaugeWidget)".
-Its macOS capture stays "not captured yet" until that bridge lands.
+Events do not cross from Swift yet: the C functions take no emitter, so a Swift widget's
+`Event` is `Infallible`. A widget that reports user input writes its AppKit side in objc2, like
+the map.
 
 ## Toolchain
 

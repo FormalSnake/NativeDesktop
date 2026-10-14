@@ -36,17 +36,17 @@ private func hosting(_ view: UnsafeMutableRawPointer) -> NSHostingView<GaugeBody
 }
 
 /// Returns a +1 retained `NSHostingView`; the caller releases it.
-@MainActor @_cdecl("nd_places_gauge_create")
+@MainActor @_cdecl("nd_widget_gauge_create")
 public func placesGaugeCreate(_ props: UnsafePointer<CChar>) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(NSHostingView(rootView: GaugeBody(props: decode(props)))).toOpaque()
 }
 
-@MainActor @_cdecl("nd_places_gauge_update")
+@MainActor @_cdecl("nd_widget_gauge_update")
 public func placesGaugeUpdate(_ view: UnsafeMutableRawPointer, _ props: UnsafePointer<CChar>) {
     hosting(view).rootView = GaugeBody(props: decode(props))
 }
 
-@MainActor @_cdecl("nd_places_gauge_measure")
+@MainActor @_cdecl("nd_widget_gauge_measure")
 public func placesGaugeMeasure(
     _ view: UnsafeMutableRawPointer, _ width: UnsafeMutablePointer<Double>,
     _ height: UnsafeMutablePointer<Double>
