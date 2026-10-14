@@ -19,6 +19,12 @@ pub mod prelude {
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
     pub use crate::chrome::fuzzy;
+    pub use crate::chrome::panes::{self, PaneResized, dock_view, pane_tree, tiles_view};
+    pub use crate::chrome::{
+        AboutPanel, AlertPresentation, Split, SplitPane, SplitResized, StatusPage, TabAddRequested, TabChanged,
+        TabCloseRequested, TabPage, TabStrip, TabStyle, TabView, open_tab, split, split_pane, status_page, tab_page,
+        tab_strip, tab_view,
+    };
     pub use crate::chrome::{
         ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
         PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,

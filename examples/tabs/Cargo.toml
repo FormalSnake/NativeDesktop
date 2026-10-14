@@ -1,0 +1,30 @@
+[package]
+name = "tabs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The GPUI backend on macOS, picked with `ND_BACKEND=gpui`.
+gpui = ["nd/gpui"]
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+[dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }
+nd-ui.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell.workspace = true
+
+# Tier 2: native window tabs on AppKit, Cmd-T and Cmd-W through the menu's key equivalents, the
+# tab bar's `+` and close button. Takes the ndshell machine lock.
+[[test]]
+name = "window_tabs"
+harness = false

@@ -7249,6 +7249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabs"
+version = "0.1.0"
+dependencies = [
+ "nd",
+ "nd-ui",
+ "ndshell",
+]
+
+[[package]]
 name = "taffy"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

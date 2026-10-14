@@ -48,6 +48,11 @@ harness = false
 name = "nav"
 harness = false
 
+# Splits, hidden subtrees, status pages, drawn alerts and the about panel.
+[[test]]
+name = "layout_widgets"
+harness = false
+
 # Tables, trees and grids on the GPUI presenter.
 [[test]]
 name = "list_kinds"
@@ -71,4 +76,9 @@ harness = false
 # The web's single canvas, run natively in GPUI's headless app.
 [[test]]
 name = "single_canvas"
+harness = false
+
+# Window tab groups and the drawn tab strip, in GPUI's headless app.
+[[test]]
+name = "window_tabs"
 harness = false

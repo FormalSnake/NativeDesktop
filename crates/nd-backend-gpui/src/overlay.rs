@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use nd_components::services::{AlertCallback, ChromeServices, OpenCallback, SaveCallback};
-use nd_components::{Alert, AlertResponse, ContextMenu, Menu, MenuItem, OpenDialog, SaveDialog};
+use nd_components::{AboutPanel, Alert, ContextMenu, Menu, MenuItem, OpenDialog, SaveDialog};
 use nd_core::{NodeId, Point, WindowId};
 use nd_gpui::gpui::{
     self, Anchor, AnyElement, Bounds, DispatchPhase, ElementId, HitboxBehavior, InteractiveElement, IntoElement,
@@ -330,9 +330,9 @@ impl GpuiBackend {
     }
 }
 
-/// [`ChromeServices`] on GPUI: drawn context menus in the overlay layer. Menu bars fold into the
-/// command palette and dialogs go through the portal in the OS lanes; until then they answer
-/// with the cancel result.
+/// [`ChromeServices`] on GPUI: drawn context menus in the overlay layer, drawn alerts and the
+/// about panel ([`crate::dialogs`]). Menu bars fold into the command palette and file dialogs go
+/// through the portal in the OS lanes; until then they answer with the cancel result.
 pub struct GpuiChrome(GpuiBackend);
 
 impl GpuiChrome {
@@ -361,8 +361,12 @@ impl ChromeServices for GpuiChrome {
         state.dirty.insert(window);
     }
 
-    fn alert(&self, cx: &mut nd_ui::App, _window: WindowId, _alert: Alert, done: AlertCallback) {
-        done(AlertResponse(0), cx);
+    fn alert(&self, _cx: &mut nd_ui::App, window: WindowId, alert: Alert, done: AlertCallback) {
+        self.0.show_alert(window, alert, done);
+    }
+
+    fn about(&self, _cx: &mut nd_ui::App, window: Option<WindowId>, about: AboutPanel) {
+        self.0.show_about(window, about);
     }
 
     fn open_dialog(&self, cx: &mut nd_ui::App, _window: WindowId, _dialog: OpenDialog, done: OpenCallback) {

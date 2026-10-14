@@ -18,9 +18,10 @@ nd-gpui.workspace = true
 nd-ui.workspace = true
 nd-macros.workspace = true
 nd-theme.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }
 schemars = "1.2.3"
-serde.workspace = true
+serde_json.workspace = true
 tempfile = "3"

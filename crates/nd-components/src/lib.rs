@@ -2,7 +2,8 @@
 //! `titlebar`), `glass()`, menus, alerts and pickers, the override layers, button variants and
 //! `separator`, the forms family ([`forms`]: text fields, toggles, choices, values, pickers,
 //! progress, labels, settings rows and `settings_form`), and navigation and feedback: the
-//! command palette, the source tree, toasts and banners. Each is a widget
+//! command palette, the source tree, toasts and banners; layout and windows: in-window tabs,
+//! splits and the pane models behind them ([`panes`]), status pages and dialogs. Each is a widget
 //! kind every backend maps (ARCHITECTURE.md 3.6); this crate holds no platform code.
 
 pub mod controls;
@@ -15,15 +16,21 @@ pub mod icon;
 pub mod menu;
 pub mod overrides;
 pub mod palette;
+pub mod panes;
 pub mod scaffold;
 pub mod services;
 pub mod source_list;
+pub mod split;
+pub mod status_page;
+pub mod tabs;
 pub mod titlebar;
 pub mod toast;
 pub mod toolbar;
 
 pub use controls::{ButtonExt, Mapping, Separator, SeparatorKind, SeparatorProps, icon_button, separator};
-pub use dialogs::{Alert, AlertButton, AlertResponse, AlertStyle, ButtonRole, OpenDialog, SaveDialog};
+pub use dialogs::{
+    AboutPanel, Alert, AlertButton, AlertPresentation, AlertResponse, AlertStyle, ButtonRole, OpenDialog, SaveDialog,
+};
 pub use form::{Form, FormProps, FormRow, FormRowProps, FormSection, FormSectionProps, form, form_row, form_section};
 pub use forms::*;
 pub use glass::{Glass, GlassGroup, GlassGroupProps, GlassProps, glass, glass_group};
@@ -41,6 +48,14 @@ pub use source_list::{
     ActionVisibility, EmptyState, SourceAction, SourceActionClicked, SourceActivated, SourceCollapsed, SourceExpanded,
     SourceIndex, SourceItem, SourceNode, SourceSelected, SourceTree, SourceTreeKind, SourceTreeProps, source_action,
     source_item, source_list, source_node, source_section, source_tree,
+};
+pub use split::{
+    Split, SplitKind, SplitPane, SplitPaneKind, SplitPaneProps, SplitProps, SplitResized, split, split_pane,
+};
+pub use status_page::{StatusPage, StatusPageKind, StatusPageProps, status_page};
+pub use tabs::{
+    TabAddRequested, TabChanged, TabCloseRequested, TabPage, TabSpec, TabStrip, TabStripKind, TabStripProps, TabStyle,
+    TabView, tab_page, tab_strip, tab_view,
 };
 pub use titlebar::{InsetEdge, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, titlebar};
 pub use toast::{

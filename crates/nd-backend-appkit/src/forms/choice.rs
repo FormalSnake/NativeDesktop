@@ -1,22 +1,22 @@
 //! `select` as `NSPopUpButton`, `NSSegmentedControl` for `Mapping::Segmented`, or a group of
 //! radio `NSButton`s in an `NSStackView` for `Mapping::Radio`. Changing the mapping or the
-//! options recreates the control.
+//! options recreates the control. `tab_strip` is a select-one segmented control too.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use nd_components::{Mapping, SelectChanged, SelectProps};
+use nd_components::{Mapping, SelectChanged, SelectProps, TabChanged, TabSpec, TabStripProps};
 use nd_core::Size;
 use nd_ui::backend::Props;
 use nd_ui::events::Synced;
-use nd_ui::prelude::Hsla;
+use nd_ui::prelude::{Hsla, SharedString};
 use nd_ui::semantics::{ActionError, Probe, SemanticAction};
 use objc2::MainThreadOnly;
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSAccessibility, NSAccessibilityRadioGroupRole, NSButton, NSButtonType, NSControl, NSControlStateValueOff,
-    NSControlStateValueOn, NSLayoutAttribute, NSPopUpButton, NSSegmentedControl, NSStackView,
-    NSUserInterfaceLayoutOrientation, NSView,
+    NSControlStateValueOn, NSLayoutAttribute, NSPopUpButton, NSSegmentStyle, NSSegmentSwitchTracking,
+    NSSegmentedControl, NSStackView, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSArray, NSRect, NSString};
 
@@ -247,5 +247,111 @@ impl FormControl for SelectControl {
             View::PopUp(p) => p.setBezelColor(color.as_deref()),
             View::Radio { buttons, .. } => buttons.iter().for_each(|b| b.setContentTintColor(color.as_deref())),
         }
+    }
+}
+
+/// `tab_strip` (every presentation) as a select-one `NSSegmentedControl`, what `NSTabView`
+/// draws for its tabs. Tabs that change rebuild the segments in place.
+pub(crate) struct TabStripControl {
+    control: Retained<NSSegmentedControl>,
+    _target: Retained<NdControlTarget>,
+    props: TabStripProps,
+    /// The tab ids by segment, which the target reports by.
+    ids: Rc<RefCell<Vec<SharedString>>>,
+    selected: Rc<RefCell<Synced<usize>>>,
+}
+
+impl TabStripControl {
+    pub fn new(cx: Ctx, props: &TabStripProps) -> Self {
+        let mtm = cx.mtm;
+        let selected: Rc<RefCell<Synced<usize>>> = Rc::default();
+        let ids: Rc<RefCell<Vec<SharedString>>> = Rc::default();
+        let (reported, by_index) = (selected.clone(), ids.clone());
+        let target = NdControlTarget::new(mtm, move |sender| {
+            let Some(control) = sender.downcast_ref::<NSSegmentedControl>() else { return };
+            let Ok(index) = usize::try_from(control.selectedSegment()) else { return };
+            // Clicking the tab already shown changes nothing.
+            if reported.borrow().value() == Some(&index) {
+                return;
+            }
+            let Some(id) = by_index.borrow().get(index).cloned() else { return };
+            reported.borrow_mut().report(index);
+            cx.send(TabChanged { id });
+        });
+        let control = NSSegmentedControl::new(mtm);
+        control.setSegmentStyle(NSSegmentStyle::Automatic);
+        control.setTrackingMode(NSSegmentSwitchTracking::SelectOne);
+        target.wire(&control);
+        let this = Self { control, _target: target, props: props.clone(), ids, selected };
+        this.set_tabs(&props.tabs);
+        this.select(props);
+        apply_common(Some(&this.control), &this.control, None, props.enabled, &props.tooltip);
+        set_accessibility_label(&this.control, props.label.as_deref());
+        this
+    }
+
+    fn set_tabs(&self, tabs: &[TabSpec]) {
+        let control = &self.control;
+        control.setSegmentCount(tabs.len() as isize);
+        for (i, tab) in tabs.iter().enumerate() {
+            control.setLabel_forSegment(&NSString::from_str(&tab.title), i as isize);
+            let image = tab.icon.and_then(|icon| crate::icons::symbol(icon.lucide()));
+            control.setImage_forSegment(image.as_deref(), i as isize);
+        }
+        *self.ids.borrow_mut() = tabs.iter().map(|t| t.id.clone()).collect();
+    }
+
+    fn select(&self, props: &TabStripProps) {
+        let Some(index) = props.selected_index() else { return };
+        let control = &self.control;
+        self.selected.borrow_mut().apply(&index, |i| {
+            control.setSelectedSegment(*i as isize);
+            control.selectedSegment().max(0) as usize
+        });
+    }
+}
+
+impl FormControl for TabStripControl {
+    fn view(&self) -> &NSView {
+        &self.control
+    }
+
+    fn update(&mut self, old: &Props, new: &Props) -> bool {
+        let (old, new): (&TabStripProps, &TabStripProps) = (props(old), props(new));
+        if old.tabs != new.tabs {
+            self.set_tabs(&new.tabs);
+            // Re-counting the segments drops the selection; the app's is applied again.
+            *self.selected.borrow_mut() = Synced::default();
+        }
+        self.select(new);
+        apply_common(Some(&self.control), &self.control, Some((old.enabled, &old.tooltip)), new.enabled, &new.tooltip);
+        if old.label != new.label {
+            set_accessibility_label(&self.control, new.label.as_deref());
+        }
+        self.props = new.clone();
+        true
+    }
+
+    fn measure(&self, _width: Option<f32>) -> Size {
+        fitting(&self.control)
+    }
+
+    fn probe(&self, probe: &mut Probe) {
+        probe.enabled = Some(self.control.isEnabled());
+        let index = usize::try_from(self.control.selectedSegment()).ok();
+        probe.value = index.and_then(|i| self.props.tabs.get(i)).map(|t| t.title.to_string());
+    }
+
+    fn perform(&self, action: &SemanticAction) -> Option<Result<(), ActionError>> {
+        let SemanticAction::SetValue(value) = action else { return None };
+        let Some(index) = self.props.tab_named(value).and_then(|t| self.props.tabs.iter().position(|x| x.id == t.id))
+        else {
+            return Some(Err(ActionError::NotActionable(format!("no tab \"{value}\""))));
+        };
+        if !self.control.isEnabled() {
+            return Some(Err(ActionError::NotActionable("the tabs are disabled".into())));
+        }
+        self.control.setSelectedSegment(index as isize);
+        Some(send_action(&self.control))
     }
 }

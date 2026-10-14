@@ -367,6 +367,11 @@ impl NdLayerView {
 
     pub(crate) fn set_props(&self, props: &ViewLook) {
         self.setAlphaValue(props.opacity.into());
+        // AppKit skips a hidden view and its subviews in hit testing and the key view loop, and
+        // moves first responder out of it.
+        if self.isHidden() != props.hidden {
+            self.setHidden(props.hidden);
+        }
         *self.ivars().props.borrow_mut() = props.clone();
         self.setNeedsDisplay(true);
     }
