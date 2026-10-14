@@ -5,8 +5,7 @@
 use nd_components::forms::TextStyle;
 use nd_gpui::gpui::{FontWeight, Hsla, Pixels, px};
 use nd_theme::Theme;
-
-use crate::render::Look;
+use nd_theme::color::with_alpha;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FormLook {
@@ -18,8 +17,10 @@ pub struct FormLook {
     pub popover_radius: Pixels,
     /// Space between a popover's edge and its items.
     pub popover_inset: Pixels,
-    /// Horizontal padding inside fields and buttons.
+    /// Horizontal padding inside buttons.
     pub padding_x: Pixels,
+    /// Horizontal padding inside text fields, inside the 2 px focus ring border.
+    pub field_padding_x: Pixels,
     /// Vertical padding inside multi-line fields.
     pub padding_y: Pixels,
     /// Space between a control's parts (indicator and title, icon and text).
@@ -36,7 +37,8 @@ pub struct FormLook {
     pub text: Hsla,
     /// Supporting text: placeholders, secondary labels, tick marks.
     pub secondary_text: Hsla,
-    /// Resting fill of fields and buttons.
+    /// Resting fill of fields and buttons: a tint of the text colour, so a control reads on the
+    /// window and on a grouped list alike.
     pub fill: Hsla,
     /// Fill under the pointer.
     pub fill_hover: Hsla,
@@ -110,17 +112,20 @@ pub struct FormLook {
 }
 
 impl FormLook {
-    /// The Linux look on libadwaita metrics: 34 px controls, 6 px radius, 46x26 switch with a
-    /// 20 px knob, 4 px slider track with a 20 px knob, 12 px popovers with 6 px item inset,
-    /// 0.5 opacity when insensitive. Every colour is the resolved theme's.
+    /// The Linux look on libadwaita metrics: 34 px controls, 6 px radius, fills of the text colour
+    /// at 10% (15% hovered, 30% pressed), 46x26 switch with a 20 px knob, 4 px slider track with a
+    /// 20 px knob, 12 px popovers with 6 px item inset, 0.5 opacity when insensitive. Every colour is the resolved theme's.
     pub fn adwaita(theme: &Theme) -> Self {
-        let look = Look::of(theme);
+        let ink = theme.text.primary;
+        let tint = |share: f32| with_alpha(ink, ink.a * share);
         Self {
             control_height: px(34.),
             radius: px(6.),
             popover_radius: px(12.),
             popover_inset: px(6.),
             padding_x: px(10.),
+            // libadwaita's 9 px entry padding less the ring border.
+            field_padding_x: px(7.),
             padding_y: px(7.),
             gap: px(8.),
             text_size: px(14.),
@@ -129,9 +134,9 @@ impl FormLook {
             glyph_stroke: px(1.75),
             text: theme.text.primary,
             secondary_text: theme.text.secondary,
-            fill: look.control,
-            fill_hover: look.control_hover,
-            fill_active: look.control_active,
+            fill: tint(0.1),
+            fill_hover: tint(0.15),
+            fill_active: tint(0.3),
             border: theme.border.subtle,
             popover: theme.surface.overlay,
             raised: theme.surface.raised,
