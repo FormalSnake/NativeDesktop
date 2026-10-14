@@ -97,6 +97,8 @@ pub(crate) struct Tree {
     rendered: HashSet<EntityId>,
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
+    /// Nodes that emitted an event since the last frame (see [`Op::Reaffirm`]).
+    pub(crate) reaffirm: HashSet<NodeId>,
     pub(crate) dispatch: DispatchTree<App>,
     /// Open overlays, oldest first. Their focus (save, trap, restore, Escape) is the dispatch
     /// tree's focus scopes; this list serves app deactivation.
@@ -111,6 +113,7 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
             let (kind, key) = match &el.0 {
                 Element::Node(n) => (SlotKind::Node(n.kind), n.key.clone()),
                 Element::View(v) => (SlotKind::View(v.view_type()), Key::Entity(v.entity_id())),
+                Element::Deferred(_) => unreachable!("deferred elements are built before matching"),
             };
             let count = seen.entry((kind, key.clone())).or_default();
             let occurrence = *count;
@@ -235,6 +238,7 @@ impl Tree {
             insets: TitlebarInsets::default(),
             placed: HashSet::new(),
             orphans: Vec::new(),
+            reaffirm: HashSet::new(),
             rendered: HashSet::new(),
             dispatch,
             overlays: Vec::new(),
@@ -259,7 +263,7 @@ impl Tree {
     }
 
     pub(crate) fn needs_frame(&self) -> bool {
-        self.needs_layout || !self.tx.is_empty()
+        self.needs_layout || !self.tx.is_empty() || !self.reaffirm.is_empty()
     }
 
     pub(crate) fn view_node(&self, view: EntityId) -> Option<NodeId> {
@@ -338,7 +342,7 @@ impl Tree {
         app.dirty.remove(&id);
         self.rendered.insert(id);
         *app.render_counts.entry(id).or_default() += 1;
-        view.render(window, app)
+        view.render(window, app).resolve(window, app)
     }
 
     fn mount(
@@ -353,6 +357,7 @@ impl Tree {
         match el.0 {
             Element::View(view) => self.mount_view(view, ident, parent, depth, window, app),
             Element::Node(node) => Slot::Node(self.mount_node(*node, ident, depth, window, app)),
+            Element::Deferred(_) => unreachable!("deferred elements are built before mounting"),
         }
     }
 
@@ -381,9 +386,9 @@ impl Tree {
                 boundary: None,
             },
         );
-        let idents = idents(&el.children);
-        let slots =
-            el.children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
+        let children: Vec<AnyElement> = el.children.into_iter().map(|c| c.resolve(window, app)).collect();
+        let idents = idents(&children);
+        let slots = children.into_iter().zip(idents).map(|(c, i)| self.mount(c, i, id, depth, window, app)).collect();
         self.nodes.get_mut(&id).expect("node").slots = slots;
         id
     }
@@ -405,9 +410,12 @@ impl Tree {
         }
         app.view_windows.insert(id, self.window);
         self.views.insert(id, ViewSlot { view: view.clone(), ident, root: None, parent, depth });
+        // Deferred elements in the view's subtree build while it mounts, so they see the view.
+        app.rendering.push(id);
         let el = self.render_view(&view, window, app);
         let root_ident = idents(std::slice::from_ref(&el)).remove(0);
         let root = self.mount(el, root_ident, parent, depth + 1, window, app);
+        app.rendering.pop();
         self.views.get_mut(&id).expect("view").root = Some(root);
         Slot::View(id)
     }
@@ -628,6 +636,7 @@ impl Tree {
         window: &mut Window,
         app: &mut App,
     ) {
+        let children: Vec<AnyElement> = children.into_iter().map(|c| c.resolve(window, app)).collect();
         let old = mem::take(&mut self.nodes.get_mut(&parent).expect("node").slots);
         if old.is_empty() && children.is_empty() {
             return;
@@ -672,6 +681,12 @@ impl Tree {
     }
 
     fn rerender_view(&mut self, id: EntityId, window: &mut Window, app: &mut App) {
+        app.rendering.push(id);
+        self.rerender_view_in(id, window, app);
+        app.rendering.pop();
+    }
+
+    fn rerender_view_in(&mut self, id: EntityId, window: &mut Window, app: &mut App) {
         let (view, parent, depth, old) = {
             let v = &self.views[&id];
             (v.view.clone(), v.parent, v.depth, v.root)
@@ -807,6 +822,11 @@ impl App {
         tree.release_orphans(self);
         tree.dispatch.settle_scopes();
         tree.push_focus_change();
+        let mut reaffirm: Vec<NodeId> = tree.reaffirm.drain().filter(|n| tree.nodes.contains_key(n)).collect();
+        reaffirm.sort();
+        for node in reaffirm {
+            tree.tx.push(Op::Reaffirm { node });
+        }
         let target = tree.view_node(tree.root_view.entity_id());
         tree.dispatch.set_default_target(target);
         let tx = mem::replace(&mut tree.tx, Transaction::new(id));

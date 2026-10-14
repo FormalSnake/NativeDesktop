@@ -31,6 +31,9 @@ pub(crate) struct WindowRecord {
     pub state: WindowState,
 }
 
+/// Drawn controls the user focused, by window, waiting for the host's next pump.
+pub(crate) type PlatformFocus = Rc<RefCell<Vec<(WindowId, Option<NodeId>)>>>;
+
 /// Called from a native callback with GPUI's app, to schedule the host's pump on the next turn.
 pub(crate) type Wake = Rc<dyn Fn(&mut gpui::App)>;
 
@@ -74,6 +77,14 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// What a drawn forms control keeps between frames (a text field's caret and selection, a
+    /// slider mid-drag), by node; dropped when the node is released.
+    pub(crate) form_drawn: Rc<RefCell<HashMap<NodeId, crate::forms::Drawn>>>,
+    /// nd focus moves the drawn controls have yet to follow, by window. The window's next draw
+    /// gives the target GPUI focus, or blurs when nd focus left the drawn controls.
+    pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
+    /// Focus the user gave a drawn control (a click), for the host to record in nd.
+    pub(crate) platform_focus: PlatformFocus,
     /// Pointer input each native surface received, written by its paint-time listeners.
     pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
     /// The app's menus, drawn above the windows of a single canvas.
@@ -127,6 +138,9 @@ impl GpuiBackend {
                 paints: HashMap::new(),
             })),
             bounds: Rc::default(),
+            form_drawn: Rc::default(),
+            focus_requests: Rc::default(),
+            platform_focus: Rc::default(),
             surface_counts: Rc::default(),
             deferred: Rc::default(),
             menu_bar: Rc::default(),
@@ -381,15 +395,33 @@ impl Backend for GpuiBackend {
         state.nodes.get_mut(&node).expect("live node").props = patch.new.clone();
     }
 
+    /// Drawn controls show their props every frame; the window repaints so a refused change
+    /// (props unchanged) replaces what the control showed during the gesture.
+    fn reaffirm(&mut self, node: NodeId) {
+        let mut state = self.state.borrow_mut();
+        let mut at = node;
+        while let Some(parent) = state.nodes.get(&at).and_then(|n| n.parent) {
+            at = parent;
+        }
+        let window = state.windows.iter().find(|(_, r)| r.root == Some(at)).map(|(id, _)| *id);
+        if let Some(window) = window {
+            state.dirty.insert(window);
+        }
+    }
+
     fn set_frame(&mut self, _node: NodeId, _frame: Rect) {}
 
     fn surface(&mut self, _node: NodeId, _op: &SurfaceOp) {}
 
-    /// nd owns focus (3.12); drawn nodes have no platform focus to mirror. The window repaints so
-    /// focus styling follows.
-    fn focus(&mut self, _node: Option<NodeId>) {}
+    /// nd owns focus (3.12). Drawn forms controls follow it with GPUI focus, which is where text
+    /// input and their keys arrive; the window's next draw applies it.
+    fn focus(&mut self, node: Option<NodeId>) {
+        let Some(window) = self.state.borrow().open else { return };
+        self.focus_requests.borrow_mut().insert(window, node);
+    }
 
     fn release(&mut self, node: NodeId) {
+        self.form_drawn.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
             Some(NodeKind::Widget(w)) => crate::custom::lookup(w.type_id),
@@ -469,6 +501,32 @@ impl Backend for GpuiBackend {
             let state = self.state.borrow();
             state.nodes.get(&node).map(|n| n.kind).ok_or_else(|| not_actionable(format!("{node:?} is not live")))?
         };
+        // A drawn control takes GPUI focus on its window's next draw, as a click would give it.
+        if *action == SemanticAction::Focus {
+            let takes = {
+                let state = self.state.borrow();
+                state.nodes.get(&node).is_some_and(|n| crate::forms::takes_focus(n.kind, &n.props))
+            };
+            if takes {
+                let window =
+                    self.window_of(node).ok_or_else(|| not_actionable(format!("{node:?} is not in a window")))?;
+                self.focus_requests.borrow_mut().insert(window, Some(node));
+                self.state.borrow_mut().dirty.insert(window);
+                let _ = self.with_window(window, |w, _| w.refresh());
+                return Ok(());
+            }
+        }
+        // A forms control answers the way its props say the drawn control would.
+        if !matches!(action, SemanticAction::RightClick | SemanticAction::Hover | SemanticAction::Focus) {
+            let state = self.state.borrow();
+            let n = state.nodes.get(&node).expect("checked live above");
+            if let NodeKind::Widget(w) = n.kind
+                && let Some(response) = w.respond(&*n.props, action)
+            {
+                state.events.emitter(node).emit_boxed(response?);
+                return Ok(());
+            }
+        }
         let press = |times: usize| {
             let events = self.state.borrow().events.clone();
             for _ in 0..times {

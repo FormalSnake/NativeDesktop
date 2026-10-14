@@ -73,6 +73,11 @@ impl Emit {
         self.queue.push(self.node, Box::new(event));
     }
 
+    /// Emits an event already boxed, such as a [`Response`](crate::semantics::Response)'s.
+    pub fn emit_boxed(&self, event: Box<dyn Any>) {
+        self.queue.push(self.node, event);
+    }
+
     pub fn node(&self) -> NodeId {
         self.node
     }

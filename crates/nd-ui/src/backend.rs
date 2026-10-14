@@ -40,16 +40,67 @@ pub enum NodeKind {
     Widget(WidgetKind),
 }
 
-/// Names a `NativeWidget` implementation by its Rust type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+type SemanticsFn = fn(&dyn AnyProps) -> Option<crate::semantics::Semantics>;
+type RespondFn = fn(&dyn AnyProps, &crate::semantics::SemanticAction) -> Option<crate::semantics::Response>;
+
+/// Names a `NativeWidget` implementation by its Rust type. Equal kinds have the same type.
+#[derive(Clone, Copy, Debug)]
 pub struct WidgetKind {
     pub name: &'static str,
     pub type_id: TypeId,
+    semantics: Option<SemanticsFn>,
+    respond: Option<RespondFn>,
+}
+
+impl PartialEq for WidgetKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id == other.type_id
+    }
+}
+
+impl Eq for WidgetKind {}
+
+impl std::hash::Hash for WidgetKind {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.type_id.hash(state);
+    }
 }
 
 impl WidgetKind {
     pub fn of<W: 'static>() -> Self {
-        Self { name: std::any::type_name::<W>(), type_id: TypeId::of::<W>() }
+        Self { name: std::any::type_name::<W>(), type_id: TypeId::of::<W>(), semantics: None, respond: None }
+    }
+
+    /// A kind whose props `P` describe the node to the semantic tree and answer semantic
+    /// actions (see [`WidgetSemantics`](crate::semantics::WidgetSemantics)).
+    pub fn described<W: 'static, P: crate::semantics::WidgetSemantics>() -> Self {
+        fn semantics<P: crate::semantics::WidgetSemantics>(
+            props: &dyn AnyProps,
+        ) -> Option<crate::semantics::Semantics> {
+            props.downcast_ref::<P>().map(P::semantics)
+        }
+        fn respond<P: crate::semantics::WidgetSemantics>(
+            props: &dyn AnyProps,
+            action: &crate::semantics::SemanticAction,
+        ) -> Option<crate::semantics::Response> {
+            props.downcast_ref::<P>().and_then(|p| p.respond(action))
+        }
+        Self { semantics: Some(semantics::<P>), respond: Some(respond::<P>), ..Self::of::<W>() }
+    }
+
+    /// What the props say about the node, for kinds built with [`WidgetKind::described`].
+    pub fn semantics(&self, props: &dyn AnyProps) -> Option<crate::semantics::Semantics> {
+        self.semantics.and_then(|f| f(props))
+    }
+
+    /// The event the control emits for `action`, for kinds built with [`WidgetKind::described`]
+    /// whose props answer it. Backends that draw the widget themselves emit it.
+    pub fn respond(
+        &self,
+        props: &dyn AnyProps,
+        action: &crate::semantics::SemanticAction,
+    ) -> Option<crate::semantics::Response> {
+        self.respond.and_then(|f| f(props, action))
     }
 }
 
@@ -141,6 +192,10 @@ pub trait Backend: Any {
     /// Structural: detaches a node (and with it its subtree). The native object stays alive.
     fn remove(&mut self, node: NodeId);
     fn update(&mut self, node: NodeId, patch: &PropsPatch);
+    /// The node emitted an event since the last frame and its props may be unchanged (the app
+    /// refused the change). A controlled native object re-applies its current props, so it
+    /// shows the app's value again; a no-op where the backend draws from props each frame.
+    fn reaffirm(&mut self, _node: NodeId) {}
     /// Retained backends only (see [`Backend::retains_frames`]); frames are relative to the
     /// parent and rounded by the backend to its pixel grid.
     fn set_frame(&mut self, node: NodeId, frame: Rect);

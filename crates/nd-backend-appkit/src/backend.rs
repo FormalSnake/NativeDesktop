@@ -18,10 +18,9 @@ use std::rc::{Rc, Weak};
 use nd_components::{
     BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
     FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
-    ScaffoldProps, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps, SourceTreeKind,
-    SourceTreeProps, SubtreeScope, SystemItemProps, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps,
-    ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem,
-    ToolbarTab, ToolbarTabProps,
+    ScaffoldProps, SeparatorKind, SeparatorProps, SourceTreeKind, SourceTreeProps, SubtreeScope, SystemItemProps,
+    Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, ToastOverlayKind, ToastOverlayProps, Toolbar,
+    ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
 };
 use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_theme::{NativeTheme, Scheme, Theme, ThemeRefinement, ThemeRegistry};
@@ -40,9 +39,9 @@ use objc2_quartz_core::CATransaction;
 
 use crate::NdWindow;
 use crate::button::NativeButtonView;
-use crate::controls::{SelectNative, SliderNative};
 use crate::events::Wake;
 use crate::form::{FormNative, RowSpec, SectionSpec};
+use crate::forms::FormControl;
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{Color, TextLook, ViewLook};
 use crate::overlay::OverlayNative;
@@ -88,8 +87,8 @@ enum Native {
     ToolbarTab(ToolbarTabNative),
     Titlebar(Retained<NdLayerView>),
     Inset(WindowId, TitlebarInsetProps),
-    Select(SelectNative),
-    Slider(SliderNative),
+    /// A forms control (`crate::forms`): text fields, toggles, choices, values, pickers.
+    Control(ControlNode),
     Separator(Retained<NSBox>, bool),
     SourceTree(SourceTreeNative),
     Palette(PaletteNative),
@@ -108,6 +107,12 @@ enum Native {
     Surface(SurfaceNative),
 }
 
+pub(crate) struct ControlNode {
+    pub control: Box<dyn FormControl>,
+    pub kind: nd_ui::backend::WidgetKind,
+    pub props: Props,
+}
+
 impl Native {
     /// The view the parent holds.
     fn view(&self) -> Option<&NSView> {
@@ -122,8 +127,7 @@ impl Native {
             Native::Scaffold(s) => Some(&s.host),
             Native::Pane(p) => Some(p.outer()),
             Native::ToolbarItem(i) => Some(&i.host),
-            Native::Select(s) => Some(s.view()),
-            Native::Slider(s) => Some(s.view()),
+            Native::Control(c) => Some(c.control.view()),
             Native::Separator(b, _) => Some(b),
             Native::SourceTree(s) => Some(s.view()),
             Native::Palette(p) => Some(p.view()),
@@ -862,8 +866,10 @@ impl State {
                     }
                 }
                 Some(Native::Button(b)) => b.set_accent(theme.accent),
-                Some(Native::Select(s)) => s.set_accent(theme.accent),
-                Some(Native::Slider(s)) => s.set_accent(theme.accent),
+                Some(Native::Control(c)) => {
+                    c.control.set_accent(theme.accent);
+                    c.control.appearance_changed();
+                }
                 _ => {}
             }
         }
@@ -1031,11 +1037,11 @@ impl Backend for AppKitBackend {
             NodeKind::Widget(w) if is::<TitlebarInset>(w) => {
                 Native::Inset(window, *props::<TitlebarInsetProps>(p, "TitlebarInset"))
             }
-            NodeKind::Widget(w) if is::<SelectKind>(w) => {
-                Native::Select(SelectNative::new(mtm, emit(), state.wake.clone(), props::<SelectProps>(p, "Select")))
-            }
-            NodeKind::Widget(w) if is::<SliderKind>(w) => {
-                Native::Slider(SliderNative::new(mtm, emit(), state.wake.clone(), props::<SliderProps>(p, "Slider")))
+            NodeKind::Widget(w)
+                if let Some(control) =
+                    crate::forms::create(w, p, crate::forms::Ctx { mtm, emit: emit(), wake: state.wake.clone() }) =>
+            {
+                Native::Control(ControlNode { control, kind: w, props: p.clone() })
             }
             NodeKind::Widget(w) if is::<SeparatorKind>(w) => {
                 Native::Separator(crate::controls::separator(mtm), props::<SeparatorProps>(p, "Separator").vertical)
@@ -1146,7 +1152,7 @@ impl Backend for AppKitBackend {
         }
         let window = state.node_window.get(&node).copied();
         let mut place: Option<(WindowId, WindowControlsProps)> = None;
-        let mut recreate_select = None;
+        let mut recreate_control = false;
         let mut recreate_surface = None;
         let mut form_changed = false;
         let mut scroll_axes = None;
@@ -1200,17 +1206,9 @@ impl Backend for AppKitBackend {
             Native::SystemItem => {}
             Native::ToolbarTab(tab) => tab.apply(props(&patch.new, "ToolbarTab")),
             Native::Inset(_, inset) => *inset = *props(&patch.new, "TitlebarInset"),
-            Native::Select(s) => {
-                let p: &SelectProps = props(&patch.new, "Select");
-                if s.can_update(p) {
-                    s.update(p);
-                } else {
-                    recreate_select = Some(p.clone());
-                }
-            }
-            Native::Slider(s) => {
-                let p: &SliderProps = props(&patch.new, "Slider");
-                s.apply(p);
+            Native::Control(c) => {
+                recreate_control = !c.control.update(&patch.old, &patch.new);
+                c.props = patch.new.clone();
             }
             Native::Separator(_, vertical) => *vertical = props::<SeparatorProps>(&patch.new, "Separator").vertical,
             Native::SourceTree(s) => s.update(props(&patch.new, "SourceTree")),
@@ -1274,17 +1272,21 @@ impl Backend for AppKitBackend {
         if let Some((w, wc)) = place {
             state.place_lights(w, &wc);
         }
-        if let Some(p) = recreate_select {
-            let mtm = state.mtm;
-            let fresh = SelectNative::new(mtm, state.events.emitter(node), state.wake.clone(), &p);
-            let old = state.nodes.insert(node, Native::Select(fresh));
+        if recreate_control && let Some(Native::Control(c)) = state.nodes.get(&node) {
+            let (kind, p) = (c.kind, c.props.clone());
+            let cx = crate::forms::Ctx { mtm: state.mtm, emit: state.events.emitter(node), wake: state.wake.clone() };
+            // Built inside `programmatic`, so the initial value the fresh control takes never echoes.
+            let control = events.programmatic(|| crate::forms::create(kind, &p, cx)).expect("a forms kind");
+            let old = state.nodes.insert(node, Native::Control(ControlNode { control, kind, props: p }));
             if let (Some(old), Some(parent)) = (old, state.parents.get(&node).copied())
                 && let (Some(old_view), Some(container)) = (old.view(), state.native(parent).container())
             {
-                let new_view = state.view(node).expect("select view");
+                let new_view = state.view(node).expect("control view");
                 container.addSubview_positioned_relativeTo(new_view, NSWindowOrderingMode::Above, Some(old_view));
                 old_view.removeFromSuperview();
             }
+            // A form row's slot holds the old view; the form takes the new one when it rebuilds.
+            state.mark_form(node);
         }
         if let Some(p) = recreate_surface {
             let fresh = SurfaceNative::new(state.mtm, &p);
@@ -1300,6 +1302,17 @@ impl Backend for AppKitBackend {
         }
         if let Some(window) = window {
             state.theme_dirty.insert(window);
+        }
+    }
+
+    fn reaffirm(&mut self, node: NodeId) {
+        let mut state = self.0.borrow_mut();
+        let events = state.events.clone();
+        if let Some(Native::Control(c)) = state.nodes.get_mut(&node) {
+            let props = c.props.clone();
+            // Old and new are the same props: only controlled values whose native side drifted
+            // from them are set again.
+            events.programmatic(|| c.control.update(&props, &props));
         }
     }
 
@@ -1382,7 +1395,10 @@ impl Backend for AppKitBackend {
         if let Some(Native::Layer(v)) = native {
             v.set_focusable();
         }
-        let view = native.and_then(Native::view).map(|v| v.retain());
+        let view = match native {
+            Some(Native::Control(c)) => Some(c.control.focus_view().retain()),
+            _ => native.and_then(Native::view).map(|v| v.retain()),
+        };
         drop(state);
         window.make_first_responder_from_nd(view.as_deref());
     }
@@ -1448,8 +1464,7 @@ impl Backend for AppKitBackend {
         match state.native(node) {
             Native::Text(v) => v.measure(width),
             Native::Button(b) => b.measure(),
-            Native::Select(s) => s.measure(),
-            Native::Slider(s) => s.measure(),
+            Native::Control(c) => c.control.measure(width),
             Native::Banner(b) => b.measure(),
             Native::Custom(c) => c.measure(width),
             Native::Separator(b, vertical) => {

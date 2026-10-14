@@ -27,6 +27,16 @@ pub enum Icon {
     Star,
     Trash,
     TriangleAlert,
+    Calendar,
+    Clock,
+    Eye,
+    EyeOff,
+    Globe,
+    Lock,
+    Mail,
+    User,
+    X,
+    CircleX,
 }
 
 impl Icon {
@@ -55,6 +65,16 @@ impl Icon {
             Icon::Star => "star",
             Icon::Trash => "trash",
             Icon::TriangleAlert => "triangle-alert",
+            Icon::Calendar => "calendar",
+            Icon::Clock => "clock",
+            Icon::Eye => "eye",
+            Icon::EyeOff => "eye-off",
+            Icon::Globe => "globe",
+            Icon::Lock => "lock",
+            Icon::Mail => "mail",
+            Icon::User => "user",
+            Icon::X => "x",
+            Icon::CircleX => "circle-x",
         }
     }
 }

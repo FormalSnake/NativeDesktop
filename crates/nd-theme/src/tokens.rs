@@ -32,6 +32,8 @@ pub struct TextTokens {
     pub secondary: Hsla,
     pub tertiary: Hsla,
     pub on_accent: Hsla,
+    /// Error text: `danger`, darkened or lightened until it reads at 4.5:1 on every surface.
+    pub danger: Hsla,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,6 +114,7 @@ impl Theme {
                 secondary: text_secondary,
                 tertiary: p.text_tertiary,
                 on_accent: p.on_accent,
+                danger: legible(p.danger, &surfaces, 4.5),
             },
             accent: p.accent,
             accent_container: AccentContainer { bg: p.accent_container, fg: p.on_accent_container },

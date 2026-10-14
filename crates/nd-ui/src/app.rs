@@ -213,6 +213,8 @@ pub struct App {
     bindings: Vec<KeyBinding>,
     /// Set by [`App::propagate`] inside an `on_action` listener.
     pub(crate) propagate_action: bool,
+    /// The views rendering now, innermost last.
+    pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
     pub(crate) current_window: Option<WindowId>,
 }
@@ -239,6 +241,7 @@ impl App {
             events,
             bindings: Vec::new(),
             propagate_action: false,
+            rendering: Vec::new(),
             current_window: None,
         }
     }
@@ -279,6 +282,12 @@ impl App {
 
     /// Marks the entity changed: its observers run when effects flush, and if it is a mounted
     /// view it re-renders in the next frame.
+    /// The view whose render (or a deferred element it returned) is running, if any. A model a
+    /// view reads through a deferred element records it, to notify that view when it changes.
+    pub fn rendering_view(&self) -> Option<EntityId> {
+        self.rendering.last().copied()
+    }
+
     pub fn notify(&mut self, id: EntityId) {
         self.dirty.insert(id);
         self.notified.push_back(id);
@@ -625,6 +634,9 @@ impl App {
             self.current_window = outer;
             if let Some(slot) = self.windows.get_mut(&window_id) {
                 slot.window = Some(window);
+                if let Some(tree) = slot.tree.as_mut() {
+                    tree.reaffirm.insert(event.node);
+                }
             }
             self.flush_effects();
         }

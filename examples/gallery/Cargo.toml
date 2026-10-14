@@ -32,6 +32,11 @@ png = "0.17"
 name = "goldens"
 harness = false
 
+# Tier 2 goldens of the forms page on macOS.
+[[test]]
+name = "forms_goldens"
+harness = false
+
 # Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
 [[test]]
 name = "appearance"

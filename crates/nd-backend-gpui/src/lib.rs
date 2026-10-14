@@ -10,6 +10,7 @@ mod canvas;
 mod clock;
 pub mod custom;
 mod drawn;
+mod forms;
 mod gestures;
 mod host;
 mod input;

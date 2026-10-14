@@ -40,6 +40,11 @@ harness = false
 name = "app_dispatch"
 harness = false
 
+# Tier 2: the forms family mapped to AppKit's own controls, with echo and reentrancy checks.
+[[test]]
+name = "forms"
+harness = false
+
 [[test]]
 name = "nav_components"
 harness = false

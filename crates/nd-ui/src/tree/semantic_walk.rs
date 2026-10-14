@@ -9,7 +9,9 @@ use super::{SlotKind, Tree};
 use crate::app::App;
 use crate::backend::Backend;
 use crate::element::Key;
-use crate::semantics::{ActionError, Capture, SemanticAction, SyntheticInput, WindowState, describe};
+use crate::semantics::{
+    ActionError, Capture, SemanticAction, SyntheticInput, WindowState, describe, part_id, part_owner,
+};
 use crate::window::Window;
 
 fn intersects(a: Rect, b: Rect) -> bool {
@@ -45,25 +47,46 @@ impl Tree {
             Key::Id(id) => Some(id.to_string()),
             Key::Site(_) | Key::Entity(_) => None,
         };
+        let focused = self.dispatch.focused() == Some(id);
+        let enabled = probe.enabled.or(described.extra.enabled).unwrap_or(true);
+        let parts = described.extra.parts.iter().enumerate().map(|(i, part)| SemanticNode {
+            id: part_id(id, i),
+            role: part.role,
+            kind: format!("{}.{}", described.kind, part.key),
+            name: part.name.clone(),
+            value: part.value.clone(),
+            test_id: test_id.as_ref().map(|t| format!("{t}.{}", part.key)),
+            placeholder: part.placeholder.clone(),
+            enabled,
+            focused: focused && part.focused,
+            checked: None,
+            selected: None,
+            expanded: None,
+            bounds,
+            visible,
+            children: Vec::new(),
+        });
+        let parts: Vec<SemanticNode> = parts.collect();
         SemanticNode {
             id,
             role: described.role,
             kind: described.kind,
             name: probe.name.unwrap_or(described.name),
-            value: probe.value,
+            value: probe.value.or(described.extra.value),
             test_id: if id == self.root { None } else { test_id },
-            placeholder: probe.placeholder,
-            enabled: probe.enabled.unwrap_or(true),
-            focused: self.dispatch.focused() == Some(id),
-            checked: probe.checked,
-            selected: probe.selected,
-            expanded: probe.expanded,
+            placeholder: probe.placeholder.or(described.extra.placeholder),
+            enabled,
+            focused,
+            checked: probe.checked.or(described.extra.checked),
+            selected: probe.selected.or(described.extra.selected),
+            expanded: probe.expanded.or(described.extra.expanded),
             bounds,
             visible,
-            children: node
-                .native
-                .iter()
-                .map(|c| self.semantic_node(*c, child_origin, viewport, window_visible, backend))
+            children: parts
+                .into_iter()
+                .chain(
+                    node.native.iter().map(|c| self.semantic_node(*c, child_origin, viewport, window_visible, backend)),
+                )
                 .collect(),
         }
     }
@@ -125,6 +148,7 @@ impl App {
     /// Events the action causes are queued; hosts drain them on the next turn, tests with
     /// `run_until_idle`.
     pub fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
+        let node = part_owner(node).unwrap_or(node);
         let Some(window) = self.window_of(node) else {
             return Err(ActionError::NotActionable(format!("{node:?} is not in any window")));
         };

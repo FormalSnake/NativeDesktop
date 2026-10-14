@@ -3,6 +3,8 @@
 //! source list is an `NSOutlineView`, the palette a glass card over the window, the toasts
 //! glass capsules. On Linux and Windows the same tree draws through GPUI.
 
+pub mod forms;
+
 use std::time::Duration;
 
 use nd::prelude::*;
@@ -18,10 +20,11 @@ pub enum Page {
     SourceList,
     Toasts,
     Banner,
+    Forms,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [Page::Palette, Page::SourceList, Page::Toasts, Page::Banner];
+    pub const ALL: [Page; 5] = [Page::Palette, Page::SourceList, Page::Toasts, Page::Banner, Page::Forms];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -29,6 +32,7 @@ impl Page {
             Page::SourceList => "source-list",
             Page::Toasts => "toasts",
             Page::Banner => "banner",
+            Page::Forms => "forms",
         }
     }
 
@@ -38,6 +42,7 @@ impl Page {
             Page::SourceList => "Source list",
             Page::Toasts => "Toasts",
             Page::Banner => "Banner",
+            Page::Forms => "Forms",
         }
     }
 
@@ -47,6 +52,7 @@ impl Page {
             Page::SourceList => Icon::PanelLeft,
             Page::Toasts => Icon::Info,
             Page::Banner => Icon::TriangleAlert,
+            Page::Forms => Icon::SquarePen,
         }
     }
 
@@ -54,6 +60,7 @@ impl Page {
         match self {
             Page::Palette | Page::SourceList => "navigation",
             Page::Toasts | Page::Banner => "feedback",
+            Page::Forms => "controls",
         }
     }
 
@@ -89,6 +96,7 @@ pub struct Gallery {
     next_toast: u32,
     banner: bool,
     last_event: SharedString,
+    forms: Entity<forms::FormsPage>,
 }
 
 fn secondary_k() -> &'static str {
@@ -96,8 +104,9 @@ fn secondary_k() -> &'static str {
 }
 
 impl Gallery {
-    fn new(start: &Start) -> Self {
+    pub fn new(start: &Start, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
+            forms: cx.new(forms::FormsPage::new),
             page: start.page,
             sidebar_collapsed: false,
             palette_open: start.palette.is_some(),
@@ -116,7 +125,11 @@ impl Gallery {
     }
 
     fn nodes(&self) -> Vec<SourceNode> {
-        let mut nodes = vec![source_section("navigation", "Navigation"), source_section("feedback", "Feedback")];
+        let mut nodes = vec![
+            source_section("navigation", "Navigation"),
+            source_section("feedback", "Feedback"),
+            source_section("controls", "Controls"),
+        ];
         // Pages under their section, in page order: insert after the section header.
         for page in Page::ALL {
             let node = source_node(page.id(), page.title()).parent(page.section()).icon(page.icon());
@@ -183,6 +196,10 @@ impl Gallery {
         }
     }
 
+    pub fn page(&self) -> Page {
+        self.page
+    }
+
     fn page_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let secondary = theme.text.secondary;
@@ -243,6 +260,8 @@ impl Gallery {
                     }),
                 ))
                 .into_any_element(),
+            // The form scrolls itself, so it takes the height left under the title.
+            Page::Forms => div().flex_1().min_h_0().w_full().child(self.forms.clone()).into_any_element(),
         }
     }
 }
@@ -397,6 +416,6 @@ pub fn open(cx: &mut App, start: Start) -> WindowHandle<Gallery> {
         if let Some(appearance) = start.appearance {
             window.set_theme(ThemeOverride::new().appearance(appearance), cx);
         }
-        cx.new(|_| Gallery::new(&start))
+        cx.new(|cx| Gallery::new(&start, cx))
     })
 }

@@ -4300,6 +4300,7 @@ dependencies = [
  "nd-theme",
  "nd-ui",
  "nd-virtual",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -4331,8 +4332,13 @@ dependencies = [
  "nd-core",
  "nd-gpui",
  "nd-macros",
+ "nd-settings",
  "nd-theme",
  "nd-ui",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

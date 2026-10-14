@@ -53,7 +53,7 @@ pub(crate) struct MenuOverlay {
 }
 
 impl Build<'_> {
-    fn overlay_depth(&self, id: NodeId) -> usize {
+    pub(crate) fn overlay_depth(&self, id: NodeId) -> usize {
         let mut depth = 0;
         let mut at = self.nodes.get(&id).and_then(|n| n.parent);
         while let Some(n) = at {
@@ -66,7 +66,7 @@ impl Build<'_> {
         depth
     }
 
-    pub(crate) fn overlay(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
+    pub(crate) fn overlay(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut gpui::App) -> AnyElement {
         let props = node.props.downcast_ref::<OverlayProps>().expect("Overlay node needs OverlayProps");
         let theme = self.theme();
         let passive = props.modality == Modality::Passive;
@@ -81,7 +81,7 @@ impl Build<'_> {
                 content.bg(fill).border_1().border_color(theme.border.subtle).rounded(theme.radius.lg).shadow_md();
         }
         let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(theme.text.primary), "overlay", || {
-            node.children.iter().map(|c| self.node(*c, window)).collect()
+            node.children.iter().map(|c| self.node(*c, window, cx)).collect()
         });
         if !passive {
             content = content

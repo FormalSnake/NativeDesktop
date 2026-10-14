@@ -14,6 +14,7 @@ mod diag;
 mod dispatch;
 mod events;
 mod form;
+mod forms;
 mod frame_clock;
 mod gestures;
 mod glass;

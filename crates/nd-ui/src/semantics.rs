@@ -6,7 +6,7 @@
 //! [`App::semantic_tree`](crate::App::semantic_tree); actions go through
 //! [`App::perform`](crate::App::perform) and [`App::synthesize`](crate::App::synthesize).
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -133,6 +133,97 @@ pub struct Capture {
     pub png: Vec<u8>,
 }
 
+/// What a widget's props say about it: role, name and the state a control holds. A backend's
+/// [`Probe`] of the live native object wins over each field it sets.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Semantics {
+    pub role: Option<Role>,
+    pub name: String,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub enabled: Option<bool>,
+    pub checked: Option<bool>,
+    pub selected: Option<bool>,
+    pub expanded: Option<bool>,
+    /// Parts of the one native control a user perceives as nodes of their own (a palette's
+    /// search box). They appear as its children; actions on one go to the control.
+    pub parts: Vec<SemanticPart>,
+}
+
+/// A node inside a widget, without a retained node of its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemanticPart {
+    /// Joined to the widget's test id with a dot (`palette.search`).
+    pub key: &'static str,
+    pub role: Role,
+    pub name: String,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    /// Has keyboard focus while the widget does.
+    pub focused: bool,
+}
+
+const PART_BIT: u64 = 1 << 63;
+
+/// The id of the `index`th part of `owner` in the semantic tree.
+pub fn part_id(owner: NodeId, index: usize) -> NodeId {
+    NodeId(PART_BIT | (owner.0 << 8) | index as u64)
+}
+
+/// The widget a part id belongs to; `None` for an ordinary node.
+pub fn part_owner(id: NodeId) -> Option<NodeId> {
+    (id.0 & PART_BIT != 0).then_some(NodeId((id.0 & !PART_BIT) >> 8))
+}
+
+impl Semantics {
+    pub fn new(role: Role, name: impl Into<String>) -> Self {
+        Self { role: Some(role), name: name.into(), ..Self::default() }
+    }
+
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
+
+    pub fn placeholder(mut self, placeholder: Option<impl Into<String>>) -> Self {
+        self.placeholder = placeholder.map(Into::into);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+}
+
+/// A control's answer to a semantic action: the event its native control would emit, or why
+/// it cannot take the action.
+pub type Response = Result<Box<dyn Any>, ActionError>;
+
+/// Props of a widget that describe it to the semantic tree and automation. Kinds built with
+/// [`WidgetKind::described`](crate::backend::WidgetKind::described) use it.
+pub trait WidgetSemantics: crate::backend::AnyProps + Sized {
+    fn semantics(&self) -> Semantics;
+
+    /// The event the control emits when automation performs `action` on it, as the user doing
+    /// the same would (`SetValue("0.5")` on a slider is a `SliderChanged`). `None` when the
+    /// control does not take the action. Backends that draw the control themselves emit it;
+    /// AppKit drives the real control instead.
+    fn respond(&self, _action: &SemanticAction) -> Option<Response> {
+        None
+    }
+}
+
 /// One colour a backend painted at rest, read back by the appearance audit.
 #[derive(Clone, Debug)]
 pub struct Paint {
@@ -165,6 +256,7 @@ pub(crate) struct Described {
     pub role: Role,
     pub kind: String,
     pub name: String,
+    pub extra: Semantics,
 }
 
 /// The short type name of a widget kind: `nd_ui::element::Button` is `Button`.
@@ -174,6 +266,16 @@ fn short_name(name: &str) -> &str {
 }
 
 pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
+    if let NodeKind::Widget(w) = kind
+        && let Some(extra) = w.semantics(&**props)
+    {
+        return Described {
+            role: extra.role.unwrap_or(Role::Generic),
+            kind: short_name(w.name).to_owned(),
+            name: extra.name.clone(),
+            extra,
+        };
+    }
     let (role, kind_name, name) = match kind {
         NodeKind::Root => (Role::Window, "root".to_owned(), String::new()),
         NodeKind::View => (Role::Group, "view".to_owned(), String::new()),
@@ -197,7 +299,7 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
             (role, short_name(w.name).to_owned(), name)
         }
     };
-    Described { role, kind: kind_name, name }
+    Described { role, kind: kind_name, name, extra: Semantics::default() }
 }
 
 /// A widget kind's role and accessible name, read from its props.

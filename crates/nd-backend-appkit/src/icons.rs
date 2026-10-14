@@ -28,6 +28,16 @@ const SYMBOLS: &[(&str, &str)] = &[
     ("star", "star"),
     ("trash", "trash"),
     ("triangle-alert", "exclamationmark.triangle"),
+    ("calendar", "calendar"),
+    ("clock", "clock"),
+    ("eye", "eye"),
+    ("eye-off", "eye.slash"),
+    ("globe", "globe"),
+    ("lock", "lock"),
+    ("mail", "envelope"),
+    ("user", "person"),
+    ("x", "xmark"),
+    ("circle-x", "xmark.circle.fill"),
 ];
 
 /// The SF Symbol for a Lucide name; `None` when nd has no mapping for it.

@@ -304,6 +304,12 @@ impl Backend for TestBackend {
         self.applied(node);
     }
 
+    fn reaffirm(&mut self, node: NodeId) {
+        self.enter(Phase::Update, "reaffirm");
+        self.node(node, "reaffirm");
+        self.log.push(Recorded::Op(Op::Reaffirm { node }));
+    }
+
     fn set_frame(&mut self, node: NodeId, frame: Rect) {
         self.enter(Phase::Frame, "set_frame");
         assert!(self.retains_frames, "TestBackend: set_frame on a backend that lays out itself");
@@ -389,6 +395,13 @@ impl Backend for TestBackend {
         };
         if self.probes.get(&node).and_then(|p| p.enabled) == Some(false) {
             return Err(ActionError::NotActionable(format!("{node:?} is disabled")));
+        }
+        if let NodeKind::Widget(w) = n.kind
+            && let Some(response) = w.respond(&*n.props, action)
+        {
+            self.events.emitter(node).emit_boxed(response?);
+            self.performed.push((node, action.clone()));
+            return Ok(());
         }
         let button = n.kind == NodeKind::Widget(crate::backend::WidgetKind::of::<Button>());
         let clicks = match action {

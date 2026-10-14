@@ -7,9 +7,8 @@ use std::any::TypeId;
 
 use nd_components::{
     Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane, PaneProps,
-    PaneRole, Scaffold, SelectChanged, SelectKind, SelectProps, SeparatorKind, SeparatorProps, SliderKind, SliderProps,
-    SystemItem, SystemItemProps, TabSelected, Titlebar, TitlebarInset, TitlebarProps, Toolbar, ToolbarItem,
-    ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
+    PaneRole, Scaffold, SeparatorKind, SeparatorProps, SystemItem, SystemItemProps, TabSelected, Titlebar,
+    TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
 };
 use nd_core::NodeId;
 use nd_gpui::gpui::{
@@ -44,11 +43,16 @@ impl Build<'_> {
         kind: WidgetKind,
         node: &Node,
         window: &mut gpui::Window,
+        cx: &mut gpui::App,
     ) -> Option<AnyElement> {
-        let children =
-            |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
+        let children = |w: &mut gpui::Window, cx: &mut gpui::App| -> Vec<AnyElement> {
+            node.children.iter().map(|c| self.node(*c, w, cx)).collect()
+        };
         if let Some(element) = self.nav(id, kind, node, window) {
             return Some(element);
+        }
+        if let Some(control) = self.form_control(id, kind, node, window, cx) {
+            return Some(control);
         }
         let look = self.look();
         let theme = self.theme();
@@ -61,14 +65,14 @@ impl Build<'_> {
                 .size_full()
                 .flex()
                 .flex_col()
-                .children(bars.iter().map(|c| self.node(*c, window)).collect::<Vec<_>>())
+                .children(bars.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>())
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .flex_1()
                         .min_h_0()
-                        .children(panes.iter().map(|c| self.node(*c, window)).collect::<Vec<_>>()),
+                        .children(panes.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>()),
                 )
                 .into_any_element()
         } else if is::<Pane>(kind) {
@@ -83,7 +87,7 @@ impl Build<'_> {
                 PaneRole::Inspector => (pane.border_l_1().border_color(look.border).bg(sidebar), Some(sidebar)),
                 PaneRole::Content | PaneRole::Overlay => (pane, None),
             };
-            self.painted(id, fill, None, "pane", || pane.children(children(window)).into_any_element())
+            self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element())
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
             // The window's title row: it moves the window and keeps clear of the OS controls.
             let base = props::<TitlebarProps>(node).map(|p| p.style.clone()).unwrap_or_default();
@@ -108,10 +112,10 @@ impl Build<'_> {
                         crate::render::start_window_move(window);
                     }
                 })
-                .children(children(window))
+                .children(children(window, cx))
                 .into_any_element()
         } else if is::<ToolbarItem>(kind) {
-            div().flex().occlude().children(children(window)).into_any_element()
+            div().flex().occlude().children(children(window, cx)).into_any_element()
         } else if is::<ToolbarSystemItem>(kind) {
             match props::<SystemItemProps>(node)?.item {
                 SystemItem::FlexibleSpace => div().flex_1().into_any_element(),
@@ -145,56 +149,16 @@ impl Build<'_> {
             let p = props::<GlassProps>(node)?;
             let fill = p.tint.unwrap_or(look.control);
             let glass = styled(&p.style).border_1().border_color(look.border).bg(fill).text_color(ink);
-            self.painted(id, Some(fill), None, "glass", || glass.children(children(window)).into_any_element())
+            self.painted(id, Some(fill), None, "glass", || glass.children(children(window, cx)).into_any_element())
         } else if is::<GlassGroup>(kind) {
-            div().flex().children(children(window)).into_any_element()
+            div().flex().children(children(window, cx)).into_any_element()
         } else if is::<SeparatorKind>(kind) {
             let p = props::<SeparatorProps>(node)?;
             self.painted(id, Some(look.border), None, "separator", || ());
             let line = div().bg(look.border);
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
-        } else if is::<SelectKind>(kind) {
-            let p = props::<SelectProps>(node)?;
-            let emit = self.backend.state.borrow().events.emitter(id);
-            let mut row = styled(&p.style).flex().flex_row().rounded(px(6.)).border_1().border_color(look.border);
-            for (index, option) in p.options.iter().enumerate() {
-                let emit = emit.clone();
-                let wake = self.wake.clone();
-                let selected = index == p.selected;
-                let fill = selected.then_some(look.control_active);
-                let color = self.text_run(id, option, Run::BODY, None, fill);
-                row = row.child(
-                    div()
-                        .id(ElementId::Integer((id.0 << 8) | index as u64))
-                        .px_3()
-                        .py_1()
-                        .text_color(color)
-                        .when_bg(selected, look.control_active)
-                        .hover(move |s| s.bg(look.control_hover))
-                        .child(option.clone())
-                        .on_click(move |_, _, cx| {
-                            emit.emit(SelectChanged { index });
-                            wake(cx);
-                        }),
-                );
-            }
-            row.into_any_element()
-        } else if is::<SliderKind>(kind) {
-            let p = props::<SliderProps>(node)?;
-            let span = (p.max - p.min).max(f32::EPSILON);
-            let fraction = ((p.value - p.min) / span).clamp(0., 1.);
-            self.painted(id, Some(look.control), None, "slider track", || {
-                self.painted(id, Some(theme.accent), None, "slider value", || ())
-            });
-            styled(&p.style)
-                .min_w(px(120.))
-                .h(px(6.))
-                .rounded_full()
-                .bg(look.control)
-                .child(div().h_full().rounded_full().bg(theme.accent).w(gpui::relative(fraction)))
-                .into_any_element()
         } else if is::<Form>(kind) {
-            div().size_full().flex().flex_col().gap_4().p_4().children(children(window)).into_any_element()
+            div().size_full().flex().flex_col().gap_4().p_4().children(children(window, cx)).into_any_element()
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
             let secondary = theme.text.secondary;
@@ -210,7 +174,7 @@ impl Build<'_> {
                     .border_1()
                     .border_color(look.border)
                     .bg(look.control)
-                    .children(children(window))
+                    .children(children(window, cx))
             });
             let footer = p.footer.clone().map(|t| {
                 self.text_run(id, &t, Run::sized(14.), Some(secondary), None);
@@ -239,7 +203,7 @@ impl Build<'_> {
                         .child(div().text_color(label).child(p.label.clone()))
                         .children(help),
                 )
-                .children(children(window))
+                .children(children(window, cx))
                 .into_any_element()
         } else {
             return None;
@@ -253,7 +217,7 @@ fn is_kind<W: 'static>(node: &Node) -> bool {
 }
 
 /// A background only when `on`, for selected rows and segments.
-trait WhenBg: Styled + Sized {
+pub(crate) trait WhenBg: Styled + Sized {
     fn when_bg(self, on: bool, color: gpui::Hsla) -> Self {
         if on { self.bg(color) } else { self }
     }

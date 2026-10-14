@@ -197,6 +197,8 @@ pub(crate) struct Build<'a> {
     pub wake: Wake,
     pub hooks: &'a Rc<dyn OsHooks>,
     pub window_id: nd_core::WindowId,
+    /// The frame's display time in seconds, which drawn animations sample.
+    pub time: f64,
     registry: &'a ThemeRegistry,
     ink: RefCell<Vec<Ink>>,
     paints: RefCell<Vec<Paint>>,
@@ -228,6 +230,7 @@ impl<'a> Build<'a> {
             wake,
             hooks,
             window_id,
+            time: 0.,
             registry,
             ink: RefCell::new(vec![ink]),
             paints: RefCell::default(),
@@ -356,15 +359,16 @@ impl<'a> Build<'a> {
         out
     }
 
-    pub fn node(&self, id: NodeId, window: &mut gpui::Window) -> AnyElement {
+    pub fn node(&self, id: NodeId, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
         let node = &self.nodes[&id];
-        let element = self.scoped(node, || self.element(id, node, window));
+        let element = self.scoped(node, || self.element(id, node, window, cx));
         Tracked { node: id, inner: element, bounds: self.backend.bounds.clone() }.into_any_element()
     }
 
-    fn element(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
-        let children =
-            |w: &mut gpui::Window| -> Vec<AnyElement> { node.children.iter().map(|c| self.node(*c, w)).collect() };
+    fn element(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
+        let children = |w: &mut gpui::Window, cx: &mut App| -> Vec<AnyElement> {
+            node.children.iter().map(|c| self.node(*c, w, cx)).collect()
+        };
         match node.kind {
             NodeKind::Root => {
                 let ink = self.top();
@@ -375,7 +379,7 @@ impl<'a> Build<'a> {
                         .flex_col()
                         .bg(ink.background)
                         .text_color(ink.text)
-                        .children(children(window))
+                        .children(children(window, cx))
                         .into_any_element()
                 })
             }
@@ -384,7 +388,7 @@ impl<'a> Build<'a> {
                 let own = solid(&props.style);
                 let surface = own.is_none().then(|| self.top().surface).flatten();
                 self.painted(id, own.or(surface), props.style.text.color, "view", || {
-                    self.view(id, props, surface, children(window), window)
+                    self.view(id, props, surface, children(window, cx), window)
                 })
             }
             NodeKind::Text => {
@@ -409,12 +413,12 @@ impl<'a> Build<'a> {
             }
             // Its bounds are its content's, which the overlay layer places and records after this
             // node's placeholder.
-            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Overlay>() => self.overlay(id, node, window),
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Overlay>() => self.overlay(id, node, window, cx),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<NativeSurface>() => self.surface(id, node),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>() => {
-                self.virtual_list(id, node, window)
+                self.virtual_list(id, node, window, cx)
             }
-            NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window) => intent,
+            NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window, cx) => intent,
             NodeKind::Widget(w) if let Some(custom) = crate::custom::lookup(w.type_id) => {
                 custom.element(&crate::custom::CustomCx::new(self, id, &node.props), window)
             }
@@ -425,7 +429,7 @@ impl<'a> Build<'a> {
         }
     }
 
-    fn virtual_list(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
+    fn virtual_list(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
         let props = node.props.downcast_ref::<nd_virtual::ListProps>().expect("ListProps").clone();
         let emit = self.backend.state.borrow().events.emitter(id);
         let look = self.look();
@@ -448,7 +452,7 @@ impl<'a> Build<'a> {
                     if tag.expandable {
                         self.painted(*c, Some(self.top().text), None, "disclosure", || ());
                     }
-                    self.node(*c, window)
+                    self.node(*c, window, cx)
                 });
                 Some(crate::virtual_list::Row { tag, node: *c, element })
             })

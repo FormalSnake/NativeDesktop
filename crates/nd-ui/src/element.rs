@@ -146,9 +146,31 @@ pub(crate) struct NodeElement {
     pub dispatch: DispatchProps,
 }
 
+pub(crate) type Deferred = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
+
 pub(crate) enum Element {
     Node(Box<NodeElement>),
     View(AnyView),
+    /// Built when the reconciler reaches it, with the app in hand; see [`deferred`].
+    Deferred(Deferred),
+}
+
+/// An element built while the tree reconciles, from the window and the app: a component that
+/// reads globals or entities without the caller passing them in (`settings_form::<T>()`).
+/// Identity is the built element's.
+pub fn deferred(build: impl FnOnce(&mut Window, &mut App) -> AnyElement + 'static) -> AnyElement {
+    AnyElement(Element::Deferred(Box::new(build)))
+}
+
+impl AnyElement {
+    /// Builds a deferred element, and whatever deferred element it returned, until a node or
+    /// view is left.
+    pub(crate) fn resolve(mut self, window: &mut Window, app: &mut App) -> AnyElement {
+        while let Element::Deferred(build) = self.0 {
+            self = build(window, app);
+        }
+        self
+    }
 }
 
 pub struct AnyElement(pub(crate) Element);
@@ -560,12 +582,25 @@ impl<P: AnyProps> NativeElement<P> {
         }
     }
 
+    /// A widget whose props describe it to the semantic tree and answer automation's actions
+    /// ([`WidgetSemantics`](crate::semantics::WidgetSemantics)).
+    pub fn described<W: 'static>(key: impl Into<Key>, props: P) -> Self
+    where
+        P: crate::semantics::WidgetSemantics,
+    {
+        Self { kind: WidgetKind::described::<W, P>(), ..Self::new::<W>(key, props) }
+    }
+
     pub fn props_mut(&mut self) -> &mut P {
         &mut self.props
     }
 
     pub fn props(&self) -> &P {
         &self.props
+    }
+
+    pub fn key_mut(&mut self) -> &mut Key {
+        &mut self.key
     }
 
     /// Handles events of type `E` the widget emits. Replaces an earlier handler for `E`.
@@ -637,6 +672,8 @@ pub enum Bezel {
     Glass,
     Bordered,
     Borderless,
+    /// The toolbar's own button style (`NSBezelStyle.toolbar` on macOS).
+    Toolbar,
 }
 
 #[derive(Clone, Debug, PartialEq)]
