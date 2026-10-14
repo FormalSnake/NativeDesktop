@@ -12,15 +12,19 @@ use nd_components::{
     ToolbarTabProps,
 };
 use nd_core::NodeId;
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, AnyElement, ElementId, FontWeight, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Refineable, StatefulInteractiveElement, StyleRefinement, Styled, WindowControlArea, div, px,
 };
+use nd_theme::preset::Material;
 use nd_ui::backend::WidgetKind;
 use nd_ui::with_titlebar_insets;
 
 use crate::backend::Node;
+use crate::forms::glyph::{Glyph, glyph};
 use crate::render::{Build, Run};
+use nd_components::icon::Icon;
 
 fn is<W: 'static>(kind: WidgetKind) -> bool {
     kind.type_id == TypeId::of::<W>()
@@ -81,14 +85,22 @@ impl Build<'_> {
                 .into_any_element()
         } else if is::<Pane>(kind) {
             let p = props::<PaneProps>(node)?;
-            if p.collapsed && p.role != PaneRole::Content {
+            if p.role != PaneRole::Content && (p.collapsed || self.sidebar_hidden(node)) {
                 return Some(div().into_any_element());
             }
             let pane = styled(&p.style);
             let sidebar = theme.surface.sidebar;
+            // Over an OS backdrop (Mica) a see-through sidebar is the bare material, one surface
+            // with the title row, and the content beside it sits on an opaque layer whose leading
+            // corner takes the window's radius, as Windows' own apps lay it out.
+            let clear_sidebar = self.backdrop_shows(theme.materials.sidebar);
             let (pane, fill) = match p.role {
+                PaneRole::Sidebar | PaneRole::Inspector if clear_sidebar => (pane, None),
                 PaneRole::Sidebar => (pane.border_r_1().border_color(look.border).bg(sidebar), Some(sidebar)),
                 PaneRole::Inspector => (pane.border_l_1().border_color(look.border).bg(sidebar), Some(sidebar)),
+                PaneRole::Content if clear_sidebar && self.beside_sidebar(node) => {
+                    (pane.bg(theme.surface.layer).rounded_tl(theme.radius.lg), Some(theme.surface.layer))
+                }
                 PaneRole::Content | PaneRole::Overlay => (pane, None),
             };
             self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element())
@@ -113,8 +125,7 @@ impl Build<'_> {
                 .gap(s.sm)
                 .w_full()
                 .flex_none()
-                .border_b_1()
-                .border_color(look.border)
+                .when(!self.backdrop_shows(theme.materials.toolbar), |row| row.border_b_1().border_color(look.border))
                 .window_control_area(WindowControlArea::Drag)
                 .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
                     if event.click_count >= 2 {
@@ -129,6 +140,7 @@ impl Build<'_> {
             div().flex().occlude().children(children(window, cx)).into_any_element()
         } else if is::<ToolbarSystemItem>(kind) {
             match props::<SystemItemProps>(node)?.item {
+                SystemItem::ToggleSidebar => self.sidebar_toggle(id, node, &theme),
                 SystemItem::FlexibleSpace => div().flex_1().into_any_element(),
                 SystemItem::Space => div().w(px(8.)).into_any_element(),
                 _ => div().into_any_element(),
@@ -239,6 +251,55 @@ impl Build<'_> {
 }
 
 impl Build<'_> {
+    /// Whether a surface of `material` shows the window's OS backdrop (Mica) through.
+    fn backdrop_shows(&self, material: Material) -> bool {
+        material != Material::Opaque && self.hooks.backdrop(self.window_id)
+    }
+
+    /// Whether a pane has an open sidebar beside it in its scaffold.
+    fn beside_sidebar(&self, node: &Node) -> bool {
+        let Some(parent) = node.parent.and_then(|p| self.nodes.get(&p)) else { return false };
+        parent.children.iter().filter_map(|c| self.nodes.get(c)).any(|n| {
+            props::<PaneProps>(n).is_some_and(|p| p.role == PaneRole::Sidebar && !p.collapsed)
+                && !self.sidebar_hidden(n)
+        })
+    }
+
+    /// Whether the drawn toolbar toggle hid the sidebar of the scaffold `pane` sits in.
+    fn sidebar_hidden(&self, pane: &Node) -> bool {
+        pane.parent.is_some_and(|scaffold| self.backend.hidden_sidebars.borrow().contains(&scaffold))
+    }
+
+    /// The toolbar's sidebar toggle: shows and hides its scaffold's sidebar, as AppKit's
+    /// `toggleSidebar:` collapses the split view without the app's state changing.
+    fn sidebar_toggle(&self, id: NodeId, node: &Node, theme: &nd_theme::Theme) -> AnyElement {
+        let look = self.look();
+        let scaffold = node.parent.and_then(|toolbar| self.nodes.get(&toolbar)).and_then(|toolbar| toolbar.parent);
+        let hidden = self.backend.hidden_sidebars.clone();
+        let side = theme.control.regular;
+        div()
+            .id(ElementId::Integer(id.0))
+            .flex_none()
+            .size(side)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(theme.radius.md)
+            .hover(move |s| s.bg(look.control_hover))
+            .occlude()
+            .on_click(move |_, window, _| {
+                if let Some(scaffold) = scaffold {
+                    let mut hidden = hidden.borrow_mut();
+                    if !hidden.remove(&scaffold) {
+                        hidden.insert(scaffold);
+                    }
+                }
+                window.refresh();
+            })
+            .child(glyph(Glyph::of(Icon::PanelLeft), px(16.), self.ink_text(), px(1.75)))
+            .into_any_element()
+    }
+
     /// A toolbar's title and the child index it goes in at: after the sidebar toggle and the
     /// leading items. The toolbar's own `title` shows whatever else it holds (empty hides it);
     /// without one, the window's title fills the leading run when the app put nothing before the

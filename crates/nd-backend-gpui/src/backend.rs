@@ -107,6 +107,9 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
+    /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
+    /// it without the app's state changing.
+    pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -165,6 +168,7 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
+            hidden_sidebars: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
