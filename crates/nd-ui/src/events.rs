@@ -9,7 +9,9 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use nd_core::NodeId;
+use nd_core::{NodeId, WindowId};
+
+use crate::{App, Window};
 
 /// One native event, addressed to the retained node that produced it.
 pub struct NativeEvent {
@@ -17,9 +19,18 @@ pub struct NativeEvent {
     pub event: Box<dyn Any>,
 }
 
+/// A delivery queued for a window, for a widget drawn from elements: it has no retained node of
+/// its own to address, so it queues the call to its handlers instead.
+pub type Delivery = Box<dyn FnOnce(&mut Window, &mut App)>;
+
+pub(crate) enum Queued {
+    Event(NativeEvent),
+    Call(WindowId, Delivery),
+}
+
 #[derive(Default)]
 struct Queue {
-    events: VecDeque<NativeEvent>,
+    events: VecDeque<Queued>,
     programmatic: u32,
 }
 
@@ -48,11 +59,19 @@ impl EventQueue {
     pub fn push(&self, node: NodeId, event: Box<dyn Any>) {
         let mut queue = self.0.borrow_mut();
         if queue.programmatic == 0 {
-            queue.events.push_back(NativeEvent { node, event });
+            queue.events.push_back(Queued::Event(NativeEvent { node, event }));
         }
     }
 
-    pub fn pop(&self) -> Option<NativeEvent> {
+    /// Queues `call` to run with `window` when the queue drains, like a native event.
+    pub fn push_call(&self, window: WindowId, call: Delivery) {
+        let mut queue = self.0.borrow_mut();
+        if queue.programmatic == 0 {
+            queue.events.push_back(Queued::Call(window, call));
+        }
+    }
+
+    pub(crate) fn pop(&self) -> Option<Queued> {
         self.0.borrow_mut().events.pop_front()
     }
 

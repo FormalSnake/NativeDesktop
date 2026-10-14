@@ -74,3 +74,11 @@ program clean its own temp files (`tempfile` in tests), or at minimum write `"${
 
 Never `pkill -f` or `killall` by pattern: several agents run the same commands in sibling
 worktrees, and a pattern kill ends their runs too. Kill only PIDs you started yourself.
+
+## Keeping the macbook responsive
+
+The macbook hosts services (BlueBubbles among them), so builds there yield: `scripts/rustc-guard`
+runs every rustc at utility QoS and nice 15 (`ND_FULL_PRIORITY=1` opts out), and the dev shell caps
+`CARGO_BUILD_JOBS` and `NEXTEST_TEST_THREADS` at 4. Only macOS work runs on the macbook: AppKit
+crates, Swift, mac gates and goldens, `-p` on the packages you touched. Workspace-wide suites,
+clippy, GPUI-backend and wasm work run on g815 through `scripts/linux-gate`.

@@ -72,7 +72,7 @@ fn bubble_font(theme: &Theme, emoji: bool) -> Retained<NSFont> {
 
 fn colors(theme: &Theme, side: BubbleSide) -> (nd_ui::prelude::Hsla, nd_ui::prelude::Hsla) {
     match side {
-        BubbleSide::Sent => (theme.accent, theme.text.on_accent),
+        BubbleSide::Sent => (theme.accent_fill, theme.text.on_accent),
         BubbleSide::Received => (theme.surface.raised_hover, theme.text.primary),
     }
 }
@@ -150,7 +150,7 @@ impl BubbleInner {
         let ring = (font.pointSize() / 6.).round().max(1.);
         for ((pill, text), reaction) in pills.iter().zip(&props.reactions) {
             let (bg, fg) = if reaction.mine {
-                (theme.accent, theme.text.on_accent)
+                (theme.accent_fill, theme.text.on_accent)
             } else {
                 (theme.surface.raised_hover, theme.text.primary)
             };
@@ -300,7 +300,7 @@ impl CustomNative for BubbleNative {
         }
         for r in &props.reactions {
             let (bg, fg) = if r.mine {
-                (theme.accent, theme.text.on_accent)
+                (theme.accent_fill, theme.text.on_accent)
             } else {
                 (theme.surface.raised_hover, theme.text.primary)
             };

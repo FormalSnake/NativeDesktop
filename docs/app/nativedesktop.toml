@@ -1,0 +1,4 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "dev.formalsnake.nd-docs"
+display_name = "NativeDesktop Docs"

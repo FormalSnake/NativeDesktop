@@ -88,7 +88,9 @@ fn hello_web_golden() {
     let port = serve(bundle);
     let goldens = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens");
     std::fs::create_dir_all(&goldens).expect("goldens dir");
+    // docs:begin bless
     let bless = std::env::var_os("ND_BLESS").is_some_and(|v| v == "1");
+    // docs:end bless
     let mut failures = Vec::new();
     // Blink's `PreferredColorScheme`: 0 dark, 1 light.
     for (scheme, setting) in [("light", 1), ("dark", 0)] {

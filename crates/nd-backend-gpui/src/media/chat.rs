@@ -66,7 +66,7 @@ pub(super) fn bubble(
     let look = ctl.look;
     let sent = p.side == BubbleSide::Sent;
     let (fill, ink) =
-        if sent { (theme.accent, theme.text.on_accent) } else { (theme.surface.raised_hover, theme.text.primary) };
+        if sent { (theme.accent_fill, theme.text.on_accent) } else { (theme.surface.raised_hover, theme.text.primary) };
     let mut root = div().id(ElementId::Integer(id.0)).role(gpui::Role::Label).aria_label(p.text.clone()).relative();
     if p.emoji_only {
         let size = px(BUBBLE.emoji_size);
@@ -102,7 +102,7 @@ pub(super) fn bubble(
         pills = if sent { pills.left(px(-8.)) } else { pills.right(px(-8.)) };
         for (i, r) in p.reactions.iter().take(3).enumerate() {
             let (pill, count_ink) = if r.mine {
-                (theme.accent, theme.text.on_accent)
+                (theme.accent_fill, theme.text.on_accent)
             } else {
                 (theme.surface.raised_hover, theme.text.secondary)
             };

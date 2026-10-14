@@ -545,7 +545,9 @@ impl TableNative {
             size: Size::default(),
             row_width: 0.,
         };
-        this.set_columns();
+        // Adding the columns resizes the table and moves the clip view; that is setup, not a
+        // user scroll, and reported as one it stopped a bottom-aligned list's tail follow.
+        this.shared.programmatic(|| this.set_columns());
         unsafe {
             this.table.setDataSource(Some(ProtocolObject::from_ref(&*this.source)));
             this.table.setDelegate(Some(ProtocolObject::from_ref(&*this.source)));
@@ -779,11 +781,16 @@ impl TableNative {
     /// The list's own frame. Returns true when rows must lay out again at a new width.
     pub fn set_frame(&mut self, frame: Rect) {
         let rect = crate::views::ns_rect(frame);
-        if self.scroll.frame() != rect {
-            self.scroll.setFrame(rect);
-        }
+        // Resizing moves the clip view's bounds, and that is not the user scrolling: reported
+        // as one, the first frame of a bottom-aligned list scrolled it to its top and stopped
+        // tail follow.
+        self.shared.programmatic(|| {
+            if self.scroll.frame() != rect {
+                self.scroll.setFrame(rect);
+            }
+            self.scroll.tile();
+        });
         self.size = frame.size;
-        self.scroll.tile();
     }
 
     /// Applies what changed since the last commit in one table update, then puts the clip view
@@ -1185,11 +1192,16 @@ impl GridNative {
 
     pub fn set_frame(&mut self, frame: Rect) {
         let rect = crate::views::ns_rect(frame);
-        if self.scroll.frame() != rect {
-            self.scroll.setFrame(rect);
-        }
+        // Resizing moves the clip view's bounds, and that is not the user scrolling: reported
+        // as one, the first frame of a bottom-aligned list scrolled it to its top and stopped
+        // tail follow.
+        self.shared.programmatic(|| {
+            if self.scroll.frame() != rect {
+                self.scroll.setFrame(rect);
+            }
+            self.scroll.tile();
+        });
         self.size = frame.size;
-        self.scroll.tile();
     }
 
     pub fn commit(&mut self) -> bool {
@@ -1251,6 +1263,21 @@ impl ListNative {
             ListNative::Table(t) => &t.scroll,
             ListNative::Grid(g) => &g.scroll,
         }
+    }
+
+    /// Scrolls the way a wheel would: the clip view moves, and the bounds change it posts is
+    /// what the model hears, so tail follow and edge loading run their user-scroll path.
+    pub fn scroll_by(&self, dx: f64, dy: f64) {
+        let scroll = self.scroll();
+        let clip = scroll.contentView();
+        let Some(document) = scroll.documentView() else { return };
+        let (doc, view) = (document.frame().size, clip.bounds().size);
+        let inset = scroll.contentInsets().top;
+        let origin = clip.bounds().origin;
+        let x = (origin.x + dx).clamp(0., (doc.width - view.width).max(0.));
+        let y = (origin.y + dy).clamp(-inset, (doc.height - view.height).max(-inset));
+        clip.scrollToPoint(NSPoint::new(x, y));
+        scroll.reflectScrolledClipView(&clip);
     }
 
     /// The document view: the table, outline or collection view.

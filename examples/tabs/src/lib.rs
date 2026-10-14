@@ -86,9 +86,11 @@ impl Render for TabWindow {
             .on_action(cx.listener(|this: &mut TabWindow, _: &CloseTab, window, cx| {
                 close_tab(cx, &this.browser, window.id());
             }))
+            // docs:begin overview
             .on_action(cx.listener(|_: &mut TabWindow, _: &ShowAllTabs, window, cx| {
                 cx.window_command(window.id(), nd::backend::WindowCommand::ToggleTabOverview);
             }))
+            // docs:end overview
             .child(self.page.clone())
     }
 }
@@ -99,6 +101,7 @@ pub fn open_tab(cx: &mut App, browser: &Entity<Browser>) -> WindowHandle<TabWind
         b.next += 1;
         b.next
     });
+    // docs:begin open-tab
     let options = WindowOptions::main("tab").title("New Tab").size(size(px(900.), px(600.))).tab_group(GROUP);
     let browser = browser.clone();
     let handle = cx.open_window(options, move |window, cx| {
@@ -113,6 +116,7 @@ pub fn open_tab(cx: &mut App, browser: &Entity<Browser>) -> WindowHandle<TabWind
             close_tab(cx, &closing, window.id());
             false
         });
+        // docs:end open-tab
         let address = cx.new(|_| TextFieldState::default());
         let page = cx.new(|_| Page { number, address, url: None, web: WebView::new() });
         cx.new(|_| TabWindow { browser, page })
@@ -122,6 +126,7 @@ pub fn open_tab(cx: &mut App, browser: &Entity<Browser>) -> WindowHandle<TabWind
     handle
 }
 
+// docs:begin close-tab
 /// Drops the tab's page, then closes its window.
 pub fn close_tab(cx: &mut App, browser: &Entity<Browser>, window: WindowId) {
     let removed = browser.update(cx, |b, _| {
@@ -135,6 +140,7 @@ pub fn close_tab(cx: &mut App, browser: &Entity<Browser>, window: WindowId) {
     }
     cx.close_window(window);
 }
+// docs:end close-tab
 
 pub fn app() -> Application {
     Application::new(nd::manifest!())

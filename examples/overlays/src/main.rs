@@ -34,6 +34,39 @@ impl Scene {
     }
 }
 
+impl Scene {
+    // docs:begin popover
+    /// Anchored to the element it is a child of; `on_dismiss` is where the app closes it.
+    fn popover_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        popover("pop").w(px(300.)).h(px(200.)).p(px(12.)).child(text("Clicks in here stay in here.")).on_dismiss(
+            cx.listener(|this, _: &Dismissed, _, cx| {
+                this.popover = false;
+                cx.notify();
+            }),
+        )
+    }
+    // docs:end popover
+
+    // docs:begin panel
+    /// Modal: presses outside are consumed and the panel stays until Esc or the app closes it.
+    fn panel_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        panel("panel").w(px(260.)).h(px(120.)).p(px(12.)).child(text("A modal panel. Esc closes it.")).on_dismiss(
+            cx.listener(|this, _: &Dismissed, _, cx| {
+                this.panel = false;
+                cx.notify();
+            }),
+        )
+    }
+    // docs:end panel
+}
+
+// docs:begin menu
+/// Built when the menu opens; each item dispatches an action.
+fn menu_items(menu: ContextMenu, _window: &mut Window, _cx: &mut App) -> ContextMenu {
+    menu.item("Choose", Choose).separator().item("Again", Choose)
+}
+// docs:end menu
+
 impl Render for Scene {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.resize_only {
@@ -63,19 +96,7 @@ impl Render for Scene {
                                     cx.notify();
                                 },
                             )))
-                            .when(self.popover, |d| {
-                                d.child(
-                                    popover("pop")
-                                        .w(px(300.))
-                                        .h(px(200.))
-                                        .p(px(12.))
-                                        .child(text("Clicks in here stay in here."))
-                                        .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
-                                            this.popover = false;
-                                            cx.notify();
-                                        })),
-                                )
-                            }),
+                            .when(self.popover, |d| d.child(self.popover_view(cx))),
                     )
                     .child(button("open-panel", "Panel").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.panel = true;
@@ -93,30 +114,11 @@ impl Render for Scene {
                             cx.notify();
                         },
                     )))
-                    .child(
-                        div()
-                            .id("menu-zone")
-                            .w(px(40.))
-                            .h(px(260.))
-                            .bg(rgb(0x8899aa))
-                            .context_menu(|menu, _, _| menu.item("Choose", Choose).separator().item("Again", Choose)),
-                    )
+                    .child(div().id("menu-zone").w(px(40.)).h(px(260.)).bg(rgb(0x8899aa)).context_menu(menu_items))
                     .child(native_surface("web", SurfaceSource::Html(PAGE.into())).count_input().flex_1().h(px(320.))),
             )
             .child(text(self.status()).id("status"))
-            .when(self.panel, |d| {
-                d.child(
-                    panel("panel")
-                        .w(px(260.))
-                        .h(px(120.))
-                        .p(px(12.))
-                        .child(text("A modal panel. Esc closes it."))
-                        .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
-                            this.panel = false;
-                            cx.notify();
-                        })),
-                )
-            })
+            .when(self.panel, |d| d.child(self.panel_view(cx)))
             .into_any_element()
     }
 }

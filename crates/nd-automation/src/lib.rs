@@ -10,10 +10,14 @@
 //! in-process, the socket [`server`] calls it on the main thread through an [`Executor`].
 //! `waitFor` polls [`wait_check`] host-side every 50 ms instead of a client round-trip per tick.
 
+#[cfg(feature = "server")]
 mod handler;
 pub mod protocol;
+#[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "server")]
 pub use handler::{WaitParams, handle, wait_check};
 pub use protocol::{RpcError, RpcErrorCode};
+#[cfg(feature = "server")]
 pub use server::{Executor, Job, start, start_from_env};

@@ -237,7 +237,8 @@ pub trait ParentElement: Sized {
 pub struct DivProps {
     pub style: StyleRefinement,
     /// What a layer above `nd-ui` attached to this container (a subtree theme override, a
-    /// context menu marker), for the backends that read it.
+    /// context menu marker), for the backends that read it. A [`Semantics`](crate::semantics::Semantics)
+    /// scope describes the container to the semantic tree, as a drawn native widget's root.
     pub scope: Option<Scope>,
     /// Pointer-down moves the window (ARCHITECTURE.md 5.4). Interactive children opt out by
     /// hit-test: a button inside never starts a move.

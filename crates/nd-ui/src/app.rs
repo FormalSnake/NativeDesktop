@@ -213,16 +213,17 @@ pub struct App {
     bindings: Vec<KeyBinding>,
     /// Set by [`App::propagate`] inside an `on_action` listener.
     pub(crate) propagate_action: bool,
+    /// Actions dispatched while their window was lent to a native event handler (a button's
+    /// click dispatching a menu command): listeners need that window, so they run once the
+    /// handler hands it back.
+    deferred_actions: Vec<(WindowId, Box<dyn Action>)>,
+    /// Focus requests by element id made while the window's dispatch tree was leased to an action
+    /// listener: they land once the tree is back.
+    deferred_focus: Vec<(WindowId, String)>,
     /// The views rendering now, innermost last.
     pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
     pub(crate) current_window: Option<WindowId>,
-    /// Actions dispatched while their window was leased to a handler (a click handler's
-    /// `dispatch`): their listeners need the window, so they run when it is back.
-    deferred_actions: VecDeque<(WindowId, Box<dyn Action>)>,
-    /// Focus requests by element id made while the window's dispatch tree was leased to an action
-    /// listener, which is also when an app asks for the editor to be focused.
-    deferred_focus: VecDeque<(WindowId, String)>,
     /// Views that moved to another window in this frame; a second move is a render bug.
     moved: HashSet<EntityId>,
     /// Frames run so far.
@@ -253,10 +254,10 @@ impl App {
             events,
             bindings: Vec::new(),
             propagate_action: false,
+            deferred_actions: Vec::new(),
+            deferred_focus: Vec::new(),
             rendering: Vec::new(),
             current_window: None,
-            deferred_actions: VecDeque::new(),
-            deferred_focus: VecDeque::new(),
             moved: HashSet::new(),
             frames: 0,
             retitled: HashMap::new(),
@@ -474,9 +475,8 @@ impl App {
     /// Bubbles `action` from the window's focused node to its root. Menus and toolbar items
     /// dispatch through here. Returns whether a listener handled it.
     pub fn dispatch_action(&mut self, window: WindowId, action: &dyn Action) -> bool {
-        // Listeners take the window, which a handler running for it holds: wait for it.
-        if self.windows.get(&window).is_some_and(|w| w.window.is_none()) {
-            self.deferred_actions.push_back((window, action.boxed_clone()));
+        if self.windows.get(&window).is_some_and(|slot| slot.window.is_none()) {
+            self.deferred_actions.push((window, action.boxed_clone()));
             return true;
         }
         self.with_dispatch(window, false, |tree, app| tree.dispatch_action(action, app))
@@ -522,11 +522,10 @@ impl App {
     }
 
     /// Moves the window's focus to the element given `.id(id)`. False when none is mounted or it
-    /// is not focusable.
+    /// is not focusable. Inside an action listener the tree is out, so the request waits for it.
     pub fn focus_id(&mut self, window: WindowId, id: &str) -> bool {
-        // Inside an action listener the tree is out; the request lands once it is back.
         if self.windows.get(&window).is_some_and(|w| w.tree.is_none()) {
-            self.deferred_focus.push_back((window, id.to_owned()));
+            self.deferred_focus.push((window, id.to_owned()));
             return true;
         }
         let node = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.node_with_id(id));
@@ -626,7 +625,6 @@ impl App {
         if let Some(slot) = self.windows.get_mut(&id) {
             slot.window = Some(window);
         }
-        self.run_deferred_actions();
         result
     }
 
@@ -740,31 +738,26 @@ impl App {
         self.drain_events();
     }
 
-    /// Dispatches the actions that waited for their window to come back from a handler.
-    fn run_deferred_actions(&mut self) {
-        let mut waiting = VecDeque::new();
-        while let Some((window, action)) = self.deferred_actions.pop_front() {
-            if !self.windows.contains_key(&window) {
-                continue;
-            }
-            if self.windows[&window].window.is_none() {
-                waiting.push_back((window, action));
-            } else {
-                self.dispatch_action(window, &*action);
-            }
-        }
-        self.deferred_actions.append(&mut waiting);
-        while let Some((window, id)) = self.deferred_focus.pop_front() {
-            if self.windows.get(&window).is_some_and(|w| w.tree.is_some()) {
-                self.focus_id(window, &id);
-            }
-        }
-    }
-
     /// Delivers queued native events to their nodes' handlers, outside every entity lease.
     /// Hosts also call it when a nested run loop (menu tracking, a modal) returns.
     pub fn drain_events(&mut self) {
-        while let Some(event) = self.events.pop() {
+        while let Some(queued) = self.events.pop() {
+            let event = match queued {
+                crate::events::Queued::Event(event) => event,
+                crate::events::Queued::Call(window_id, call) => {
+                    let Some(mut window) = self.windows.get_mut(&window_id).and_then(|slot| slot.window.take()) else {
+                        continue;
+                    };
+                    let outer = self.current_window.replace(window_id);
+                    call(&mut window, self);
+                    self.current_window = outer;
+                    if let Some(slot) = self.windows.get_mut(&window_id) {
+                        slot.window = Some(window);
+                    }
+                    self.flush_effects();
+                    continue;
+                }
+            };
             let any: &dyn Any = &*event.event;
             let type_id = any.type_id();
             let found = self.windows.iter().find_map(|(id, slot)| {
@@ -785,7 +778,12 @@ impl App {
                     tree.reaffirm.insert(event.node);
                 }
             }
-            self.run_deferred_actions();
+            for (window, action) in std::mem::take(&mut self.deferred_actions) {
+                self.dispatch_action(window, &*action);
+            }
+            for (window, id) in std::mem::take(&mut self.deferred_focus) {
+                self.focus_id(window, &id);
+            }
             self.flush_effects();
         }
     }

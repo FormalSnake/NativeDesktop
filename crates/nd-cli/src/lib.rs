@@ -1,8 +1,10 @@
-//! The `nd` command line: `new`, `check`, `test`, `build`, `serve`, `diagnose`, `package`, `release`.
+//! The `nd` command line: `new`, `check`, `test`, `build`, `serve`, `diagnose`, `package`, `release`,
+//! `diag`, `docs`.
 
 pub mod check;
 pub mod diag;
 pub mod diagnose;
+pub mod docs;
 pub mod lints;
 pub mod new;
 pub mod package;
@@ -45,6 +47,8 @@ pub enum Command {
     Release(release::ReleaseArgs),
     /// Measure framework budgets: `nd diag scroll --rows 100000`.
     Diag(diag::DiagArgs),
+    /// The docs: `nd docs check`, `build`, `serve` and `capture`.
+    Docs(docs::DocsArgs),
 }
 
 pub fn run(cli: Cli) -> Result<ExitCode> {
@@ -58,5 +62,6 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         Command::Package(args) => package::run(args).map(|()| ExitCode::SUCCESS),
         Command::Release(args) => release::run(args).map(|()| ExitCode::SUCCESS),
         Command::Diag(args) => diag::run(args),
+        Command::Docs(args) => docs::run(args),
     }
 }

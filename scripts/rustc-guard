@@ -11,5 +11,11 @@ if [ "$(uname -s)" = Darwin ]; then
     [ "${ND_ALLOW_LOCAL_BUILD:-0}" = 1 ] || exit 101
   fi
 fi
-if [ -n "${ND_RUSTC_WRAPPER:-}" ]; then exec "$ND_RUSTC_WRAPPER" "$@"; fi
-exec "$@"
+# The macbook also hosts services (BlueBubbles) that must stay responsive while agents build:
+# compiles run at utility QoS and nice 15 there, so they yield the CPU without stalling.
+lower=""
+if [ "$(uname -s)" = Darwin ] && [ "${ND_FULL_PRIORITY:-0}" != 1 ]; then
+  lower="/usr/sbin/taskpolicy -c utility /usr/bin/nice -n 15"
+fi
+if [ -n "${ND_RUSTC_WRAPPER:-}" ]; then exec $lower "$ND_RUSTC_WRAPPER" "$@"; fi
+exec $lower "$@"

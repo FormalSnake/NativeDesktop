@@ -115,6 +115,7 @@ mod gate_m1 {
         let mut child = launch(data.path(), &[("ND_DEBUG_PANIC", "1")]);
         let status = wait(&mut child, Duration::from_secs(60));
         assert_eq!(status.code(), Some(101), "hello exits 101 after a panic");
+        // docs:begin panic-bundle
         let found = bundles(data.path(), "panic");
         assert_eq!(found.len(), 1, "one panic bundle: {found:?}");
         let dir = &found[0];
@@ -142,6 +143,7 @@ mod gate_m1 {
             log.iter().any(|l| l["level"] == "ERROR" && l["message"].as_str().is_some_and(|m| m.starts_with("panic:")))
         );
         assert_minidump(dir);
+        // docs:end panic-bundle
         assert!(fs::read_dir(data.path().join("logs")).expect("logs dir").count() >= 1, "rolling log file");
     }
 
@@ -156,6 +158,7 @@ mod gate_m1 {
         let dir = data.path().join("diagnostics");
         let args = |json| DiagnoseArgs { id: None, last: true, list: false, json, app: None, manifest_path: None };
 
+        // docs:begin diagnose
         let text = output(&args(false), &dir).expect("diagnose");
         assert!(text.contains("panic on thread"), "{text}");
         assert!(text.contains("ND_DEBUG_PANIC: forced panic"), "{text}");
@@ -164,6 +167,7 @@ mod gate_m1 {
         assert!(text.contains("key_up") && text.contains("\"n\""), "inputs:\n{text}");
         assert!(text.contains("frames,") && text.contains("log tail"), "{text}");
         assert!(text.contains("minidump:"), "{text}");
+        // docs:end diagnose
 
         let report: Value = serde_json::from_str(&output(&args(true), &dir).expect("json")).expect("json");
         assert_eq!(report["kind"], "panic");
