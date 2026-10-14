@@ -105,7 +105,7 @@ roles and labels from the semantic tree), never a second adapter.
 | Window composition: native surface between GPUI base and overlay layers | M4 | zed #62379 (open), shipped in gpui-fast |
 | Alpha-preserving content over glass | M3 | zed #58833 (open) |
 | Linux headless rendering, only if `gpui-pre 0.3.9` lacks it (checked in M0) | M0 | zed #64718 (merged) |
-| wasm fixes found while building the web backend | M11 | to file |
+| wasm fixes found while building the web backend: none needed, gpui-pre 0.3.9 ships `gpui_web` | M11 | none |
 
 ## 3. App programming model
 
@@ -1012,10 +1012,11 @@ unchanged; app code has no `cfg`.
   overlays intersecting it promoted to a canvas stacked above; CEF, tray, notifications beyond the
   Notification API, credentials, global menus and native widgets without a drawn impl are
   unavailable.
-- Capability checks: `cx.supports(Feature::MultiWindow)`, `Feature::FileSystem`, `Feature::Cef`,
-  and so on, at runtime (the old `hasWidget`/`hasCommand` idea). APIs that cannot work on the web
+- Capability checks: `nd::platform::has(Feature::MultiWindow)`, `Feature::FileSystem`,
+  `Feature::Cef`, and so on, at runtime (the old `hasWidget`/`hasCommand` idea). A target, not a
+  window, decides them, so they need no `cx`. APIs that cannot work on the web
   return `Err(Unsupported)` and are marked `#[nd::unavailable(web)]`, which `nd check --target web`
-  turns into warnings at each call site that lacks a `supports` check.
+  turns into warnings at each call site that lacks a `has(..)` check.
 - Runtime, not only compilation: `std::time::Instant`, `SystemTime`, threads and `std::fs`
   compile on `wasm32-unknown-unknown` and panic at runtime, so `nd check --target web` denies them
   in app crates (use `nd::time`, executors, `Store`), and the M11 gate runs each example's tier 1

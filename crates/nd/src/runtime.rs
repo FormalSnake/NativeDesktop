@@ -94,6 +94,7 @@ pub fn mark_whats_new_seen(manifest: &Manifest) {
     nd_update::mark_whats_new_seen(&update_state_dir(manifest), manifest.version);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn update_state_dir(manifest: &Manifest) -> std::path::PathBuf {
     nd_core::paths::app_data_dir(manifest.name).join("updates")
 }
@@ -124,7 +125,8 @@ fn start_updates(manifest: &Manifest) {
 }
 
 /// Writes a `-report` incident bundle with `message` and returns its directory, or `None` when
-/// diagnostics are not running.
+/// diagnostics are not running, which is always the case on the web.
+#[nd_macros::unavailable(web)]
 pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
     nd_diag::global()?.report_issue(message).ok()
 }
@@ -217,7 +219,9 @@ impl Application {
         let patterns = self.patterns;
         #[cfg(target_os = "linux")]
         let hooks = nd_os_linux::LinuxHooks::new(self.manifest.name);
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_arch = "wasm32")]
+        let hooks = nd_os_web::WebHooks;
+        #[cfg(not(any(target_os = "linux", target_arch = "wasm32")))]
         let hooks = nd_backend_gpui::NoOsHooks;
         nd_backend_gpui::run_with(
             hooks,
@@ -235,7 +239,11 @@ impl Application {
                 if let Err(e) = nd_automation::start_from_env(move |job| jobs.send(job)) {
                     eprintln!("nd: automation socket: {e}");
                 }
+                // A browser tab has no theme files to watch.
+                #[cfg(not(target_arch = "wasm32"))]
                 sources::watch(&watched, move |job| sender.send(job));
+                #[cfg(target_arch = "wasm32")]
+                let _ = (watched, sender);
             },
         );
         Ok(())
@@ -267,19 +275,29 @@ pub(crate) mod gpui_host {
         super::sources::load(&mut registry, files);
         cx.set_global(ThemeState(registry));
         cx.set_global(patterns);
+        // The web's chrome: drawn menu bar and alerts, browser pickers. It keeps the GPUI
+        // backend's own chrome, if one is installed, for what both draw alike.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(backend) = cx.backend_as::<GpuiBackend>() {
+            let inner = cx.try_global::<nd_components::Chrome>().map(|c| c.0.clone());
+            cx.set_global(nd_components::Chrome(nd_os_web::WebChrome::new(backend.clone(), inner)));
+        }
     }
 }
 
 /// The palette sources every backend shares: the app's `theme.toml` and matugen `theme.json`,
 /// read at launch and watched for live reload.
 mod sources {
+    #![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
     use nd_theme::{MatugenTheme, ThemeFileWatcher, ThemeFiles, ThemeRegistry, theme_toml};
     use nd_ui::App;
 
     use crate::theme::update_registry;
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub type Job = Box<dyn FnOnce(&mut App) + Send>;
 
+    #[cfg(not(target_arch = "wasm32"))]
     struct Watchers(#[allow(dead_code)] Vec<ThemeFileWatcher>);
 
     fn read<T, E: std::fmt::Display>(
@@ -301,6 +319,7 @@ mod sources {
 
     /// `theme.toml` and `theme.json` reload live: each new parseable version reaches the app on
     /// the main thread through `send` and recolours it in the next frame.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn watch(files: &ThemeFiles, send: impl Fn(Job) + Clone + Send + 'static) {
         let mut watchers = Vec::new();
         if let Some(path) = &files.toml {

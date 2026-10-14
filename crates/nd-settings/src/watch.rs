@@ -33,6 +33,15 @@ impl<T: Settings> SettingsHandle<T> {
     /// file contents with what is loaded, so the app's own saves and repeated events do nothing.
     /// Listeners registered with `on_event` see the outcome.
     pub fn watch(&self) -> notify::Result<WatchGuard> {
+        // Only this tab writes its keys, and its writes already reload.
+        #[cfg(target_arch = "wasm32")]
+        return Ok(WatchGuard { watcher: None, thread: None });
+        #[cfg(not(target_arch = "wasm32"))]
+        self.watch_files()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn watch_files(&self) -> notify::Result<WatchGuard> {
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = tx.send(res);

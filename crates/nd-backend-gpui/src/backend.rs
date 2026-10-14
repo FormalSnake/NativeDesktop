@@ -34,6 +34,9 @@ pub(crate) struct WindowRecord {
 /// Called from a native callback with GPUI's app, to schedule the host's pump on the next turn.
 pub(crate) type Wake = Rc<dyn Fn(&mut gpui::App)>;
 
+/// Work for the app at the host's next pump (see [`GpuiBackend::defer`]).
+pub(crate) type Deferred = Box<dyn FnOnce(&mut App)>;
+
 /// Told the platform's light or dark setting, with the app, when it changes.
 pub(crate) type SchemeListener = Rc<dyn Fn(&mut App, Scheme)>;
 
@@ -73,6 +76,10 @@ pub struct GpuiBackend {
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
     /// Pointer input each native surface received, written by its paint-time listeners.
     pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
+    /// The app's menus, drawn above the windows of a single canvas.
+    pub(crate) menu_bar: Rc<RefCell<crate::canvas::MenuBar>>,
+    /// Work [`GpuiBackend::defer`] queued for the next pump.
+    deferred: Rc<RefCell<Vec<Deferred>>>,
     /// Presenter state of each `nd-virtual` list, by its node.
     pub(crate) lists: crate::virtual_list::Presenters,
     /// Gesture recognition and scroll physics per window.
@@ -121,10 +128,59 @@ impl GpuiBackend {
             })),
             bounds: Rc::default(),
             surface_counts: Rc::default(),
+            deferred: Rc::default(),
+            menu_bar: Rc::default(),
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
         }
+    }
+
+    /// Runs `f` on the app at the host's next pump, outside every entity lease and GPUI update.
+    /// For services answering from a browser or OS callback (a picked file, a clipboard read).
+    pub fn defer(&self, f: impl FnOnce(&mut App) + 'static) {
+        self.deferred.borrow_mut().push(Box::new(f));
+        let (app, wake) = {
+            let state = self.state.borrow();
+            (state.app.clone(), state.wake.clone())
+        };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
+    }
+
+    /// The app's menu bar, for a single canvas to draw (the web). Other GPUI desktops fold
+    /// menus into the command palette and ignore it.
+    pub fn set_menu_bar(&self, menus: Vec<nd_components::Menu>) {
+        self.menu_bar.borrow_mut().set(menus);
+        let mut state = self.state.borrow_mut();
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+    }
+
+    /// Puts `text` on the platform clipboard (the async Clipboard API on the web), on the next
+    /// turn, outside the GPUI update an app handler runs in.
+    pub fn write_clipboard_text(&self, text: String) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        app.spawn(async move |cx| cx.update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))))
+            .detach();
+    }
+
+    /// Reads the clipboard's text and hands it to `done` on the app. On the web the browser may
+    /// ask the user first, and refuses outside a user gesture; `done` then gets `None`.
+    pub fn read_clipboard_text(&self, done: impl FnOnce(Option<String>, &mut App) + 'static) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        let backend = self.clone();
+        app.spawn(async move |cx| {
+            let read = cx.update(|cx| cx.read_from_clipboard_async());
+            let text = read.await.ok().flatten().and_then(|item| item.text());
+            backend.defer(move |app| done(text, app));
+        })
+        .detach();
+    }
+
+    pub(crate) fn take_deferred(&self) -> Vec<Deferred> {
+        std::mem::take(&mut *self.deferred.borrow_mut())
     }
 
     pub(crate) fn attach_app(&self, app: AsyncApp, wake: Wake) {
@@ -202,7 +258,9 @@ impl GpuiBackend {
 
     /// The nd window a GPUI window shows.
     pub fn window_for(&self, handle: AnyWindowHandle) -> Option<WindowId> {
-        self.state.borrow().windows.iter().find(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id)
+        // One GPUI window shows several app windows on a single canvas (the web); the newest
+        // is on top and takes the keys.
+        self.state.borrow().windows.iter().filter(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id).max()
     }
 
     /// The `nd-virtual` lists drawn so far, by node.

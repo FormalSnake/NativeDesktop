@@ -380,12 +380,22 @@ mod gate_m2 {
         // hello's toolbar row is the title row; press in its middle, clear of the "Add one" button.
         // The compositor follows motion only once hello's `xdg_toplevel.move` reached it, so the
         // pointer waits for hello to report the request (it lags the press under load).
-        input.move_to(x + f64::from(before.size.0) / 2., y + 12.);
+        // A hand arrives over the row before it presses: hello sees the pointer enter and hover first.
+        let target = (x + f64::from(before.size.0) / 2., y + 12.);
+        for i in (0..=5).rev() {
+            input.move_to(target.0 - f64::from(i) * 8., target.1 + f64::from(i) * 4.);
+            std::thread::sleep(Duration::from_millis(20));
+        }
         input.sync().unwrap();
         std::thread::sleep(Duration::from_millis(50));
         input.button(true);
         input.sync().unwrap();
-        assert!(probe.wait_for("nd: window move", Duration::from_secs(3)), "no move from the press:\n{}", probe.log());
+        assert!(
+            probe.wait_for("nd: window move", Duration::from_secs(3)),
+            "no move from the press at {target:?} (window {before:?}):\n{}\nHyprland:\n{}",
+            probe.log(),
+            hyprland.log_tail()
+        );
         std::thread::sleep(Duration::from_millis(30));
         let (px, py) = input.position();
         for i in 1..=30 {

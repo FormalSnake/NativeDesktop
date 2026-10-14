@@ -5,10 +5,10 @@
 //! (zed#14473). Scroll views are drawn with their content shifted by the router's offset; GPUI's
 //! own div scrolling is not used, so there is one scroll model per window.
 
+use nd_core::time::Instant;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use nd_core::{NodeId, Point, Rect, Size, WindowId};
 use nd_gesture::{
