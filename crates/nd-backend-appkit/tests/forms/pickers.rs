@@ -524,16 +524,26 @@ fn labels(rig: &Rig, c: &mut Checks, opened: &Opened, w: WindowId) {
             .is_some_and(|f| f.textColor().is_some_and(|t| *t == *NSColor::labelColor())),
         "primary tone is labelColor",
     );
-    c.check(
-        as_class::<NSTextField>(rig.view(w, "secondary"))
-            .is_some_and(|f| f.textColor().is_some_and(|t| *t == *NSColor::secondaryLabelColor())),
-        "secondary tone is secondaryLabelColor",
-    );
-    c.check(
-        as_class::<NSTextField>(rig.view(w, "danger"))
-            .is_some_and(|f| f.textColor().is_some_and(|t| *t == *NSColor::systemRedColor())),
-        "danger tone is systemRedColor",
-    );
+    // Secondary and danger tones start from secondaryLabelColor and systemRed and are adjusted
+    // until they read at 4.5:1 on the control background, as the theme's text tokens are.
+    for (id, what) in [("secondary", "secondary"), ("danger", "danger")] {
+        let ratio = as_class::<NSTextField>(rig.view(w, id)).and_then(|f| {
+            let text = f.textColor()?.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+            let bg = NSColor::controlBackgroundColor().colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+            let ch = |v: f64| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            let lum = |r: f64, g: f64, b: f64| 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+            // The text composited over the background, as it is drawn.
+            let over = |t: f64, b: f64| t * text.alphaComponent() + b * (1. - text.alphaComponent());
+            let a = lum(
+                over(text.redComponent(), bg.redComponent()),
+                over(text.greenComponent(), bg.greenComponent()),
+                over(text.blueComponent(), bg.blueComponent()),
+            );
+            let b = lum(bg.redComponent(), bg.greenComponent(), bg.blueComponent());
+            Some((a.max(b) + 0.05) / (a.min(b) + 0.05))
+        });
+        c.check(ratio.is_some_and(|r| r >= 4.45), &format!("{what} tone reads at 4.5:1 ({ratio:?})"));
+    }
     c.check(
         as_class::<NSTextField>(rig.view(w, "selectable")).is_some_and(|f| f.isSelectable()),
         "selectable reaches the field",
