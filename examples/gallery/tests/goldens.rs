@@ -159,6 +159,7 @@ mod goldens {
             palette: (view == "palette").then(|| "to".into()),
             toast: page == gallery::Page::SourceList,
             appearance: Some(appearance),
+            ..gallery::Start::default()
         };
         let handle = host.update(|cx| gallery::open(cx, start));
         settle(host);

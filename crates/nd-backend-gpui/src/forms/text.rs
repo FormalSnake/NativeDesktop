@@ -70,6 +70,15 @@ pub(crate) struct Editor {
     /// Edited since the last commit (parsed fields only).
     dirty: bool,
     sink: Option<Sink>,
+    /// Return submits; Shift- or Alt-Return breaks the line.
+    submit_on_return: bool,
+    /// Pasted images go to the app as `ImagesPasted` instead of as text.
+    accepts_media: bool,
+    /// Height of the laid-out text, for an area that grows with it.
+    content: Pixels,
+    /// The emoji picker request last seen, and whether the picker is open.
+    emoji: Option<u64>,
+    emoji_open: bool,
 }
 
 impl Editor {
@@ -96,6 +105,11 @@ impl Editor {
             commit,
             dirty: false,
             sink: None,
+            submit_on_return: false,
+            accepts_media: false,
+            content: px(0.),
+            emoji: None,
+            emoji_open: false,
         }
     }
 
@@ -409,6 +423,7 @@ impl Editor {
                 }
                 self.replace(range, "", cx);
             }
+            "enter" if self.multiline && self.submit_on_return && !m.shift && !m.alt && !shortcut => self.submit(cx),
             "enter" if self.multiline && !shortcut => self.replace(self.selected.clone(), "\n", cx),
             "enter" => self.submit(cx),
             "a" if shortcut => {
@@ -424,7 +439,26 @@ impl Editor {
                 }
             }
             "v" if shortcut => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                let item = cx.read_from_clipboard();
+                let images: Vec<PastedImage> = match &item {
+                    Some(item) if self.accepts_media => item
+                        .entries
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            gpui::ClipboardEntry::Image(image) => Some(PastedImage {
+                                bytes: image.bytes.clone().into(),
+                                mime: image.format.mime_type().into(),
+                            }),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if !images.is_empty() {
+                    if let Some(sink) = &self.sink {
+                        sink.send(ImagesPasted { images }, cx);
+                    }
+                } else if let Some(text) = item.and_then(|item| item.text()) {
                     self.replace(self.selected.clone(), &text, cx);
                 }
             }
@@ -666,6 +700,11 @@ impl gpui::Element for EditorElement {
             }
             e.scroll.y = e.scroll.y.min((content - bounds.size.height).max(px(0.))).max(px(0.));
             e.scroll.x = px(0.);
+            if (content - e.content).abs() > px(0.5) {
+                // The area sizes itself from this on its next build.
+                e.content = content;
+                window.request_animation_frame();
+            }
         } else {
             let width = match &e.layout {
                 Some(Layout::Line(line)) => line.width,
@@ -1014,18 +1053,119 @@ pub(crate) fn text_area(
     let (ctl, editor) = editor(b, id, &f, || Commit::Text, window, cx);
     let look = ctl.look;
     let name = p.label.clone().or_else(|| p.tooltip.clone()).or_else(|| p.placeholder.clone()).unwrap_or_default();
-    let lines = f32::from(p.min_lines.max(1));
+    let (content, picker) = {
+        let mut e = editor.borrow_mut();
+        e.submit_on_return = p.submit_on_return;
+        e.accepts_media = p.accepts_media;
+        // Each new request opens the picker; the first one seen is where the app started.
+        if e.emoji.is_some_and(|seen| seen != p.emoji_picker) && p.enabled {
+            e.emoji_open = true;
+        }
+        e.emoji = Some(p.emoji_picker);
+        (e.content, e.emoji_open && p.enabled)
+    };
+    let min = look.line_height * f32::from(p.min_lines.max(1));
+    let text_height = match p.max_lines {
+        Some(max) => content.max(min).min(look.line_height * f32::from(max.max(p.min_lines).max(1))),
+        None => min,
+    };
     let mut area = chrome(&ctl, &editor, &f)
         .role(gpui::Role::MultilineTextInput)
         .aria_label(name)
         .aria_value(p.text.clone())
         .min_w(look.field_min_width)
-        .h(look.line_height * lines + look.padding_y * 2. + px(4.));
+        .h(text_height + look.padding_y * 2. + px(4.));
+    // A rounded area (a chat composer) keeps its outline at rest.
+    let rounded = p.style.corner_radii.top_left.is_some();
+    if rounded && !ctl.focused {
+        area = area.border_color(look.border);
+    }
     if p.enabled {
         area = area.on_key_down(on_key(&editor));
+        if p.accepts_media {
+            let sink = ctl.sink.clone();
+            area = area.on_drop(move |paths: &gpui::ExternalPaths, _: &mut Window, cx: &mut App| {
+                sink.send(FilesDropped { paths: paths.paths().to_vec() }, cx);
+            });
+        }
     }
-    with_style(area.child(text_element(&ctl, &editor, &f)), &p.style).into_any_element()
+    let area = with_style(area.child(text_element(&ctl, &editor, &f)), &p.style);
+    if !picker {
+        return area.into_any_element();
+    }
+    let close = {
+        let editor = editor.clone();
+        move |_: &MouseDownEvent, window: &mut Window, _: &mut App| {
+            editor.borrow_mut().emoji_open = false;
+            window.refresh();
+        }
+    };
+    let grid =
+        EMOJI.iter().enumerate().fold(div().w(px(8. * 34.)).flex().flex_row().flex_wrap(), |grid, (i, emoji)| {
+            let (editor, sink) = (editor.clone(), ctl.sink.clone());
+            grid.child(
+                div()
+                    .id(ElementId::Integer(i as u64))
+                    .role(gpui::Role::Button)
+                    .aria_label(*emoji)
+                    .size(px(34.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(look.radius)
+                    .text_size(px(20.))
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(move |s| s.bg(look.fill_hover))
+                    .child(*emoji)
+                    .on_click(move |_, window, cx| {
+                        sink.take_focus(window, cx);
+                        let mut e = editor.borrow_mut();
+                        e.emoji_open = false;
+                        let at = e.selected.clone();
+                        e.replace(at, emoji, cx);
+                        drop(e);
+                        window.refresh();
+                    }),
+            )
+        });
+    div().flex().flex_col().child(area).child(popover(b, id, window, look, close, [grid])).into_any_element()
 }
+
+/// What the drawn emoji picker offers.
+static EMOJI: [&str; 32] = [
+    "\u{1f600}",
+    "\u{1f602}",
+    "\u{1f60a}",
+    "\u{1f60d}",
+    "\u{1f618}",
+    "\u{1f60e}",
+    "\u{1f914}",
+    "\u{1f644}",
+    "\u{1f62d}",
+    "\u{1f621}",
+    "\u{1f631}",
+    "\u{1f634}",
+    "\u{1f973}",
+    "\u{1f607}",
+    "\u{1f643}",
+    "\u{1f609}",
+    "\u{1f44d}",
+    "\u{1f44e}",
+    "\u{1f44f}",
+    "\u{1f64f}",
+    "\u{1f44b}",
+    "\u{1f4aa}",
+    "\u{1f440}",
+    "\u{1f525}",
+    "\u{2764}\u{fe0f}",
+    "\u{1f494}",
+    "\u{2728}",
+    "\u{1f389}",
+    "\u{1f4af}",
+    "\u{2705}",
+    "\u{274c}",
+    "\u{1f680}",
+];
 
 pub(crate) fn combo_box(
     b: &Build,

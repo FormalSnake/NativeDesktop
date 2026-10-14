@@ -5,6 +5,7 @@
 
 pub mod forms;
 pub mod layout;
+pub mod media;
 
 use std::time::Duration;
 
@@ -26,10 +27,11 @@ pub enum Page {
     Split,
     StatusPage,
     Dialogs,
+    Media,
 }
 
 impl Page {
-    pub const ALL: [Page; 9] = [
+    pub const ALL: [Page; 10] = [
         Page::Palette,
         Page::SourceList,
         Page::Toasts,
@@ -39,6 +41,7 @@ impl Page {
         Page::Split,
         Page::StatusPage,
         Page::Dialogs,
+        Page::Media,
     ];
 
     pub fn id(self) -> &'static str {
@@ -52,6 +55,7 @@ impl Page {
             Page::Split => "split",
             Page::StatusPage => "status-page",
             Page::Dialogs => "dialogs",
+            Page::Media => "media",
         }
     }
 
@@ -66,6 +70,7 @@ impl Page {
             Page::Split => "Split view",
             Page::StatusPage => "Status page",
             Page::Dialogs => "Dialogs",
+            Page::Media => "Media",
         }
     }
 
@@ -80,6 +85,7 @@ impl Page {
             Page::Split => Icon::PanelRight,
             Page::StatusPage => Icon::Inbox,
             Page::Dialogs => Icon::Check,
+            Page::Media => Icon::Music,
         }
     }
 
@@ -89,6 +95,7 @@ impl Page {
             Page::Toasts | Page::Banner => "feedback",
             Page::Forms => "controls",
             Page::Tabs | Page::Split | Page::StatusPage | Page::Dialogs => "layout",
+            Page::Media => "content",
         }
     }
 
@@ -104,11 +111,14 @@ pub struct Start {
     pub palette: Option<SharedString>,
     pub toast: bool,
     pub appearance: Option<Appearance>,
+    /// The Media page plays its tone through the OS and shows in Now Playing. Off in tests and
+    /// goldens, which want a still clock.
+    pub audio: bool,
 }
 
 impl Default for Start {
     fn default() -> Self {
-        Self { page: Page::Palette, palette: None, toast: false, appearance: None }
+        Self { page: Page::Palette, palette: None, toast: false, appearance: None, audio: false }
     }
 }
 
@@ -128,6 +138,7 @@ pub struct Gallery {
     tabs: Entity<layout::TabsDemo>,
     split: Entity<layout::SplitDemo>,
     dialogs: Entity<layout::DialogsDemo>,
+    media: Entity<media::MediaPage>,
 }
 
 fn secondary_k() -> &'static str {
@@ -141,6 +152,7 @@ impl Gallery {
             tabs: cx.new(layout::TabsDemo::new),
             split: cx.new(layout::SplitDemo::new),
             dialogs: cx.new(layout::DialogsDemo::new),
+            media: cx.new(|cx| media::MediaPage::new(start.audio, cx)),
             page: start.page,
             sidebar_collapsed: false,
             palette_open: start.palette.is_some(),
@@ -164,6 +176,7 @@ impl Gallery {
             source_section("feedback", "Feedback"),
             source_section("controls", "Controls"),
             source_section("layout", "Layout and windows"),
+            source_section("content", "Content"),
         ];
         // Pages under their section, in page order: insert after the section header.
         for page in Page::ALL {
@@ -229,6 +242,10 @@ impl Gallery {
                 }
             }
         }
+    }
+
+    pub fn media(&self) -> &Entity<media::MediaPage> {
+        &self.media
     }
 
     pub fn page(&self) -> Page {
@@ -315,6 +332,7 @@ impl Gallery {
                 .child(note("Alerts attach to their window; a confirmation styles its action destructive."))
                 .child(self.dialogs.clone())
                 .into_any_element(),
+            Page::Media => div().flex_1().min_h_0().w_full().child(self.media.clone()).into_any_element(),
         }
     }
 }
@@ -446,7 +464,7 @@ pub fn app() -> Application {
 }
 
 pub fn init(cx: &mut App) -> WindowHandle<Gallery> {
-    open(cx, Start::default())
+    open(cx, Start { audio: true, ..Start::default() })
 }
 
 /// Binds the gallery's keys and opens its window in `start`'s state.

@@ -138,7 +138,9 @@ impl Palette {
                 text_secondary: hex("#ffffff8c"),
                 text_tertiary: hex("#ffffff42"),
                 accent: hex("#4c8dff"),
-                on_accent: hex("#ffffff"),
+                // White on this accent is 3.2:1; the accent has to stay this light to read as
+                // text on the dark surfaces, so what sits on it is dark, as Material's is.
+                on_accent: hex("#0b1a33"),
                 accent_container: hex("#1f3a6e"),
                 on_accent_container: hex("#d9e5ff"),
                 separator: hex("#ffffff1f"),

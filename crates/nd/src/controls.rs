@@ -12,8 +12,7 @@ pub struct Painter {
     _private: (),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ImageSource(pub SharedString);
+pub use nd_components::media::ImageSource;
 
 impl Painter {
     /// A stroked arc around `center`, from `start` to `end` as fractions of a turn from 12 o'clock.
@@ -67,7 +66,7 @@ pub trait ImageCache {
 
 impl ImageCache for App {
     fn image(&mut self, source: &str) -> ImageSource {
-        ImageSource(SharedString::from(source.to_owned()))
+        ImageSource::from(source)
     }
 }
 

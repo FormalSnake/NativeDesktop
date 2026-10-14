@@ -554,8 +554,9 @@ impl Backend for GpuiBackend {
             && let Some(n) = state.nodes.get(&node)
             && is_button(n.kind)
         {
-            probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
-            probe.enabled = Some(true);
+            let props = n.props.downcast_ref::<ButtonProps>();
+            probe.name = props.map(|p| p.label.to_string());
+            probe.enabled = Some(props.is_none_or(|p| p.enabled));
         }
         if let Ok(state) = self.state.try_borrow()
             && let Some(p) = state.nodes.get(&node).and_then(|n| n.props.downcast_ref::<SurfaceProps>())
@@ -564,6 +565,7 @@ impl Backend for GpuiBackend {
             probe.value = Some(self.surface_counts.borrow().get(&node).copied().unwrap_or_default().to_string());
         }
         self.probe_nav(node, &mut probe);
+        self.probe_media(node, &mut probe);
         probe
     }
 
@@ -627,6 +629,13 @@ impl Backend for GpuiBackend {
                 events.emitter(node).emit(ClickEvent);
             }
         };
+        let refused = {
+            let state = self.state.borrow();
+            state.nodes.get(&node).and_then(|n| n.props.downcast_ref::<ButtonProps>()).is_some_and(|p| !p.enabled)
+        };
+        if refused && matches!(action, SemanticAction::Click | SemanticAction::DoubleClick) {
+            return Err(not_actionable(format!("{node:?} is disabled")));
+        }
         match action {
             SemanticAction::Click if is_button(kind) => press(1),
             SemanticAction::DoubleClick if is_button(kind) => press(2),

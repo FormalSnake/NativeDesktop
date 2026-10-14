@@ -404,6 +404,9 @@ impl Backend for TestBackend {
             return Ok(());
         }
         let button = n.kind == NodeKind::Widget(crate::backend::WidgetKind::of::<Button>());
+        if button && n.props.downcast_ref::<crate::ButtonProps>().is_some_and(|p| !p.enabled) {
+            return Err(ActionError::NotActionable(format!("{node:?} is disabled")));
+        }
         let clicks = match action {
             SemanticAction::Click if button => 1,
             SemanticAction::DoubleClick if button => 2,

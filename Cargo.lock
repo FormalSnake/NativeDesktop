@@ -2395,6 +2395,7 @@ dependencies = [
 name = "gallery"
 version = "0.1.0"
 dependencies = [
+ "image",
  "nd",
  "ndshell",
  "png 0.17.16",
@@ -4597,6 +4598,7 @@ version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
+ "image",
  "nd-components",
  "nd-core",
  "nd-diag",
@@ -4687,6 +4689,7 @@ dependencies = [
 name = "nd-components"
 version = "0.1.0"
 dependencies = [
+ "image",
  "nd-core",
  "nd-gpui",
  "nd-macros",
@@ -4697,6 +4700,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]

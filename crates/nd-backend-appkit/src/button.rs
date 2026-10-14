@@ -115,6 +115,9 @@ impl NativeButtonView {
                 (None, _) => NSCellImagePosition::NoImage,
             });
         }
+        if old.is_none_or(|o| o.enabled != new.enabled) {
+            b.setEnabled(new.enabled);
+        }
         if old.is_none_or(|o| o.tooltip != new.tooltip) {
             b.setToolTip(new.tooltip.as_deref().map(NSString::from_str).as_deref());
         }

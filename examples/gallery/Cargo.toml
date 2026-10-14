@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 nd = { path = "../../crates/nd" }
+# Generated artwork for the Media page, so the gallery ships no image files.
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
@@ -35,6 +37,16 @@ harness = false
 # Tier 2 goldens of the forms page on macOS.
 [[test]]
 name = "forms_goldens"
+harness = false
+
+# Tier 2 on macOS: the player bar drives real playback through nd::system.
+[[test]]
+name = "audio"
+harness = false
+
+# Tier 2 goldens of the media page on macOS.
+[[test]]
+name = "media_goldens"
 harness = false
 
 # Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.

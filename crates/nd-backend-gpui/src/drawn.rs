@@ -54,6 +54,9 @@ impl Build<'_> {
         if let Some(control) = self.form_control(id, kind, node, window, cx) {
             return Some(control);
         }
+        if let Some(media) = self.media(id, kind, node, window, cx) {
+            return Some(media);
+        }
         let look = self.look();
         let theme = self.theme();
         let ink = self.ink_text();

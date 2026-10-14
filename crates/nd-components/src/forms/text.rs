@@ -146,10 +146,45 @@ pub struct TextAreaProps {
     pub editable: bool,
     /// Lines of height the area asks for before the app's style sizes it.
     pub min_lines: u16,
+    /// Grows with its text from `min_lines` up to this many lines, then scrolls.
+    pub max_lines: Option<u16>,
+    /// Return fires [`TextSubmitted`]; Shift-Return or Option-Return inserts a line break.
+    pub submit_on_return: bool,
+    /// Pasted or dropped images arrive as [`ImagesPasted`] and dropped files as
+    /// [`FilesDropped`], instead of as text.
+    pub accepts_media: bool,
+    /// Opens the system emoji picker at the caret each time it changes.
+    pub emoji_picker: u64,
     pub label: Option<SharedString>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
+}
+
+/// An image the user pasted or dropped into a text area that accepts media.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PastedImage {
+    pub bytes: std::sync::Arc<[u8]>,
+    /// `image/png`, `image/tiff`, ...
+    pub mime: SharedString,
+}
+
+impl std::fmt::Debug for PastedImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PastedImage({}, {} bytes)", self.mime, self.bytes.len())
+    }
+}
+
+/// Images pasted or dropped into a text area that accepts media.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagesPasted {
+    pub images: Vec<PastedImage>,
+}
+
+/// Files dropped (or pasted as files) into a text area that accepts media.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilesDropped {
+    pub paths: Vec<std::path::PathBuf>,
 }
 
 /// A text field with a list of suggestions (`NSComboBox`). The text is free; picking a
@@ -333,6 +368,10 @@ pub fn text_area(id: impl Into<SharedString>) -> TextArea {
         placeholder: None,
         editable: true,
         min_lines: 3,
+        max_lines: None,
+        submit_on_return: false,
+        accepts_media: false,
+        emoji_picker: 0,
         label: None,
         enabled: true,
         tooltip: None,
@@ -475,6 +514,41 @@ impl TextField {
 impl TextArea {
     pub fn min_lines(mut self, lines: u16) -> Self {
         self.element.props_mut().min_lines = lines;
+        self
+    }
+
+    /// Grows with its text up to `lines`, then scrolls.
+    pub fn max_lines(mut self, lines: u16) -> Self {
+        self.element.props_mut().max_lines = Some(lines);
+        self
+    }
+
+    /// Return submits ([`TextInput::on_submit`]); Shift-Return inserts a line break.
+    pub fn submit_on_return(mut self) -> Self {
+        self.element.props_mut().submit_on_return = true;
+        self.element = self.element.takes_return();
+        self
+    }
+
+    /// Takes pasted and dropped images and files as events instead of text.
+    pub fn accepts_media(mut self) -> Self {
+        self.element.props_mut().accepts_media = true;
+        self
+    }
+
+    /// Opens the system emoji picker whenever `request` changes; pass a counter the app bumps.
+    pub fn emoji_picker(mut self, request: u64) -> Self {
+        self.element.props_mut().emoji_picker = request;
+        self
+    }
+
+    pub fn on_images(mut self, f: impl Fn(&ImagesPasted, &mut Window, &mut App) + 'static) -> Self {
+        self.element = self.element.on(f);
+        self
+    }
+
+    pub fn on_files(mut self, f: impl Fn(&FilesDropped, &mut Window, &mut App) + 'static) -> Self {
+        self.element = self.element.on(f);
         self
     }
 }

@@ -174,6 +174,7 @@ impl Native {
             // NSSplitView arranges every subview it is given.
             Native::Split(s) => Some(&s.view),
             Native::SplitPane(p) => Some(&p.content),
+            Native::Custom(c) => c.container(),
             _ => None,
         }
     }
@@ -253,6 +254,7 @@ fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
 
 impl AppKitBackend {
     pub fn new(mtm: MainThreadMarker) -> Self {
+        crate::media::register();
         let state = Rc::new_cyclic(|weak| {
             RefCell::new(State {
                 mtm,
@@ -293,6 +295,10 @@ impl AppKitBackend {
         state.windows.insert(id, record);
         if let Some(native) = native {
             state.apply_window_appearance(id, &native);
+            // Controls created before the window existed resolved their colours under the
+            // app's appearance; the window's may differ.
+            state.apply_theme(id);
+            state.retheme_custom(Some(id));
         }
     }
 
@@ -1568,6 +1574,17 @@ impl Backend for AppKitBackend {
         state.rebuild_toolbars();
         state.rebuild_forms();
         state.commit_lists(window);
+        let customs: Vec<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|(id, n)| matches!(n, Native::Custom(_)) && state.node_window.get(id) == Some(&window))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in customs {
+            if let Some(Native::Custom(c)) = state.nodes.get_mut(&id) {
+                c.committed();
+            }
+        }
         for (node, scroll) in &state.scrolls {
             if state.node_window.get(node) == Some(&window) {
                 scroll.fit_document();

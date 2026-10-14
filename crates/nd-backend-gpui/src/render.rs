@@ -24,10 +24,12 @@ use nd_ui::overlay::Overlay;
 use nd_ui::semantics::{Paint, PaintKind};
 use nd_ui::surface::NativeSurface;
 use nd_ui::{
-    ClickEvent, DivProps, Scope, TextProps, TitlebarInsets, WindowControls, WindowControlsProps, with_titlebar_insets,
+    Bezel, ButtonVariant, ClickEvent, DivProps, Scope, TextProps, TitlebarInsets, WindowControls, WindowControlsProps,
+    with_titlebar_insets,
 };
 
 use crate::backend::{GpuiBackend, Node, Wake, is_button};
+use crate::forms::glyph::Glyph;
 use crate::os::{ChromeContext, OsHooks};
 
 /// Records the bounds GPUI laid an element out at.
@@ -315,6 +317,11 @@ impl<'a> Build<'a> {
     /// The colour text inherits where the build is.
     pub fn ink_text(&self) -> Hsla {
         self.top().text
+    }
+
+    /// The opaque colour under what the build is at.
+    pub(crate) fn backdrop(&self) -> Hsla {
+        self.top().background
     }
 
     pub fn look(&self) -> Look {
@@ -635,34 +642,56 @@ impl<'a> Build<'a> {
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
         let look = self.look();
-        // Icons arrive with `nd-icons` (M6); until then an icon-only button shows its tooltip.
+        let theme = self.theme();
+        // An icon-only button draws its glyph; one with no glyph here shows its tooltip.
+        let glyph = if props.label.is_empty() { props.icon.as_deref().and_then(Glyph::named) } else { None };
         let label = if props.label.is_empty() {
             props.tooltip.clone().or_else(|| props.icon.clone()).unwrap_or_default()
         } else {
             props.label.clone()
         };
-        self.painted(id, Some(look.control), None, "button", || {
-            self.text_run(id, &label, Run::BODY, Some(look.text), None);
+        let name = if props.label.is_empty() { label.clone() } else { props.label.clone() };
+        let accent = props.variant == ButtonVariant::Accent;
+        let (fill, ink) = if accent { (theme.accent, theme.text.on_accent) } else { (look.control, look.text) };
+        let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
+        // Borderless: no bezel until the pointer is over it.
+        let bezel = props.bezel != Bezel::Borderless || accent;
+        let rest = bezel.then_some(fill);
+        self.painted(id, rest, None, "button", || {
+            if glyph.is_some() {
+                self.record_marks(
+                    id,
+                    vec![crate::nav::Mark { label: label.to_string(), color: ink, under: vec![], text: None }],
+                );
+            } else {
+                self.text_run(id, &label, Run::BODY, Some(ink), None);
+            }
         });
-        div()
+        let mut button = div()
             .id(ElementId::Integer(id.0))
             .role(gpui::Role::Button)
-            .aria_label(props.label.clone())
+            .aria_label(name)
             .flex()
             .items_center()
             .justify_center()
-            .px(px(12.))
-            .py(px(4.))
             .rounded(px(6.))
-            .border_1()
-            .border_color(look.border)
-            .bg(look.control)
-            .text_color(look.text)
-            .hover(move |s| s.bg(look.control_hover))
-            .active(move |s| s.bg(look.control_active))
+            .text_color(ink)
             // Inside a drag region the button keeps its clicks and never starts a window move.
-            .occlude()
-            .child(label)
+            .occlude();
+        button = match glyph {
+            Some(g) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
+            None => button.px(px(12.)).py(px(4.)).child(label),
+        };
+        if bezel {
+            button = button.border_1().border_color(look.border).bg(fill);
+        }
+        if !props.enabled {
+            return button.into_any_element();
+        }
+        let (hover, active) = (theme.hover(fill), theme.pressed(fill));
+        button
+            .hover(move |s| s.bg(hover))
+            .active(move |s| s.bg(active))
             .on_click(move |_, _, cx| {
                 emit.emit(ClickEvent);
                 wake(cx);
