@@ -955,6 +955,7 @@ name = "chrome"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "ndshell",
 ]
 
 [[package]]
@@ -4577,6 +4578,7 @@ dependencies = [
  "nd-update",
  "nd-virtual",
  "nd-webview",
+ "ndshell",
  "toml 0.9.12+spec-1.1.0",
  "wasm-bindgen-test",
 ]
@@ -5942,6 +5944,7 @@ name = "overrides"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "ndshell",
  "png 0.17.16",
 ]
 
