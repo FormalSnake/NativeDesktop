@@ -11,6 +11,7 @@ mod clock;
 pub mod custom;
 pub mod dialogs;
 mod drawn;
+mod fluent_icons;
 mod forms;
 mod gestures;
 mod host;

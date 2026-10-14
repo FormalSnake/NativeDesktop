@@ -286,6 +286,7 @@ impl gpui::Render for Golden {
                 &golden_tree(),
                 None,
                 &theme,
+                false,
                 None,
                 &Marks::default(),
             )))

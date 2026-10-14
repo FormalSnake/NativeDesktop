@@ -85,10 +85,18 @@ impl Build<'_> {
                 .into_any_element()
         } else if is::<Pane>(kind) {
             let p = props::<PaneProps>(node)?;
-            if p.role != PaneRole::Content && (p.collapsed || self.sidebar_hidden(node)) {
+            let fluent = theme.preset == nd_theme::Preset::Fluent;
+            if p.role != PaneRole::Content && p.collapsed {
+                return Some(div().into_any_element());
+            }
+            // Hidden by the toolbar toggle: WinUI's navigation pane folds to an icon rail,
+            // elsewhere the sidebar goes.
+            let rail = p.role == PaneRole::Sidebar && self.sidebar_hidden(node);
+            if rail && !fluent {
                 return Some(div().into_any_element());
             }
             let pane = styled(&p.style);
+            let pane = if rail { pane.w(px(48.)).min_w(px(48.)).flex_none() } else { pane };
             let sidebar = theme.surface.sidebar;
             // Over an OS backdrop (Mica) a see-through sidebar is the bare material, one surface
             // with the title row, and the content beside it sits on an opaque layer whose leading
@@ -259,10 +267,24 @@ impl Build<'_> {
     /// Whether a pane has an open sidebar beside it in its scaffold.
     fn beside_sidebar(&self, node: &Node) -> bool {
         let Some(parent) = node.parent.and_then(|p| self.nodes.get(&p)) else { return false };
+        let rails = self.theme().preset == nd_theme::Preset::Fluent;
         parent.children.iter().filter_map(|c| self.nodes.get(c)).any(|n| {
             props::<PaneProps>(n).is_some_and(|p| p.role == PaneRole::Sidebar && !p.collapsed)
-                && !self.sidebar_hidden(n)
+                && (rails || !self.sidebar_hidden(n))
         })
+    }
+
+    /// Whether `node` sits in a sidebar the toolbar toggle folded to a rail.
+    pub(crate) fn in_hidden_sidebar(&self, node: &Node) -> bool {
+        let mut at = node.parent;
+        while let Some(id) = at {
+            let Some(n) = self.nodes.get(&id) else { return false };
+            if props::<PaneProps>(n).is_some_and(|p| p.role == PaneRole::Sidebar) {
+                return self.sidebar_hidden(n);
+            }
+            at = n.parent;
+        }
+        false
     }
 
     /// Whether the drawn toolbar toggle hid the sidebar of the scaffold `pane` sits in.
@@ -287,6 +309,8 @@ impl Build<'_> {
             .rounded(theme.radius.md)
             .hover(move |s| s.bg(look.control_hover))
             .occlude()
+            // The title row's own press starts a window move.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, _| {
                 if let Some(scaffold) = scaffold {
                     let mut hidden = hidden.borrow_mut();
@@ -296,7 +320,11 @@ impl Build<'_> {
                 }
                 window.refresh();
             })
-            .child(glyph(Glyph::of(Icon::PanelLeft), px(16.), self.ink_text(), px(1.75)))
+            .child(if theme.preset == nd_theme::Preset::Fluent {
+                crate::fluent_icons::glyph(crate::fluent_icons::HAMBURGER, px(16.), self.ink_text()).into_any_element()
+            } else {
+                glyph(Glyph::of(Icon::PanelLeft), px(16.), self.ink_text(), px(1.75)).into_any_element()
+            })
             .into_any_element()
     }
 
@@ -330,8 +358,13 @@ impl Build<'_> {
                     || item(c).is_some_and(|p| p.leading)
             })
             .count();
-        let color = self.text_run(id, &title, Run::BODY.weight(FontWeight::BOLD), None, None);
-        let label = div().min_w_0().truncate().font_weight(FontWeight::BOLD).text_color(color).child(title);
+        // A WinUI title bar sets the title in the 12 pt Caption style, regular weight.
+        let theme = self.theme();
+        let fluent = theme.preset == nd_theme::Preset::Fluent;
+        let weight = if fluent { FontWeight::NORMAL } else { FontWeight::BOLD };
+        let color = self.text_run(id, &title, Run::BODY.weight(weight), None, None);
+        let label = div().min_w_0().truncate().font_weight(weight).text_color(color).child(title);
+        let label = if fluent { label.text_size(theme.type_scale.caption) } else { label };
         Some((at, label.into_any_element()))
     }
 }
