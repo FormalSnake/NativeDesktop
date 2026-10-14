@@ -270,7 +270,9 @@ impl Application {
         let app_theme = self.theme.unwrap_or_default();
         let patterns = self.patterns;
         #[cfg(target_os = "linux")]
-        let hooks = nd_os_linux::LinuxHooks::new(self.manifest.name);
+        // The Wayland app id and X11 class are what a desktop entry (named after the app id) and
+        // compositor rules match on, so they are the bundle id when there is one.
+        let hooks = nd_os_linux::LinuxHooks::new(self.manifest.id.unwrap_or(self.manifest.name));
         #[cfg(target_arch = "wasm32")]
         let hooks = nd_os_web::WebHooks;
         #[cfg(not(any(target_os = "linux", target_arch = "wasm32")))]
