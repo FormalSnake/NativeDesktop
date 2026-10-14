@@ -4483,11 +4483,16 @@ dependencies = [
 name = "nd-terminal"
 version = "0.1.0"
 dependencies = [
+ "futures",
+ "image",
  "libghostty-vt",
+ "nd-backend-gpui",
  "nd-core",
+ "nd-gpui",
  "nd-theme",
  "nd-ui",
  "portable-pty",
+ "swash",
 ]
 
 [[package]]

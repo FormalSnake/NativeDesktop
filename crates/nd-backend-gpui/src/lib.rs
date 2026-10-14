@@ -7,6 +7,7 @@
 mod backend;
 mod budget;
 mod clock;
+pub mod custom;
 mod drawn;
 mod gestures;
 mod host;

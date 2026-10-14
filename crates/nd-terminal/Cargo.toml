@@ -14,6 +14,31 @@ nd-theme.workspace = true
 # shell's); the 0.2.2 release pins one that needs Zig 0.15, which cannot link on macOS 27.
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "d2036baeb6", default-features = false }
 portable-pty = "0.9.0"
+futures = "0.3.34"
+swash = "0.2.10"
+
+[features]
+# The GPUI presenter on macOS too, for apps that run the GPUI backend there (`nd/gpui`).
+gpui = ["dep:nd-backend-gpui", "dep:nd-gpui", "dep:image"]
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+nd-backend-gpui.workspace = true
+nd-gpui.workspace = true
+image = { version = "0.25.10", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nd-backend-gpui = { workspace = true, optional = true }
+nd-gpui = { workspace = true, optional = true }
+image = { version = "0.25.10", default-features = false, optional = true }
 
 [dev-dependencies]
 nd-theme.workspace = true
+nd-gpui = { workspace = true, features = ["platform", "test-support"] }
+nd-backend-gpui.workspace = true
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+# Tier 2 on the GPUI presenter in GPUI's headless app.
+[[test]]
+name = "gpui"
+harness = false
+required-features = ["gpui"]
