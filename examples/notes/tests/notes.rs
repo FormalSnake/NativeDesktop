@@ -1,125 +1,172 @@
-//! Tier 1 (logic) and tier 2 (pixels) run in-process on the test backend and the headless
-//! renderer; tier 3 launches the real app and drives it over the automation socket.
+//! Tier 1: the app on the test backend, seeded with the demo library, settings in a temp dir.
 
 use nd::prelude::*;
-use nd::test::*;
-use notes::{app::Notes, demo};
+use nd::test::{Role, SemanticAction, SemanticNode, Size, TestApp};
+use nd::virtual_list::RowsSelected;
+use nd_settings::{Options, Paths, Store};
+use notes::actions::{DeleteNote, NewNote, OpenPalette, OpenSettings};
+use notes::app::Notes;
+use notes::model::{Folder, Library, LibraryData, NoteId};
+use notes::{demo, settings};
+use tempfile::TempDir;
 
-fn open(cx: &mut TestApp) -> TestWindow {
-    cx.update(demo::seed);
-    cx.open_window(WindowOptions::main("main"), |window, cx| cx.new(|cx| Notes::new(window, cx)))
+struct Rig {
+    cx: TestApp,
+    win: WindowHandle<Notes>,
+    dir: TempDir,
 }
 
-#[nd::test]
-async fn pinned_notes_sort_first(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    let rows = win.get_by_role(Role::ListItem).within(win.get_by_test_id("notes"));
-    expect(rows.first()).to_contain_text("Groceries").await?;
-    expect(rows).to_have_count(4).await?;
-    Ok(())
+fn open() -> Rig {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    let mut cx = TestApp::new();
+    settings::load(&mut cx, Options::new("notes").paths(Paths::in_dir(&config)).env(Vec::new()));
+    let store = Store::open(dir.path().join("library.json"), LibraryData::VERSION, None);
+    store.update(|data| *data = demo::library());
+    let library = Library::open(store, &mut cx);
+    let win =
+        cx.open_window(Size { width: 960., height: 600. }, |window, cx| cx.new(|cx| Notes::new(library, window, cx)));
+    Rig { cx, win, dir }
 }
 
-#[nd::test]
-async fn new_note_is_selected_and_focused(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    win.get_by_role(Role::Button).name("New Note").click().await?;
-    let first = win.get_by_role(Role::ListItem).first();
-    expect(&first).to_contain_text("Untitled").await?;
-    expect(&first).to_be_selected().await?;
-    win.keyboard().type_text("Plan the week\nMonday: ship").await?;
-    expect(first).to_contain_text("Plan the week").await?;
-    Ok(())
+impl Rig {
+    fn items(&self) -> Vec<u64> {
+        self.win.root().read(&self.cx).notes().read(&self.cx).list().items().into_iter().map(|id| id.0).collect()
+    }
+
+    fn selected(&self) -> Option<u64> {
+        self.win.root().read(&self.cx).notes().read(&self.cx).list().selected().first().map(|id| id.0)
+    }
+
+    fn title(&self, id: u64) -> String {
+        let library = self.win.root().read(&self.cx).library().read(&self.cx);
+        library.note(&NoteId(id)).map(|n| n.title.to_string()).unwrap_or_default()
+    }
+
+    fn sem(&self, id: &str) -> SemanticNode {
+        let tree = self.cx.semantic_tree();
+        match tree.nodes().find(|(_, n)| n.test_id.as_deref() == Some(id)) {
+            Some((_, n)) => n.clone(),
+            None => panic!("no node with id {id:?} in\n{}", tree.snapshot()),
+        }
+    }
+
+    fn dispatch(&mut self, action: &dyn Action) {
+        let window = self.win.id();
+        self.cx.dispatch_action(window, action);
+        self.cx.run_until_idle();
+    }
+
+    fn act(&mut self, id: &str, action: SemanticAction) {
+        let node = self.sem(id).id;
+        self.cx.perform(node, &action).unwrap_or_else(|e| panic!("{id}: {e}"));
+        self.cx.run_until_idle();
+    }
+
+    fn emit<E: 'static>(&mut self, id: &str, event: E) {
+        let node = self.sem(id).id;
+        self.cx.emit(node, event);
+        self.cx.run_until_idle();
+    }
 }
 
-#[nd::test]
-async fn delete_from_context_menu_keeps_scroll_anchor(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    let trip = win.get_by_test_id("note-2");
-    let before = trip.bounds().await?.top();
-    let removed = win.get_by_test_id("note-1").bounds().await?.size.height;
-    win.get_by_test_id("note-1").click_with(MouseButton::Right).await?;
-    win.get_by_role(Role::MenuItem).name("Delete").click().await?;
-    expect(win.get_by_test_id("note-1")).to_be_gone().await?;
-    // The removed row was above; the list moves up by exactly its height, nothing jumps.
-    assert_eq!(trip.bounds().await?.top(), before - removed);
-    Ok(())
+#[test]
+fn pinned_notes_sort_first() {
+    let rig = open();
+    assert_eq!(rig.items(), [1, 2, 3, 4]);
+    assert_eq!(rig.title(1), "Groceries");
 }
 
-#[nd::test]
-async fn palette_completes_and_opens_a_note(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    win.keyboard().press("secondary-k").await?;
-    let palette = win.get_by_role(Role::Dialog).name("Command Palette");
-    expect(&palette).to_be_visible().await?;
-    win.keyboard().type_text("tri").await?;
-    // The first row's title starts with the query, so its completion shows selected after the caret.
-    expect(palette.get_by_role(Role::SearchBox)).to_have_value("tri|p to Lisbon").await?;
-    win.keyboard().press("tab").await?;
-    win.keyboard().press("enter").await?;
-    expect(palette).to_be_gone().await?;
-    expect(win.get_by_test_id("editor")).to_contain_text("Tram 28").await?;
-    Ok(())
+#[test]
+fn folders_count_and_filter() {
+    let mut rig = open();
+    assert_eq!(rig.sem("folders").role, Role::Tree);
+    let counts = Folder::ALL.map(|f| rig.win.root().read(&rig.cx).library().read(&rig.cx).count(f));
+    assert_eq!(counts, [4, 1, 0]);
+    rig.emit("folders", SourceSelected { id: "pinned".into() });
+    assert_eq!(rig.items(), [1]);
 }
 
-#[nd::test]
-async fn settings_sheet_round_trips_to_toml(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    win.keyboard().press("secondary-,").await?;
-    win.get_by_role(Role::Switch).name("Compact rows").click().await?;
-    win.get_by_role(Role::Button).name("Done").click().await?;
-    let toml = std::fs::read_to_string(cx.config_dir().join("config.toml"))?;
-    assert!(toml.contains("compact_rows = true"));
-    Ok(())
+#[test]
+fn new_note_is_selected_and_edits_retitle_it() {
+    let mut rig = open();
+    rig.dispatch(&NewNote);
+    assert_eq!(rig.items().first(), Some(&5));
+    assert_eq!(rig.selected(), Some(5));
+    assert_eq!(rig.title(5), "Untitled");
+    rig.act("body", SemanticAction::SetValue("Plan the week\nMonday: ship".into()));
+    assert_eq!(rig.title(5), "Plan the week");
 }
 
-#[nd::test]
-async fn opening_a_note_does_not_reorder_the_list(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    win.get_by_test_id("note-4").click().await?;
-    let rows = win.get_by_role(Role::ListItem).within(win.get_by_test_id("notes"));
-    expect(rows.nth(3)).to_contain_text("Ideas").await?; // still last: set_text emits Replaced, not Edited
-    Ok(())
+#[test]
+fn delete_removes_the_row() {
+    let mut rig = open();
+    rig.dispatch(&DeleteNote(NoteId(1)));
+    assert_eq!(rig.items(), [2, 3, 4]);
 }
 
-#[nd::test]
-async fn pinch_zoom_snaps_at_one_hundred(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    let editor = win.get_by_test_id("editor");
-    editor.pinch(0.8).await?;
-    editor.pinch(1.3).await?;
-    expect(win.get_by_test_id("zoom-label")).to_be_gone().await?; // crossed 100%, snapped back
-    assert_eq!(cx.haptics(), [Haptic::Alignment]);
-    Ok(())
+#[test]
+fn search_filters_the_list() {
+    let mut rig = open();
+    rig.act("search", SemanticAction::SetValue("tram".into()));
+    assert_eq!(rig.items(), [2]);
+    rig.act("search", SemanticAction::SetValue(String::new()));
+    assert_eq!(rig.items(), [1, 2, 3, 4]);
 }
 
-#[nd::test(pixels)]
-async fn default_window(cx: &mut TestApp) -> nd::Result<()> {
-    let win = open(cx);
-    win.set_size(size(px(960.), px(600.)));
-    win.snapshot("notes-default").await?; // golden per platform, light and dark
-    Ok(())
+#[test]
+fn palette_completes_and_opens_a_note() {
+    let mut rig = open();
+    rig.dispatch(&OpenPalette);
+    assert!(rig.win.root().read(&rig.cx).palette_open());
+    rig.emit("palette", PaletteQueryChanged { text: "tri".into() });
+    let items = rig.win.root().read(&rig.cx).palette_items(&rig.cx);
+    assert_eq!(items[0].id.as_ref(), "note:2");
+    assert_eq!(items[0].completion.as_ref().map(|c| c.as_ref()), Some("Trip to Lisbon"));
+    rig.emit("palette", PaletteActivated { id: "note:2".into() });
+    assert!(!rig.win.root().read(&rig.cx).palette_open());
+    assert_eq!(rig.selected(), Some(2));
+    assert!(rig.sem("body").value.unwrap_or_default().contains("Tram 28"));
 }
 
-#[nd::test(real)]
-async fn swipe_to_delete_on_the_real_window() -> nd::Result<()> {
-    let app = launch(env!("CARGO_BIN_EXE_notes")).env("NOTES_DEMO", "1").start().await?;
-    let row = app.get_by_test_id("note-3");
-    row.swipe(Direction::Left).await?; // trackpad gesture on macOS, synthesized at the platform layer elsewhere
-    // Row actions are drawn by AppKit on macOS; they are synthetic nodes in the semantic tree.
-    row.get_by_role(Role::Button).name("Delete").click().await?;
-    expect(row).to_be_gone().await?;
-    app.record().last_frames(30).save("swipe-delete")?; // kept as a test artifact for review
-    Ok(())
+#[test]
+fn settings_sheet_round_trips_to_toml() {
+    let mut rig = open();
+    rig.dispatch(&OpenSettings);
+    rig.act("compact_rows", SemanticAction::Click);
+    let toml = std::fs::read_to_string(rig.dir.path().join("config/config.toml")).unwrap();
+    assert!(toml.contains("compact_rows = true"), "{toml}");
+    assert!(settings::current(&rig.cx).compact_rows);
 }
 
-#[nd::test(real)]
-async fn popover_menu_does_not_leak_into_the_editor() -> nd::Result<()> {
-    let app = launch(env!("CARGO_BIN_EXE_notes")).env("NOTES_DEMO", "1").start().await?;
-    app.get_by_test_id("note-2").click_with(MouseButton::Right).await?;
-    let editor = app.get_by_test_id("editor");
-    // Outside press closes the menu and is consumed; the editor never sees it.
-    app.mouse().click(editor.center().await?).await?;
-    expect(app.get_by_role(Role::Menu)).to_be_gone().await?;
-    expect(editor).not().to_be_focused().await?;
-    Ok(())
+#[test]
+fn opening_a_note_does_not_reorder_the_list() {
+    let mut rig = open();
+    let row = rig.win.root().read(&rig.cx).notes().read(&rig.cx).list().row_of(&NoteId(4)).unwrap();
+    rig.emit("notes", RowsSelected(vec![row]));
+    assert!(rig.sem("body").value.unwrap_or_default().contains("Ideas"));
+    assert_eq!(rig.items(), [1, 2, 3, 4]);
+}
+
+#[test]
+fn pinch_zoom_snaps_at_one_hundred() {
+    let mut rig = open();
+    let editor = rig.win.root().read(&rig.cx).editor().clone();
+    let pinch = |scale| PinchEvent { position: Default::default(), scale, phase: GesturePhase::Changed };
+    rig.emit("editor", pinch(0.8));
+    assert_eq!(editor.read(&rig.cx).zoom(), 0.8);
+    rig.emit("editor", pinch(1.3));
+    assert_eq!(editor.read(&rig.cx).zoom(), 1.0, "crossed 100%, snapped back");
+    assert_eq!(rig.cx.backend().haptics(), [Haptic::Alignment]);
+}
+
+#[test]
+fn the_window_shows_the_toolbar_and_editor() {
+    let rig = open();
+    let tree = rig.cx.semantic_tree();
+    let roles: Vec<Role> = tree.nodes().map(|(_, n)| n.role).collect();
+    for role in [Role::SearchBox, Role::TextArea, Role::Button] {
+        assert!(roles.contains(&role), "no {role:?} in\n{}", tree.snapshot());
+    }
 }

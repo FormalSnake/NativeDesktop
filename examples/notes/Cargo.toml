@@ -7,12 +7,15 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-# The example needs APIs that ship in M6 (components) and M7 (settings). Without the feature the
-# crate is empty, so the workspace builds; CI turns it on once the milestone lands.
+# Without the feature the crate is empty.
 m6 = []
 
 [dependencies]
 nd = { path = "../../crates/nd", features = ["settings-ui"] }
+# `#[derive(Settings)]` expands to `::nd_settings` paths, and settings and action payloads derive
+# `JsonSchema`, neither of which `nd` re-exports.
+nd-settings = { path = "../../crates/nd-settings" }
+schemars = "1.2.3"
 serde = { version = "1", features = ["derive"] }
 jiff = { version = "0.2", features = ["serde"] }
 
@@ -21,6 +24,7 @@ jiff = { version = "0.2", features = ["serde", "js"] }
 
 [dev-dependencies]
 nd = { path = "../../crates/nd", features = ["test"] }
+tempfile = "3"
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
