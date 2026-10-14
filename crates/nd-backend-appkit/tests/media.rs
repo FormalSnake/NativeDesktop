@@ -38,7 +38,6 @@ mod media {
     pub use rig::{Checks, Rig};
 
     pub fn run() -> ! {
-        let _lock = ndshell::lock::acquire("nd-backend-appkit media mapping").expect("machine lock");
         let rig = Rig::new();
         let mut c = Checks(0);
         images(&rig, &mut c);

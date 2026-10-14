@@ -4,7 +4,7 @@
 //! app, not the view, so switching tabs keeps each one's scrollback and running program.
 
 use nd::prelude::*;
-use nd::terminal::{Command, Exited, LinkActivated, SessionOptions, TerminalSession, TitleChanged, terminal};
+use nd_terminal::{Command, Exited, LinkActivated, SessionOptions, TerminalSession, TitleChanged, terminal};
 
 actions!(terminal_app, [NewTab, CloseTab]);
 

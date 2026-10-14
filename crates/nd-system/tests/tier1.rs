@@ -216,7 +216,8 @@ fn media_session_and_commands() {
 fn audio_players_report_transitions() {
     let (sys, fake) = System::fake();
     let mut events = sys.events();
-    let player = block_on(sys.audio().play(PlayOptions::path("/tmp/a.wav").volume(2.).spectrum())).unwrap();
+    let (player, started) = sys.audio().play(PlayOptions::path("/tmp/a.wav").volume(2.).spectrum());
+    block_on(started).unwrap();
     assert_eq!(fake.state().players[&player.id().0].volume, 1., "volume clamps to 0..=1");
     let state = |events: &mut nd_system::Events| match events.try_next() {
         Some(SystemEvent::Audio { event: AudioEvent::State { state, .. }, .. }) => Some(state),

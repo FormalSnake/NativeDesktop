@@ -96,7 +96,7 @@ mod gate_m9_terminal {
             assert!(text.contains("wide: 你好世界"), "{text}");
             let handle = o.host.window_handle(o.window).expect("GPUI window");
             let image = o.cx.capture_screenshot(handle).expect("capture");
-            let name = format!("printf-gpui-{}-{}", if scheme.is_dark() { "dark" } else { "light" }, support::os());
+            let name = format!("printf-gpui-{}", if scheme.is_dark() { "dark" } else { "light" });
             if let Err(e) = support::compare(&name, &image) {
                 failed.push(e);
             }

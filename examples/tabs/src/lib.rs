@@ -24,7 +24,9 @@ pub struct Page {
 impl Render for Page {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.url {
-            Some(_) => webview(SharedString::from(format!("page-{}", self.number)), &self.web).size_full().into_any_element(),
+            Some(_) => {
+                webview(SharedString::from(format!("page-{}", self.number)), &self.web).size_full().into_any_element()
+            }
             None => status_page("New Tab")
                 .id("new-tab")
                 .icon(Icon::Globe)

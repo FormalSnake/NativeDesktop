@@ -7,6 +7,7 @@
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens. A mismatch writes `<golden>.actual.png` beside
 //! the golden. Prints `ND_GALLERY_GOLDENS_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m6::gallery_forms_goldens";

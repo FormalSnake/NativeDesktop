@@ -390,12 +390,13 @@ impl Media<'_> {
 pub struct Audio<'a>(&'a System);
 
 impl Audio<'_> {
-    /// Starts playing; state changes and spectrum frames arrive as [`SystemEvent::Audio`].
-    pub fn play(&self, options: PlayOptions) -> Pending<Player> {
-        let id = PlayerId(self.0.next_id());
-        let system = self.0.clone();
-        let call = self.0.call(|b, r| b.audio_play(id, options, r));
-        Box::pin(async move { call.await.map(|()| Player { id, system }) })
+    /// Starts playing; state changes and spectrum frames arrive as [`SystemEvent::Audio`]. The
+    /// player comes back at once: its first events can reach the app before the pending start
+    /// does, and its id is what matches them. The start fails when the sound cannot be played.
+    pub fn play(&self, options: PlayOptions) -> (Player, Pending<()>) {
+        let player = Player { id: PlayerId(self.0.next_id()), system: self.0.clone() };
+        let id = player.id;
+        (player, self.0.call(|b, r| b.audio_play(id, options, r)))
     }
 }
 

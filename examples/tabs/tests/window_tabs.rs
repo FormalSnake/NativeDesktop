@@ -5,6 +5,7 @@
 //! through the window's key path. Takes the ndshell machine lock: a key window is needed.
 //! Prints `ND_TABS_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m6::appkit_window_tabs_example";
@@ -91,7 +92,7 @@ mod window {
     }
 
     pub fn run() {
-        let _lock = ndshell::lock::acquire("tabs window").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gate_m6::appkit_window_tabs_example");
         let mtm = MainThreadMarker::new().expect("main thread");
         unsafe {
             std::env::set_var("ND_THEME_TOML", "");

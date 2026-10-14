@@ -3,7 +3,7 @@
 //! panel, with input through the window's own pointer and key paths; and their goldens, light
 //! and dark, captured from the host's own window.
 //!
-//! `ND_UPDATE_GOLDENS=1` rewrites the goldens: `tests/goldens/layout-<view>-<scheme>-<os>.png`.
+//! `ND_UPDATE_GOLDENS=1` rewrites the goldens: `tests/goldens/<os>/layout-<view>-<scheme>.png`.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -420,19 +420,10 @@ mod gate_m6 {
     }
 }
 
-fn os() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "linux"
-    }
-}
-
 fn golden_path(view: &str, scheme: Scheme) -> PathBuf {
     let scheme = if scheme.is_dark() { "dark" } else { "light" };
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/layout-{view}-{scheme}-{}.png", os()))
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("tests/goldens/{}/layout-{view}-{scheme}.png", std::env::consts::OS))
 }
 
 /// Per channel, out of 255, and the share of pixels allowed past it: antialiasing drifts.
@@ -463,11 +454,14 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
     let handle = o.host.window_handle(o.window).ok_or("no window")?;
     let image = o.cx.capture_screenshot(handle).map_err(|e| e.to_string())?;
     let path = golden_path(view, scheme);
-    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") || !path.exists() {
+    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().expect("dir")).map_err(|e| e.to_string())?;
         image.save(&path).map_err(|e| e.to_string())?;
         println!("recorded {}", path.display());
         return Ok(());
+    }
+    if !path.exists() {
+        return Err(format!("{} is missing (record it with ND_UPDATE_GOLDENS=1)", path.display()));
     }
     let expected = image::open(&path).map_err(|e| e.to_string())?.to_rgba8();
     let actual_path = path.with_extension("actual.png");

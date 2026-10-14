@@ -3,6 +3,7 @@
 //! control; its tabs are the toolbar's own selectable items, and picking one swaps the rows.
 //! `ND_CHROME_SHOT=<dir>` screenshots the window there. Prints `ND_SETTINGS_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m3::settings_window";

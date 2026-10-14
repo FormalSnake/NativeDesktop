@@ -223,7 +223,7 @@ impl MediaPage {
             TransportCommand::TogglePlay => {
                 let playing = !self.clock.playing;
                 self.clock = if playing { PlaybackClock::playing(now) } else { PlaybackClock::paused(now) };
-                match (&self.player, playing) {
+                match (self.started_player(), playing) {
                     (Some(p), true) => run(p.resume()),
                     (Some(p), false) => run(p.pause()),
                     (None, true) => self.start(now, cx),
@@ -232,13 +232,13 @@ impl MediaPage {
             }
             TransportCommand::Seek(p) => {
                 self.clock = if self.clock.playing { PlaybackClock::playing(p) } else { PlaybackClock::paused(p) };
-                if let Some(player) = &self.player {
+                if let Some(player) = self.started_player() {
                     run(player.seek(p));
                 }
             }
             TransportCommand::Previous => {
                 self.clock = PlaybackClock::paused(Duration::ZERO);
-                if let Some(player) = &self.player {
+                if let Some(player) = self.started_player() {
                     run(player.pause());
                     run(player.seek(Duration::ZERO));
                 }
@@ -250,14 +250,19 @@ impl MediaPage {
             TransportCommand::ToggleMute => self.muted = !self.muted,
             TransportCommand::Next | TransportCommand::Scrub(_) => {}
         }
-        if let Some(player) = &self.player {
+        if let Some(player) = self.started_player() {
             run(player.set_volume(if self.muted { 0. } else { self.volume }));
         }
         self.publish();
         self.last = format!("{command:?}").into();
     }
 
-    /// Starts the tone at `at`; the player arrives on a later turn.
+    /// The player once the OS has started it; controls sent before that would find no sound.
+    fn started_player(&self) -> Option<&nd::system::Player> {
+        self.player.as_ref().filter(|_| !self.starting)
+    }
+
+    /// Starts the tone at `at`; the OS reports it started on a later turn.
     fn start(&mut self, at: Duration, cx: &mut Context<Self>) {
         let Some(tone) = self.tone.clone() else { return };
         if self.starting {
@@ -266,21 +271,23 @@ impl MediaPage {
         self.starting = true;
         let volume = if self.muted { 0. } else { self.volume };
         let options = nd::system::PlayOptions::path(tone).volume(volume);
+        let (player, started) = nd::system::system().audio().play(options);
+        self.player = Some(player.clone());
         let page = cx.weak_entity();
-        nd::system::spawn(nd::system::system().audio().play(options), move |player, app| {
+        nd::system::spawn(started, move |started, app| {
             page.update(app, |this, cx| {
                 this.starting = false;
-                match player {
-                    Ok(player) => {
+                match started {
+                    Ok(()) => {
                         if !at.is_zero() {
                             run(player.seek(at));
                         }
                         if !this.clock.playing {
                             run(player.pause());
                         }
-                        this.player = Some(player);
                     }
                     Err(e) => {
+                        this.player = None;
                         this.clock = PlaybackClock::paused(at);
                         this.last = format!("Could not play: {e}").into();
                     }

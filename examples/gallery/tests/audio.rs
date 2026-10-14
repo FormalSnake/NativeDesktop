@@ -3,6 +3,7 @@
 //! OS player, which reports the new position when it pauses. Plays a quiet tone for about two
 //! seconds and holds the ndshell machine lock. Prints `ND_GALLERY_AUDIO_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m6::gallery_audio";
@@ -59,7 +60,7 @@ mod audio {
     pub fn run() -> ! {
         let data = std::env::temp_dir().join(format!("nd-gallery-audio-{}", std::process::id()));
         unsafe { std::env::set_var("ND_APP_DATA_DIR", &data) };
-        let _lock = ndshell::lock::acquire("gallery audio").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gate_m6::gallery_audio");
         let host = gallery::app().host(|_cx| {});
         let start = gallery::Start { page: gallery::Page::Media, audio: true, ..gallery::Start::default() };
         let handle = host.update(|cx| gallery::open(cx, start));

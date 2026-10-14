@@ -18,33 +18,27 @@ pub fn printf_command() -> Command {
     Command::new("printf").arg(lines.join("\\n"))
 }
 
-pub fn os() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "linux"
-    }
-}
-
+/// Per OS: text is shaped by each platform's text system.
 pub fn golden_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/{name}.png"))
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/{}/{name}.png", std::env::consts::OS))
 }
 
 /// Per channel, out of 255, and the share of pixels allowed past it: antialiasing drifts.
 const CHANNEL_TOLERANCE: i16 = 24;
 const PIXEL_TOLERANCE: f64 = 0.004;
 
-/// Compares `image` with the golden `name`, recording it when missing or `ND_UPDATE_GOLDENS=1`.
+/// Compares `image` with the golden `name`, recording it with `ND_UPDATE_GOLDENS=1`.
 /// A mismatch writes `<golden>.actual.png` beside it.
 pub fn compare(name: &str, image: &image::RgbaImage) -> Result<(), String> {
     let path = golden_path(name);
-    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") || !path.exists() {
+    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().expect("dir")).map_err(|e| e.to_string())?;
         image.save(&path).map_err(|e| e.to_string())?;
         println!("recorded {}", path.display());
         return Ok(());
+    }
+    if !path.exists() {
+        return Err(format!("{} is missing (record it with ND_UPDATE_GOLDENS=1)", path.display()));
     }
     let expected = image::open(&path).map_err(|e| e.to_string())?.to_rgba8();
     let actual_path = path.with_extension("actual.png");

@@ -44,8 +44,9 @@ mod real {
 
         let system = System::native();
         let mut events = system.events();
-        let player = match block_on(system.audio().play(PlayOptions::path(&tone).volume(VOLUME).spectrum())) {
-            Ok(player) => player,
+        let (player, started) = system.audio().play(PlayOptions::path(&tone).volume(VOLUME).spectrum());
+        match block_on(started) {
+            Ok(()) => {}
             Err(Error::Platform(message))
                 if cfg!(target_os = "linux")
                     && message.starts_with("audio unavailable")
@@ -55,7 +56,7 @@ mod real {
                 return;
             }
             Err(e) => panic!("play failed: {e}"),
-        };
+        }
         let id = player.id();
 
         let playing = wait_state(&mut events, id, PATIENCE);
@@ -111,13 +112,14 @@ mod real {
 
         let junk = dir.path().join("junk.wav");
         std::fs::write(&junk, b"RIFF this is not audio at all, just bytes").expect("write junk");
-        let bad = block_on(system.audio().play(PlayOptions::path(&junk).volume(0.))).expect("play junk");
+        let (bad, started) = system.audio().play(PlayOptions::path(&junk).volume(0.));
+        block_on(started).expect("play junk");
         let failed = wait_state(&mut events, bad.id(), PATIENCE);
         assert_eq!(failed.0, AudioState::Error);
         assert!(failed.3.is_some_and(|m| !m.is_empty()), "error carries a message");
         block_on(bad.stop()).expect("stop the failed player");
 
-        let missing = block_on(system.audio().play(PlayOptions::path(dir.path().join("missing.wav"))));
+        let missing = block_on(system.audio().play(PlayOptions::path(dir.path().join("missing.wav"))).1);
         assert!(matches!(missing, Err(Error::Invalid(_))), "missing file: {:?}", missing.err());
 
         println!("audio_playback: ok");

@@ -141,6 +141,49 @@ pub fn test_main<F: Factory>(prefix: &str, factory: &F) {
     }
 }
 
+/// As [`test_main`], but the whole suite is the one test `name`, every check run in one process.
+/// For a presenter that opens a real app and window per check, where process start dominates.
+pub fn test_main_as_one<F: Factory>(name: &str, factory: &F) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    if has("--list") {
+        if !has("--ignored") {
+            println!("{name}: test");
+        }
+        return;
+    }
+    let exact = has("--exact");
+    let mut skip = false;
+    let selected = args
+        .iter()
+        .filter(|a| {
+            if std::mem::take(&mut skip) {
+                return false;
+            }
+            if matches!(a.as_str(), "--format" | "--test-threads" | "--color" | "--skip" | "-Z") {
+                skip = true;
+            }
+            !a.starts_with('-')
+        })
+        .all(|f| if exact { f == name } else { name.contains(f.as_str()) });
+    if has("--ignored") || !selected {
+        return;
+    }
+    let mut failed = 0;
+    for (check_name, check) in checks::<F>() {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(factory))) {
+            Ok(()) => println!("check {check_name} ... ok"),
+            Err(_) => {
+                println!("check {check_name} ... FAILED");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 {
+        std::process::exit(101);
+    }
+}
+
 /// Runs every check.
 pub fn run_all<F: Factory>(factory: &F) {
     for (name, check) in checks::<F>() {

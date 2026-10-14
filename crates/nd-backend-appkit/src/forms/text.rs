@@ -992,7 +992,8 @@ impl TextAreaControl {
         if let Some(layer) = self.scroll.layer() {
             layer.setCornerRadius(f64::from(radius));
             layer.setMasksToBounds(true);
-            layer.setBorderWidth(1.);
+            // A hairline is one device pixel.
+            layer.setBorderWidth(1. / self.scroll.window().map_or(1., |w| w.backingScaleFactor()));
         }
         self.appearance_changed();
         let inset = (f64::from(radius) * 0.4).round();

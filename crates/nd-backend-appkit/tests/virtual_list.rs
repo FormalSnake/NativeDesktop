@@ -20,7 +20,7 @@ mod mac {
     use nd_backend_appkit::objc2_foundation::NSPoint;
     use nd_ui::prelude::*;
     use nd_ui::{NodeId, WindowId};
-    use nd_virtual::conformance::{Harness, Painted, Setup, test_main};
+    use nd_virtual::conformance::{Harness, Painted, Setup, test_main_as_one};
     use nd_virtual::{Align, ListState, list};
 
     struct Rows {
@@ -162,15 +162,24 @@ mod mac {
             });
         }
 
+        /// Until two passes in a row find no frame pending: AppKit applies a table's height
+        /// changes on the run loop pass after the frame that made them.
         fn settle(&mut self) {
-            for _ in 0..16 {
+            let mut quiet = 0;
+            for _ in 0..64 {
                 self.host.platform().pump(Duration::from_millis(1), Duration::from_millis(30));
-                self.host.update(|app| {
+                let busy = self.host.update(|app| {
                     app.drain_events();
-                    if app.needs_frame() {
+                    let busy = app.needs_frame();
+                    if busy {
                         app.frame();
                     }
+                    busy
                 });
+                quiet = if busy { 0 } else { quiet + 1 };
+                if quiet == 2 {
+                    return;
+                }
             }
         }
 
@@ -243,6 +252,6 @@ mod mac {
     }
 
     pub fn main() {
-        test_main("gate_m5::appkit_conformance", &(open as fn(Setup) -> Mac));
+        test_main_as_one("gate_m5::appkit_conformance", &(open as fn(Setup) -> Mac));
     }
 }
