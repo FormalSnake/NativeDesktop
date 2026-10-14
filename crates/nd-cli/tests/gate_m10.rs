@@ -3,9 +3,12 @@
 //! every publisher writes to a local target.
 
 mod gate_m10 {
+    #[cfg(target_os = "macos")]
     use std::path::{Path, PathBuf};
+    #[cfg(target_os = "macos")]
     use std::process::{Child, Command, Stdio};
     use std::sync::{Arc, Mutex};
+    #[cfg(target_os = "macos")]
     use std::time::{Duration, Instant};
 
     use nd_cli::publish::{self, GhCommand, S3Target};
@@ -111,8 +114,10 @@ mod gate_m10 {
     // The full flow below is macOS only for now: `nd package linux` and `windows` are covered by
     // the unit tests of their argument and AppDir builders.
 
+    #[cfg(target_os = "macos")]
     const APP_ID: &str = "dev.formalsnake.ndgatem10";
 
+    #[cfg(target_os = "macos")]
     fn nd(dir: &Path, args: &[&str]) -> String {
         let output = Command::new(env!("CARGO_BIN_EXE_nd")).args(args).current_dir(dir).output().expect("spawn nd");
         assert!(
@@ -124,12 +129,14 @@ mod gate_m10 {
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
+    #[cfg(target_os = "macos")]
     fn system(program: &str, args: &[&str]) {
         let status =
             Command::new(program).args(args).env_remove("SDKROOT").env_remove("DEVELOPER_DIR").status().unwrap();
         assert!(status.success(), "{program} {args:?} failed ({status})");
     }
 
+    #[cfg(target_os = "macos")]
     fn bundle_version(app: &Path) -> String {
         let out = Command::new("/usr/bin/plutil")
             .args(["-extract", "CFBundleShortVersionString", "raw"])
@@ -139,19 +146,23 @@ mod gate_m10 {
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
+    #[cfg(target_os = "macos")]
     fn velopack_packages() -> PathBuf {
         PathBuf::from(std::env::var_os("HOME").unwrap()).join("Library/Caches/velopack").join(APP_ID)
     }
 
+    #[cfg(target_os = "macos")]
     fn free_port() -> u16 {
         std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
     }
 
+    #[cfg(target_os = "macos")]
     struct Serve {
         child: Child,
         log: PathBuf,
     }
 
+    #[cfg(target_os = "macos")]
     impl Serve {
         fn start(dir: &Path, root: &Path, port: u16, log: PathBuf) -> Self {
             let out = std::fs::File::create(&log).unwrap();
@@ -176,6 +187,7 @@ mod gate_m10 {
         }
     }
 
+    #[cfg(target_os = "macos")]
     impl Drop for Serve {
         fn drop(&mut self) {
             let _ = self.child.kill();
@@ -183,6 +195,7 @@ mod gate_m10 {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn launch(app: &Path) -> nd_test::AppHandle {
         nd_test::launch_app(
             nd_test::LaunchOptions::new(app.join("Contents/MacOS/demo")).env("ND_UPDATE_DELAY_MS", "200"),
@@ -190,6 +203,7 @@ mod gate_m10 {
         .expect("launch the packaged app")
     }
 
+    #[cfg(target_os = "macos")]
     fn wait_until(what: &str, timeout: Duration, mut done: impl FnMut() -> bool) {
         let start = Instant::now();
         while !done() {

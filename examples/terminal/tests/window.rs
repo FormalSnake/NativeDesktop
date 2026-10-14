@@ -4,6 +4,7 @@
 //! back into the grid. The view draws through a `CAMetalLayer` sized to its backing pixels.
 //! Takes the ndshell machine lock: a key window is needed. Prints `ND_TERMINAL_WINDOW_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m9_terminal::appkit_window_keys_reach_cat";

@@ -41,6 +41,14 @@ pub mod prelude {
         titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::chrome::{
+        Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
+        ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,
+        LyricsView, NowPlaying, Outgoing, PastedImage, Person, PlaybackClock, PlayerBar, Reaction, RunPosition,
+        SeekBar, SeekPhase, Seeked, Shelf, ShelfArrows, ShelfHandle, ShelfScroll, ShelfScrolled, TransportCommand,
+        TransportLayout, avatar, avatar_group, chat_bubble, chat_row, composer, format_clock, image, image_placeholder,
+        lyrics_view, player_bar, seek_bar, shelf,
+    };
+    pub use crate::chrome::{
         ButtonGroup, Checkbox, CivilDateTime, Clamp, ColorChanged, ColorWell, ComboBox, DateChanged, DatePicker,
         DatePickerMode, DatePickerStyle, FieldIconClicked, FormField, FormSection, IconEdge, Label, LabelTone, Link,
         LinkActivated, Progress, RowActivated, Stepper, StepperChanged, Switch, TextArea, TextChanged, TextEvent,
@@ -48,14 +56,6 @@ pub mod prelude {
         combo_box, date_picker, form_field, label, link, navigation_row, progress, radio_group, row, search_field,
         secure_field, segmented, settings_group, sheet_layout, spinner, stepper, switch, switch_row, text_area,
         text_field,
-    };
-    pub use crate::chrome::{
-        Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
-        ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,
-        LyricsView, NowPlaying, Outgoing, PastedImage, Person, PlaybackClock, PlayerBar, Reaction, RunPosition, SeekBar,
-        SeekPhase, Seeked, Shelf, ShelfArrows, ShelfHandle, ShelfScroll, ShelfScrolled, TransportCommand,
-        TransportLayout, avatar, avatar_group, chat_bubble, chat_row, composer, format_clock, image, image_placeholder,
-        lyrics_view, player_bar, seek_bar, shelf,
     };
     pub use crate::controls::{Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas};
     pub use crate::native::{ElementId, NativeStyled};

@@ -12,6 +12,7 @@
 
 mod common;
 
+#[cfg(target_os = "macos")]
 fn real_allowed(name: &str) -> bool {
     let allowed = std::env::var_os("NEXTEST").is_some() || std::env::var_os("ND_REAL").is_some_and(|v| v == "1");
     if !allowed {
@@ -20,17 +21,24 @@ fn real_allowed(name: &str) -> bool {
     allowed
 }
 
+#[cfg(target_os = "macos")]
 fn now_ms() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
 }
 
 mod gate_m1_automation {
+    #[cfg(target_os = "macos")]
     use std::process::{Command, Stdio};
+    #[cfg(target_os = "macos")]
     use std::time::{Duration, Instant};
 
-    use nd_test::{LaunchOptions, Role, expect, launch_app};
+    #[cfg(target_os = "macos")]
+    use nd_test::{LaunchOptions, launch_app};
+    use nd_test::{Role, expect};
 
-    use super::{common, now_ms, real_allowed};
+    use super::common;
+    #[cfg(target_os = "macos")]
+    use super::{now_ms, real_allowed};
 
     #[test]
     fn tier1_locator_click() {
