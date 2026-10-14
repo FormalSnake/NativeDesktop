@@ -29,6 +29,8 @@ pub(crate) struct WindowRecord {
     pub handle: Option<AnyWindowHandle>,
     /// The window as of its last frame, for reads that arrive while GPUI is drawing.
     pub state: WindowState,
+    /// What a toolbar with no title of its own shows.
+    pub title: nd_gpui::gpui::SharedString,
 }
 
 /// Drawn controls the user focused, by window, waiting for the host's next pump.
@@ -575,6 +577,12 @@ impl Backend for GpuiBackend {
         }
         let state = self.state.try_borrow().ok()?.windows.get(&window)?.state.clone();
         Some(self.tab_state(window, state))
+    }
+
+    fn set_window_title(&mut self, window: WindowId, title: &str) {
+        let mut state = self.state.borrow_mut();
+        state.windows.entry(window).or_default().title = title.to_owned().into();
+        state.dirty.insert(window);
     }
 
     /// Recorded for the host, which carries it out on its next pump with the app free.

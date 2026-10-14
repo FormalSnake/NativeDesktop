@@ -632,6 +632,7 @@ impl Inner {
             }
         }
         for (id, title, size, group) in wanted {
+            self.backend.state.borrow_mut().windows.entry(id).or_default().title = title.clone();
             if self.windows.borrow().contains_key(&id) {
                 continue;
             }

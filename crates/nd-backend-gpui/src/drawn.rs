@@ -8,7 +8,8 @@ use std::any::TypeId;
 use nd_components::{
     Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane, PaneProps,
     PaneRole, Scaffold, SeparatorKind, SeparatorProps, SystemItem, SystemItemProps, TabSelected, Titlebar,
-    TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarSystemItem, ToolbarTab, ToolbarTabProps,
+    TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab,
+    ToolbarTabProps,
 };
 use nd_core::NodeId;
 use nd_gpui::gpui::{
@@ -93,16 +94,23 @@ impl Build<'_> {
             self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element())
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
             // The window's title row: it moves the window and keeps clear of the OS controls.
-            let base = props::<TitlebarProps>(node).map(|p| p.style.clone()).unwrap_or_default();
-            let style = with_titlebar_insets(&base, self.insets);
-            let mut row = div().id(ElementId::Integer(id.0));
-            row.style().refine(&style);
+            // Defaults, then the app's style, then the OS insets added on top of both: the
+            // insets pad out from whatever padding the row ends up with.
+            let s = &theme.spacing;
+            let mut row = div().id(ElementId::Integer(id.0)).p(s.sm).min_h(theme.control.regular + s.sm * 2.);
+            if let Some(p) = props::<TitlebarProps>(node) {
+                row.style().refine(&p.style);
+            }
+            let merged = row.style().clone();
+            *row.style() = with_titlebar_insets(&merged, self.insets);
+            let mut items = children(window, cx);
+            if let Some((at, title)) = self.toolbar_title(id, node) {
+                items.insert(at, title);
+            }
             row.flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
+                .gap(s.sm)
                 .w_full()
                 .flex_none()
                 .border_b_1()
@@ -115,7 +123,7 @@ impl Build<'_> {
                         crate::render::start_window_move(window);
                     }
                 })
-                .children(children(window, cx))
+                .children(items)
                 .into_any_element()
         } else if is::<ToolbarItem>(kind) {
             div().flex().occlude().children(children(window, cx)).into_any_element()
@@ -161,19 +169,32 @@ impl Build<'_> {
             let line = div().bg(look.border);
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
         } else if is::<Form>(kind) {
-            div().size_full().flex().flex_col().gap_4().p_4().children(children(window, cx)).into_any_element()
+            // The form scrolls itself, like AppKit's: rows past its height scroll under it rather
+            // than drawing over what follows.
+            let s = &theme.spacing;
+            div()
+                .id(ElementId::Integer(id.0))
+                .size_full()
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap(s.xl)
+                .p(s.md)
+                .children(children(window, cx))
+                .into_any_element()
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
+            let s = &theme.spacing;
             let secondary = theme.text.secondary;
             let title = p.title.clone().map(|t| {
                 self.text_run(id, &t, Run::BODY.weight(FontWeight::SEMIBOLD), Some(secondary), None);
-                div().font_weight(FontWeight::SEMIBOLD).text_color(secondary).child(t)
+                div().mb(s.md).font_weight(FontWeight::SEMIBOLD).text_color(secondary).child(t)
             });
             let rows = self.painted(id, Some(look.control), None, "form section", || {
                 div()
                     .flex()
                     .flex_col()
-                    .rounded(px(8.))
+                    .rounded(theme.radius.lg)
                     .border_1()
                     .border_color(look.border)
                     .bg(look.control)
@@ -181,9 +202,9 @@ impl Build<'_> {
             });
             let footer = p.footer.clone().map(|t| {
                 self.text_run(id, &t, Run::sized(14.), Some(secondary), None);
-                div().text_sm().text_color(secondary).child(t)
+                div().mt(s.sm).text_sm().text_color(secondary).child(t)
             });
-            div().flex().flex_col().gap_1().children(title).child(rows).children(footer).into_any_element()
+            div().flex().flex_col().flex_none().children(title).child(rows).children(footer).into_any_element()
         } else if is::<FormRow>(kind) {
             let p = props::<FormRowProps>(node)?;
             let label = self.text_run(id, &p.label, Run::BODY, None, None);
@@ -191,13 +212,15 @@ impl Build<'_> {
                 let color = self.text_run(id, &h, Run::sized(14.), Some(theme.text.secondary), None);
                 div().text_sm().text_color(color).child(h)
             });
+            let s = &theme.spacing;
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_3()
-                .px_3()
-                .py_2()
+                .gap(s.md)
+                .min_h(theme.control.row)
+                .px(s.md)
+                .py(s.sm)
                 .child(
                     div()
                         .flex_1()
@@ -212,6 +235,43 @@ impl Build<'_> {
             return None;
         };
         Some(element)
+    }
+}
+
+impl Build<'_> {
+    /// A toolbar's title and the child index it goes in at: after the sidebar toggle and the
+    /// leading items. The toolbar's own `title` shows whatever else it holds (empty hides it);
+    /// without one, the window's title fills the leading run when the app put nothing before the
+    /// first flexible space.
+    fn toolbar_title(&self, id: NodeId, node: &Node) -> Option<(usize, AnyElement)> {
+        let props = props::<ToolbarProps>(node)?;
+        let system =
+            |c: &NodeId| self.nodes.get(c).and_then(|n| n.props.downcast_ref::<SystemItemProps>()).map(|p| p.item);
+        let item = |c: &NodeId| self.nodes.get(c).and_then(|n| n.props.downcast_ref::<ToolbarItemProps>());
+        let title = match &props.title {
+            Some(title) => title.clone(),
+            None => {
+                let before_space = node.children.iter().take_while(|c| system(c) != Some(SystemItem::FlexibleSpace));
+                if before_space.clone().any(|c| item(c).is_some()) {
+                    return None;
+                }
+                self.backend.state.borrow().windows.get(&self.window_id)?.title.clone()
+            }
+        };
+        if title.is_empty() {
+            return None;
+        }
+        let at = node
+            .children
+            .iter()
+            .take_while(|c| {
+                matches!(system(c), Some(SystemItem::ToggleSidebar | SystemItem::SidebarTrackingSeparator))
+                    || item(c).is_some_and(|p| p.leading)
+            })
+            .count();
+        let color = self.text_run(id, &title, Run::BODY.weight(FontWeight::BOLD), None, None);
+        let label = div().min_w_0().truncate().font_weight(FontWeight::BOLD).text_color(color).child(title);
+        Some((at, label.into_any_element()))
     }
 }
 
