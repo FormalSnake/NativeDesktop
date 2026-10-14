@@ -12,6 +12,8 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::thread::ThreadId;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const LOCK_FILE: &str = "real-input.lock";
@@ -38,14 +40,41 @@ fn worktree() -> String {
     cwd.ancestors().find(|dir| dir.join(".git").exists()).unwrap_or(&cwd).display().to_string()
 }
 
+/// Lock files each thread of this process holds. `flock` locks belong to the open file, so a
+/// thread taking a lock it already holds would wait on itself forever.
+static HELD: Mutex<Vec<(ThreadId, PathBuf)>> = Mutex::new(Vec::new());
+
+fn held_by_this_thread(dir: &Path) -> bool {
+    let path = dir.join(LOCK_FILE);
+    let me = std::thread::current().id();
+    HELD.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(t, p)| *t == me && *p == path)
+}
+
+fn refuse_reentry(dir: &Path) -> io::Result<()> {
+    if held_by_this_thread(dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::Deadlock,
+            format!("this thread already holds the lock in {}; it is not reentrant", dir.display()),
+        ));
+    }
+    Ok(())
+}
+
 /// Held while it lives; dropping it releases the lock.
 #[derive(Debug)]
 pub struct MachineLock {
     file: File,
     path: PathBuf,
+    thread: ThreadId,
 }
 
 impl MachineLock {
+    fn new(file: File, path: PathBuf) -> Self {
+        let thread = std::thread::current().id();
+        HELD.lock().unwrap_or_else(|e| e.into_inner()).push((thread, path.clone()));
+        Self { file, path, thread }
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -55,6 +84,10 @@ impl Drop for MachineLock {
     fn drop(&mut self) {
         let _ = self.file.set_len(0);
         let _ = self.file.unlock();
+        let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = held.iter().position(|(t, p)| *t == self.thread && *p == self.path) {
+            held.swap_remove(i);
+        }
     }
 }
 
@@ -95,6 +128,7 @@ pub fn acquire(purpose: &str) -> io::Result<MachineLock> {
 
 /// [`acquire`] on a lock file in `dir`.
 pub fn acquire_in(dir: &Path, purpose: &str) -> io::Result<MachineLock> {
+    refuse_reentry(dir)?;
     let (mut file, path) = open(dir)?;
     match file.try_lock() {
         Ok(()) => {}
@@ -107,7 +141,7 @@ pub fn acquire_in(dir: &Path, purpose: &str) -> io::Result<MachineLock> {
         Err(TryLockError::Error(e)) => return Err(e),
     }
     record(&mut file, purpose)?;
-    Ok(MachineLock { file, path })
+    Ok(MachineLock::new(file, path))
 }
 
 /// How long [`window_test`] waits for the lock before failing, in seconds. Under nextest the
@@ -116,6 +150,7 @@ pub const WINDOW_WAIT_SECS: u64 = 600;
 
 /// [`acquire_in`] that gives up after `timeout` with a `TimedOut` error naming the holder.
 pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::Result<MachineLock> {
+    refuse_reentry(dir)?;
     let (mut file, path) = open(dir)?;
     let start = Instant::now();
     let mut announced = false;
@@ -147,7 +182,7 @@ pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::R
         }
     }
     record(&mut file, purpose)?;
-    Ok(MachineLock { file, path })
+    Ok(MachineLock::new(file, path))
 }
 
 /// The lock a test holds for as long as it has an on-screen window or needs key status, taken
@@ -155,7 +190,8 @@ pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::R
 /// AppKit harness's `main` does it for its binaries), so concurrent runs on one machine queue
 /// instead of stealing focus. `test` names the test in the holder line a waiting run prints.
 /// Panics after [`WINDOW_WAIT_SECS`] (`ND_WINDOW_LOCK_TIMEOUT_SECS` overrides), naming the holder.
-/// Not reentrant: a test already holding it must not take it again. Headless tests skip it.
+/// Not reentrant: taking it again on the thread that holds it fails at once instead of waiting
+/// on itself. Headless tests skip it.
 #[track_caller]
 pub fn window_test(test: &str) -> MachineLock {
     match acquire_bounded(test) {
@@ -178,11 +214,14 @@ pub fn try_acquire(purpose: &str) -> io::Result<Option<MachineLock>> {
 }
 
 pub fn try_acquire_in(dir: &Path, purpose: &str) -> io::Result<Option<MachineLock>> {
+    if held_by_this_thread(dir) {
+        return Ok(None);
+    }
     let (mut file, path) = open(dir)?;
     match file.try_lock() {
         Ok(()) => {
             record(&mut file, purpose)?;
-            Ok(Some(MachineLock { file, path }))
+            Ok(Some(MachineLock::new(file, path)))
         }
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(e)) => Err(e),
