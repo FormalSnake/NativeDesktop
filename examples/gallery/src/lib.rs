@@ -430,8 +430,7 @@ impl Render for Gallery {
                             .on_action(cx.listener(|this, _: &ToastActionClicked, _, cx| {
                                 this.last_event = "Undo clicked".into();
                                 cx.notify();
-                            }))
-                        // docs:end toasts
+                            })), // docs:end toasts
                     ),
             )
             .overlay(

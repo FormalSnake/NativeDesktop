@@ -62,7 +62,9 @@ pub fn capture(number: u32, png: &Path) -> Result<(), String> {
         .status()
         .map_err(|e| format!("screencapture: {e}"))?;
     if !status.success() || !png.is_file() {
-        return Err(format!("screencapture -l{number} wrote nothing ({status}); does this process have Screen Recording?"));
+        return Err(format!(
+            "screencapture -l{number} wrote nothing ({status}); does this process have Screen Recording?"
+        ));
     }
     Ok(())
 }

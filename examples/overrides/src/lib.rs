@@ -96,7 +96,7 @@ impl Render for Showcase {
                             .context_menu(|menu, _window, _cx| menu.item("Rename…", Rename).item("Share", Share))
                             .pattern(Pattern::Drawn),
                     ),
-                    // docs:end subtree
+                // docs:end subtree
             )
     }
 }

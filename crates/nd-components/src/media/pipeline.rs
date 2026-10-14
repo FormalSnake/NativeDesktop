@@ -281,9 +281,8 @@ fn http_get(url: &str) -> Result<Vec<u8>, String> {
 async fn web_fetch(url: &str) -> Result<Vec<u8>, String> {
     use wasm_bindgen::JsCast;
     let window = web_sys::window().ok_or("no window")?;
-    let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
-        .await
-        .map_err(|e| format!("{url}: {e:?}"))?;
+    let response =
+        wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url)).await.map_err(|e| format!("{url}: {e:?}"))?;
     let response: web_sys::Response = response.dyn_into().map_err(|_| format!("{url}: not a Response"))?;
     if !response.ok() {
         return Err(format!("{url}: HTTP {}", response.status()));

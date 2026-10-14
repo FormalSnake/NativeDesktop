@@ -663,10 +663,7 @@ mod capture {
         let status = Command::new("ffmpeg")
             .args(["-y", "-loglevel", "error", "-framerate", &format!("{fps:.2}"), "-i"])
             .arg(frames.join("%04d.png"))
-            .args([
-                "-vf",
-                "scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse",
-            ])
+            .args(["-vf", "scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse"])
             .arg(gif)
             .status()
             .context("ffmpeg")?;

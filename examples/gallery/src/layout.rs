@@ -108,8 +108,7 @@ impl Render for TabsDemo {
                         this.documents.push(name.clone());
                         this.document = name;
                         cx.notify();
-                    }))
-                // docs:end tab-view
+                    })), // docs:end tab-view
             )
             .child(text(self.last.clone()).text_color(secondary))
     }
@@ -188,8 +187,7 @@ impl Render for SplitDemo {
                             this.tree = next;
                             cx.notify();
                         }
-                    }))
-                    // docs:end pane-tree
+                    })), // docs:end pane-tree
                 ),
             )
     }

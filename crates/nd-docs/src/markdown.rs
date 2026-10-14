@@ -83,7 +83,7 @@ pub fn page(id: &str, text: &str, cx: &PageContext<'_>) -> Result<Page> {
         flush(&mut chunk, &mut blocks, &mut markdown);
         match kind {
             "snippet" => {
-                let (path, anchor, snippet) = crate::snippets::load(cx.repo, arg).with_context(|| format!("{id}"))?;
+                let (path, anchor, snippet) = crate::snippets::load(cx.repo, arg).with_context(|| id.to_string())?;
                 let lang = crate::snippets::lang_of(&path);
                 let fence = if snippet.code.contains("```") { "````" } else { "```" };
                 markdown.push_str(&format!("{fence}{lang}\n{}\n{fence}\n\n", snippet.code));
@@ -239,9 +239,10 @@ pub fn parse_blocks(text: &str, id: &str, base: &str) -> Vec<Block> {
     let mut stack: Vec<Frame> = vec![Frame::Blocks(Vec::new())];
     let mut style = Style::default();
     let mut code: Option<(String, String)> = None;
-    let push_block = |stack: &mut Vec<Frame>, block: Block| match stack.last_mut() {
-        Some(Frame::Blocks(b) | Frame::Item(b)) => b.push(block),
-        _ => {}
+    let push_block = |stack: &mut Vec<Frame>, block: Block| {
+        if let Some(Frame::Blocks(b) | Frame::Item(b)) = stack.last_mut() {
+            b.push(block);
+        }
     };
     let push_inline = |stack: &mut Vec<Frame>, style: &Style, text: &str, code: bool| {
         let run = Inline {

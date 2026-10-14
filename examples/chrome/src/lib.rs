@@ -110,7 +110,7 @@ impl Render for Mail {
                     .min_w(px(200.))
                     .child(v_flex().p_3().child(text("Details").text_color(theme.text.secondary))),
             )
-            // docs:end inspector
+        // docs:end inspector
     }
 }
 
