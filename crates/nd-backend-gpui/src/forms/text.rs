@@ -850,7 +850,7 @@ pub(crate) fn chrome(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, f: &Fie
         .id(ElementId::Integer(ctl.id.0))
         .flex()
         .gap(look.gap)
-        .px(look.padding_x)
+        .px(look.field_padding_x)
         .rounded(look.radius)
         .bg(look.fill)
         .border_2()
