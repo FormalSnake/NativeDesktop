@@ -17,3 +17,4 @@ nd-gesture.workspace = true
 
 [dev-dependencies]
 nd-virtual = { path = ".", features = ["conformance"] }
+nd-ui = { workspace = true, features = ["test-support"] }
