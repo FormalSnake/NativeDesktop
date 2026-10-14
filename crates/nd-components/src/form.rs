@@ -9,7 +9,12 @@ use nd_ui::prelude::*;
 use nd_ui::{ContainerElement, Key, StyleRefinement};
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct FormProps {}
+pub struct FormProps {
+    /// The page's title, set large above the first section.
+    pub title: Option<SharedString>,
+    /// The title stays put while the rows scroll; by default it scrolls away with them.
+    pub title_pinned: bool,
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FormSectionProps {
@@ -46,6 +51,20 @@ pub fn form_row(label: impl Into<SharedString>) -> FormRow {
     let props = FormRowProps { label: label.into(), help: None };
     // A row, so the control keeps its natural size unless its own style sets one.
     FormRow(ContainerElement::new::<FormRow>(Key::Site(Location::caller()), props).flex().flex_row().items_start())
+}
+
+impl Form {
+    /// A page title above the sections, scrolling with them unless [`Form::pin_title`].
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.0.props_mut().title = Some(title.into());
+        self
+    }
+
+    /// Keeps the title in place while the rows scroll under it.
+    pub fn pin_title(mut self) -> Self {
+        self.0.props_mut().title_pinned = true;
+        self
+    }
 }
 
 impl FormSection {

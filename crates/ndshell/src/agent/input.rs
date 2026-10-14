@@ -11,7 +11,7 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS,
     MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
 };
 use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_PRIMARY,
@@ -20,6 +20,7 @@ use windows::Win32::UI::Input::Pointer::{
 use windows::Win32::UI::Shell::{
     QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState,
 };
+use windows::Win32::UI::WindowsAndMessaging::WHEEL_DELTA;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowThreadProcessId, PEN_MASK_PRESSURE, PT_PEN,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -89,6 +90,13 @@ pub fn button(down: bool) -> Result<(), String> {
 
 pub fn click(x: i32, y: i32) -> Result<(), String> {
     send(&[move_input(x, y), mouse(MOUSEEVENTF_LEFTDOWN, 0, 0), mouse(MOUSEEVENTF_LEFTUP, 0, 0)])
+}
+
+/// `notches` wheel notches at `(x, y)`, positive scrolling the content up as a wheel turned away.
+pub fn wheel(x: i32, y: i32, notches: i32) -> Result<(), String> {
+    let mut input = mouse(MOUSEEVENTF_WHEEL, 0, 0);
+    input.Anonymous.mi.mouseData = (notches * WHEEL_DELTA as i32) as u32;
+    send(&[move_input(x, y), input])
 }
 
 pub fn right_click(x: i32, y: i32) -> Result<(), String> {

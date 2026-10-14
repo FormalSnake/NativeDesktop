@@ -218,6 +218,12 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
             }
             Ok(json!({}))
         }
+        "wheel" => {
+            real_input()?;
+            let (x, y) = point(request, "at")?;
+            input::wheel(x, y, arg_i32(request, "notches")?)?;
+            Ok(json!({}))
+        }
         "button" => {
             real_input()?;
             input::button(request["down"].as_bool().unwrap_or(false))?;

@@ -6,8 +6,8 @@
 use std::any::TypeId;
 
 use nd_components::{
-    Form, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane, PaneProps,
-    PaneRole, Scaffold, SeparatorKind, SeparatorProps, SystemItem, SystemItemProps, TabSelected, Titlebar,
+    Form, FormProps, FormRow, FormRowProps, FormSection, FormSectionProps, Glass, GlassGroup, GlassProps, Pane,
+    PaneProps, PaneRole, Scaffold, SeparatorKind, SeparatorProps, SystemItem, SystemItemProps, TabSelected, Titlebar,
     TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab,
     ToolbarTabProps,
 };
@@ -190,18 +190,30 @@ impl Build<'_> {
             if p.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }.into_any_element()
         } else if is::<Form>(kind) {
             // The form scrolls itself, like AppKit's: rows past its height scroll under it rather
-            // than drawing over what follows.
+            // than drawing over what follows. Its title scrolls with the rows unless pinned.
             let s = &theme.spacing;
-            div()
-                .id(ElementId::Integer(id.0))
-                .size_full()
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap(s.xl)
-                .p(s.md)
-                .children(children(window, cx))
-                .into_any_element()
+            let p = props::<FormProps>(node).cloned().unwrap_or_default();
+            let title = p.title.map(|t| {
+                // WinUI sets a page's title in TitleLarge (28 px semibold); elsewhere the title style.
+                let size = if theme.preset == nd_theme::Preset::Fluent {
+                    theme.type_scale.large_title
+                } else {
+                    theme.type_scale.title
+                };
+                self.text_run(id, &t, Run::sized(size.as_f32()).weight(FontWeight::SEMIBOLD), None, None);
+                div().flex_none().text_size(size).font_weight(FontWeight::SEMIBOLD).child(t)
+            });
+            let rows = div().id(ElementId::Integer(id.0)).overflow_y_scroll().flex().flex_col().gap(s.xl).p(s.md);
+            match (title, p.title_pinned) {
+                (Some(title), true) => div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(title.px(s.md).pt(s.md))
+                    .child(rows.flex_1().min_h_0().children(children(window, cx)))
+                    .into_any_element(),
+                (title, _) => rows.size_full().children(title).children(children(window, cx)).into_any_element(),
+            }
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
             let s = &theme.spacing;

@@ -18,6 +18,15 @@ final class NDFormModel {
         let rows: [Row]
     }
 
+    struct Page: Decodable {
+        let title: String?
+        let pinned: Bool
+        let sections: [Section]
+    }
+
+    var title: String?
+    /// The title stays above the scrolling rows instead of scrolling with them.
+    var pinned = false
     var sections: [Section] = []
     var slots: [Int64: Slot] = [:]
 
@@ -34,7 +43,24 @@ struct NDFormBody: View {
     let model: NDFormModel
 
     var body: some View {
+        if model.pinned, let title = model.title {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(.largeTitle.weight(.semibold)).padding([.horizontal, .top], 20)
+                form(title: nil)
+            }
+        } else {
+            form(title: model.title)
+        }
+    }
+
+    /// The grouped form, its first row the page title when it scrolls with the rows.
+    private func form(title: String?) -> some View {
         Form {
+            if let title {
+                Section {} header: {
+                    Text(title).font(.largeTitle.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
+                }
+            }
             ForEach(model.sections) { section in
                 Section {
                     ForEach(section.rows) { row in
@@ -110,13 +136,16 @@ public func ndSwiftFormCreate() -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(NDFormHost(model: NDFormModel())).toOpaque()
 }
 
-/// Replaces the sections from JSON: `[{"id", "title", "footer", "rows": [{"id", "label", "help"}]}]`.
-/// Malformed JSON keeps the last sections.
+/// Replaces the page from JSON: `{"title", "pinned", "sections": [{"id", "title", "footer",
+/// "rows": [{"id", "label", "help"}]}]}`. Malformed JSON keeps the last page.
 @MainActor @_cdecl("nd_swift_form_set")
 public func ndSwiftFormSet(_ view: UnsafeMutableRawPointer, _ json: UnsafePointer<CChar>) {
     let data = Data(String(cString: json).utf8)
-    guard let sections = try? JSONDecoder().decode([NDFormModel.Section].self, from: data) else { return }
-    host(view).model.sections = sections
+    guard let page = try? JSONDecoder().decode(NDFormModel.Page.self, from: data) else { return }
+    let model = host(view).model
+    model.title = page.title
+    model.pinned = page.pinned
+    model.sections = page.sections
 }
 
 /// Shows `child` (an `NSView`, not retained by the caller's call) in row `row` at least
