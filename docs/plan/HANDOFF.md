@@ -34,6 +34,17 @@ is fully checked; then the nd branch becomes the app's main and the nix config s
   its `docs/port-parity.md` (dispatch buttons, media icons, drag reorder, container hover, menu button).
 - nativebrowser: not started; needs the Linux engine and Chrome-style extensions (M15).
 
+## First thing to fix
+
+The headless Hyprland/labwc test runner on g815 (ndshell, from the m2-linux lane) very likely
+imports its nested session into the user's systemd/D-Bus environment (WAYLAND_DISPLAY=wayland-2,
+XDG_CURRENT_DESKTOP unset), which broke formalshell.service and beeper.service restarts on
+2026-10-14 (reported by the formalshell session, which reset it with `systemctl --user
+set-environment`). The runner must never touch the user manager or D-Bus activation environment:
+run nested compositors with their own private D-Bus and without `dbus-update-activation-environment`
+/ `systemctl --user import-environment`, and add a test that the user manager's environment is
+unchanged after a gate run.
+
 ## Machines
 
 - macbook: overloaded host for the user's services (BlueBubbles). The repo's rustc wrapper builds at
