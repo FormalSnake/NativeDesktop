@@ -46,6 +46,7 @@ fn writes_are_debounced_and_leave_no_temp_files() {
 
 #[test]
 fn drop_flushes_pending_changes() {
+    // docs:begin store
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.json");
     {
@@ -55,6 +56,7 @@ fn drop_flushes_pending_changes() {
     let reopened = Store::<Machine>::open(&path, 1, None);
     assert_eq!(reopened.get().last_folder, "Inbox");
     assert!(reopened.load_error().is_none());
+    // docs:end store
 }
 
 #[test]

@@ -14,11 +14,13 @@ mod gate_m7_ipc {
         a: i64,
         b: i64,
     }
+    // docs:begin method
     impl Method for Add {
         const NAME: &'static str = "add";
         type Params = Pair;
         type Output = i64;
     }
+    // docs:end method
 
     struct Fail;
     impl Method for Fail {
@@ -101,6 +103,7 @@ mod gate_m7_ipc {
 
     #[tokio::test]
     async fn second_launch_is_forwarded_in_process() {
+        // docs:begin instance
         let dir = tempfile::tempdir().unwrap();
         let endpoint = Endpoint::at_path(dir.path().join("i.sock"));
         let first = Launch::from_args(["--a".into()]);
@@ -111,6 +114,7 @@ mod gate_m7_ipc {
         let got = primary.next_launch().await.unwrap();
         assert_eq!(got.args, ["file.txt", "myapp://open/3"]);
         assert_eq!(got.urls, ["myapp://open/3"]);
+        // docs:end instance
     }
 
     #[cfg(unix)]

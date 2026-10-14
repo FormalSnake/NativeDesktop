@@ -38,10 +38,12 @@ impl Terminals {
     }
 
     fn new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
+        // docs:begin spawn
         match TerminalSession::spawn(&self.command, SessionOptions::default()) {
             Ok(session) => self.push(session),
             Err(e) => eprintln!("terminal: could not start a shell: {e}"),
         }
+        // docs:end spawn
         cx.notify();
     }
 
@@ -71,6 +73,7 @@ impl Render for Terminals {
         let content = match selected {
             Some(tab) => {
                 let id = tab.id;
+                // docs:begin element
                 terminal(SharedString::from(format!("term-{id}")), &tab.session)
                     .size_full()
                     .on_title_changed(cx.listener(move |this, e: &TitleChanged, _, cx| {
@@ -84,6 +87,7 @@ impl Render for Terminals {
                         cx.notify();
                     }))
                     .on_link(|e: &LinkActivated, _, _| open_url(&e.link.url))
+                    // docs:end element
                     .into_any_element()
             }
             None => v_flex().size_full().items_center().justify_center().child(text("No open tabs")).into_any_element(),
@@ -129,11 +133,13 @@ pub fn app() -> Application {
 /// The bindings: Cmd-T and Cmd-W, Ctrl-Shift-T and Ctrl-Shift-W off macOS (plain Ctrl-T and
 /// Ctrl-W belong to the shell).
 pub fn bind_keys(cx: &mut App) {
+    // docs:begin keys
     let (new, close) = if cfg!(target_os = "macos") { ("cmd-t", "cmd-w") } else { ("ctrl-shift-t", "ctrl-shift-w") };
     cx.bind_keys([
         KeyBinding::new(new, NewTab, Some("Terminals")),
         KeyBinding::new(close, CloseTab, Some("Terminals")),
     ]);
+    // docs:end keys
 }
 
 /// The window with one tab running the user's shell.
