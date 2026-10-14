@@ -1,0 +1,93 @@
+# Written by `nd docs capture`; do not edit by hand.
+
+[browser.macos]
+hash = "444573603746d876"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[chrome.macos]
+hash = "d0e501a5fd82e297"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[gallery.macos]
+hash = "515d7ab88daefc98"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[hello.macos]
+hash = "3480ff5148fb4bd3"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[native-widget.macos]
+hash = "8400b1cdeb565652"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[notes.macos]
+hash = "3177cd47d87a8125"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[overlays.macos]
+hash = "de0c4ea8b76b0863"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[overrides.macos]
+hash = "81ae7960987aded2"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[pacing.macos]
+hash = "dfb91fcae4d3424c"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[scroll.macos]
+hash = "cc6a8399245ddae3"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+recording = "macos.gif"
+
+[system.macos]
+hash = "71271b3bf7c2a3d3"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[tabs.macos]
+hash = "0276e1db1762d582"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"
+
+[terminal.macos]
+hash = "2ca2a4307ed7b3d0"
+captured_on = "macOS 27.0"
+date = "2026-10-14"
+light = "macos-light.png"
+dark = "macos-dark.png"

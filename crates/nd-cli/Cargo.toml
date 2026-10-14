@@ -25,6 +25,11 @@ ureq = "3.4"
 url = "2"
 nd-core.workspace = true
 nd-diag.workspace = true
+nd-docs.workspace = true
+# Only the wire protocol: `nd docs capture` drives examples over their automation socket.
+nd-automation = { workspace = true, default-features = false }
+# The machine-wide window lock and, on macOS, composited window captures.
+ndshell.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 serde_json = "1"

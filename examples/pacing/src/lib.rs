@@ -10,6 +10,7 @@ pub struct Clock {
 
 impl Render for Clock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // docs:begin clock
         // Rendering again next frame keeps the window animating at its display's rate.
         cx.notify();
         let time = window.frame_time();
@@ -22,6 +23,7 @@ impl Render for Clock {
             .child(text(self.name).text_size(px(20.)))
             .child(text(format!("frame {}", time.frame)).tabular_nums())
             .child(text(format!("{hz:.0} Hz display")).tabular_nums())
+        // docs:end clock
     }
 }
 

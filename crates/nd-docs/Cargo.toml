@@ -1,0 +1,21 @@
+[package]
+name = "nd-docs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The docs content model: pages, example snippets, captures, link check, llms.txt."
+
+[dependencies]
+anyhow = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+quote = "1"
+serde.workspace = true
+serde_json.workspace = true
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+toml = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

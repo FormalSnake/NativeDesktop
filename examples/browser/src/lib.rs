@@ -41,9 +41,11 @@ pub struct Browser {
     status: SharedString,
 }
 
+// docs:begin options
 fn options() -> WebViewOptions {
     WebViewOptions::default().adopt_popups().inspectable(true)
 }
+// docs:end options
 
 impl Browser {
     fn new(url: &str) -> Self {
@@ -106,6 +108,7 @@ impl Browser {
             }
             cx.notify();
         };
+        // docs:begin mount
         webview(SharedString::from(format!("page-{id}")), &tab.page)
             .size_full()
             .context_menu_items(vec![
@@ -122,6 +125,7 @@ impl Browser {
                 let title = if e.title.is_empty() { "Untitled".to_owned() } else { e.title.clone() };
                 update(cx, this, &|t| t.title = title.clone().into());
             }))
+            // docs:end mount
             .on_loading_changed(cx.listener(move |this, e: &LoadingChanged, _, cx| {
                 update(cx, this, &|t| t.loading = e.loading);
             }))
@@ -132,6 +136,7 @@ impl Browser {
                 this.status = format!("Could not load {}: {}", e.url, e.error).into();
                 cx.notify();
             }))
+            // docs:begin popups
             .on_new_window(cx.listener(move |this, e: &NewWindow, _, cx| {
                 let select = e.disposition != nd::webview::Disposition::BackgroundTab;
                 match &e.popup {
@@ -146,6 +151,8 @@ impl Browser {
                 this.close(id);
                 cx.notify();
             }))
+            // docs:end popups
+            // docs:begin downloads
             .on_download_requested(cx.listener(|this, e: &DownloadRequested, _, cx| {
                 let path = e.download.save_to_downloads();
                 this.status = format!("Downloading {}", path.display()).into();
@@ -163,6 +170,7 @@ impl Browser {
                 .into();
                 cx.notify();
             }))
+            // docs:end downloads
             .on_context_menu_item_clicked(cx.listener(|this, e: &ContextMenuItemClicked, _, cx| {
                 match e.id.as_str() {
                     "open-link-tab" => {
@@ -188,6 +196,7 @@ impl Render for Browser {
         let current = self.tab(self.selected);
         let (loading, fraction) = current.map_or((false, 0.), |t| (t.loading, t.progress));
         let content = match current {
+            // docs:begin conditional
             Some(tab) => v_flex()
                 .size_full()
                 .when(loading, |d| d.child(progress(Some(fraction as f32)).id("progress").w_full()))
@@ -196,6 +205,7 @@ impl Render for Browser {
                     d.child(text(self.status.clone()).id("status").text_color(secondary).p(margin))
                 })
                 .into_any_element(),
+            // docs:end conditional
             None => v_flex().size_full().items_center().justify_center().child(text("No open tabs")).into_any_element(),
         };
         let items: Vec<SourceItem> =
@@ -218,6 +228,7 @@ impl Render for Browser {
                     cx.notify();
                 }
             }))
+            // docs:begin commands
             .on_action(cx.listener(|this, _: &Reload, _, _| {
                 if let Some(page) = this.current() {
                     if page.is_loading() { page.stop() } else { page.reload() }
@@ -238,6 +249,7 @@ impl Render for Browser {
                     page.open_dev_tools();
                 }
             }))
+            // docs:end commands
             .toolbar(
                 toolbar()
                     .title(current.map_or_else(|| SharedString::from("Browser"), |t| t.title.clone()))

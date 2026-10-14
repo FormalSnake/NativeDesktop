@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 nd-core.workspace = true
 nd-ui = { workspace = true, features = ["test-support"] }
-nd-automation.workspace = true
+nd-automation = { workspace = true, features = ["server"] }
 ndshell.workspace = true
 serde.workspace = true
 serde_json.workspace = true

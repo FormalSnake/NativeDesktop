@@ -210,6 +210,11 @@ fn root_style(size: Size) -> taffy::Style {
 }
 
 impl Tree {
+    /// The node mounted for the element given `.id(id)`.
+    pub(crate) fn node_with_id(&self, id: &str) -> Option<NodeId> {
+        self.nodes.iter().find(|(_, n)| matches!(&n.ident.key, Key::Id(k) if k.as_ref() == id)).map(|(n, _)| *n)
+    }
+
     pub(crate) fn new(
         window: WindowId,
         root: NodeId,

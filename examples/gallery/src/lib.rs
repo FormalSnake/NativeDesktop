@@ -423,6 +423,7 @@ impl Render for Gallery {
                             .child(text(self.last_event.clone()).text_color(secondary))
                     })
                     .child(
+                        // docs:begin toasts
                         toast_overlay("toasts")
                             .toasts(self.toasts.clone())
                             .on_dismiss(cx.listener(|this, e: &ToastDismissed, _, cx| {
@@ -432,7 +433,7 @@ impl Render for Gallery {
                             .on_action(cx.listener(|this, _: &ToastActionClicked, _, cx| {
                                 this.last_event = "Undo clicked".into();
                                 cx.notify();
-                            })),
+                            })), // docs:end toasts
                     ),
             )
             .overlay(

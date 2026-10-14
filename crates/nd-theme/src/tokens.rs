@@ -4,7 +4,7 @@
 
 use nd_gpui::gpui::{Font, Hsla, Pixels};
 
-use crate::color::{is_dark, legible, mix, over, with_alpha};
+use crate::color::{contrast, is_dark, legible, mix, over, with_alpha};
 use crate::palette::{Palette, Scheme};
 use crate::preset::{ControlHeights, Materials, Metrics, Motion, Preset, Radii, Spacing, TypeScale};
 
@@ -65,6 +65,10 @@ pub struct Theme {
     pub separator: Hsla,
     pub text: TextTokens,
     pub accent: Hsla,
+    /// The accent as a fill that carries `text.on_accent` (a sent chat bubble): moved just
+    /// far enough from the accent for that text to read at 4.5:1. macOS's systemBlue under
+    /// white text is 4.0:1.
+    pub accent_fill: Hsla,
     pub accent_container: AccentContainer,
     pub selection: Hsla,
     pub danger: Hsla,
@@ -121,6 +125,7 @@ impl Theme {
                 danger: legible(p.danger, &surfaces, 4.5),
             },
             accent: p.accent,
+            accent_fill: fill_under(p.accent, p.on_accent, 4.5),
             accent_container: AccentContainer { bg: p.accent_container, fg: p.on_accent_container },
             selection: p.selection,
             danger: p.danger,
@@ -223,5 +228,38 @@ fn terminal_tokens(scheme: Scheme, p: &Palette, text: Hsla) -> TerminalTokens {
             bright[5],
             bright_white,
         ],
+    }
+}
+
+/// `fill` moved towards black (or white, under dark text) until `text` reads on it at `ratio`.
+fn fill_under(fill: Hsla, text: Hsla, ratio: f32) -> Hsla {
+    let text = over(text, fill);
+    if contrast(text, fill) >= ratio {
+        return fill;
+    }
+    let ink = if is_dark(text) { nd_gpui::gpui::white() } else { nd_gpui::gpui::black() };
+    for step in 1..=60 {
+        let candidate = mix(fill, with_alpha(ink, fill.a), step as f32 / 100.);
+        if contrast(over(text, candidate), candidate) >= ratio {
+            return candidate;
+        }
+    }
+    mix(fill, with_alpha(ink, fill.a), 0.6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fill_under;
+    use crate::color::{contrast, parse_hex};
+
+    #[test]
+    fn a_fill_under_white_text_darkens_until_the_text_reads() {
+        let blue = parse_hex("#007aff").unwrap();
+        let white = parse_hex("#ffffff").unwrap();
+        assert!(contrast(white, blue) < 4.5);
+        let fill = fill_under(blue, white, 4.5);
+        assert!(contrast(white, fill) >= 4.5);
+        let dark = parse_hex("#1c4fa0").unwrap();
+        assert_eq!(fill_under(dark, white, 4.5), dark, "a fill that already passes is left alone");
     }
 }

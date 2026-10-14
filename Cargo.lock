@@ -3404,6 +3404,7 @@ version = "0.1.0"
 dependencies = [
  "nd",
  "nd-cli",
+ "nd-test",
  "png 0.17.16",
  "serde_json",
  "tempfile",
@@ -4563,10 +4564,12 @@ dependencies = [
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
  "nd-os-windows",
+ "nd-settings",
  "nd-system",
  "nd-terminal",
  "nd-theme",
@@ -4575,6 +4578,8 @@ dependencies = [
  "nd-virtual",
  "nd-webview",
  "ndshell",
+ "serde",
+ "serde_json",
  "toml 0.9.12+spec-1.1.0",
  "wasm-bindgen-test",
 ]
@@ -4602,6 +4607,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4631,6 +4637,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4668,9 +4675,11 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "nd-automation",
  "nd-config",
  "nd-core",
  "nd-diag",
+ "nd-docs",
  "nd-test",
  "nd-update",
  "ndshell",
@@ -4689,8 +4698,10 @@ name = "nd-components"
 version = "0.1.0"
 dependencies = [
  "image",
+ "js-sys",
  "nd-core",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-settings",
  "nd-theme",
@@ -4700,6 +4711,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -4755,6 +4769,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-docs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "pulldown-cmark",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "nd-docs-app"
+version = "0.1.0"
+dependencies = [
+ "gallery",
+ "hello",
+ "nd",
+ "nd-docs",
+ "overrides",
+ "scroll-bench",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nd-example-swift-leaf"
 version = "0.1.0"
 dependencies = [
@@ -4779,6 +4822,10 @@ dependencies = [
  "taffy 0.13.0",
  "taffy 0.14.0",
 ]
+
+[[package]]
+name = "nd-icons"
+version = "0.1.0"
 
 [[package]]
 name = "nd-ipc"
@@ -4890,6 +4937,7 @@ dependencies = [
 name = "nd-settings-derive"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5133,7 +5181,9 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "nd",
+ "nd-test",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -6414,6 +6464,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
@@ -8404,6 +8465,12 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
 
 [[package]]
 name = "unicode-bidi"

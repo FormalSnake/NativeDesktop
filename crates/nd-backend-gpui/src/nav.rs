@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::forms::glyph::{Glyph, glyph};
 use nd_components::{
     BANNER, BannerProps, CommandPaletteProps, FieldSelection, PALETTE, PaletteKey, PaletteModel, SourceIndex,
     SourceTreeProps, TOAST, Toast, ToastOverlayProps, ToastQueue,
@@ -102,6 +103,11 @@ pub fn palette_input(keystroke: &Keystroke) -> Option<PaletteInput> {
             .filter(|c| !c.is_empty())
             .map(PaletteInput::Insert),
     }
+}
+
+/// The glyph an icon slot draws, or `None` so the slot is not laid out at all.
+pub(crate) fn icon_glyph(icon: Option<nd_components::Icon>) -> Option<Glyph> {
+    icon.filter(|i| i.shape().is_some()).map(Glyph::of)
 }
 
 /// The presented palette over a window of `viewport`: the scrim, the card, the field and the
@@ -213,8 +219,8 @@ pub fn palette_overlay(
             .rounded(theme.radius.md)
             .text_size(theme.type_scale.body)
             .text_color(fg)
-            // The icon slot holds its column even when empty, so titles line up.
-            .child(div().flex_shrink_0().size(px(m.icon_side)))
+            // A row without an icon (or whose icon draws nothing) has no slot at all.
+            .children(icon_glyph(item.icon).map(|g| glyph(g, px(m.icon_side), fg, px(1.5))))
             .child(
                 div()
                     .flex()
@@ -273,7 +279,7 @@ pub fn palette_overlay(
                 .pl(px(m.search_icon_inset))
                 .pr(px(m.field_trailing))
                 .gap(px(m.search_icon_gap))
-                .child(div().flex_shrink_0().size(px(m.search_icon)))
+                .child(glyph(Glyph::Search, px(m.search_icon), theme.text.secondary, px(1.75)))
                 .child(field.role(gpui::Role::SearchInput).aria_value(model.field_text())),
         );
     if !rows.is_empty() {
@@ -443,7 +449,8 @@ pub fn source_tree_view(
         let icon = node
             .icon
             .filter(|_| fluent)
-            .map(|icon| crate::fluent_icons::glyph(crate::fluent_icons::codepoint(icon), px(16.), fg));
+            .and_then(|icon| icon.segoe_fluent())
+            .map(|code| crate::fluent_icons::glyph(code, px(16.), fg));
         let pill = (fluent && selected).then(|| {
             div()
                 .absolute()
@@ -470,7 +477,7 @@ pub fn source_tree_view(
         if compact {
             row = row.justify_center().child(icon.unwrap_or_else(|| {
                 crate::fluent_icons::glyph(
-                    crate::fluent_icons::codepoint(nd_components::icon::Icon::FileText),
+                    nd_components::Icon::FileText.segoe_fluent().unwrap_or_default(),
                     px(16.),
                     fg,
                 )
@@ -480,7 +487,16 @@ pub fn source_tree_view(
                 .pl(px(depth as f32 * indent))
                 .pr(theme.spacing.sm)
                 .child(disclosure)
-                .children(icon.map(|icon| icon.mr(theme.spacing.md)))
+                .children(match icon {
+                    Some(icon) => Some(icon.mr(theme.spacing.md).into_any_element()),
+                    None => icon_glyph(node.icon).map(|g| {
+                        div()
+                            .flex_shrink_0()
+                            .pr(theme.spacing.sm)
+                            .child(glyph(g, px(16.), secondary, px(1.5)))
+                            .into_any_element()
+                    }),
+                })
                 .child(
                     div()
                         .flex()
@@ -1092,5 +1108,28 @@ impl Build<'_> {
             return Some(banner_view(id, props, theme, Some(on_action), marks));
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod icon_slot_tests {
+    use nd_components::Icon;
+
+    use super::icon_glyph;
+    use crate::forms::glyph::Glyph;
+
+    #[test]
+    fn a_slot_exists_only_for_an_icon_that_draws() {
+        assert!(icon_glyph(None).is_none(), "no icon, no slot");
+        assert!(icon_glyph(Some(Icon::Custom("never-registered"))).is_none(), "an icon with no shape, no slot");
+        for icon in Icon::ALL {
+            assert!(icon_glyph(Some(*icon)).is_some(), "{} draws", icon.lucide());
+        }
+    }
+
+    #[test]
+    fn a_toolbar_button_with_an_unknown_icon_name_draws_no_glyph() {
+        assert!(Glyph::named("never-registered").is_none());
+        assert!(Glyph::named("square-pen").is_some());
     }
 }

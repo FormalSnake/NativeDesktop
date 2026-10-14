@@ -5,6 +5,10 @@
 
 use nd::prelude::*;
 
+mod gestures;
+
+pub use gestures::Pad;
+
 pub struct Rows {
     list: ListState<u32>,
     step: Option<f64>,
@@ -17,11 +21,40 @@ fn height(row: u32) -> f32 {
 
 impl Rows {
     pub fn new(rows: u32, step: Option<f64>, cx: &mut Context<Self>) -> Self {
+        // docs:begin state
         let mut list = ListState::new(cx).estimated_row_height(px(60.));
         list.set_items_versioned((0..rows).map(|r| (r, 0)), cx);
+        // docs:end state
         Self { list, step, passes: 0 }
     }
 }
+
+// docs:begin log
+/// A log that stays pinned to its newest line until the user scrolls away from the end.
+pub fn log_state<T: 'static>(lines: u32, cx: &mut Context<T>) -> ListState<u32> {
+    let mut log = ListState::new(cx).follow(Follow::Tail);
+    log.set_items((0..lines).collect::<Vec<_>>(), cx);
+    log.scroll_to_end(cx);
+    log
+}
+
+/// Brings one row to the middle of the list, 96 points above where it would rest.
+pub fn reveal(list: &mut ListState<u32>, row: u32, cx: &mut App) {
+    list.scroll_to(row, Align::Center, px(-96.), cx);
+}
+// docs:end log
+
+// docs:begin table
+/// The same keys as a table: one cell per column, sorting reported but left to the app.
+pub fn row_table(state: &ListState<u32>) -> impl IntoElement {
+    let columns = vec![column("row", "Row").width(120.).fixed(), column("height", "Height").sortable()];
+    table("rows-table", state, columns, |row, col, _, _| match col {
+        0 => text(format!("Row {row}")).tabular_nums(),
+        _ => text(format!("{:.0} pt", height(row))).tabular_nums(),
+    })
+    .on_sort(|sort, _, _| println!("sort {:?}", sort.direction))
+}
+// docs:end table
 
 impl Render for Rows {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -35,6 +68,7 @@ impl Render for Rows {
             }
             cx.notify();
         }
+        // docs:begin render
         list("rows", &self.list, |row: u32, _, cx| {
             h_flex()
                 .px(px(12.))
@@ -44,6 +78,7 @@ impl Render for Rows {
                 .child(text(format!("Row {row}")).tabular_nums())
         })
         .size_full()
+        // docs:end render
     }
 }
 
