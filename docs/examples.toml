@@ -1,0 +1,98 @@
+# The example apps the docs embed. Each page shows an example through a four-tab embed: Web runs
+# it live (examples with `web = true`), macOS, Linux and Windows show captures that
+# `nd docs capture` takes on that OS. Every directory under examples/ is listed here or under
+# [skip] with the reason, and `nd docs check` fails on one that is neither.
+
+[[example]]
+name = "hello"
+title = "Hello"
+summary = "The smallest app: a toolbar button, a count and window controls placed by coordinates."
+web = true
+
+[[example]]
+name = "notes"
+title = "Notes"
+summary = "A multi-file app: source list sidebar, toolbar, a virtual list of notes, an editor, the command palette, gestures and settings."
+features = ["m6"]
+web_reason = "Notes keeps its notes on disk and opens a single-instance socket."
+env = { NOTES_DEMO = "1" }
+
+[[example]]
+name = "gallery"
+title = "Gallery"
+summary = "One page per built-in component: palette, source list, toasts, banner, forms, tabs, split view, status page, dialogs and media."
+web = true
+
+[[example]]
+name = "overrides"
+title = "Overrides"
+summary = "Every override layer in one window: element style, per platform, native mapping, theme (app, window, subtree) and patterns."
+web = true
+
+[[example]]
+name = "chrome"
+title = "Chrome"
+summary = "The window structure a Mail-style app declares: scaffold, source list, toolbar, inspector, menu bar, alert, file picker and a settings window."
+web_reason = "Shows the macOS window structure; the web draws none of it."
+
+[[example]]
+name = "native-widget"
+package = "places"
+title = "Places"
+summary = "App-defined native widgets: an objc2 MapKit view and a Swift-hosted SwiftUI gauge, each with a drawn fallback."
+features = ["m6"]
+web_reason = "MapKit and the SwiftUI gauge are macOS views."
+
+[[example]]
+name = "scroll"
+package = "scroll-bench"
+title = "Scroll"
+summary = "A virtualized list of 100 000 rows with heights from 28 to 124 points, the list `nd diag scroll` measures."
+web = true
+env = { ND_ROWS = "100000" }
+motion = { seconds = 3.0, interval_ms = 50, steps = [{ method = "scroll", params = { testId = "rows", dy = 240 } }] }
+
+[[example]]
+name = "overlays"
+title = "Overlays"
+summary = "A popover, a modal panel and a context menu over a native button and a live web page, none of them leaking input."
+web_reason = "The page under the overlays is a native web view."
+
+[[example]]
+name = "tabs"
+title = "Tabs"
+summary = "Browser-style window tabs: every tab is a window of one tab group, with the system tab bar on macOS."
+web_reason = "Window tabs are separate OS windows; the web canvas has one."
+
+[[example]]
+name = "browser"
+title = "Browser"
+summary = "A small browser: tabs in the sidebar, an address field in the toolbar, devtools and downloads, on WKWebView or CEF."
+web_reason = "Embeds the platform web engine."
+env = { BROWSER_URL = "about:blank" }
+
+[[example]]
+name = "terminal"
+title = "Terminal"
+summary = "A terminal with tabs over libghostty-vt: one shell per tab, titled by what the shell reports."
+web_reason = "Runs a shell in a pty."
+
+[[example]]
+name = "system"
+package = "system-demo"
+title = "System"
+summary = "Every nd::system service behind a button: dialogs, clipboard, notifications, keychain, tray, media keys and audio with a spectrum."
+web_reason = "Most services are OS services the browser does not offer."
+
+[[example]]
+name = "pacing"
+title = "Pacing"
+summary = "Two windows animating every frame, each at the refresh rate of the display it is on."
+web_reason = "Measures per-display frame pacing; the browser paces the canvas itself."
+
+[[example]]
+name = "discord-rpc"
+title = "Discord presence"
+summary = "Discord Rich Presence as a plugin, written against nd-plugin and nd-ipc the way an outside crate would be."
+headless = true
+web_reason = "A plugin with no window."
