@@ -8,7 +8,7 @@ use nd_core::Size;
 use objc2_app_kit::{NSWindow, NSWindowStyleMask};
 use objc2_foundation::{NSString, NSUserDefaults};
 
-use crate::traffic_lights;
+use crate::traffic_lights::{self, TrafficLights};
 
 /// `AppleActionOnDoubleClick`: zoom (the default, "Maximize" or "Fill"), minimize, or nothing.
 pub(crate) fn double_click(window: &NSWindow) {
@@ -32,12 +32,14 @@ fn titlebar_height(window: &NSWindow) -> f32 {
 
 /// The size a title row inset takes: on the leading edge, the span from the window's left
 /// edge past the traffic lights plus the gap AppKit leaves between them; nothing trailing.
-pub(crate) fn measure_inset(window: &NSWindow, props: &TitlebarInsetProps) -> Size {
-    let height = titlebar_height(window);
-    if props.edge == InsetEdge::Trailing || props.controls_in_row {
-        return Size { width: 0., height };
-    }
+/// Both are as tall as the band the lights sit centred in, so the row's title and items share
+/// the lights' vertical centre wherever the app pinned them.
+pub(crate) fn measure_inset(window: &NSWindow, lights: &TrafficLights, props: &TitlebarInsetProps) -> Size {
     if window.styleMask().contains(NSWindowStyleMask::FullScreen) {
+        return Size { width: 0., height: titlebar_height(window) };
+    }
+    let height = titlebar_height(window).max(lights.band(window).unwrap_or(0.));
+    if props.edge == InsetEdge::Trailing || props.controls_in_row {
         return Size { width: 0., height };
     }
     let Some(buttons) = traffic_lights::buttons(window) else { return Size { width: 0., height } };

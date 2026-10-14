@@ -354,6 +354,10 @@ impl ToolbarNative {
                 && let Some((split, divider)) = inspector
             {
                 tracking_separator(inspector_id, split, divider, &mut items, &mut identifiers);
+                // The inspector toggle sits at the window's trailing edge, as in Apple's apps.
+                if matches!(entry, Entry::System(SystemItem::ToggleInspector)) {
+                    identifiers.push(system_identifier(SystemItem::FlexibleSpace).copy());
+                }
             }
             match entry {
                 Entry::Item(item, _) => {

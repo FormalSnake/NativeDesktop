@@ -54,13 +54,23 @@ impl TrafficLights {
         }
     }
 
-    /// From the window's `window_controls()` node. Pinned lights mean the app draws its own
-    /// title row, so the stock title and title bar material would sit beside the moved buttons.
+    /// The height of the band pinned buttons sit centred in: twice their centre's distance
+    /// from the window's top. A title row as tall as this centres its title and items on the
+    /// buttons. `None` while the buttons sit where AppKit puts them.
+    pub fn band(&self, window: &NSWindow) -> Option<f32> {
+        let at = self.at.get()?;
+        let height = buttons(window)?[0].frame().size.height;
+        Some((2. * (f64::from(at.y) + height / 2.)).round() as f32)
+    }
+
+    /// From the window's `window_controls()` node. Pinned lights in a window without a toolbar
+    /// mean the app draws its own title row, so the stock title and title bar material would
+    /// sit beside the moved buttons. A toolbar keeps both: its title is the toolbar's.
     pub fn set_at(&self, window: &NSWindow, at: Option<Point>) {
         if self.at.replace(at) == at {
             return;
         }
-        let pinned = at.is_some();
+        let pinned = at.is_some() && window.toolbar().is_none();
         window.setTitleVisibility(if pinned {
             NSWindowTitleVisibility::Hidden
         } else {

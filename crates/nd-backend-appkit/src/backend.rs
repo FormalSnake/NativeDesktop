@@ -1632,7 +1632,7 @@ impl Backend for AppKitBackend {
                 }
             }
             Native::Inset(window, props) => match state.windows.get(window) {
-                Some(record) => crate::titlebar::measure_inset(&record.window, props),
+                Some(record) => crate::titlebar::measure_inset(&record.window, &record.lights, props),
                 None => Size::default(),
             },
             Native::WindowControls { window, props, .. } if props.embedded => state

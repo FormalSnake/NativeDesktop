@@ -184,10 +184,15 @@ impl KeyRouter for AppRouter {
         // now, and a listener's focus move reaches AppKit now, so the next key in the same event
         // batch already goes to the new first responder.
         app.drain_events();
-        if app.needs_frame() {
+        drop(app);
+        // A key that opened a window (Cmd-T's new tab) needs that window's host before the
+        // frame draws it.
+        host.sync_windows();
+        if let Ok(mut app) = host.app.try_borrow_mut()
+            && app.needs_frame()
+        {
             app.frame();
         }
-        drop(app);
         host.after_frame();
         result
     }
