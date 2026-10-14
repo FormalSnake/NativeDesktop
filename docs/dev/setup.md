@@ -71,3 +71,6 @@ Every test that puts a window on screen or needs key status holds the machine-wi
 Never `rm`, `mv` or `find -delete` a path built from a shell variable (`rm -f $OUT/*`): the
 permission guard stops for a manual approval on each one. Use a literal absolute path, let the
 program clean its own temp files (`tempfile` in tests), or at minimum write `"${OUT:?}"/*`.
+
+Never `pkill -f` or `killall` by pattern: several agents run the same commands in sibling
+worktrees, and a pattern kill ends their runs too. Kill only PIDs you started yourself.
