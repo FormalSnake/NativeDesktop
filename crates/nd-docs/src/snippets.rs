@@ -34,30 +34,63 @@ pub fn is_anchor_line(line: &str) -> bool {
     anchor_of(line, BEGIN).is_some() || anchor_of(line, END).is_some()
 }
 
+/// `line` without anchors: `None` for an anchor line, else the code before a trailing anchor
+/// comment (rustfmt moves `// docs:end x` onto the end of the line above it in builder chains).
+pub fn without_anchor(line: &str) -> Option<&str> {
+    if is_anchor_line(line) {
+        return None;
+    }
+    Some(match line.find("// docs:") {
+        Some(at) if is_anchor_line(&line[at..]) => line[..at].trim_end(),
+        _ => line,
+    })
+}
+
+/// Splits trailing anchor comments onto lines of their own, keeping each line's number.
+fn normalized(source: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (n, line) in source.lines().enumerate() {
+        match line.find("// docs:") {
+            Some(at) if at > 0 && !line[..at].trim().is_empty() && is_anchor_line(&line[at..]) => {
+                let comment = line[at..].to_owned();
+                if anchor_of(&comment, BEGIN).is_some() {
+                    out.push((n, comment));
+                    out.push((n, line[..at].trim_end().to_owned()));
+                } else {
+                    out.push((n, line[..at].trim_end().to_owned()));
+                    out.push((n, comment));
+                }
+            }
+            _ => out.push((n, line.to_owned())),
+        }
+    }
+    out
+}
+
 /// The anchors `source` defines, in order.
 pub fn anchors(source: &str) -> Vec<String> {
     source.lines().filter_map(|l| anchor_of(l, BEGIN)).map(str::to_owned).collect()
 }
 
 pub fn extract(source: &str, anchor: Option<&str>) -> Result<Snippet> {
-    let lines: Vec<&str> = source.lines().collect();
+    let lines = normalized(source);
     let (from, to) = match anchor {
         None => (0, lines.len()),
         Some(name) => {
             let begin = lines
                 .iter()
-                .position(|l| anchor_of(l, BEGIN) == Some(name))
+                .position(|(_, l)| anchor_of(l, BEGIN) == Some(name))
                 .with_context(|| format!("no `// {BEGIN} {name}`"))?;
             let end = lines[begin + 1..]
                 .iter()
-                .position(|l| anchor_of(l, END) == Some(name))
+                .position(|(_, l)| anchor_of(l, END) == Some(name))
                 .map(|i| begin + 1 + i)
                 .with_context(|| format!("`// {BEGIN} {name}` has no `// {END} {name}`"))?;
             (begin + 1, end)
         }
     };
     let kept: Vec<(usize, &str)> =
-        lines[from..to].iter().enumerate().map(|(i, l)| (from + i, *l)).filter(|(_, l)| !is_anchor_line(l)).collect();
+        lines[from..to].iter().map(|(n, l)| (*n, l.as_str())).filter(|(_, l)| !is_anchor_line(l)).collect();
     let Some(first) = kept.iter().position(|(_, l)| !l.trim().is_empty()) else {
         bail!("snippet `{}` is empty", anchor.unwrap_or("<file>"));
     };
@@ -112,6 +145,14 @@ mod tests {
         assert_eq!(outer.code, "impl X {\n    fn b() {}\n}");
         assert_eq!(extract(SRC, None).unwrap().code, "fn a() {}\nimpl X {\n    fn b() {}\n}");
         assert_eq!(anchors(SRC), ["outer", "inner"]);
+    }
+
+    #[test]
+    fn trailing_anchor_comments() {
+        let src = "a()\n    // docs:begin t\n    .b()\n    .c())), // docs:end t\nd()\n";
+        assert_eq!(extract(src, Some("t")).unwrap().code, ".b()\n.c())),");
+        assert_eq!(without_anchor("    .c())), // docs:end t"), Some("    .c())),"));
+        assert_eq!(without_anchor("// docs:end t"), None);
     }
 
     #[test]

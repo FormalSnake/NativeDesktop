@@ -137,7 +137,7 @@ pub fn source_hash(dir: &Path, framework_version: &str) -> Result<String> {
         let bytes = std::fs::read(dir.join(&relative))?;
         match String::from_utf8(bytes) {
             Ok(text) => {
-                for line in text.lines().filter(|l| !crate::snippets::is_anchor_line(l)) {
+                for line in text.lines().filter_map(crate::snippets::without_anchor) {
                     hash.write(line.as_bytes());
                     hash.write(b"\n");
                 }
