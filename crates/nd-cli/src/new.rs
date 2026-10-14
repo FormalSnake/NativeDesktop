@@ -83,6 +83,24 @@ struct Vars {
     pairs: Vec<(&'static str, String)>,
 }
 
+/// The `[workspace]` table of a standalone project. Outside nd's own workspace a path
+/// dependency on nd still needs nd's GPUI patch queue, which only the root manifest can name.
+fn workspace(standalone: bool, nd_path: Option<&Path>) -> Result<String> {
+    if !standalone {
+        return Ok(String::new());
+    }
+    let mut out = "\n[workspace]\n".to_string();
+    if let Some(nd) = nd_path {
+        let nd = std::fs::canonicalize(nd).with_context(|| format!("--nd-path {}", nd.display()))?;
+        let vendor = nd.parent().unwrap_or(&nd).join("nd-gpui/vendor");
+        out.push_str("\n# nd's GPUI patch queue; cargo resolves the unpatched crates.io releases without it.\n[patch.crates-io]\n");
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
+            out.push_str(&format!("{krate} = {{ path = \"{}\" }}\n", vendor.join(krate).display()));
+        }
+    }
+    Ok(out)
+}
+
 impl Vars {
     fn new(name: &str, id: Option<&str>, nd_path: Option<&Path>, standalone: bool) -> Result<Self> {
         let krate = name.replace('-', "_");
@@ -121,7 +139,7 @@ impl Vars {
                 ("{{nd_dep}}", nd_dep),
                 ("{{nd_dev_dep}}", nd_dev_dep),
                 ("{{nd_build_dep}}", nd_build_dep),
-                ("{{workspace}}", if standalone { "\n[workspace]".to_string() } else { String::new() }),
+                ("{{workspace}}", workspace(standalone, nd_path)?),
             ],
         })
     }
@@ -143,6 +161,14 @@ mod tests {
         assert!(package_name(Path::new("2fast")).is_err());
         assert!(package_name(Path::new("nd")).is_err());
         assert!(package_name(Path::new("my app")).is_err());
+    }
+
+    #[test]
+    fn a_standalone_path_project_names_the_gpui_patches() {
+        let nd = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd");
+        let table = super::workspace(true, Some(&nd)).unwrap();
+        assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
+        assert_eq!(super::workspace(false, Some(&nd)).unwrap(), "");
     }
 
     #[test]
