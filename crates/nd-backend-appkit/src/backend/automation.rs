@@ -223,6 +223,12 @@ impl AppKitBackend {
         {
             return result;
         }
+        if let SemanticAction::Scroll { dx, dy } = action
+            && let Some(Native::List(l)) = self.0.borrow().nodes.get(&node)
+        {
+            l.scroll_by(f64::from(*dx), f64::from(*dy));
+            return Ok(());
+        }
         if !matches!(action, SemanticAction::Focus)
             && let Some(result) = self.perform_control(node, action)
         {
@@ -375,7 +381,10 @@ impl AppKitBackend {
     pub(super) fn capture_window(&self, window: WindowId) -> Result<Capture, ActionError> {
         let state = self.0.borrow();
         let record = state.record(window)?;
-        let content: &NSView = record.root.content();
+        // The window's content view, not the root's: a scaffold moves the root under a split
+        // view, and the root's own layer tree then holds none of the panes.
+        let window_content = record.window.contentView();
+        let content: &NSView = window_content.as_deref().unwrap_or(record.root.content());
         let layer = content.layer().ok_or_else(|| not_actionable("content view has no layer"))?;
         let bounds = content.bounds();
         let scale = record.window.backingScaleFactor();
@@ -388,9 +397,13 @@ impl AppKitBackend {
         let info = CGImageAlphaInfo::PremultipliedLast.0;
         let ctx = unsafe { CGBitmapContextCreate(std::ptr::null_mut(), width, height, 8, 0, Some(&space), info) }
             .ok_or_else(|| not_actionable("CGBitmapContextCreate failed"))?;
-        // The layer tree is flipped like the views; Core Graphics is not.
-        CGContext::translate_ctm(Some(&ctx), 0., height as f64);
-        CGContext::scale_ctm(Some(&ctx), scale, -scale);
+        // nd's own views are flipped and Core Graphics is not; AppKit's content view is not.
+        if content.isFlipped() {
+            CGContext::translate_ctm(Some(&ctx), 0., height as f64);
+            CGContext::scale_ctm(Some(&ctx), scale, -scale);
+        } else {
+            CGContext::scale_ctm(Some(&ctx), scale, scale);
+        }
         // The window draws its background behind the content, so the layer tree has none.
         let background = std::cell::RefCell::new(None);
         let resolve = block2::RcBlock::new(|| {
