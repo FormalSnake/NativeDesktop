@@ -3408,6 +3408,7 @@ version = "0.1.0"
 dependencies = [
  "nd",
  "nd-cli",
+ "nd-test",
  "png 0.17.16",
  "serde_json",
  "tempfile",
@@ -4671,11 +4672,14 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "nd-automation",
  "nd-config",
  "nd-core",
  "nd-diag",
+ "nd-docs",
  "nd-test",
  "nd-update",
+ "ndshell",
  "proc-macro2",
  "rusty-s3",
  "serde_json",
@@ -4691,6 +4695,7 @@ name = "nd-components"
 version = "0.1.0"
 dependencies = [
  "image",
+ "js-sys",
  "nd-core",
  "nd-gpui",
  "nd-macros",
@@ -4702,6 +4707,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -4775,7 +4783,14 @@ dependencies = [
 name = "nd-docs-app"
 version = "0.1.0"
 dependencies = [
+ "gallery",
+ "hello",
  "nd",
+ "nd-docs",
+ "overrides",
+ "scroll-bench",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5152,7 +5167,10 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "nd",
+ "nd-settings",
+ "schemars",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
