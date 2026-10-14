@@ -1,7 +1,8 @@
 //! `command_palette()` on AppKit: the zig branch's Spotlight-style palette
 //! (`NDShell/CommandPalette.swift`), ported to objc2. The node's own view is a hidden zero-size
-//! handle; a present puts a dimmed full-window backdrop over the window's frame view (toolbar and
-//! sidebar included) holding a Liquid Glass card: a borderless field over an inset
+//! handle; a present opens the overlay layer over the window (`crate::overlay::WindowLayer`, a
+//! key child panel covering the whole frame, toolbar and sidebar included, above every view and
+//! native surface) and puts a dimmed backdrop in it holding a Liquid Glass card: a borderless field over an inset
 //! `NSTableView` of one-line rows. The card's top edge is fixed and its height follows the rows.
 //!
 //! Behaviour is [`PaletteModel`]'s; this module draws it and feeds it the field's edits, the
@@ -18,7 +19,7 @@ use nd_components::{
 use nd_ui::events::Emit;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAccessibility, NSAccessibilityGroupRole, NSApplication, NSAutoresizingMaskOptions, NSBackgroundStyle, NSBox,
     NSBoxType, NSColor, NSControl, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSEventType,
@@ -444,6 +445,8 @@ pub(crate) struct Palette {
     model: RefCell<PaletteModel>,
     placeholder: RefCell<Option<String>>,
     ui: RefCell<Option<Ui>>,
+    /// The overlay window the presented palette draws in.
+    layer: RefCell<Option<crate::overlay::WindowLayer>>,
     open: Cell<bool>,
     /// A present waits for a window to anchor to.
     pending: Cell<bool>,
@@ -471,6 +474,7 @@ impl PaletteNative {
                 model: RefCell::new(PaletteModel::default()),
                 placeholder: RefCell::new(None),
                 ui: RefCell::new(None),
+                layer: RefCell::new(None),
                 open: Cell::new(false),
                 pending: Cell::new(false),
                 return_focus: RefCell::new(None),
@@ -617,31 +621,12 @@ pub struct PaletteRowLayout {
 }
 
 impl Drop for PaletteNative {
-    // The backdrop hangs off the window's frame view, not the handle: an unmount while open
+    // The backdrop lives in the overlay window, not under the handle: an unmount while open
     // would strand it.
     fn drop(&mut self) {
         self.0.pending.set(false);
         self.0.dismiss(true);
     }
-}
-
-/// While the field is editing, it takes every key without the secondary modifier (Tab, the
-/// arrows, Return, Esc and typing) and secondary-Return before nd's bindings; other
-/// secondary shortcuts (a menu accelerator, the palette's own toggle) still reach nd.
-fn capture(field: &NSTextField) -> crate::window::KeyCapture {
-    let field = objc2::rc::Weak::from_retained(&objc2::Message::retain(field));
-    Rc::new(move |keystroke| {
-        let editing = field.load().is_some_and(|f| f.currentEditor().is_some());
-        let m = &keystroke.modifiers;
-        editing && (!(m.platform || m.control) || keystroke.key == "enter")
-    })
-}
-
-/// Where framework panels go until the overlay layer (6.3) lands: the window's frame view, so
-/// the dim covers the toolbar and a sidebar too.
-pub(crate) fn overlay_host(window: &NSWindow) -> Option<Retained<NSView>> {
-    let content = window.contentView()?;
-    unsafe { content.superview() }.or(Some(content))
 }
 
 impl Palette {
@@ -675,8 +660,11 @@ impl Palette {
             return;
         }
         let app = NSApplication::sharedApplication(self.mtm);
-        // Over the window the user is looking at, wherever the handle sits in the tree.
+        // Over the window the user is looking at, wherever the handle sits in the tree; when an
+        // overlay of that window has the keyboard, over its owner.
         let window = app.keyWindow().or_else(|| app.mainWindow()).or_else(|| self.handle.window());
+        let window = window
+            .map(|w| if w.downcast_ref::<crate::NdWindow>().is_some() { w } else { w.parentWindow().unwrap_or(w) });
         let Some(window) = window else {
             // Not in a window yet: try again shortly, until it is or the palette closes.
             let weak = self.weak.clone();
@@ -693,7 +681,8 @@ impl Palette {
         if !app.isActive() && std::env::var_os("NATIVE_AUTOMATION").is_some_and(|v| v == "1") {
             app.activate();
         }
-        let Some(host) = overlay_host(&window) else { return };
+        let layer = crate::overlay::WindowLayer::new(self.mtm, &window, true);
+        let host = layer.host();
         *self.return_focus.borrow_mut() = window.firstResponder().map(|r| objc2::rc::Weak::from_retained(&r));
         let presented = self.model.borrow_mut().present();
         if !presented {
@@ -702,13 +691,13 @@ impl Palette {
         let ui = self.build(&host);
         let field = ui.field.clone();
         *self.ui.borrow_mut() = Some(ui);
-        if let Some(nd_window) = window.downcast_ref::<crate::NdWindow>() {
-            nd_window.set_key_capture(Some(capture(&field)));
-        }
+        layer.show();
+        let panel = layer.window().retain();
+        *self.layer.borrow_mut() = Some(layer);
         self.reload();
         self.sync_field(false);
         // Becoming first responder selects the field's whole text: a seeded present wants that.
-        window.makeFirstResponder(Some(&field));
+        panel.makeFirstResponder(Some(&field));
     }
 
     fn user_cancel(&self) {
@@ -726,11 +715,10 @@ impl Palette {
 
     fn teardown(&self) {
         let Some(ui) = self.ui.borrow_mut().take() else { return };
-        let window = ui.backdrop.window();
-        if let Some(nd_window) = window.as_ref().and_then(|w| w.downcast_ref::<crate::NdWindow>()) {
-            nd_window.set_key_capture(None);
-        }
         ui.backdrop.removeFromSuperview();
+        let layer = self.layer.borrow_mut().take();
+        let window = layer.as_ref().map(|l| l.owner().retain());
+        drop(layer);
         // Focus goes back where it was; a responder that left the window leaves it with the window.
         let back = self.return_focus.borrow_mut().take().and_then(|w| w.load());
         if let (Some(window), Some(back)) = (window, back) {

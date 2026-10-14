@@ -14,7 +14,7 @@ use nd_theme::{OsTheme, Preset, Scheme, ThemeRegistry};
 use nd_ui::backend::{Backend, Constraint, NodeKind, Props, PropsPatch, SurfaceOp};
 use nd_ui::events::EventQueue;
 use nd_ui::semantics::{ActionError, Capture, Paint, Probe, SemanticAction, SyntheticInput, WindowState};
-use nd_ui::{App, Button, ButtonProps, ClickEvent};
+use nd_ui::{App, Button, ButtonProps, ClickEvent, InputCounts, SurfaceProps};
 
 pub(crate) struct Node {
     pub kind: NodeKind,
@@ -51,6 +51,12 @@ pub(crate) struct State {
     pub wake: Option<Wake>,
     /// Synthetic input waiting for the host's next pump, which dispatches it with the app free.
     pending: Vec<(WindowId, gpui::PlatformInput)>,
+    /// Each window's open drawn context menu.
+    pub menus: HashMap<WindowId, crate::overlay::MenuOverlay>,
+    /// Menu items chosen since the last pump, dispatched from the window's focused node.
+    pub actions: Vec<(WindowId, Box<dyn gpui::Action>)>,
+    /// Windows whose next mouse release ends a press an overlay backdrop consumed.
+    pub swallow_up: std::collections::HashSet<WindowId>,
     /// Every colour the elements paint comes from here: the app's registry once `nd` hands it
     /// over, until then one following the platform's scheme.
     pub theme: ThemeRegistry,
@@ -68,6 +74,8 @@ pub struct GpuiBackend {
     /// Each node's bounds in window coordinates as of the last paint, written by the elements
     /// while GPUI prepaints; kept apart from `state` so a paint never contends with a seam op.
     pub(crate) bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+    /// Pointer input each native surface received, written by its paint-time listeners.
+    pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
     /// The app's menus, drawn above the windows of a single canvas.
     pub(crate) menu_bar: Rc<RefCell<crate::canvas::MenuBar>>,
     /// Work [`GpuiBackend::defer`] queued for the next pump.
@@ -110,12 +118,16 @@ impl GpuiBackend {
                 app: None,
                 wake: None,
                 pending: Vec::new(),
+                menus: HashMap::new(),
+                actions: Vec::new(),
+                swallow_up: Default::default(),
                 theme: ThemeRegistry::new(Preset::current()),
                 platform_scheme: None,
                 scheme_listener: None,
                 paints: HashMap::new(),
             })),
             bounds: Rc::default(),
+            surface_counts: Rc::default(),
             deferred: Rc::default(),
             menu_bar: Rc::default(),
             lists: Rc::default(),
@@ -392,6 +404,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.surface_counts.borrow_mut().remove(&node);
         self.drawn.borrow_mut().remove(&node);
     }
 
@@ -423,6 +436,12 @@ impl Backend for GpuiBackend {
         {
             probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
             probe.enabled = Some(true);
+        }
+        if let Ok(state) = self.state.try_borrow()
+            && let Some(p) = state.nodes.get(&node).and_then(|n| n.props.downcast_ref::<SurfaceProps>())
+            && p.count_input
+        {
+            probe.value = Some(self.surface_counts.borrow().get(&node).copied().unwrap_or_default().to_string());
         }
         self.probe_nav(node, &mut probe);
         probe

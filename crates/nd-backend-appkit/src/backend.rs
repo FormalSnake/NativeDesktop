@@ -27,7 +27,11 @@ use nd_core::{NodeId, Rect, Size, WindowId};
 use nd_theme::{NativeTheme, Scheme, ThemeRefinement};
 use nd_ui::backend::{AvailableSpace, Backend, Constraint, NodeKind, Props, PropsPatch, SurfaceOp};
 use nd_ui::events::EventQueue;
-use nd_ui::{Button, ButtonProps, DivProps, RootProps, WindowControls, WindowControlsProps};
+use nd_ui::overlay::Overlay;
+use nd_ui::surface::NativeSurface;
+use nd_ui::{
+    Button, ButtonProps, DivProps, OverlayProps, RootProps, SurfaceProps, WindowControls, WindowControlsProps,
+};
 use objc2::Message;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSAppearanceCustomization, NSApplication, NSBox, NSView, NSWindowOrderingMode};
@@ -41,9 +45,11 @@ use crate::events::Wake;
 use crate::form::{FormNative, RowSpec, SectionSpec};
 use crate::glass::{GlassGroupNative, GlassNative};
 use crate::look::{Color, TextLook, ViewLook};
+use crate::overlay::OverlayNative;
 use crate::palette::PaletteNative;
 use crate::scaffold::{PaneNative, ScaffoldNative};
 use crate::source_list::SourceTreeNative;
+use crate::surface::SurfaceNative;
 use crate::system_colors::appearance_for;
 use crate::toast::{BannerNative, ToastNative};
 use crate::toolbar::{Entry, ToolbarItemNative, ToolbarNative, ToolbarTabNative};
@@ -95,6 +101,9 @@ enum Native {
     /// Logical: the form draws sections and rows; these hold what goes in them.
     FormSection(FormSectionProps, Vec<NodeId>),
     FormRow(FormRowProps, Option<NodeId>),
+    /// Its own window above the owner; never a subview of its parent, which is its anchor.
+    Overlay(OverlayNative),
+    Surface(SurfaceNative),
 }
 
 impl Native {
@@ -120,7 +129,8 @@ impl Native {
             Native::Banner(b) => Some(b.view()),
             Native::List(l) => Some(l.view()),
             Native::Form(f) => Some(&f.outer),
-            Native::FormSection(..) | Native::FormRow(..) => None,
+            Native::Surface(s) => Some(s.view()),
+            Native::FormSection(..) | Native::FormRow(..) | Native::Overlay(_) => None,
             Native::Toolbar(_) | Native::SystemItem | Native::ToolbarTab(_) | Native::Inset(..) => None,
         }
     }
@@ -134,6 +144,7 @@ impl Native {
             Native::Pane(p) => Some(&p.content),
             Native::Scaffold(s) => Some(&s.host),
             Native::ToolbarItem(i) => Some(&i.host),
+            Native::Overlay(o) => Some(&o.content),
             _ => None,
         }
     }
@@ -538,6 +549,14 @@ impl State {
         if let Some(window) = self.node_window.get(&node).copied() {
             self.theme_dirty.insert(window);
         }
+        if let Some(Native::Overlay(overlay)) = self.nodes.get(&node) {
+            let anchor = self.nodes.get(&parent).and_then(|p| p.view().or(p.container())).map(|v| v.retain());
+            let owner = self.node_window.get(&node).and_then(|w| self.windows.get(w)).map(|r| r.window.clone());
+            if let Some(owner) = owner {
+                overlay.attach(anchor, owner);
+            }
+            return;
+        }
         if self.attach_to_list(parent, node) {
             return;
         }
@@ -638,6 +657,10 @@ impl State {
             return;
         }
         let parent = self.parents.remove(&node);
+        if let Some(Native::Overlay(overlay)) = self.nodes.get(&node) {
+            overlay.detach();
+            return;
+        }
         match parent.map(|p| self.nodes.get_disjoint_mut([&p, &node])) {
             Some([Some(Native::Scaffold(scaffold)), Some(Native::Pane(pane))]) => scaffold.remove(node, pane),
             Some([Some(_), Some(Native::Toolbar(_))]) => {
@@ -981,6 +1004,16 @@ impl Backend for AppKitBackend {
                 props::<nd_virtual::ListProps>(p, "List"),
             )),
             NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
+            NodeKind::Widget(w) if is::<Overlay>(w) => Native::Overlay(OverlayNative::new(
+                mtm,
+                node,
+                props::<OverlayProps>(p, "Overlay"),
+                emit(),
+                state.wake.clone(),
+            )),
+            NodeKind::Widget(w) if is::<NativeSurface>(w) => {
+                Native::Surface(SurfaceNative::new(mtm, props::<SurfaceProps>(p, "NativeSurface")))
+            }
             NodeKind::Widget(w) if is::<FormSection>(w) => {
                 Native::FormSection(props::<FormSectionProps>(p, "FormSection").clone(), Vec::new())
             }
@@ -1038,6 +1071,7 @@ impl Backend for AppKitBackend {
         let window = state.node_window.get(&node).copied();
         let mut place: Option<(WindowId, WindowControlsProps)> = None;
         let mut recreate_select = None;
+        let mut recreate_surface = None;
         let mut form_changed = false;
         let mut scroll_axes = None;
         events.programmatic(|| match state.nodes.get_mut(&node).unwrap_or_else(|| panic!("{node:?} is not live")) {
@@ -1100,6 +1134,13 @@ impl Backend for AppKitBackend {
                 form_changed = true;
             }
             Native::Form(_) => {}
+            Native::Overlay(o) => o.update(props(&patch.new, "Overlay")),
+            Native::Surface(s) => {
+                let p: &SurfaceProps = props(&patch.new, "NativeSurface");
+                if !s.update(p) {
+                    recreate_surface = Some(p.clone());
+                }
+            }
             Native::Root(_) | Native::External(_) | Native::Scaffold(_) => {}
         });
         if let Some(Native::ToolbarItem(_)) = state.nodes.get(&node)
@@ -1148,6 +1189,18 @@ impl Backend for AppKitBackend {
                 && let (Some(old_view), Some(container)) = (old.view(), state.native(parent).container())
             {
                 let new_view = state.view(node).expect("select view");
+                container.addSubview_positioned_relativeTo(new_view, NSWindowOrderingMode::Above, Some(old_view));
+                old_view.removeFromSuperview();
+            }
+        }
+        if let Some(p) = recreate_surface {
+            let fresh = SurfaceNative::new(state.mtm, &p);
+            let old = state.nodes.insert(node, Native::Surface(fresh));
+            if let (Some(old), Some(parent)) = (old, state.parents.get(&node).copied())
+                && let (Some(old_view), Some(container)) = (old.view(), state.native(parent).container())
+            {
+                let new_view = state.view(node).expect("surface view");
+                new_view.setFrame(old_view.frame());
                 container.addSubview_positioned_relativeTo(new_view, NSWindowOrderingMode::Above, Some(old_view));
                 old_view.removeFromSuperview();
             }
@@ -1206,6 +1259,10 @@ impl Backend for AppKitBackend {
             }
             Some(Native::ToolbarItem(item)) => {
                 item.host.set_size(objc2_foundation::NSSize::new(frame.size.width.into(), frame.size.height.into()));
+                return;
+            }
+            Some(Native::Overlay(overlay)) => {
+                overlay.set_size(frame);
                 return;
             }
             _ => {}
@@ -1272,6 +1329,20 @@ impl Backend for AppKitBackend {
         state.place_embedded_lights(window);
         state.apply_dirty_themes();
         CATransaction::commit();
+        // After the content's frames are committed, so an overlay opens over laid-out content;
+        // outer overlays first, since a nested one is anchored inside its parent's window.
+        let mut overlays: Vec<NodeId> = state
+            .nodes
+            .iter()
+            .filter(|(n, native)| matches!(native, Native::Overlay(_)) && state.node_window.get(n) == Some(&window))
+            .map(|(n, _)| *n)
+            .collect();
+        overlays.sort();
+        for node in overlays {
+            if let Some(Native::Overlay(overlay)) = state.nodes.get(&node) {
+                overlay.present();
+            }
+        }
         state.open = None;
     }
 

@@ -100,6 +100,28 @@ impl Render for Lists {
     }
 }
 
+/// Overlays over a native surface: an open popover and a modal panel, each with text.
+struct Overlays;
+
+impl Render for Overlays {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .p_3()
+            .gap_2()
+            .child(
+                div()
+                    .id("anchor")
+                    .w(px(200.))
+                    .h(px(28.))
+                    .child(text("Anchor"))
+                    .child(popover("pop").w(px(220.)).p_3().child(text("In a popover"))),
+            )
+            .child(native_surface("surface", SurfaceSource::TestPattern).w(px(300.)).h(px(160.)))
+            .child(panel("panel").w(px(240.)).p_3().child(text("In a panel")))
+    }
+}
+
 fn main() {
     nd::audit::Audit::new("intents", || Application::new(nd::manifest!()))
         .window("gallery", |cx| {
@@ -111,6 +133,12 @@ fn main() {
         .window("lists", |cx| {
             cx.open_window(WindowOptions::main("lists").title("Lists").size(size(px(720.), px(400.))), |_, cx| {
                 cx.new(Lists::new)
+            })
+            .id()
+        })
+        .window("overlays", |cx| {
+            cx.open_window(WindowOptions::main("overlays").title("Overlays").size(size(px(640.), px(420.))), |_, cx| {
+                cx.new(|_| Overlays)
             })
             .id()
         })

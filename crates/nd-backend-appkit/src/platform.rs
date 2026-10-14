@@ -26,6 +26,12 @@ define_class!(
         fn should_terminate_after_last_window_closed(&self, _app: &NSApplication) -> bool {
             true
         }
+
+        // Light-dismiss overlays close when the app loses activation (ARCHITECTURE.md 6.3).
+        #[unsafe(method(applicationDidResignActive:))]
+        fn did_resign_active(&self, _notification: &objc2_foundation::NSNotification) {
+            crate::defer_with_app(|app| app.app_deactivated());
+        }
     }
 );
 

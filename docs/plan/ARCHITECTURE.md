@@ -691,23 +691,40 @@ declared accelerators pre-empt embedded pages. IME: NSTextField/NSTextView nativ
 GPUI's `text-input-v3`/XIM/TSF on GPUI backends, CEF OSR through the same input handler.
 
 ### 6.3 Overlays: no leaks, always on top
-Every floating element (popover, menu, tooltip, toast, command palette, sheet, dropdown) opens
-through `cx.overlay(spec)` or a built-in that uses it, with modality `Modal`, `LightDismiss` or
-`Passive`. macOS: system overlays stay system classes (`NSMenu` for menus, `NSPopover` for
-anchored popovers, window sheets), which keep the parent window's active chrome. Framework panels
-(command palette, hover cards, dropdowns, toasts) are a top-most in-window view above every
-content view, WKWebView, CEF and GPU surface views included (all ordinary sibling NSViews), with
-`hitTest:` returning the overlay for points it covers, so nothing below receives them. A
-non-activating `NSPanel` is used only when an overlay must extend past the window frame; a panel
-that must take typing never deactivates the owner's chrome. GPUI backends: one overlay stack per window; the
-input router checks it before content (outside press on `LightDismiss` closes and is consumed);
-overlays intersecting a registered native surface (WebView2, WPE, iframe) are promoted to GPUI's
-overlay composition surface under `nd-gpui/fast` (zed PR #62379) or to a child popup window;
-menus that do not fit use `xdg_popup` with grab or owned popups. Overlays close when their anchor
-subtree goes, on Esc, on a click outside, or when the app deactivates; never on a key change
-inside the app's own window group. Gate: a tier 3 test opens a popover over a live
-webview, clicks inside and outside and scrolls over it, and asserts the webview saw zero events,
-on all three OSes.
+Every floating element (popover, menu, tooltip, toast, command palette, sheet, dropdown) is an
+overlay element in the tree (`popover(id)`, `panel(id)`, `tooltip()` in `nd_ui::overlay`, or a
+built-in that uses one), with modality `Modal`, `LightDismiss` or `Passive`. Its parent is its
+anchor; it takes no room in the anchor's layout and closes with the anchor's subtree. Dismissal is
+the app's: `on_dismiss` hears `Dismissed { reason }` and the app drops the overlay. Every
+non-passive overlay is a focus scope (6.2): focus is saved on open and restored on close, a modal
+one traps Tab, and an Escape no listener took closes the innermost one.
+- Input inside an overlay never reaches what lies under it (press, scroll, hover), over native
+  views and surfaces included. A press outside a `LightDismiss` overlay closes it and is consumed
+  on every OS, its release too, matching what macOS menus already do; a `Modal` overlay consumes
+  outside presses and stays open; `Passive` takes no input.
+- macOS: every overlay is its own window above the owner, so the window server routes input, not
+  hit-testing inside one window (tracking areas, which drive hover and cursors, fire for covered
+  views too, so an in-window overlay would still leak hover into a WKWebView). Menus are `NSMenu`;
+  popovers are `NSPopover` (behaviour application-defined, so nd consumes outside presses instead
+  of AppKit's transient pass-through); panels and tooltips are borderless child `NSPanel`s that
+  never become key, so the owner keeps its key chrome and keys keep reaching nd dispatch. One local
+  event monitor applies the outside-press and Esc rules while any overlay is open. Declared
+  accelerators run through the main menu before the window's views, so an embedded web view cannot
+  swallow them.
+- GPUI backends: overlays draw in GPUI's deferred layer, nested ones above their parents, with a
+  transparent backdrop that consumes presses (a light-dismiss one lets scrolls through); nd's
+  gesture hit test starts inside the topmost overlay or hits nothing. Drawn context menus live in
+  the same layer. Native surfaces composited by the OS above GPUI (WebView2, WPE subsurfaces) need
+  the overlay composition surface under `nd-gpui/fast` (zed PR #62379) or a child popup window;
+  that lands with those engines in M8. Menus that do not fit use `xdg_popup` with grab or owned
+  popups.
+- Overlays close when their anchor subtree goes, on Esc, on a press outside, or when the app
+  deactivates; never on a key change inside the app's own window group.
+
+Gate: a tier 3 test opens a popover, a modal panel and a context menu over a live webview and a
+native button, clicks, moves and scrolls inside and outside, and asserts the page and button saw
+nothing they should not, on all three OSes (macOS: `gate_m4_overlays::real_overlay_leak_appkit`;
+GPUI in-process: `gate_m4_overlays::gpui_*`).
 
 ## 7. Virtualization
 

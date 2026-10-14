@@ -227,6 +227,10 @@ impl Application {
             hooks,
             move |cx| {
                 gpui_host::install(cx, &files, app_theme, patterns);
+                if let Some(backend) = cx.backend_as::<nd_backend_gpui::GpuiBackend>() {
+                    let chrome = nd_backend_gpui::GpuiChrome::new(backend.clone());
+                    cx.set_global(nd_components::Chrome(chrome));
+                }
                 init(cx);
                 crate::theme::sync(cx);
             },

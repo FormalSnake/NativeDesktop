@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use nd_components::{GlassProps, ScaffoldProps, SubtreeScope};
+use nd_components::{ContextMenuRequested, GlassProps, ScaffoldProps, SubtreeScope};
 use nd_core::{NodeId, Rect};
 use nd_gpui::gpui::{
     self, AnyElement, App, Bounds, Decorations, ElementId, FontFeatures, FontWeight, GlobalElementId, Hsla,
@@ -20,7 +20,9 @@ use nd_gpui::gpui::{
 use nd_theme::color::{over, with_alpha};
 use nd_theme::{Theme, ThemeRefinement, ThemeRegistry};
 use nd_ui::backend::NodeKind;
+use nd_ui::overlay::Overlay;
 use nd_ui::semantics::{Paint, PaintKind};
+use nd_ui::surface::NativeSurface;
 use nd_ui::{
     ClickEvent, DivProps, Scope, TextProps, TitlebarInsets, WindowControls, WindowControlsProps, with_titlebar_insets,
 };
@@ -33,6 +35,12 @@ pub(crate) struct Tracked {
     node: NodeId,
     inner: AnyElement,
     bounds: Rc<RefCell<HashMap<NodeId, Rect>>>,
+}
+
+impl Tracked {
+    pub(crate) fn new(node: NodeId, inner: AnyElement, bounds: Rc<RefCell<HashMap<NodeId, Rect>>>) -> Self {
+        Self { node, inner, bounds }
+    }
 }
 
 impl IntoElement for Tracked {
@@ -399,6 +407,10 @@ impl<'a> Build<'a> {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
             }
+            // Its bounds are its content's, which the overlay layer places and records after this
+            // node's placeholder.
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Overlay>() => self.overlay(id, node, window),
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<NativeSurface>() => self.surface(id, node),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>() => {
                 self.virtual_list(id, node, window)
             }
@@ -478,6 +490,7 @@ impl<'a> Build<'a> {
         }
         // Spelled out on every view, so text under a subtree scope takes the scope's colour.
         style.text.color = Some(self.top().text);
+        let menu = props.scope.as_ref().and_then(|s| s.get::<SubtreeScope>()).is_some_and(|s| s.context_menu);
         let gestures = &self.backend.gestures;
         let last_bounds = self.backend.bounds.borrow().get(&id).copied();
         if let Some(row) = props.gestures.row_swipe.map(|_| last_bounds.map_or(0., |b| b.size.width)) {
@@ -502,6 +515,17 @@ impl<'a> Build<'a> {
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);
+            if menu {
+                let emit = self.backend.state.borrow().events.emitter(id);
+                let (wake, bounds) = (self.wake.clone(), self.backend.bounds.clone());
+                d = d.on_mouse_down(MouseButton::Right, move |event: &MouseDownEvent, _, cx| {
+                    let origin = bounds.borrow().get(&id).map_or(nd_core::Point::default(), |b| b.origin);
+                    let (x, y) = (event.position.x.as_f32() - origin.x, event.position.y.as_f32() - origin.y);
+                    emit.emit(ContextMenuRequested { node: id, x, y });
+                    wake(cx);
+                    cx.stop_propagation();
+                });
+            }
             return d.children(children).into_any_element();
         }
         let mut d = div().id(ElementId::Integer(id.0));

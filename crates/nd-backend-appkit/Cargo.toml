@@ -24,6 +24,7 @@ objc2-app-kit = "0.3.2"
 objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
+objc2-web-kit = "0.3.2"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
 
@@ -47,6 +48,11 @@ harness = false
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]
 name = "real_resize_gate"
+harness = false
+
+# Tier 3: the same gate with a WKWebView filling `examples/overlays` (`gate_m4_overlays::`).
+[[test]]
+name = "real_resize_webview_gate"
 harness = false
 
 [[test]]

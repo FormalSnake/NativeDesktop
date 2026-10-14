@@ -28,13 +28,7 @@ pub struct NdWindowIvars {
     last_key: RefCell<Option<Retained<NSEvent>>>,
     /// Set while nd's own focus op moves the first responder, so it is not reported back.
     nd_focus: Cell<bool>,
-    /// A framework panel holding text focus outside nd's tree (the command palette) claims the
-    /// keys it edits with before nd's bindings see them.
-    key_capture: RefCell<Option<KeyCapture>>,
 }
-
-/// Says whether a framework panel takes a keystroke before nd dispatch.
-pub(crate) type KeyCapture = Rc<dyn Fn(&Keystroke) -> bool>;
 
 define_class!(
     // SAFETY: NSWindow has no subclassing requirements beyond calling super in the overrides
@@ -57,9 +51,14 @@ define_class!(
             unsafe { msg_send![super(self), sendEvent: event] }
         }
 
+        // Declared accelerators pre-empt embedded views (ARCHITECTURE.md 6.2): AppKit asks the
+        // window's views before the main menu, and a WKWebView claims every key equivalent to
+        // offer it to the page first, handing unclaimed ones back to the menu late or not at all.
         #[unsafe(method(performKeyEquivalent:))]
         fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
-            if event.r#type() == NSEventType::KeyDown && self.route_key(event) {
+            let key = event.r#type() == NSEventType::KeyDown;
+            let menu = || objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
+            if key && (self.route_key(event) || menu().is_some_and(|m| m.performKeyEquivalent(event))) {
                 true
             } else {
                 unsafe { msg_send![super(self), performKeyEquivalent: event] }
@@ -106,8 +105,12 @@ impl NdWindow {
         *self.ivars().router.borrow_mut() = router;
     }
 
-    pub(crate) fn set_key_capture(&self, capture: Option<KeyCapture>) {
-        *self.ivars().key_capture.borrow_mut() = capture;
+    /// A key event an overlay window's own views left: offered to nd dispatch as if this window
+    /// had it, then to the main menu, so accelerators hold while an overlay field has focus.
+    pub(crate) fn route_key_from_overlay(&self, event: &NSEvent) -> bool {
+        let menu = || objc2_app_kit::NSApplication::sharedApplication(self.mtm()).mainMenu();
+        event.r#type() == NSEventType::KeyDown
+            && (self.route_key(event) || menu().is_some_and(|m| m.performKeyEquivalent(event)))
     }
 
     /// The backend's focus op: moves AppKit's first responder to `view` (the window itself for
@@ -134,10 +137,6 @@ impl NdWindow {
         let (Some(router), Some(keystroke)) = (self.router(), crate::keystroke(event)) else {
             return false;
         };
-        let capture = self.ivars().key_capture.borrow().clone();
-        if capture.is_some_and(|c| c(&keystroke)) {
-            return false;
-        }
         router.key_down(&keystroke) != KeyDispatch::Unhandled
     }
 }

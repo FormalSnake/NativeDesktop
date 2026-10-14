@@ -33,6 +33,12 @@ nd-virtual = { workspace = true, features = ["conformance"] }
 name = "headless"
 harness = false
 
+# The overlay leak gate in-process (ARCHITECTURE.md 6.3): input inside an overlay never reaches
+# the button or GPU surface under it.
+[[test]]
+name = "overlays"
+harness = false
+
 [[test]]
 name = "nav"
 harness = false

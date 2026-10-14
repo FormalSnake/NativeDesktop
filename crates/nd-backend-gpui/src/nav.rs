@@ -14,7 +14,7 @@ use nd_components::{
     BANNER, BannerProps, CommandPaletteProps, FieldSelection, PALETTE, PaletteKey, PaletteModel, SourceIndex,
     SourceTreeProps, TOAST, Toast, ToastOverlayProps, ToastQueue,
 };
-use nd_core::NodeId;
+use nd_core::{NodeId, WindowId};
 use nd_gpui::gpui::{
     self, Animation, AnimationExt, AnyElement, BoxShadow, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement,
     IntoElement, Keystroke, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled,
@@ -45,11 +45,11 @@ pub struct Mark {
 pub struct Marks(RefCell<Vec<Mark>>);
 
 impl Marks {
-    fn fill(&self, label: &str, color: Hsla, under: &[Hsla]) {
+    pub(crate) fn fill(&self, label: &str, color: Hsla, under: &[Hsla]) {
         self.0.borrow_mut().push(Mark { label: label.into(), color, under: under.to_vec(), text: None });
     }
 
-    fn text(&self, label: &str, color: Hsla, under: &[Hsla], size: Pixels, weight: FontWeight) {
+    pub(crate) fn text(&self, label: &str, color: Hsla, under: &[Hsla], size: Pixels, weight: FontWeight) {
         let text = Some((size.as_f32(), weight.0));
         self.0.borrow_mut().push(Mark { label: label.into(), color, under: under.to_vec(), text });
     }
@@ -306,7 +306,9 @@ pub fn palette_overlay(
     if let Some(on_input) = on_input {
         scrim = scrim.on_mouse_down(MouseButton::Left, move |_, window, cx| on_input(PaletteInput::Cancel, window, cx));
     }
-    deferred(anchored().position(point(px(0.), px(0.))).child(scrim)).with_priority(2).into_any_element()
+    deferred(anchored().position(point(px(0.), px(0.))).child(scrim))
+        .with_priority(crate::overlay::PANEL_PRIORITY)
+        .into_any_element()
 }
 
 fn caret(theme: &Theme, line: f32) -> gpui::Div {
@@ -599,7 +601,9 @@ pub fn toast_view(
         .items_center()
         .pb(px(t.bottom))
         .child(body);
-    deferred(anchored().position(point(px(0.), px(0.))).child(layer)).with_priority(1).into_any_element()
+    deferred(anchored().position(point(px(0.), px(0.))).child(layer))
+        .with_priority(crate::overlay::TOAST_PRIORITY)
+        .into_any_element()
 }
 
 /// The drawn banner: the title and an optional button on the accent container.
@@ -749,6 +753,15 @@ impl GpuiBackend {
                 Drawn::Palette(p) => p.model.is_presented() && p.focus.is_focused(window),
                 _ => false,
             })
+        })
+    }
+
+    /// Whether a presented palette covers `window`: its scrim takes every press, so nd's gesture
+    /// recognizers under it see none.
+    pub(crate) fn palette_covers(&self, window: WindowId) -> bool {
+        self.drawn.borrow().iter().any(|(node, d)| {
+            d.try_borrow().is_ok_and(|d| matches!(&*d, Drawn::Palette(p) if p.model.is_presented()))
+                && self.window_of(*node) == Some(window)
         })
     }
 

@@ -14,3 +14,4 @@ nd-backend-gpui.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ndshell.workspace = true
+nd-test.workspace = true

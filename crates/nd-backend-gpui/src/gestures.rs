@@ -19,9 +19,9 @@ use nd_gpui::gpui::{
     self, AnyElement, App, Bounds, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels,
     PressureStage, ScrollDelta, TouchPhase, point, px,
 };
-use nd_ui::DivProps;
 use nd_ui::backend::NodeKind;
 use nd_ui::events::{EventQueue, emit_gesture};
+use nd_ui::{DivProps, Modality, OverlayProps};
 
 use crate::backend::Node;
 
@@ -66,9 +66,41 @@ fn contains(r: &Rect, p: Point) -> bool {
     p.x >= r.origin.x && p.y >= r.origin.y && p.x < r.origin.x + r.size.width && p.y < r.origin.y + r.size.height
 }
 
-/// Nodes under `at`, innermost first: from the root, into the topmost child (the last painted)
-/// whose bounds contain the point.
-fn hit_path(nodes: &HashMap<NodeId, Node>, bounds: &HashMap<NodeId, Rect>, root: NodeId, at: Point) -> Vec<NodeId> {
+/// Where a hit test starts. Overlays draw above all content (`crate::overlay`): a point inside
+/// the topmost one starts there, and a point on an input-taking overlay's backdrop hits nothing,
+/// so no gesture under an overlay ever fires. Scrolls pass a light-dismiss backdrop, as GPUI's
+/// own scroll handlers do.
+fn hit_start(
+    nodes: &HashMap<NodeId, Node>,
+    bounds: &HashMap<NodeId, Rect>,
+    root: NodeId,
+    at: Point,
+    scroll: bool,
+) -> Option<NodeId> {
+    let mut overlays: Vec<(NodeId, Modality)> = nodes
+        .iter()
+        .filter_map(|(id, n)| n.props.downcast_ref::<OverlayProps>().map(|p| (*id, p.modality)))
+        .filter(|(_, m)| *m != Modality::Passive)
+        .collect();
+    // Node ids grow with creation, and a nested overlay is created after the one holding it.
+    overlays.sort_by_key(|(id, _)| std::cmp::Reverse(*id));
+    if let Some((inside, _)) = overlays.iter().find(|(o, _)| bounds.get(o).is_some_and(|b| contains(b, at))) {
+        return Some(*inside);
+    }
+    let blocks = |m: &Modality| !scroll || *m == Modality::Modal;
+    if overlays.iter().any(|(_, m)| blocks(m)) { None } else { Some(root) }
+}
+
+/// Nodes under `at`, innermost first: from the hit start, into the topmost child (the last
+/// painted) whose bounds contain the point.
+fn hit_path(
+    nodes: &HashMap<NodeId, Node>,
+    bounds: &HashMap<NodeId, Rect>,
+    root: NodeId,
+    at: Point,
+    scroll: bool,
+) -> Vec<NodeId> {
+    let Some(root) = hit_start(nodes, bounds, root, at, scroll) else { return Vec::new() };
     let mut path = vec![root];
     let mut cursor = root;
     while let Some(node) = nodes.get(&cursor) {
@@ -103,9 +135,10 @@ impl Gestures {
         bounds: &HashMap<NodeId, Rect>,
         root: NodeId,
         at: Point,
+        scroll: bool,
         f: impl FnOnce(&[HitEntry<'_>]) -> R,
     ) -> R {
-        let path = hit_path(nodes, bounds, root, at);
+        let path = hit_path(nodes, bounds, root, at, scroll);
         let hit: Vec<HitEntry<'_>> = path
             .iter()
             .filter_map(|n| {
@@ -121,7 +154,7 @@ impl Gestures {
         let mut windows = self.windows.borrow_mut();
         let w = windows.entry(window).or_default();
         if phase == PointerPhase::Down {
-            self.with_hit(tree.0, tree.1, tree.2, at, |hit| w.router.pointer(&input, hit))
+            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| w.router.pointer(&input, hit))
         } else if w.router.pointer_active() {
             w.router.pointer(&input, &[])
         } else {
@@ -148,7 +181,7 @@ impl Gestures {
         let w = windows.entry(window).or_default();
         let (phase, momentum) = w.momentum.classify(finger);
         let input = ScrollInput { position: at, delta, phase, momentum, time: self.now() };
-        self.with_hit(tree.0, tree.1, tree.2, at, |hit| w.router.scroll(&input, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| w.router.scroll(&input, hit))
     }
 
     pub fn os_gesture(&self, window: WindowId, event: GestureEvent, at: Point, tree: Tree<'_>) -> Option<Output> {
@@ -156,7 +189,7 @@ impl Gestures {
         let router = windows.get(&window).map(|w| &w.router);
         let fallback = GestureRouter::default();
         let router = router.unwrap_or(&fallback);
-        self.with_hit(tree.0, tree.1, tree.2, at, |hit| router.route(event, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| router.route(event, hit))
     }
 
     /// A pressure event: the step into the force stage is a force click.

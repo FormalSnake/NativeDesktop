@@ -367,6 +367,11 @@ impl Inner {
                     ..InputRecord::default()
                 });
             }
+            if event.keystroke.key == "escape" && inner.backend.close_menu(id) {
+                cx.stop_propagation();
+                (inner.wake())(cx);
+                return;
+            }
             if inner.backend.drawn_claims_key(&event.keystroke, window) {
                 return;
             }
@@ -426,6 +431,14 @@ impl Inner {
     }
 
     fn pump(self: &Rc<Self>, cx: &mut gpui::App) {
+        let actions = self.backend.take_actions();
+        if !actions.is_empty()
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            for (window, action) in actions {
+                app.dispatch_action(window, &*action);
+            }
+        }
         let deferred = self.backend.take_deferred();
         if !deferred.is_empty()
             && let Ok(mut app) = self.app.try_borrow_mut()
@@ -452,6 +465,10 @@ impl Inner {
         self.sync_windows(cx);
         if needs_frame {
             self.frame_now(cx);
+        } else {
+            // A context menu opened or closed without a frame.
+            let dirty = self.backend.take_dirty();
+            self.notify(cx, dirty.into_iter());
         }
     }
 
@@ -578,8 +595,33 @@ impl Inner {
         let any: AnyWindowHandle = handle.into();
         self.backend.set_window_handle(id, any);
         let weak = Rc::downgrade(self);
+        let weak_appearance = weak.clone();
         let view = handle.update(cx, |_, window, cx| {
             self.hooks.window_opened(id, window, cx);
+            // Light-dismiss overlays close when the app loses activation, checked a turn later so
+            // a key change between the app's own windows does not count.
+            let activation = cx.observe_window_activation(window, move |_, window, cx| {
+                if window.is_window_active() {
+                    return;
+                }
+                let weak = weak.clone();
+                cx.defer(move |cx| {
+                    let Some(inner) = weak.upgrade() else { return };
+                    let active =
+                        cx.windows().iter().any(|w| w.update(cx, |_, w, _| w.is_window_active()).unwrap_or(false));
+                    if !active {
+                        for window in inner.windows.borrow().keys() {
+                            inner.backend.close_menu(*window);
+                        }
+                        if let Ok(mut app) = inner.app.try_borrow_mut() {
+                            app.app_deactivated();
+                        }
+                        inner.pump(cx);
+                    }
+                });
+            });
+            self.subscriptions.borrow_mut().push(activation);
+            let weak = weak_appearance;
             let appearance = window.observe_window_appearance(move |_, cx| {
                 if let Some(inner) = weak.upgrade() {
                     inner.platform_appearance(cx);
@@ -773,6 +815,7 @@ impl Inner {
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
         let build = Build::new(&self.backend, &state.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
         let element = build.node(root, window);
+        let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         let paints = build.take_paints();
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
@@ -786,8 +829,17 @@ impl Inner {
             Rc::downgrade(self),
         );
         let expose = self.debug.expose;
+        let (backend, fresh) = (self.backend.clone(), self.backend.clone());
         div()
             .size_full()
+            // A new press starts clean: a release owed to an earlier consumed press that never
+            // arrived (the compositor dropped it) must not eat this press's release.
+            .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))
+            .capture_any_mouse_up(move |_, _, cx| {
+                if backend.take_swallow(id) {
+                    cx.stop_propagation();
+                }
+            })
             .when(expose, |d| d.bg(gpui::rgb(0xff00ff)))
             .capture_any_mouse_down(move |event, window, cx| {
                 if let Some(diag) = nd_diag::global() {
@@ -855,6 +907,7 @@ impl Inner {
                 }
                 _ => d.child(element),
             })
+            .children(menu)
             .into_any_element()
     }
 
@@ -901,8 +954,15 @@ impl Inner {
         cx: &mut gpui::App,
         f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
     ) {
+        if self.backend.palette_covers(id) {
+            return;
+        }
         let outputs = {
             let state = self.backend.state.borrow();
+            // An open context menu's or palette's backdrop takes every press.
+            if state.menus.contains_key(&id) {
+                return;
+            }
             let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
             let bounds = self.backend.bounds.borrow();
             f(&self.backend.gestures, (&state.nodes, &bounds, root))

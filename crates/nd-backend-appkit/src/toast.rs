@@ -114,6 +114,8 @@ pub(crate) struct Overlay {
     handle: Retained<NSView>,
     queue: RefCell<ToastQueue>,
     layer: RefCell<Option<Retained<NdToastLayer>>>,
+    /// The overlay window over the node's window that the layer fills.
+    window_layer: RefCell<Option<crate::overlay::WindowLayer>>,
     shown: RefCell<Option<Shown>>,
     /// Changes waiting for the node to reach a window.
     waiting: RefCell<Vec<ToastChange>>,
@@ -134,6 +136,7 @@ impl ToastNative {
             handle,
             queue: RefCell::default(),
             layer: RefCell::default(),
+            window_layer: RefCell::default(),
             shown: RefCell::default(),
             waiting: RefCell::default(),
             retrying: Cell::new(false),
@@ -186,6 +189,7 @@ impl Drop for ToastNative {
         if let Some(layer) = self.0.layer.borrow_mut().take() {
             layer.removeFromSuperview();
         }
+        self.0.window_layer.borrow_mut().take();
     }
 }
 
@@ -243,10 +247,18 @@ impl Overlay {
         }
     }
 
-    /// The layer over this node's own window, made on first use.
+    /// The layer over this node's own window, in the overlay window above it (6.3), made on
+    /// first use. The overlay window never takes key status, and a click that misses every toast
+    /// lands on its transparent area, which the window server passes through to the window.
     fn layer(&self) -> Option<Retained<NdToastLayer>> {
         let window = self.handle.window()?;
-        let host = crate::palette::overlay_host(&window)?;
+        let current = self.window_layer.borrow().as_ref().is_some_and(|l| *l.owner() == *window);
+        if !current {
+            let layer = crate::overlay::WindowLayer::new(self.mtm, &window, false);
+            layer.show();
+            *self.window_layer.borrow_mut() = Some(layer);
+        }
+        let host = self.window_layer.borrow().as_ref()?.host();
         let mut slot = self.layer.borrow_mut();
         if let Some(layer) = slot.as_ref()
             && unsafe { layer.superview() }.is_some_and(|s| s == host)
