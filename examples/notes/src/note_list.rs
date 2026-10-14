@@ -43,17 +43,21 @@ impl NoteList {
         self.refresh(cx);
     }
 
+    // docs:begin select
     pub fn select(&mut self, id: NoteId, cx: &mut Context<Self>) {
         self.list.select(id, cx);
         self.list.scroll_to(id, Align::Nearest, px(0.), cx);
     }
+    // docs:end select
 
+    // docs:begin refresh
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let rows = self.library.read(cx).rows(self.folder, &self.query);
         // Keyed diff: inserts and removals animate and the anchor row stays put. Versioned: only
         // rows whose note changed re-render.
         self.list.set_items_versioned(rows, cx);
     }
+    // docs:end refresh
 
     fn row(&mut self, id: NoteId, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
@@ -141,6 +145,7 @@ impl Render for NoteList {
         let library = self.library.clone();
         let on_open = self.on_open.clone();
 
+        // docs:begin list
         list("notes", &self.list, cx.processor(Self::row))
             .estimated_row_height(if compact { px(36.) } else { px(64.) })
             .selection(Selection::single())
@@ -162,5 +167,6 @@ impl Render for NoteList {
                 Some(keys) => format!("Press {keys} to write one."),
                 None => "Use the New Note button to write one.".to_owned(),
             }))
+            // docs:end list
     }
 }

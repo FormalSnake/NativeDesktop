@@ -116,9 +116,11 @@ impl Notes {
         }
     }
 
+    // docs:begin sheet
     fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         window.open_sheet(cx, |window, cx| cx.new(|cx| SettingsSheet::new(window, cx)));
     }
+    // docs:end sheet
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_id(cx, SEARCH);
@@ -218,6 +220,7 @@ impl Render for Notes {
                     .child(separator().vertical())
                     .child(div().flex_1().h_full().child(self.editor.clone())),
             )
+            // docs:begin palette
             .overlay(
                 command_palette("palette")
                     .open(self.palette_open)
@@ -245,5 +248,6 @@ impl Render for Notes {
                         cx.notify();
                     })),
             )
+        // docs:end palette
     }
 }

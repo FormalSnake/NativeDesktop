@@ -40,6 +40,7 @@ impl Editor {
         window.focus_id(cx, BODY);
     }
 
+    // docs:begin pinch
     fn pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let before = self.zoom;
         self.zoom = (self.zoom * event.scale).clamp(0.5, 3.0);
@@ -50,6 +51,7 @@ impl Editor {
         }
         cx.notify();
     }
+    // docs:end pinch
 }
 
 impl Render for Editor {

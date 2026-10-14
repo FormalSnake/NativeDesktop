@@ -181,12 +181,14 @@ pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
     nd_diag::global()?.report_issue(message).ok()
 }
 
+type Setup = Box<dyn FnOnce(&mut nd_ui::App)>;
+
 pub struct Application {
     manifest: Manifest,
     pub(crate) theme: Option<crate::theme::ThemeOverride>,
     pub(crate) patterns: crate::chrome::Patterns,
     /// Runs before `init`: services the app asked for with builder calls such as `settings`.
-    setup: Vec<Box<dyn FnOnce(&mut nd_ui::App)>>,
+    setup: Vec<Setup>,
 }
 
 impl Application {
