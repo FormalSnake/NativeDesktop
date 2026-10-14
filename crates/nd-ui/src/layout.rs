@@ -85,8 +85,30 @@ pub(crate) fn to_taffy(refinement: &StyleRefinement) -> taffy::Style {
         flex_basis: dim(s.flex_basis),
         flex_grow: s.flex_grow,
         flex_shrink: s.flex_shrink,
+        grid_template_rows: grid_tracks(s.grid_rows),
+        grid_template_columns: grid_tracks(s.grid_cols),
+        grid_row: s.grid_location.as_ref().map(|l| grid_line(&l.row)).unwrap_or_default(),
+        grid_column: s.grid_location.as_ref().map(|l| grid_line(&l.column)).unwrap_or_default(),
         ..Default::default()
     }
+}
+
+fn grid_line(placement: &std::ops::Range<gpui::GridPlacement>) -> taffy::Line<taffy::GridPlacement> {
+    taffy::Line { start: placement.start.into(), end: placement.end.into() }
+}
+
+/// GPUI's `grid-template-*`: `repeat(n, minmax(<min>, 1fr))`, or `minmax(0, max-content)`.
+fn grid_tracks<S: taffy::style::CheapCloneStr>(
+    template: Option<gpui::GridTemplate>,
+) -> Vec<taffy::GridTemplateComponent<S>> {
+    use taffy::style_helpers::{fr, length, max_content, min_content, minmax, repeat};
+    let Some(t) = template else { return Vec::new() };
+    let track = match t.min_size {
+        gpui::GridTemplateMinSize::Zero => minmax(length(0.), fr(1.)),
+        gpui::GridTemplateMinSize::MinContent => minmax(min_content(), fr(1.)),
+        gpui::GridTemplateMinSize::MaxContent => minmax(length(0.), max_content()),
+    };
+    vec![repeat(t.repeat, vec![track])]
 }
 
 /// `style` padded by the titlebar insets: leading and trailing added to the left and right

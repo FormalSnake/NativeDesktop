@@ -41,6 +41,7 @@ use crate::budget::Budget;
 use crate::clock::{DisplayClock, Pacing};
 use crate::os::{FrameRequest, NoOsHooks, OsHooks};
 use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH};
+use crate::window_tabs::{CloseHook, Groups, Request, SurfaceId, TabGroup};
 
 fn point_of(p: gpui::Point<gpui::Pixels>) -> Point {
     Point { x: p.x.as_f32(), y: p.y.as_f32() }
@@ -69,25 +70,30 @@ impl AppSender {
     }
 }
 
-/// A window's GPUI root view.
+/// A window's GPUI root view: one app window, or a group window showing a tab group's tabs.
 pub struct NdView {
     host: Weak<Inner>,
     window: WindowId,
+    surface: Option<SurfaceId>,
 }
 
 impl Render for NdView {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.host.upgrade() {
             Some(host) if host.single_canvas => host.render_canvas(window, cx),
-            Some(host) => host.render_window(self.window, window, cx),
+            Some(host) => match self.surface {
+                Some(surface) => host.render_group(surface, window, cx),
+                None => host.render_window(self.window, window, cx),
+            },
             None => div().into_any_element(),
         }
     }
 }
 
-struct HostWindow {
-    view: Option<gpui::Entity<NdView>>,
-    handle: Option<AnyWindowHandle>,
+pub(crate) struct HostWindow {
+    /// Shared by every tab of a group window, and by every window of a single canvas.
+    pub(crate) view: Option<gpui::Entity<NdView>>,
+    pub(crate) handle: Option<AnyWindowHandle>,
     clock: DisplayClock,
     /// When the window last printed its pacing line.
     reported: Option<Instant>,
@@ -116,11 +122,11 @@ impl DebugFlags {
     }
 }
 
-struct Inner {
-    app: RefCell<App>,
-    backend: GpuiBackend,
-    windows: RefCell<BTreeMap<WindowId, HostWindow>>,
-    hooks: Rc<dyn OsHooks>,
+pub(crate) struct Inner {
+    pub(crate) app: RefCell<App>,
+    pub(crate) backend: GpuiBackend,
+    pub(crate) windows: RefCell<BTreeMap<WindowId, HostWindow>>,
+    pub(crate) hooks: Rc<dyn OsHooks>,
     origin: Instant,
     first_frame: Cell<bool>,
     had_windows: Cell<bool>,
@@ -135,7 +141,9 @@ struct Inner {
     tasks: RefCell<Vec<gpui::Task<()>>>,
     watchdog: RefCell<Option<Watchdog>>,
     /// Every app window draws into the first GPUI window (see [`HostBuilder::single_canvas`]).
-    single_canvas: bool,
+    pub(crate) single_canvas: bool,
+    /// The tab groups and the group windows showing them.
+    pub(crate) groups: RefCell<Groups>,
 }
 
 /// Builds a [`GpuiHost`].
@@ -193,6 +201,7 @@ impl HostBuilder {
             tasks: RefCell::default(),
             watchdog: RefCell::default(),
             single_canvas: self.single_canvas,
+            groups: RefCell::default(),
         });
         let weak = Rc::downgrade(&inner);
         let wake: Wake = Rc::new(move |cx: &mut gpui::App| {
@@ -209,6 +218,12 @@ impl HostBuilder {
             inner.subscriptions.borrow_mut().push(keys);
         }
         inner.listen(cx, rx);
+        let weak = Rc::downgrade(&inner);
+        cx.set_global(CloseHook(Rc::new(move |handle, cx| {
+            if let Some(inner) = weak.upgrade() {
+                inner.os_close(handle, cx);
+            }
+        })));
         if let Some(diag) = nd_diag::global() {
             let sender = inner.sender.clone();
             *inner.watchdog.borrow_mut() = Some(diag.start_watchdog(Box::new(move |f| sender.post(f))));
@@ -283,9 +298,31 @@ impl GpuiHost {
     /// Draws every window now, as GPUI does on its next frame. For headless tests, whose
     /// windows draw only when asked.
     pub fn draw(&self, cx: &mut gpui::App) {
-        let handles: Vec<AnyWindowHandle> = self.0.windows.borrow().values().filter_map(|w| w.handle).collect();
+        let mut handles: Vec<AnyWindowHandle> = Vec::new();
+        for handle in self.0.windows.borrow().values().filter_map(|w| w.handle) {
+            if !handles.contains(&handle) {
+                handles.push(handle);
+            }
+        }
         for handle in handles {
             let _ = handle.update(cx, |_, window, cx| window.draw(cx).clear(cx));
+        }
+    }
+}
+
+impl GpuiHost {
+    /// The tab group `window` is a tab of, as the host shows it; `None` for a window outside
+    /// every group.
+    pub fn tab_group(&self, window: WindowId) -> Option<TabGroup> {
+        self.0.groups.borrow().info(window)
+    }
+
+    /// What the OS close button of the GPUI window showing `window` does: asks the app to close
+    /// it, or every tab of its group window, on the next pump.
+    pub fn request_window_close(&self, cx: &mut gpui::App, window: WindowId) {
+        let handle = self.window_handle(window);
+        if let Some(handle) = handle {
+            self.0.os_close(handle, cx);
         }
     }
 }
@@ -309,7 +346,7 @@ fn scheme_of(appearance: gpui::WindowAppearance) -> Scheme {
 }
 
 /// Where the OS controls sit when no OS crate says otherwise.
-fn default_insets(window: &gpui::Window) -> TitlebarInsets {
+pub(crate) fn default_insets(window: &gpui::Window) -> TitlebarInsets {
     if cfg!(target_os = "macos") {
         // The window keeps AppKit's titlebar on the GPUI path, so content starts below it.
         return TitlebarInsets::default();
@@ -333,7 +370,7 @@ fn record_frame(app: &App, id: WindowId, time: FrameTime, work_ms: f64) {
 }
 
 impl Inner {
-    fn wake(&self) -> Wake {
+    pub(crate) fn wake(&self) -> Wake {
         self.backend.wake_fn().expect("host attached its wake")
     }
 
@@ -375,6 +412,11 @@ impl Inner {
                 (inner.wake())(cx);
                 return;
             }
+            if inner.tab_key_first(id, &event.keystroke) {
+                cx.stop_propagation();
+                window.refresh();
+                return;
+            }
             if inner.backend.drawn_claims_key(&event.keystroke, window) {
                 return;
             }
@@ -383,24 +425,34 @@ impl Inner {
             drop(app);
             if result != KeyDispatch::Unhandled {
                 cx.stop_propagation();
+            } else if inner.tab_key_last(id, &event.keystroke) {
+                cx.stop_propagation();
+                window.refresh();
             }
             (inner.wake())(cx);
         });
         let weak = Rc::downgrade(self);
         let closed = cx.on_window_closed(move |cx, closed| {
             let Some(inner) = weak.upgrade() else { return };
-            let id = inner
+            let ids: Vec<WindowId> = inner
                 .windows
                 .borrow()
                 .iter()
-                .find(|(_, w)| w.handle.is_some_and(|h| h.window_id() == closed))
-                .map(|(id, _)| *id);
-            let Some(id) = id else { return };
-            inner.windows.borrow_mut().remove(&id);
-            inner.closed(id);
-            if let Ok(mut app) = inner.app.try_borrow_mut() {
-                app.close_window(id);
+                .filter(|(_, w)| w.handle.is_some_and(|h| h.window_id() == closed))
+                .map(|(id, _)| *id)
+                .collect();
+            if ids.is_empty() {
+                return;
             }
+            inner.groups.borrow_mut().surfaces.retain(|_, s| s.handle.is_none_or(|h| h.window_id() != closed));
+            for id in ids {
+                inner.windows.borrow_mut().remove(&id);
+                inner.closed(id);
+                if let Ok(mut app) = inner.app.try_borrow_mut() {
+                    app.close_window(id);
+                }
+            }
+            inner.refresh_hidden();
             inner.pump(cx);
         });
         self.subscriptions.borrow_mut().extend([keys, closed]);
@@ -423,6 +475,18 @@ impl Inner {
         let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
         self.notify(cx, all.into_iter());
         self.pump(cx);
+    }
+
+    /// The OS close of a GPUI window, which never closes it there and then: the app is asked on
+    /// the next pump, for every tab of a group window, and closes what it lets go (3.13, 5.5).
+    pub(crate) fn os_close(&self, handle: AnyWindowHandle, cx: &mut gpui::App) {
+        let Some(id) = self.backend.window_for(handle) else { return };
+        let request = match self.groups.borrow().surface_of(id) {
+            Some(surface) => Request::CloseAll(surface),
+            None => Request::Close(id),
+        };
+        self.groups.borrow_mut().requests.push(request);
+        (self.wake())(cx);
     }
 
     fn closed(&self, id: WindowId) {
@@ -451,6 +515,7 @@ impl Inner {
                 app.flush_effects();
             }
         }
+        self.tab_requests(cx);
         for (id, event) in self.backend.take_pending() {
             if let Some(handle) = self.backend.window_handle(id) {
                 self.budget.borrow_mut().input(Instant::now());
@@ -525,10 +590,14 @@ impl Inner {
 
     /// Opens a GPUI window for every app window that has none and closes those of closed ones.
     fn sync_windows(self: &Rc<Self>, cx: &mut gpui::App) {
-        let wanted: Vec<(WindowId, SharedString, Size)> = {
+        type Wanted = (WindowId, SharedString, Size, Option<SharedString>);
+        let wanted: Vec<Wanted> = {
             let Ok(app) = self.app.try_borrow() else { return };
             app.window_ids()
-                .filter_map(|id| app.window(id).map(|w| (id, w.title().clone(), w.viewport_size())))
+                .filter_map(|id| {
+                    let w = app.window(id)?;
+                    Some((id, w.title().clone(), w.viewport_size(), w.options().tab_group.clone()))
+                })
                 .collect()
         };
         let gone: Vec<(WindowId, Option<AnyWindowHandle>)> = self
@@ -539,42 +608,80 @@ impl Inner {
             .map(|(id, w)| (*id, w.handle))
             .collect();
         for (id, handle) in gone {
-            self.windows.borrow_mut().remove(&id);
+            // Notifying a group window below can pump again and close it there first.
+            if self.windows.borrow_mut().remove(&id).is_none() {
+                continue;
+            }
             self.closed(id);
-            // The canvas outlives the app windows drawn into it.
-            if let Some(handle) = handle.filter(|_| !self.single_canvas) {
+            let tab = self.groups.borrow_mut().detach(id);
+            match tab {
+                Some((surface, true)) => {
+                    self.groups.borrow_mut().surfaces.remove(&surface);
+                }
+                Some((surface, false)) => {
+                    self.refresh_hidden();
+                    self.notify_surface(surface, cx);
+                    continue;
+                }
+                None => {}
+            }
+            // The canvas outlives the app windows drawn into it, as a group window does its tabs.
+            let shared = |h: &AnyWindowHandle| self.windows.borrow().values().any(|w| w.handle == Some(*h));
+            if let Some(handle) = handle.filter(|h| !self.single_canvas && !shared(h)) {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
             }
         }
-        for (id, title, size) in wanted {
+        for (id, title, size, group) in wanted {
             if self.windows.borrow().contains_key(&id) {
                 continue;
             }
-            self.open_window(cx, id, title, size);
+            self.open_window(cx, id, title, size, group);
         }
         if self.quit_when_empty && self.had_windows.get() && self.windows.borrow().is_empty() {
             cx.quit();
         }
     }
 
-    fn open_window(self: &Rc<Self>, cx: &mut gpui::App, id: WindowId, title: SharedString, size: Size) {
+    fn open_window(
+        self: &Rc<Self>,
+        cx: &mut gpui::App,
+        id: WindowId,
+        title: SharedString,
+        size: Size,
+        group: Option<SharedString>,
+    ) {
+        // A tab joins the group window of its group the user used last, selected.
+        let joined = group.as_ref().and_then(|g| {
+            let mut groups = self.groups.borrow_mut();
+            let surface = groups.active(g)?;
+            let s = groups.surfaces.get(&surface)?;
+            let (handle, view) = (s.handle?, s.view.clone()?);
+            let end = s.tabs.len();
+            groups.attach(surface, id, end);
+            Some((surface, handle, view))
+        });
+        if let Some((surface, handle, view)) = joined {
+            self.windows.borrow_mut().insert(id, self.host_window(Some(handle), Some(view), size));
+            self.backend.set_window_handle(id, handle);
+            self.had_windows.set(true);
+            self.refresh_hidden();
+            self.notify_surface(surface, cx);
+            return;
+        }
+        let surface = group.map(|g| self.groups.borrow_mut().create(g, id));
         let canvas = self
             .single_canvas
             .then(|| self.windows.borrow().values().find_map(|w| Some((w.handle?, w.view.clone()?))))
             .flatten();
         let (handle, view) = canvas.map_or((None, None), |(h, v)| (Some(h), Some(v)));
-        self.windows.borrow_mut().insert(
-            id,
-            HostWindow {
-                view,
-                handle,
-                clock: DisplayClock::new(self.origin),
-                reported: None,
-                resized: None,
-                requested: size,
-            },
-        );
+        self.windows.borrow_mut().insert(id, self.host_window(handle, view.clone(), size));
         if let Some(handle) = handle {
+            if let Some(s) = surface
+                && let Some(s) = self.groups.borrow_mut().surfaces.get_mut(&s)
+            {
+                s.handle = Some(handle);
+                s.view = view;
+            }
             self.backend.set_window_handle(id, handle);
             self.had_windows.set(true);
             let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
@@ -582,6 +689,42 @@ impl Inner {
             return;
         }
         let bounds = Bounds::centered(None, gpui::size(px(size.width), px(size.height)), cx);
+        if self.open_gpui_window(cx, id, title, bounds, surface).is_none() {
+            self.windows.borrow_mut().remove(&id);
+            if let Some(s) = surface {
+                self.groups.borrow_mut().surfaces.remove(&s);
+            }
+            return;
+        }
+        self.had_windows.set(true);
+    }
+
+    fn host_window(
+        &self,
+        handle: Option<AnyWindowHandle>,
+        view: Option<gpui::Entity<NdView>>,
+        size: Size,
+    ) -> HostWindow {
+        HostWindow {
+            view,
+            handle,
+            clock: DisplayClock::new(self.origin),
+            reported: None,
+            resized: None,
+            requested: size,
+        }
+    }
+
+    /// Opens a GPUI window for the app window `id`, or for the group window `surface` showing
+    /// it, and points both at it.
+    pub(crate) fn open_gpui_window(
+        self: &Rc<Self>,
+        cx: &mut gpui::App,
+        id: WindowId,
+        title: SharedString,
+        bounds: Bounds<gpui::Pixels>,
+        surface: Option<SurfaceId>,
+    ) -> Option<AnyWindowHandle> {
         let mut options = gpui::WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
@@ -593,32 +736,31 @@ impl Inner {
         self.hooks.window_options(id, &mut options);
         let host = Rc::downgrade(self);
         let Ok(handle) = cx.open_window(options, |window, cx| {
-            let view = cx.new(|_| NdView { host, window: id });
+            let view = cx.new(|_| NdView { host, window: id, surface });
             // The window's first draw can open further app windows, which must find this one as
-            // their canvas before `open_window` returns.
-            if self.single_canvas {
-                if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
-                    w.handle = Some(window.window_handle());
-                    w.view = Some(view.clone());
-                }
-                self.backend.set_window_handle(id, window.window_handle());
-            }
+            // their canvas, or their group window, before `open_window` returns.
+            self.bind(id, surface, window.window_handle(), view.clone());
             view
         }) else {
             eprintln!("nd: GPUI could not open window {id:?}");
-            self.windows.borrow_mut().remove(&id);
-            return;
+            return None;
         };
         let any: AnyWindowHandle = handle.into();
         self.backend.set_window_handle(id, any);
         let weak = Rc::downgrade(self);
         let weak_appearance = weak.clone();
+        let weak_close = weak.clone();
         let view = handle.update(cx, |_, window, cx| {
             self.hooks.window_opened(id, window, cx);
             // Light-dismiss overlays close when the app loses activation, checked a turn later so
             // a key change between the app's own windows does not count.
             let activation = cx.observe_window_activation(window, move |_, window, cx| {
                 if window.is_window_active() {
+                    if let Some(inner) = weak.upgrade()
+                        && let Some(surface) = surface
+                    {
+                        inner.groups.borrow_mut().touch(surface);
+                    }
                     return;
                 }
                 let weak = weak.clone();
@@ -652,13 +794,35 @@ impl Inner {
                 }
             });
             self.subscriptions.borrow_mut().push(activation);
+            if !self.single_canvas {
+                window.on_window_should_close(cx, move |window, cx| {
+                    if let Some(inner) = weak_close.upgrade() {
+                        inner.os_close(window.window_handle(), cx);
+                    }
+                    false
+                });
+            }
             cx.entity()
         });
-        if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
-            w.handle = Some(any);
-            w.view = view.ok();
+        if let Ok(view) = view {
+            self.bind(id, surface, any, view);
         }
-        self.had_windows.set(true);
+        Some(any)
+    }
+
+    /// Points the app window and its group window at the GPUI window `handle`.
+    fn bind(&self, id: WindowId, surface: Option<SurfaceId>, handle: AnyWindowHandle, view: gpui::Entity<NdView>) {
+        if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
+            w.handle = Some(handle);
+            w.view = Some(view.clone());
+        }
+        if let Some(s) = surface
+            && let Some(s) = self.groups.borrow_mut().surfaces.get_mut(&s)
+        {
+            s.handle = Some(handle);
+            s.view = Some(view);
+        }
+        self.backend.set_window_handle(id, handle);
     }
 
     /// Follows one window's active state. Moving focus between two app windows deactivates one
@@ -687,7 +851,7 @@ impl Inner {
         let size = window.viewport_size();
         let size = Size { width: size.width.as_f32(), height: size.height.as_f32() };
         let insets = self.hooks.titlebar_insets(id, window).unwrap_or_else(|| default_insets(window));
-        self.render_window_at(id, size, insets, window, cx)
+        self.render_window_at(id, size, insets, None, window, cx)
     }
 
     /// The app windows of a single canvas: the oldest normal window fills it, the rest float
@@ -703,6 +867,24 @@ impl Inner {
             };
             open.into_iter()
                 .filter_map(|(id, size)| app.window(id).map(|w| (id, size, w.options().kind, w.title().clone())))
+                .collect()
+        };
+        // A tab group is one in-canvas window showing its selected tab, where its first tab
+        // opened.
+        let kinds: Vec<(WindowId, Size, nd_ui::WindowKind, SharedString)> = {
+            let groups = self.groups.borrow();
+            let mut seen = Vec::new();
+            kinds
+                .iter()
+                .filter_map(|k| match groups.surface_of(k.0) {
+                    None => Some(k.clone()),
+                    Some(s) if seen.contains(&s) => None,
+                    Some(s) => {
+                        seen.push(s);
+                        let shown = groups.surfaces[&s].selected;
+                        kinds.iter().find(|k| k.0 == shown).cloned()
+                    }
+                })
                 .collect()
         };
         let base = kinds.iter().find(|(_, _, kind, _)| !matches!(kind, nd_ui::WindowKind::Sheet { .. })).map(|k| k.0);
@@ -745,21 +927,23 @@ impl Inner {
         let mut stack = div().w(px(viewport.width)).h(px(viewport.height)).relative();
         if let Some(base) = base {
             let insets = self.hooks.titlebar_insets(base, window).unwrap_or_else(|| default_insets(window));
-            stack = stack.child(self.render_window_at(base, viewport, insets, window, cx));
+            stack = stack.child(self.canvas_window(base, viewport, insets, window, cx));
         }
         let mut floating = 0;
         for (id, requested, kind, title) in kinds.into_iter().filter(|k| Some(k.0) != base) {
             let sheet = matches!(kind, nd_ui::WindowKind::Sheet { .. });
             let chrome = if sheet { 0. } else { crate::canvas::TITLE_HEIGHT };
             let size = crate::canvas::fit(requested, viewport, chrome);
-            let element = self.render_window_at(id, size, TitlebarInsets::default(), window, cx);
+            let element = self.canvas_window(id, size, TitlebarInsets::default(), window, cx);
             let close = {
                 let weak = Rc::downgrade(self);
                 move |cx: &mut gpui::App| {
                     let Some(inner) = weak.upgrade() else { return };
-                    if let Ok(mut app) = inner.app.try_borrow_mut() {
-                        app.close_window(id);
-                    }
+                    let request = match inner.groups.borrow().surface_of(id) {
+                        Some(surface) => Request::CloseAll(surface),
+                        None => Request::Close(id),
+                    };
+                    inner.groups.borrow_mut().requests.push(request);
                     inner.pump(cx);
                 }
             };
@@ -784,11 +968,30 @@ impl Inner {
         }
     }
 
-    fn render_window_at(
+    /// An in-canvas window: the app window, or the tab group it is the shown tab of.
+    fn canvas_window(
         self: &Rc<Self>,
         id: WindowId,
         size: Size,
         insets: TitlebarInsets,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> AnyElement {
+        let surface = self.groups.borrow().surface_of(id);
+        match surface {
+            Some(surface) => self.group_content(surface, size, insets, window, cx),
+            None => self.render_window_at(id, size, insets, None, window, cx),
+        }
+    }
+
+    /// The app window's tree at `size`. `under_title` (a group window's tab bar) goes under the
+    /// tree's title row, or above the tree when it has none.
+    pub(crate) fn render_window_at(
+        self: &Rc<Self>,
+        id: WindowId,
+        size: Size,
+        insets: TitlebarInsets,
+        under_title: Option<AnyElement>,
         window: &mut gpui::Window,
         cx: &mut gpui::App,
     ) -> AnyElement {
@@ -838,9 +1041,15 @@ impl Inner {
             // An automation job holds the app; draw the tree as it stands and come back.
             Err(_) => (Default::default(), true),
         };
-        // On a single canvas every app window is this view, which is drawing now.
+        // On a single canvas every app window is this view, which is drawing now, as are the
+        // other tabs of a group window.
         if !self.single_canvas {
-            self.notify(cx, committed.into_iter().filter(|w| *w != id));
+            let this = window.window_handle();
+            let others: Vec<WindowId> = {
+                let open = self.windows.borrow();
+                committed.into_iter().filter(|w| open.get(w).is_some_and(|w| w.handle != Some(this))).collect()
+            };
+            self.notify(cx, others.into_iter());
         }
         self.backend.set_window_state(id, window_state(window));
         if needs_more || animating {
@@ -863,7 +1072,18 @@ impl Inner {
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
         let mut build = Build::new(&self.backend, &state.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
         build.time = frame_time.unwrap_or_else(|| self.origin.elapsed().as_secs_f64());
+        *build.under_title.borrow_mut() = under_title;
         let element = build.node(root, window, cx);
+        let element = match build.under_title.take() {
+            Some(bar) => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(bar)
+                .child(div().flex_1().min_h_0().w_full().child(element))
+                .into_any_element(),
+            None => element,
+        };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         let paints = build.take_paints();
         drop(state);

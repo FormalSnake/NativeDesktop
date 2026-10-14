@@ -106,6 +106,64 @@ impl gpui::Element for Tracked {
     }
 }
 
+/// A subtree whose root has `visibility: Hidden`: laid out, so it keeps its box, but never
+/// prepainted or painted, so it shows nothing, registers no hitbox and takes no focus.
+struct HiddenSubtree(AnyElement);
+
+impl IntoElement for HiddenSubtree {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for HiddenSubtree {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.0.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        _window: &mut gpui::Window,
+        _cx: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        _window: &mut gpui::Window,
+        _cx: &mut App,
+    ) {
+    }
+}
+
 /// The colours the drawn chrome and controls use, taken from the theme in effect.
 #[derive(Clone, Copy, Debug)]
 pub struct Look {
@@ -202,6 +260,8 @@ pub(crate) struct Build<'a> {
     registry: &'a ThemeRegistry,
     ink: RefCell<Vec<Ink>>,
     paints: RefCell<Vec<Paint>>,
+    /// A group window's tab bar, placed under the first title row (toolbar or titlebar) built.
+    pub(crate) under_title: RefCell<Option<AnyElement>>,
 }
 
 impl<'a> Build<'a> {
@@ -234,6 +294,7 @@ impl<'a> Build<'a> {
             registry,
             ink: RefCell::new(vec![ink]),
             paints: RefCell::default(),
+            under_title: RefCell::default(),
         }
     }
 
@@ -362,7 +423,13 @@ impl<'a> Build<'a> {
     pub fn node(&self, id: NodeId, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
         let node = &self.nodes[&id];
         let element = self.scoped(node, || self.element(id, node, window, cx));
-        Tracked { node: id, inner: element, bounds: self.backend.bounds.clone() }.into_any_element()
+        let tracked = Tracked { node: id, inner: element, bounds: self.backend.bounds.clone() }.into_any_element();
+        if crate::window_tabs::is_title_row(node)
+            && let Some(bar) = self.under_title.borrow_mut().take()
+        {
+            return div().w_full().flex_none().flex().flex_col().child(tracked).child(bar).into_any_element();
+        }
+        tracked
     }
 
     fn element(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
@@ -380,6 +447,7 @@ impl<'a> Build<'a> {
                         .bg(ink.background)
                         .text_color(ink.text)
                         .children(children(window, cx))
+                        .children(self.dialog_layer(id, window))
                         .into_any_element()
                 })
             }
@@ -387,9 +455,15 @@ impl<'a> Build<'a> {
                 let props = node.props.downcast_ref::<DivProps>().expect("View node needs DivProps");
                 let own = solid(&props.style);
                 let surface = own.is_none().then(|| self.top().surface).flatten();
-                self.painted(id, own.or(surface), props.style.text.color, "view", || {
+                let painted = self.paints.borrow().len();
+                let element = self.painted(id, own.or(surface), props.style.text.color, "view", || {
                     self.view(id, props, surface, children(window, cx), window)
-                })
+                });
+                if props.style.visibility == Some(gpui::Visibility::Hidden) {
+                    self.paints.borrow_mut().truncate(painted);
+                    return HiddenSubtree(element).into_any_element();
+                }
+                element
             }
             NodeKind::Text => {
                 let props = node.props.downcast_ref::<TextProps>().expect("Text node needs TextProps");
@@ -418,6 +492,11 @@ impl<'a> Build<'a> {
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>() => {
                 self.virtual_list(id, node, window, cx)
             }
+            NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<nd_components::TabStripKind>() => {
+                let props = node.props.downcast_ref::<nd_components::TabStripProps>().expect("TabStripProps");
+                self.tab_strip(id, props)
+            }
+            NodeKind::Widget(w) if let Some(layout) = self.layout_widget(id, w, node, window, cx) => layout,
             NodeKind::Widget(w) if let Some(intent) = self.intent(id, w, node, window, cx) => intent,
             NodeKind::Widget(w) if let Some(custom) = crate::custom::lookup(w.type_id) => {
                 custom.element(&crate::custom::CustomCx::new(self, id, &node.props), window)
@@ -645,7 +724,7 @@ pub fn drawn_controls(cx: &ChromeContext, window: &gpui::Window) -> AnyElement {
     }
     row.child(
         button("close", "\u{00d7}", WindowControlArea::Close, look.close_hover)
-            .on_click(|_, window, _| window.remove_window()),
+            .on_click(|_, window, cx| crate::window_tabs::user_close(window, cx)),
     )
     .into_any_element()
 }

@@ -117,6 +117,8 @@ pub(crate) fn create(kind: WidgetKind, p: &Props, cx: Ctx) -> Option<Box<dyn For
         Box::new(display::LabelControl::new(cx, props(p)))
     } else if is::<LinkKind>(kind) {
         Box::new(display::LinkControl::new(cx, props(p)))
+    } else if is::<nd_components::TabStripKind>(kind) {
+        Box::new(choice::TabStripControl::new(cx, props(p)))
     } else if is::<TextFieldKind>(kind) {
         Box::new(text::TextFieldControl::new(cx, props(p)))
     } else if is::<TextAreaKind>(kind) {

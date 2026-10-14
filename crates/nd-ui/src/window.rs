@@ -1,7 +1,9 @@
+use std::rc::Rc;
+
 use nd_core::{FrameTime, Size, WindowId};
 use nd_gpui::gpui::{self, Pixels, SharedString};
 
-use crate::app::Entity;
+use crate::app::{App, Entity};
 
 /// How the window's title bar is drawn (ARCHITECTURE.md 5.4).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -35,6 +37,10 @@ pub struct WindowOptions {
     pub min_size: Option<gpui::Size<Pixels>>,
     pub titlebar: Titlebar,
     pub kind: WindowKind,
+    /// Windows naming the same group show as tabs of one window (ARCHITECTURE.md 5.5): native
+    /// window tabs on macOS, a drawn tab bar elsewhere. Read when the window opens; groups with
+    /// different names never merge.
+    pub tab_group: Option<SharedString>,
 }
 
 impl WindowOptions {
@@ -47,7 +53,14 @@ impl WindowOptions {
             min_size: None,
             titlebar: Titlebar::Native,
             kind: WindowKind::Normal,
+            tab_group: None,
         }
+    }
+
+    /// Opens the window as a tab of `group`, next to the group's key window when one is open.
+    pub fn tab_group(mut self, group: impl Into<SharedString>) -> Self {
+        self.tab_group = Some(group.into());
+        self
     }
 
     pub fn titlebar(mut self, titlebar: Titlebar) -> Self {
@@ -88,6 +101,9 @@ pub struct TitlebarInsets {
     pub height: f32,
 }
 
+pub(crate) type ShouldClose = Rc<dyn Fn(&mut Window, &mut App) -> bool>;
+pub(crate) type NewTab = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// Per-window state handed to `render` and to handlers.
 pub struct Window {
     id: WindowId,
@@ -96,6 +112,8 @@ pub struct Window {
     clock: FrameTime,
     options: WindowOptions,
     insets: TitlebarInsets,
+    pub(crate) should_close: Option<ShouldClose>,
+    pub(crate) new_tab: Option<NewTab>,
 }
 
 impl Window {
@@ -111,7 +129,29 @@ impl Window {
             clock: FrameTime::default(),
             options: options.clone(),
             insets: TitlebarInsets::default(),
+            should_close: None,
+            new_tab: None,
         }
+    }
+
+    /// Decides what the user's close does (the close button, `cmd-w` on a native tab, a drawn
+    /// tab's close). Returning false holds the close: the window stays until the app calls
+    /// [`App::close_window`], which is how a tab whose view the app still has to drop waits.
+    /// Without a handler a close request closes the window. Replaces an earlier handler.
+    pub fn on_should_close(&mut self, handler: impl Fn(&mut Window, &mut App) -> bool + 'static) {
+        self.should_close = Some(Rc::new(handler));
+    }
+
+    /// The user asked this window's tab group for a new tab (the `+` of the tab bar). The app
+    /// opens another window with the same [`WindowOptions::tab_group`]. Replaces an earlier
+    /// handler.
+    pub fn on_new_tab(&mut self, handler: impl Fn(&mut Window, &mut App) + 'static) {
+        self.new_tab = Some(Rc::new(handler));
+    }
+
+    /// Whether the window answers a new tab request, so a drawn tab bar shows its `+`.
+    pub fn handles_new_tab(&self) -> bool {
+        self.new_tab.is_some()
     }
 
     /// What the window was opened with.
@@ -125,6 +165,10 @@ impl Window {
 
     pub fn title(&self) -> &SharedString {
         &self.title
+    }
+
+    pub(crate) fn set_title(&mut self, title: SharedString) {
+        self.title = title;
     }
 
     /// Content size in logical points.

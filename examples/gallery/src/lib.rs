@@ -4,6 +4,7 @@
 //! glass capsules. On Linux and Windows the same tree draws through GPUI.
 
 pub mod forms;
+pub mod layout;
 
 use std::time::Duration;
 
@@ -21,10 +22,24 @@ pub enum Page {
     Toasts,
     Banner,
     Forms,
+    Tabs,
+    Split,
+    StatusPage,
+    Dialogs,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Palette, Page::SourceList, Page::Toasts, Page::Banner, Page::Forms];
+    pub const ALL: [Page; 9] = [
+        Page::Palette,
+        Page::SourceList,
+        Page::Toasts,
+        Page::Banner,
+        Page::Forms,
+        Page::Tabs,
+        Page::Split,
+        Page::StatusPage,
+        Page::Dialogs,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -33,6 +48,10 @@ impl Page {
             Page::Toasts => "toasts",
             Page::Banner => "banner",
             Page::Forms => "forms",
+            Page::Tabs => "tabs",
+            Page::Split => "split",
+            Page::StatusPage => "status-page",
+            Page::Dialogs => "dialogs",
         }
     }
 
@@ -43,6 +62,10 @@ impl Page {
             Page::Toasts => "Toasts",
             Page::Banner => "Banner",
             Page::Forms => "Forms",
+            Page::Tabs => "Tabs",
+            Page::Split => "Split view",
+            Page::StatusPage => "Status page",
+            Page::Dialogs => "Dialogs",
         }
     }
 
@@ -53,6 +76,10 @@ impl Page {
             Page::Toasts => Icon::Info,
             Page::Banner => Icon::TriangleAlert,
             Page::Forms => Icon::SquarePen,
+            Page::Tabs => Icon::FileText,
+            Page::Split => Icon::PanelRight,
+            Page::StatusPage => Icon::Inbox,
+            Page::Dialogs => Icon::Check,
         }
     }
 
@@ -61,6 +88,7 @@ impl Page {
             Page::Palette | Page::SourceList => "navigation",
             Page::Toasts | Page::Banner => "feedback",
             Page::Forms => "controls",
+            Page::Tabs | Page::Split | Page::StatusPage | Page::Dialogs => "layout",
         }
     }
 
@@ -97,6 +125,9 @@ pub struct Gallery {
     banner: bool,
     last_event: SharedString,
     forms: Entity<forms::FormsPage>,
+    tabs: Entity<layout::TabsDemo>,
+    split: Entity<layout::SplitDemo>,
+    dialogs: Entity<layout::DialogsDemo>,
 }
 
 fn secondary_k() -> &'static str {
@@ -107,6 +138,9 @@ impl Gallery {
     pub fn new(start: &Start, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             forms: cx.new(forms::FormsPage::new),
+            tabs: cx.new(layout::TabsDemo::new),
+            split: cx.new(layout::SplitDemo::new),
+            dialogs: cx.new(layout::DialogsDemo::new),
             page: start.page,
             sidebar_collapsed: false,
             palette_open: start.palette.is_some(),
@@ -129,6 +163,7 @@ impl Gallery {
             source_section("navigation", "Navigation"),
             source_section("feedback", "Feedback"),
             source_section("controls", "Controls"),
+            source_section("layout", "Layout and windows"),
         ];
         // Pages under their section, in page order: insert after the section header.
         for page in Page::ALL {
@@ -262,6 +297,24 @@ impl Gallery {
                 .into_any_element(),
             // The form scrolls itself, so it takes the height left under the title.
             Page::Forms => div().flex_1().min_h_0().w_full().child(self.forms.clone()).into_any_element(),
+            Page::Tabs => column
+                .child(note("A view switcher over pages of one size, and document tabs that close and add."))
+                .child(self.tabs.clone())
+                .into_any_element(),
+            Page::Split => v_flex()
+                .gap_3()
+                .w_full()
+                .child(note("Drag a divider. Split and close the focused pane; tap a pane to focus it."))
+                .child(self.split.clone())
+                .into_any_element(),
+            Page::StatusPage => column
+                .child(note("What a view shows when it has nothing to show."))
+                .child(layout::status_demo())
+                .into_any_element(),
+            Page::Dialogs => column
+                .child(note("Alerts attach to their window; a confirmation styles its action destructive."))
+                .child(self.dialogs.clone())
+                .into_any_element(),
         }
     }
 }

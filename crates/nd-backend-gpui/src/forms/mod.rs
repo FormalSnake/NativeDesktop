@@ -13,7 +13,7 @@
 
 mod choice;
 mod display;
-mod glyph;
+pub(crate) mod glyph;
 mod look;
 mod pickers;
 mod text;

@@ -1,10 +1,11 @@
 //! The chrome intents apps declare (ARCHITECTURE.md 3.6): `scaffold`, `toolbar`, `sidebar`,
 //! `inspector`, `titlebar`, `glass`, from `nd-components`, plus the imperative ones on a window:
-//! sheets, the settings window, alerts and file pickers, and the app's menu bar.
+//! sheets, the settings window, alerts, confirmations, the about panel, file pickers, window
+//! tabs and the app's menu bar.
 
 use std::path::PathBuf;
 
-pub use nd_components::services::{alert, open_dialog, save_dialog, set_menus};
+pub use nd_components::services::{about, alert, open_dialog, save_dialog, set_menus};
 pub use nd_components::*;
 use nd_ui::prelude::*;
 use nd_ui::{WindowId, WindowKind};
@@ -56,6 +57,20 @@ pub trait WindowChromeExt {
 
     fn alert(&self, cx: &mut App, alert: Alert, done: impl FnOnce(AlertResponse, &mut App) + 'static);
 
+    /// Asks before a destructive action: `action` in the platform's destructive style and a
+    /// Cancel. `done` hears true when the user confirmed.
+    fn confirm(
+        &self,
+        cx: &mut App,
+        title: impl Into<SharedString>,
+        message: Option<SharedString>,
+        action: impl Into<SharedString>,
+        done: impl FnOnce(bool, &mut App) + 'static,
+    );
+
+    /// Shows the app's about panel over this window.
+    fn show_about(&self, cx: &mut App, about: AboutPanel);
+
     fn open_dialog(
         &self,
         cx: &mut App,
@@ -101,6 +116,23 @@ impl WindowChromeExt for Window {
         nd_components::services::alert(cx, self.id(), alert, done);
     }
 
+    fn confirm(
+        &self,
+        cx: &mut App,
+        title: impl Into<SharedString>,
+        message: Option<SharedString>,
+        action: impl Into<SharedString>,
+        done: impl FnOnce(bool, &mut App) + 'static,
+    ) {
+        let mut alert = Alert::confirm(title, action);
+        alert.message = message;
+        nd_components::services::alert(cx, self.id(), alert, move |r, cx| done(r.0 == 0, cx));
+    }
+
+    fn show_about(&self, cx: &mut App, about: AboutPanel) {
+        nd_components::services::about(cx, Some(self.id()), about);
+    }
+
     fn open_dialog(
         &self,
         cx: &mut App,
@@ -133,4 +165,17 @@ pub fn open_settings<V: Render>(
     let options =
         WindowOptions::main("settings").title("Settings").kind(WindowKind::Settings).size(size(px(560.), px(420.)));
     Some(cx.open_window(options, build))
+}
+
+/// Opens `build`'s view as a new tab of window tab group `group` (ARCHITECTURE.md 5.5): a
+/// native window tab on macOS, a tab in the group window's tab bar elsewhere. The tab joins the
+/// group's key window and is selected.
+pub fn open_tab<V: Render>(
+    cx: &mut App,
+    group: impl Into<SharedString>,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> WindowHandle<V> {
+    let group = group.into();
+    let options = WindowOptions::main(format!("{group}.tab")).tab_group(group);
+    cx.open_window(options, build)
 }

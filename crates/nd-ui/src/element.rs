@@ -9,6 +9,7 @@ use std::any::{Any, TypeId};
 use std::panic::Location;
 use std::rc::Rc;
 
+use nd_core::semantic::Role;
 use nd_core::{NodeId, WindowId};
 use nd_gesture::{
     Axes, Axis, DoubleTapEvent, DragEvent, ForceClickEvent, GestureSet, LongPressEvent, PinchEvent, RotateEvent,
@@ -247,6 +248,9 @@ pub struct DivProps {
     /// The gestures this node listens for, and the axes it scrolls on. Backends recognize them
     /// and report the events through the queue (ARCHITECTURE.md 6.1).
     pub gestures: GestureSet,
+    /// What the container is to the semantic tree when it is more than a group (a tab page, a
+    /// split pane), with its accessible name.
+    pub role: Option<(Role, SharedString)>,
 }
 
 /// Type-erased props a layer above `nd-ui` hangs on a `div`, compared by value.
@@ -283,6 +287,7 @@ pub struct Div {
     drag_region: bool,
     titlebar_insets: bool,
     gestures: GestureSet,
+    role: Option<(Role, SharedString)>,
 }
 
 #[track_caller]
@@ -324,7 +329,15 @@ impl Div {
             drag_region: false,
             titlebar_insets: false,
             gestures: GestureSet::default(),
+            role: None,
         }
+    }
+
+    /// Names the container's role and accessible name in the semantic tree (a tab page is a
+    /// `TabPanel` named by its tab). Composed widgets set it; a plain `div` is a group.
+    pub fn role(mut self, role: Role, name: impl Into<SharedString>) -> Self {
+        self.role = Some((role, name.into()));
+        self
     }
 
     /// Pads the element by the window's titlebar insets: the leading and trailing space the OS
@@ -492,6 +505,7 @@ impl IntoElement for Div {
                 drag_region: self.drag_region,
                 titlebar_insets: self.titlebar_insets,
                 gestures,
+                role: self.role,
             }),
             layout: self.style,
             measured: false,

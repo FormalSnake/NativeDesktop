@@ -31,6 +31,8 @@ pub struct PaneIvars {
     child: RefCell<Option<Retained<NSView>>>,
     last: Cell<NSSize>,
     on_resize: RefCell<Option<Hook>>,
+    /// Smallest and largest size along a `split()`'s axis, which its delegate holds a drag to.
+    limits: Cell<(Option<f64>, Option<f64>)>,
 }
 
 define_class!(
@@ -72,7 +74,7 @@ define_class!(
 );
 
 impl NdPaneView {
-    fn new(mtm: MainThreadMarker, child: &NSView) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, child: &NSView) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(PaneIvars::default());
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         // Framed by nd alone; an autoresizing mask's constraints would pin the pane to the
@@ -83,8 +85,16 @@ impl NdPaneView {
         this
     }
 
-    fn set_on_resize(&self, hook: Option<Hook>) {
+    pub(crate) fn set_on_resize(&self, hook: Option<Hook>) {
         *self.ivars().on_resize.borrow_mut() = hook;
+    }
+
+    pub(crate) fn limits(&self) -> (Option<f64>, Option<f64>) {
+        self.ivars().limits.get()
+    }
+
+    pub(crate) fn set_limits(&self, limits: (Option<f64>, Option<f64>)) {
+        self.ivars().limits.set(limits);
     }
 }
 
@@ -244,6 +254,13 @@ impl ScaffoldNative {
 
     pub fn has_sidebar(&self) -> bool {
         self.panes.iter().any(|(_, r)| *r == PaneRole::Sidebar)
+    }
+
+    /// The index of the divider on the inspector's leading edge, when there is an inspector.
+    pub fn inspector_divider(&self) -> Option<isize> {
+        let split = self.panes.iter().filter(|(_, r)| *r != PaneRole::Overlay);
+        let index = split.clone().position(|(_, r)| *r == PaneRole::Inspector)?;
+        (index > 0).then(|| index as isize - 1)
     }
 }
 

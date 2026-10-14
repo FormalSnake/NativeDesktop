@@ -192,15 +192,18 @@ fn system_identifier(item: SystemItem) -> &'static NSString {
     }
 }
 
-/// The system's sidebar tracking separator, bound to `split`'s first divider.
+/// A system tracking separator (`id` names the sidebar's or the inspector's), bound to
+/// `split`'s divider at `divider`.
 fn tracking_separator(
+    id: &NSToolbarItemIdentifier,
     split: &NSSplitView,
+    divider: isize,
     items: &mut Vec<Retained<NSToolbarItem>>,
     ids: &mut Vec<Retained<NSString>>,
 ) {
-    let id = unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier };
-    let separator =
-        NSTrackingSeparatorToolbarItem::trackingSeparatorToolbarItemWithIdentifier_splitView_dividerIndex(id, split, 0);
+    let separator = NSTrackingSeparatorToolbarItem::trackingSeparatorToolbarItemWithIdentifier_splitView_dividerIndex(
+        id, split, divider,
+    );
     items.push(Retained::into_super(separator));
     ids.push(id.copy());
 }
@@ -319,8 +322,10 @@ impl ToolbarNative {
     }
 
     /// Re-lists the toolbar's items: `entries` in order, the sidebar tracking separator after
-    /// the leading ones when `split` has a sidebar.
-    pub fn rebuild(&self, entries: Vec<Entry>, split: Option<&NSSplitView>) {
+    /// the leading ones when `split` has a sidebar, and the inspector tracking separator ahead
+    /// of the inspector toggle and what follows it (at the end without one) when the window
+    /// has an inspector, whose leading divider `inspector` names.
+    pub fn rebuild(&self, entries: Vec<Entry>, split: Option<&NSSplitView>, inspector: Option<(&NSSplitView, isize)>) {
         self.dirty.set(false);
         let mut items = Vec::new();
         let mut identifiers: Vec<Retained<NSString>> = Vec::new();
@@ -330,11 +335,25 @@ impl ToolbarNative {
             .iter()
             .take_while(|e| matches!(e, Entry::Item(_, true) | Entry::System(SystemItem::ToggleSidebar)))
             .count();
+        let explicit = entries.iter().any(|e| matches!(e, Entry::System(SystemItem::InspectorTrackingSeparator)));
+        let inspector = inspector.filter(|_| !explicit);
+        let trailing = entries
+            .iter()
+            .position(|e| matches!(e, Entry::System(SystemItem::ToggleInspector)))
+            .unwrap_or(entries.len())
+            .max(leading);
+        let sidebar_id = unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier };
+        let inspector_id = unsafe { NSToolbarInspectorTrackingSeparatorItemIdentifier };
         for (i, entry) in entries.into_iter().enumerate() {
             if i == leading
                 && let Some(split) = split
             {
-                tracking_separator(split, &mut items, &mut identifiers);
+                tracking_separator(sidebar_id, split, 0, &mut items, &mut identifiers);
+            }
+            if i == trailing
+                && let Some((split, divider)) = inspector
+            {
+                tracking_separator(inspector_id, split, divider, &mut items, &mut identifiers);
             }
             match entry {
                 Entry::Item(item, _) => {
@@ -352,7 +371,12 @@ impl ToolbarNative {
         if leading == identifiers.len()
             && let Some(split) = split
         {
-            tracking_separator(split, &mut items, &mut identifiers);
+            tracking_separator(sidebar_id, split, 0, &mut items, &mut identifiers);
+        }
+        if let Some((split, divider)) = inspector
+            && !identifiers.iter().any(|i| &**i == inspector_id)
+        {
+            tracking_separator(inspector_id, split, divider, &mut items, &mut identifiers);
         }
         let current: Vec<Retained<NSString>> = self.toolbar.items().iter().map(|i| i.itemIdentifier()).collect();
         self.delegate.set(items, identifiers.clone());

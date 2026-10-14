@@ -133,6 +133,20 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     app_item.setSubmenu(Some(&app_menu));
     bar.addItem(&app_item);
 
+    let file_item = NSMenuItem::new(mtm);
+    let file_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("File"));
+    let close = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Close"),
+            Some(sel!(performClose:)),
+            &NSString::from_str("w"),
+        )
+    };
+    file_menu.addItem(&close);
+    file_item.setSubmenu(Some(&file_menu));
+    bar.addItem(&file_item);
+
     let view_item = NSMenuItem::new(mtm);
     let view_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str("View"));
     let full_screen = unsafe {

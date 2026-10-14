@@ -39,6 +39,15 @@ impl<P: AnyProps> ContainerElement<P> {
         }
     }
 
+    /// A container whose props `P` describe it to the semantic tree and answer semantic
+    /// actions, as [`NativeElement::described`](crate::NativeElement::described) does for leaves.
+    pub fn described<W: 'static>(key: impl Into<Key>, props: P) -> Self
+    where
+        P: crate::semantics::WidgetSemantics,
+    {
+        Self { kind: WidgetKind::described::<W, P>(), ..Self::new::<W>(key, props) }
+    }
+
     pub fn props(&self) -> &P {
         &self.props
     }

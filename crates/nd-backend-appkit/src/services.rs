@@ -10,19 +10,24 @@ use std::path::PathBuf;
 use block2::RcBlock;
 use nd_components::services::{AlertCallback, ChromeServices, OpenCallback, SaveCallback};
 use nd_components::{
-    Alert, AlertResponse, AlertStyle, ButtonRole, ContextMenu, Menu, MenuItem, MenuKind, MenuRole, OpenDialog,
-    SaveDialog,
+    AboutPanel, Alert, AlertPresentation, AlertResponse, AlertStyle, ButtonRole, ContextMenu, Menu, MenuItem, MenuKind,
+    MenuRole, OpenDialog, SaveDialog,
 };
 use nd_core::{NodeId, WindowId};
 use nd_ui::{Action, App, KeyBinding};
 use objc2::rc::Retained;
-use objc2::runtime::Sel;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::runtime::{AnyObject, Sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSApplication, NSControlStateValueOn, NSEventModifierFlags, NSMenu, NSMenuItem, NSOpenPanel,
-    NSSavePanel,
+    NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion, NSAboutPanelOptionCredits,
+    NSAboutPanelOptionVersion, NSAlert, NSAlertStyle, NSApplication, NSColor, NSControlStateValueOn,
+    NSEventModifierFlags, NSFont, NSFontAttributeName, NSForegroundColorAttributeName, NSLinkAttributeName, NSMenu,
+    NSMenuItem, NSOpenPanel, NSSavePanel,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSPoint, NSString, NSURL};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSAttributedStringKey, NSDictionary, NSMutableAttributedString, NSObject,
+    NSObjectProtocol, NSPoint, NSString, NSURL,
+};
 
 use crate::AppKitBackend;
 use crate::app_host::{defer_with_app, key_window};
@@ -364,7 +369,10 @@ impl ChromeServices for AppKitChrome {
                 ButtonRole::Default => {}
             }
         }
-        let parent = ns_window(&self.backend, window);
+        let parent = match alert.presentation {
+            AlertPresentation::Sheet => ns_window(&self.backend, window),
+            AlertPresentation::Modal => None,
+        };
         let finish = once(move |code: isize| {
             // NSAlertFirstButtonReturn is 1000; later buttons count up from it.
             let index = usize::try_from(code - 1000).unwrap_or(0);
@@ -376,6 +384,34 @@ impl ChromeServices for AppKitChrome {
                 ns.beginSheetModalForWindow_completionHandler(&parent, Some(&block));
             }
             None => finish(ns.runModal()),
+        });
+    }
+
+    fn about(&self, _cx: &mut App, _window: Option<WindowId>, about: AboutPanel) {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let mut keys: Vec<&NSString> = Vec::new();
+        let mut values: Vec<Retained<AnyObject>> = Vec::new();
+        let copyright = NSString::from_str("Copyright");
+        let fields = [
+            (unsafe { NSAboutPanelOptionApplicationName }, &about.name),
+            (unsafe { NSAboutPanelOptionApplicationVersion }, &about.version),
+            (unsafe { NSAboutPanelOptionVersion }, &about.build),
+            (&*copyright, &about.copyright),
+        ];
+        for (key, value) in fields {
+            if let Some(value) = value {
+                keys.push(key);
+                values.push(Retained::into_super(Retained::into_super(NSString::from_str(value))));
+            }
+        }
+        if let Some(credits) = credits(&about) {
+            keys.push(unsafe { NSAboutPanelOptionCredits });
+            values.push(Retained::into_super(Retained::into_super(Retained::into_super(credits))));
+        }
+        let options = NSDictionary::from_retained_objects(&keys, &values);
+        // Ordering a window front runs AppKit callbacks; never under the handler's lease (3.13).
+        crate::events::defer(move || unsafe {
+            NSApplication::sharedApplication(mtm).orderFrontStandardAboutPanelWithOptions(&options);
         });
     }
 
@@ -422,6 +458,35 @@ impl ChromeServices for AppKitChrome {
         });
         crate::events::defer(move || present(&panel, parent, finish));
     }
+}
+
+/// The about panel's credits: the credits line, then the website as a link.
+fn credits(about: &AboutPanel) -> Option<Retained<NSMutableAttributedString>> {
+    let lines: Vec<&str> = [about.credits.as_deref(), about.website.as_deref()].into_iter().flatten().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let text = NSString::from_str(&lines.join("\n"));
+    let font = NSFont::systemFontOfSize(NSFont::smallSystemFontSize());
+    let color = NSColor::labelColor();
+    let attributes: Retained<NSDictionary<NSAttributedStringKey, AnyObject>> = NSDictionary::from_retained_objects(
+        &[unsafe { NSFontAttributeName }, unsafe { NSForegroundColorAttributeName }],
+        &[Retained::into_super(Retained::into_super(font)), Retained::into_super(Retained::into_super(color))],
+    );
+    let credits = unsafe {
+        NSMutableAttributedString::initWithString_attributes(
+            NSMutableAttributedString::alloc(),
+            &text,
+            Some(&attributes),
+        )
+    };
+    if let Some(website) = about.website.as_deref()
+        && let Some(url) = NSURL::URLWithString(&NSString::from_str(website))
+    {
+        let range = text.rangeOfString(&NSString::from_str(website));
+        unsafe { credits.addAttribute_value_range(NSLinkAttributeName, &url, range) };
+    }
+    Some(credits)
 }
 
 fn path_of(url: &NSURL) -> Option<PathBuf> {

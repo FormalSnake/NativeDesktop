@@ -278,7 +278,10 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
     }
     let (role, kind_name, name) = match kind {
         NodeKind::Root => (Role::Window, "root".to_owned(), String::new()),
-        NodeKind::View => (Role::Group, "view".to_owned(), String::new()),
+        NodeKind::View => match props.downcast_ref::<crate::DivProps>().and_then(|p| p.role.clone()) {
+            Some((role, name)) => (role, "view".to_owned(), name.to_string()),
+            None => (Role::Group, "view".to_owned(), String::new()),
+        },
         NodeKind::Text => {
             let text = props.downcast_ref::<TextProps>().map(|p| p.text.to_string()).unwrap_or_default();
             (Role::Text, "text".to_owned(), text)

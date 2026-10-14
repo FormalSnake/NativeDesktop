@@ -13,9 +13,9 @@ use std::rc::{Rc, Weak};
 
 use nd_core::{Size, WindowId};
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindowDelegate};
+use objc2_app_kit::{NSColor, NSScreen, NSViewFrameDidChangeNotification, NSWindow, NSWindowDelegate};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol};
 
 use crate::NdWindow;
@@ -87,6 +87,19 @@ define_class!(
     unsafe impl NSObjectProtocol for NdWindowDelegate {}
 
     unsafe impl NSWindowDelegate for NdWindowDelegate {
+        // The close button, cmd-w and a tab's close all land here. The app decides, on a later
+        // turn (3.13); a close it allows comes back as the host's drop, which closes the window.
+        #[unsafe(method(windowShouldClose:))]
+        fn window_should_close(&self, _sender: &NSWindow) -> bool {
+            if let Some(host) = self.ivars().host.upgrade() {
+                let id = host.id;
+                crate::defer_with_app(move |app| {
+                    app.request_close(id);
+                });
+            }
+            false
+        }
+
         #[unsafe(method(windowWillStartLiveResize:))]
         fn will_start_live_resize(&self, _n: &NSNotification) {
             self.with(|h| {
@@ -146,6 +159,16 @@ define_class!(
     }
 
     impl NdWindowDelegate {
+        // Being in the responder chain is what makes AppKit show the tab bar's `+`.
+        #[unsafe(method(newWindowForTab:))]
+        fn new_window_for_tab(&self, _sender: Option<&AnyObject>) {
+            let Some(host) = self.ivars().host.upgrade() else { return };
+            let id = crate::app_host::key_window().unwrap_or(host.id);
+            crate::defer_with_app(move |app| {
+                app.request_new_tab(id);
+            });
+        }
+
         // Every title bar layout AppKit runs moves a button, and this lands inside that same
         // pass, so the stock position is never drawn.
         #[unsafe(method(ndTitlebarButtonMoved:))]
@@ -282,16 +305,17 @@ impl WindowHost {
 
 impl Drop for WindowHost {
     fn drop(&mut self) {
-        // The app closed the window: a sheet ends on its parent, any other window goes away.
-        if let Some(parent) = self.inner.window.sheetParent() {
-            parent.endSheet(&self.inner.window);
-        } else if self.inner.window.isVisible() {
-            self.inner.window.orderOut(None);
-        }
         self.inner.root.set_layout_hook(None);
         self.inner.window.setDelegate(None);
         if let Some(delegate) = self.inner.delegate.borrow().as_ref() {
             unsafe { NSNotificationCenter::defaultCenter().removeObserver(delegate) };
+        }
+        // The app closed the window: a sheet ends on its parent; any other window closes, so a
+        // tab leaves its group and AppKit selects its neighbour.
+        if let Some(parent) = self.inner.window.sheetParent() {
+            parent.endSheet(&self.inner.window);
+        } else {
+            self.inner.window.close();
         }
         self.inner.backend.remove_window(self.inner.id);
     }
