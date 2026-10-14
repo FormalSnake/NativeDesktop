@@ -3,7 +3,7 @@
 //! look, light and dark, rendered by GPUI's headless renderer from the same view builders.
 //!
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens. Goldens are per OS (text is shaped by the
-//! platform's text system): `tests/goldens/nav-<view>-<scheme>-<os>.png`.
+//! platform's text system): `tests/goldens/<os>/nav-<view>-<scheme>.png`.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -313,23 +313,14 @@ impl gpui::Render for Golden {
     }
 }
 
-fn os() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "linux"
-    }
-}
-
 fn golden_path(view: GoldenView, scheme: Scheme) -> PathBuf {
     let view = match view {
         GoldenView::Sidebar => "sidebar",
         GoldenView::Palette => "palette",
     };
     let scheme = if scheme.is_dark() { "dark" } else { "light" };
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/goldens/nav-{view}-{scheme}-{}.png", os()))
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("tests/goldens/{}/nav-{view}-{scheme}.png", std::env::consts::OS))
 }
 
 /// Per channel, out of 255, and the share of pixels allowed past it: antialiasing drifts.
@@ -345,11 +336,14 @@ fn golden(view: GoldenView, scheme: Scheme) -> Result<(), String> {
     cx.run_until_parked();
     let image = cx.capture_screenshot(handle.into()).map_err(|e| e.to_string())?;
     let path = golden_path(view, scheme);
-    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") || !path.exists() {
+    if std::env::var_os("ND_UPDATE_GOLDENS").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().expect("dir")).map_err(|e| e.to_string())?;
         image.save(&path).map_err(|e| e.to_string())?;
         println!("recorded {}", path.display());
         return Ok(());
+    }
+    if !path.exists() {
+        return Err(format!("{} is missing (record it with ND_UPDATE_GOLDENS=1)", path.display()));
     }
     let expected = image::open(&path).map_err(|e| e.to_string())?.to_rgba8();
     let actual_path = path.with_extension("actual.png");
