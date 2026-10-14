@@ -7,6 +7,7 @@
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens. A mismatch writes `<golden>.actual.png` beside
 //! the golden. Prints `ND_GALLERY_GOLDENS_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "gate_m6::gallery_media_goldens";
@@ -242,7 +243,7 @@ mod goldens {
             std::env::set_var("ND_THEME_TOML", "");
             std::env::set_var("ND_THEME_JSON", "");
         }
-        let _lock = ndshell::lock::acquire("gallery media goldens").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gate_m6::gallery_media_goldens");
         let host = gallery::app().host(|_cx| {});
         let mut failed = 0;
         for (appearance, scheme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {

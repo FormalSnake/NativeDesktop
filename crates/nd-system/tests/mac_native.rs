@@ -96,6 +96,8 @@ mod mac {
     }
 
     pub fn run() {
+        // Its panels and alerts take key from any other window test on the machine.
+        let _lock = ndshell::lock::window_test("gate_m7::mac_native");
         let app = NSApplication::sharedApplication(mtm());
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
