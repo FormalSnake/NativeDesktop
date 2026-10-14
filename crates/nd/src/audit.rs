@@ -464,6 +464,7 @@ fn tokens(theme: &Theme) -> Vec<nd_ui::prelude::Hsla> {
         t.text.on_accent,
         t.text.danger,
         t.accent,
+        t.accent_fill,
         t.accent_container.bg,
         t.accent_container.fg,
         t.selection,
