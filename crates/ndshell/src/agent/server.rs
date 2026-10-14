@@ -256,9 +256,11 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
         "record_start" => {
             let hwnd = hwnd_arg(request)?;
             let probe = &request["probe"];
-            let key = probe["key"].as_array().ok_or("`probe.key` must be [r, g, b]")?;
+            let key = probe["key"]
+                .as_array()
+                .map(|key| [0, 1, 2].map(|i| key.get(i).and_then(Value::as_u64).unwrap_or(0) as u8));
             let probe = EdgeProbe {
-                key: [0, 1, 2].map(|i| key.get(i).and_then(Value::as_u64).unwrap_or(0) as u8),
+                key,
                 tolerance: probe["tolerance"].as_u64().unwrap_or(24) as u8,
                 scan: probe["scan"].as_u64().unwrap_or(64) as u32,
                 skip: probe["skip"].as_u64().unwrap_or(48) as u32,
@@ -278,7 +280,7 @@ fn handle(agent: &mut Agent, request: &Value) -> Result<Value, String> {
             let (frames, errors) = recording.stop();
             let frames: Vec<Value> = frames
                 .iter()
-                .map(|f| json!({ "t": f.t_ms, "w": f.width, "h": f.height, "right": f.right, "bottom": f.bottom }))
+                .map(|f| json!({ "t": f.t_ms, "w": f.width, "h": f.height, "right": f.right, "bottom": f.bottom, "magenta": f.magenta }))
                 .collect();
             Ok(json!({ "frames": frames, "errors": errors }))
         }

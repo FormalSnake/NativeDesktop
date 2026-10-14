@@ -64,6 +64,19 @@ pub trait OsHooks: 'static {
         None
     }
 
+    /// Drawn above the window's content and below its menus on every frame, whether or not the
+    /// app placed a `window_controls()` node: chrome the OS expects on every window, such as the
+    /// caption buttons of a window whose title bar the app draws (Windows).
+    fn window_overlay(&self, _window: WindowId, _look: Look, _gpui_window: &mut gpui::Window) -> Option<AnyElement> {
+        None
+    }
+
+    /// The OS draws a material behind the window (Mica), so the window's root paints no surface
+    /// of its own and the material shows wherever the app's content is not filled.
+    fn backdrop(&self, _window: WindowId) -> bool {
+        false
+    }
+
     /// The time of the frame about to be drawn. `None` uses the backend's estimate: now, with
     /// the target one display interval later. An OS crate that measures presentation returns
     /// the measured previous present as `timestamp` and its prediction as `target`.

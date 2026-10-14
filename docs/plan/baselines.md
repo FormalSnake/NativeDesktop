@@ -95,3 +95,19 @@ the dev shell's `LD_LIBRARY_PATH` on e1504g, then `nd diag scroll --rows 100000 
 with the Hyprland session's `WAYLAND_DISPLAY`. Headless work budget anywhere:
 `cargo nextest run --cargo-profile release -p nd-backend-gpui --test scroll_budget` (`ND_ROWS`,
 `ND_SCROLL_STEP`, `ND_FRAMES`).
+
+## Windows pacing in the g815 VM (2026-10-14)
+
+`examples/pacing` with `ND_PACING=1`, two windows, in the KVM guest of g815's Windows install
+(Microsoft Basic Display Adapter, no GPU, one 1280x800 virtual display). GPUI reports a 64 Hz
+display; both windows measure 55.5 to 57.3 Hz. The guest has one virtual display and no vsync of
+real hardware, so it proves nothing about per-monitor pacing: the 240 + 144 Hz check (5.3) needs
+a dual-boot session on the real pair.
+
+The resize gate in the same guest (`gate_m2_windows::real_resize_drag`) passes everything but the
+frame check: during a right-edge drag 3 to 11 of about 60 captured frames show the content one
+drag step (4 px) short of the window edge, never magenta. GPUI resizes its composition swap chain
+in `WM_SIZE` and draws on its next timer tick, so DWM shows a grown window with the previous
+frame. A forced draw from the window subclass inside `WM_SIZE` did not remove it; the fix belongs
+in the fork's Windows renderer (5.2: draw in `WM_WINDOWPOSCHANGED`, one DirectComposition
+commit), and is to be re-measured on hardware since WARP rendering in the guest adds latency.

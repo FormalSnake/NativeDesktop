@@ -446,12 +446,14 @@ impl<'a> Build<'a> {
         match node.kind {
             NodeKind::Root => {
                 let ink = self.top();
+                // Under an OS backdrop the root paints nothing, so the material shows through.
+                let fill = if self.hooks.backdrop(self.window_id) { gpui::transparent_black() } else { ink.background };
                 self.painted(id, Some(ink.background), Some(ink.text), "window", || {
                     div()
                         .size_full()
                         .flex()
                         .flex_col()
-                        .bg(ink.background)
+                        .bg(fill)
                         .text_color(ink.text)
                         .children(children(window, cx))
                         .children(self.dialog_layer(id, window))

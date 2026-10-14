@@ -1,19 +1,20 @@
 //! M2 resize gate, Windows leg (ARCHITECTURE.md 5.2, 5.4 and 16), tier 3. Runs on the Windows
 //! machine, from an ssh session or a terminal, and does everything through the `ndshell` agent
-//! in the desktop session: it launches `win_hello` with its content opaque and a green edge along
-//! the content's right and bottom (`ND_DEBUG_EXPOSE=1`), records every frame DWM composes for the
-//! window with Windows.Graphics.Capture, and drags the window's right then bottom edge with
-//! `SendInput`, so Windows runs its real size loop. In every frame the green edge must sit where
-//! it sat before the drag, at the window's edge.
+//! in the desktop session: it launches `examples/hello` with magenta painted behind its tree and
+//! its root opaque (`ND_DEBUG_EXPOSE=1`), records every frame DWM composes for the window with
+//! Windows.Graphics.Capture, and drags the window's right then bottom edge with `SendInput`, so
+//! Windows runs its real size loop. In every frame the content's background must run to the
+//! window's edge as it did before the drag (a swap chain behind the window size leaves a strip of
+//! another colour there) and no magenta may show (a late nd layout).
 //!
 //! Also checked: the caption hit test (`HTMAXBUTTON` on the drawn maximize button, `HTCAPTION`
 //! on the title row), the Snap Layouts flyout opening on hover over the maximize button, a
 //! maximize and restore through the drawn button, and a pen stroke arriving through `WM_POINTER`
-//! with its pressure. A control run with `ND_DEBUG_DEFER_LIVE_LAYOUT=1` must fail the edge
-//! check, which proves the detector sees a late layout.
+//! with its pressure. A control run with `ND_DEBUG_DEFER_LIVE_LAYOUT=1` must fail the check,
+//! which proves the detector sees a late layout.
 //!
-//! Needs the agent (`ndshell agent install`) and a built `win_hello` (`cargo test` builds the
-//! examples; `ND_WIN_HELLO_BIN` overrides). Prints `ND_M2_WINDOWS_RESIZE_GATE_OK`.
+//! Needs the agent (`ndshell agent install`) and a built `hello` (`cargo build -p hello`;
+//! `ND_HELLO_BIN` overrides). Prints `ND_M2_WINDOWS_RESIZE_GATE_OK`.
 //! `ND_GATE_OUT=<dir>` keeps a mid-drag frame, the Snap Layouts flyout before and after hover, and
 //! `hello` with Mica, as PNG.
 
@@ -76,12 +77,14 @@ mod gate {
     }
 
     fn hello_bin() -> PathBuf {
-        if let Some(bin) = std::env::var_os("ND_WIN_HELLO_BIN") {
+        if let Some(bin) = std::env::var_os("ND_HELLO_BIN") {
             return bin.into();
         }
-        // target/<profile>/deps/<this test>.exe -> target/<profile>/examples/win_hello.exe
-        let exe = std::env::current_exe().unwrap();
-        exe.parent().unwrap().parent().unwrap().join("examples").join("win_hello.exe")
+        // Final binaries sit in the target dir, not beside this test in the build dir.
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+        target.join("debug").join("hello.exe")
     }
 
     struct Hello<'a> {
@@ -108,12 +111,13 @@ mod gate {
         fn launch(agent: &'a mut Client, defer: bool, expose: bool) -> Result<Self, String> {
             let bin = hello_bin();
             if !bin.exists() {
-                return Err(format!("build win_hello first (cargo test -p nd-os-windows --no-run): {}", bin.display()));
+                return Err(format!("build hello first (cargo build -p hello): {}", bin.display()));
             }
             let reply = agent.call(json!({
                 "cmd": "launch",
                 "exe": bin.display().to_string(),
                 "env": {
+                    "ND_DIAG_WINDOW": "1",
                     "ND_DEBUG_EXPOSE": if expose { "1" } else { "0" },
                     "ND_DEBUG_DEFER_LIVE_LAYOUT": if defer { "1" } else { "0" },
                 },
@@ -142,7 +146,11 @@ mod gate {
                 .unwrap_or_default()
         }
 
+        /// The hit test at a screen point. The cursor goes there first: GPUI answers for its own
+        /// drag regions from the last mouse move it saw, not from the point asked about.
         fn hit(&mut self, x: i64, y: i64) -> i64 {
+            let _ = self.agent.call(json!({ "cmd": "move", "to": [x, y] }));
+            sleep(60);
             let reply =
                 self.agent.call(json!({ "cmd": "hit_test", "hwnd": self.hwnd, "at": [x, y] })).unwrap_or_default();
             reply["code"].as_i64().unwrap_or(-1)
@@ -181,7 +189,7 @@ mod gate {
         let mut request = json!({
             "cmd": "record_start",
             "hwnd": hello.hwnd,
-            "probe": { "key": [0, 255, 0], "tolerance": 60, "scan": 64, "skip": (TITLE * 1.5 * g.scale) as i64 },
+            "probe": { "tolerance": 6, "scan": (24. * g.scale) as i64, "skip": (TITLE * 2.5 * g.scale) as i64 },
         });
         if let Some(keep) = keep {
             request["keep"] = json!([[20, keep.display().to_string()]]);
@@ -215,14 +223,19 @@ mod gate {
         let edge = |f: &Value, key: &str| -> Option<(i64, i64)> { Some((f[key][0].as_i64()?, f[key][1].as_i64()?)) };
         let first = frames.first();
         let base = first.map(|f| (edge(f, "right"), edge(f, "bottom")));
-        let bad = frames
+        let off: Vec<&Value> = frames
             .iter()
             .filter(|f| {
                 let (right, bottom) = (edge(f, "right"), edge(f, "bottom"));
                 let flat = |e: Option<(i64, i64)>| e.is_some_and(|(lo, hi)| lo == hi);
-                !(flat(right) && flat(bottom) && Some((right, bottom)) == base)
+                let exposed = f["magenta"].as_i64().unwrap_or(0) > 0;
+                exposed || !(flat(right) && flat(bottom) && Some((right, bottom)) == base)
             })
-            .count();
+            .collect();
+        for f in off.iter().take(4) {
+            println!("     off: {f}");
+        }
+        let bad = off.len();
         let mut sizes: Vec<(i64, i64)> =
             frames.iter().map(|f| (f["w"].as_i64().unwrap_or(0), f["h"].as_i64().unwrap_or(0))).collect();
         sizes.sort_unstable();
@@ -264,7 +277,7 @@ mod gate {
         sleep(800);
         let g = hello.geometry();
         println!("     window {:?}, client {:?}, scale {}", g.frame, g.client, g.scale);
-        let title = (g.client[0] + (120. * g.scale) as i64, g.client[1] + (TITLE / 2. * g.scale) as i64);
+        let title = (g.client[0] + g.client[2] / 2, g.client[1] + (TITLE / 2. * g.scale) as i64);
         // A click on the caption activates without moving.
         hello.call(json!({ "cmd": "click", "at": [title.0, title.1] })).expect("click title row");
         sleep(400);
@@ -323,9 +336,9 @@ mod gate {
         let after = hello.call(after).expect("capture on hover");
         let diff = grid_diff(&before["grid"], &after["grid"]);
         r.check(
-            diff > 12.,
+            diff >= 6,
             format!(
-                "hover over the maximize button changes the region below it (mean diff {diff:.1}): Snap Layouts flyout"
+                "hover over the maximize button opens the Snap Layouts flyout ({diff} of 64 cells below it changed)"
             ),
         );
         hello.call(json!({ "cmd": "move", "to": [content.0, content.1] })).unwrap();
@@ -363,7 +376,7 @@ mod gate {
             let mut plain = Hello::launch(&mut agent, false, false).expect("hello starts");
             sleep(800);
             let g = plain.geometry();
-            plain.call(json!({ "cmd": "click", "at": [g.client[0] + (120. * g.scale) as i64, g.client[1] + (16. * g.scale) as i64] })).unwrap();
+            plain.call(json!({ "cmd": "click", "at": [g.client[0] + g.client[2] / 2, g.client[1] + (16. * g.scale) as i64] })).unwrap();
             plain.call(json!({ "cmd": "move", "to": [g.client[0] + g.client[2] / 2, g.client[1] + g.client[3] + (80. * g.scale) as i64] })).unwrap();
             sleep(800);
             let shot = plain.call(json!({ "cmd": "capture", "hwnd": plain.hwnd, "out": out.join("hello-mica.png").display().to_string() }));
@@ -374,7 +387,7 @@ mod gate {
             let mut control = Hello::launch(&mut agent, true, true).expect("control hello starts");
             sleep(800);
             let g = control.geometry();
-            control.call(json!({ "cmd": "click", "at": [g.client[0] + (120. * g.scale) as i64, g.client[1] + (16. * g.scale) as i64] })).unwrap();
+            control.call(json!({ "cmd": "click", "at": [g.client[0] + g.client[2] / 2, g.client[1] + (16. * g.scale) as i64] })).unwrap();
             sleep(400);
             let mut scratch = Report { failures: Vec::new() };
             let run = edge_drags(&mut control, (160. * g.scale) as i64, (96. * g.scale) as i64, None, &mut scratch);
@@ -392,16 +405,14 @@ mod gate {
         std::process::exit(1);
     }
 
-    fn grid_diff(a: &Value, b: &Value) -> f64 {
-        let (Some(a), Some(b)) = (a.as_array(), b.as_array()) else { return 0. };
-        let mut total = 0.;
-        let mut n = 0.;
-        for (ca, cb) in a.iter().zip(b) {
-            for i in 0..3 {
-                total += (ca[i].as_f64().unwrap_or(0.) - cb[i].as_f64().unwrap_or(0.)).abs();
-                n += 1.;
-            }
-        }
-        if n == 0. { 0. } else { total / n }
+    /// How many cells of two 8 by 8 capture grids differ by more than 24 levels in a channel.
+    fn grid_diff(a: &Value, b: &Value) -> usize {
+        let (Some(a), Some(b)) = (a.as_array(), b.as_array()) else { return 0 };
+        a.iter()
+            .zip(b)
+            .filter(|(ca, cb)| {
+                (0..3).any(|i| (ca[i].as_f64().unwrap_or(0.) - cb[i].as_f64().unwrap_or(0.)).abs() > 24.)
+            })
+            .count()
     }
 }

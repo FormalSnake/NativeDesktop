@@ -192,7 +192,11 @@ unsafe extern "system" fn subclass_proc(
             if (HTLEFT..=HTBOTTOMRIGHT).contains(&(inner.0 as u32)) {
                 return inner;
             }
-            LRESULT(hit_code(shared.hit(hwnd, lparam)) as isize)
+            match shared.hit(hwnd, lparam) {
+                // Content and the backend's own drag regions: its answer stands.
+                Hit::Client => inner,
+                hit => LRESULT(hit_code(hit) as isize),
+            }
         }
         WM_NCMOUSEMOVE => {
             let hovered = match shared.hit(hwnd, lparam) {
