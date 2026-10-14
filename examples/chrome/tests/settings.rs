@@ -76,6 +76,7 @@ mod settings {
     }
 
     pub fn run() -> ! {
+        let _lock = ndshell::lock::window_test("gate_m3::settings_window");
         let dir = std::env::temp_dir().join(format!("nd-settings-{}", std::process::id()));
         unsafe {
             std::env::set_var("ND_APP_DATA_DIR", &dir);

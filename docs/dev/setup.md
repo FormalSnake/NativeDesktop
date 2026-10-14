@@ -48,6 +48,8 @@ The shell carries the Wayland, X11, xkbcommon, Vulkan, fontconfig and ALSA libra
 | `real` | tier 3 only, one at a time (`real-window` group) |
 | `gate` | everything, the `real-window` group (plus the dispatch spike, which needs its window key) still serialized; `just gate mN` runs it as `cargo nextest run --profile gate -E 'test(/^gate_mN::/)'` |
 
+Every test that puts a window on screen or needs key status holds the machine-wide ndshell lock (`ndshell::lock::window_test`) for its duration, so several runs on one machine (other worktrees, other agents) queue instead of stealing focus. The AppKit test harness (`tests/harness`) takes it for its binaries; custom `main`s, `nd::audit` (AppKit variant) and `nd_test::launch_app` do it themselves. Headless GPUI and tier 1 tests never take it. A wait longer than 600 s (`ND_WINDOW_LOCK_TIMEOUT_SECS`) fails with the holder's pid, worktree and test name. The `real-window` nextest group still orders tests within one run. A new window test calls `ndshell::lock::window_test("<test name>")` first and does not take the lock twice.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on macOS and Linux: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo nextest run --profile ci`, doc tests. Runners override the build dir with `CARGO_BUILD_BUILD_DIR` and `ND_ALLOW_LOCAL_BUILD=1`.

@@ -164,6 +164,7 @@ mod chrome {
     }
 
     pub fn run() -> ! {
+        let _lock = ndshell::lock::window_test("gate_m3::appkit_chrome_intents");
         let dir = std::env::temp_dir().join(format!("nd-chrome-{}", std::process::id()));
         unsafe {
             std::env::set_var("ND_APP_DATA_DIR", &dir);

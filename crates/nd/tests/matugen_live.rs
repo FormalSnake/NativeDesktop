@@ -72,6 +72,7 @@ mod live {
     }
 
     pub fn run() -> ! {
+        let _lock = ndshell::lock::window_test("gate_m3::matugen_live_recolour");
         let gate = std::env::var("NEXTEST_PROFILE").is_ok_and(|p| p == "gate");
         let dir = std::env::temp_dir().join(format!("nd-matugen-live-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");

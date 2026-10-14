@@ -159,6 +159,7 @@ mod goldens {
     }
 
     pub fn run() -> ! {
+        let _lock = ndshell::lock::window_test("gate_m3::overrides_goldens");
         // Isolated from the user's theme files and data, so only the app's overrides apply.
         let data = std::env::temp_dir().join(format!("nd-overrides-goldens-{}", std::process::id()));
         unsafe {

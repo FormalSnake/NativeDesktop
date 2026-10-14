@@ -213,7 +213,7 @@ mod goldens {
 
     pub fn run() -> ! {
         // Activation and the capture share the window server with every other real-window run.
-        let _lock = ndshell::lock::acquire("gallery goldens").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gate_m6::gallery_goldens");
         // Isolated from the user's theme files and data.
         let data = std::env::temp_dir().join(format!("nd-gallery-goldens-{}", std::process::id()));
         unsafe {

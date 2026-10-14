@@ -200,6 +200,10 @@ impl Audit {
     }
 
     fn in_process(&self, kind: Kind) -> ExitCode {
+        // The AppKit variant puts real windows on screen; the GPUI one is headless.
+        #[cfg(target_os = "macos")]
+        let _window_lock =
+            (kind == Kind::AppKit).then(|| ndshell::lock::window_test(&format!("appearance audit {}", self.name)));
         // Isolated from the user's theme files and data, so only the app and the variant apply.
         let data = std::env::temp_dir().join(format!("nd-appearance-audit-{}", std::process::id()));
         unsafe {

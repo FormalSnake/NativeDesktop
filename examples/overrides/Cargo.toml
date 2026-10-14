@@ -20,6 +20,9 @@ path = "src/main.rs"
 nd = { path = "../../crates/nd", features = ["audit"] }
 png = "0.17"
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell = { path = "../../crates/ndshell" }
+
 # Tier 1 runs in a browser too; the tier 2 audit and the CLI stay native.
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 nd = { path = "../../crates/nd", features = ["test"] }

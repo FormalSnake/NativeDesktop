@@ -16,11 +16,17 @@ pub fn main_real(name: &str, run: fn()) {
         println!("{name}: skipped, it moves the real cursor; run with nextest --profile real or ND_REAL=1");
         return;
     }
-    main(name, run);
+    run_selected(name, run, false);
 }
 
-/// Lists or runs `name`. `run` exits the process itself with the test's status.
+/// Lists or runs `name` holding the machine-wide window lock (`ndshell::lock::window_test`), since
+/// every test here opens a real window that must stay key. `run` exits the process itself with the
+/// test's status, which releases the lock.
 pub fn main(name: &str, run: fn()) {
+    run_selected(name, run, true);
+}
+
+fn run_selected(name: &str, run: fn(), window_lock: bool) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     let ignored_only = has("--ignored");
@@ -50,5 +56,9 @@ pub fn main(name: &str, run: fn()) {
     if ignored_only || !selected || !cfg!(target_os = "macos") {
         return;
     }
+    #[cfg(target_os = "macos")]
+    let _lock = window_lock.then(|| ndshell::lock::window_test(name));
+    #[cfg(not(target_os = "macos"))]
+    let _ = window_lock;
     run();
 }

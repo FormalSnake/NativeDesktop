@@ -24,10 +24,15 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 # Tier 2 AppKit tests that need their own window to stay key (posted key events, active-state
 # goldens) take it from each other, so they queue too; so does the matugen recolour timing,
 # which a loaded machine would push past its 100 ms budget. The appearance audits open AppKit
-# windows that would take key from them.
+# windows that would take key from them. Every nd-backend-appkit test opens a window. This group only orders tests inside one nextest run:
+# each of these tests also holds the machine-wide ndshell lock (`ndshell::lock::window_test`),
+# which orders them against runs in other worktrees. Group and lock stay in step, so a test
+# is not parked on the lock while a slot of its own run waits on it.
 [[profile.default.overrides]]
-filter = "binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/) | test(/^gate_m9_terminal::appkit_window_/) | binary(mac_native)"
+filter = "package(nd-backend-appkit) | binary(dispatch_spike) | binary(app_dispatch) | binary(/^appearance/) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery(_forms)?_goldens$/) | test(/^gate_m9_terminal::appkit_window_/) | binary(mac_native)"
 test-group = "real-window"
+# Waiting for the machine lock (up to 600 s) counts against the test, so these get room for it.
+slow-timeout = { period = "60s", terminate-after = 15 }
 
 # Tiers 1 and 2 only, what `just test` and CI's first step run.
 [profile.fast]
@@ -62,13 +67,13 @@ test-group = "real-window"
 default-filter = "all()"
 fail-fast = false
 retries = 0
-slow-timeout = { period = "60s", terminate-after = 5 }
+slow-timeout = { period = "60s", terminate-after = 15 }
 
 # The dispatch spike and the other key-window tests need their window key, which a real-input
 # test activating its own app takes away, so they queue with them.
 [[profile.gate.overrides]]
 platform = 'cfg(not(target_os = "linux"))'
-filter = "test(/(^|::)(real::|real_)/) | binary(dispatch_spike) | binary(app_dispatch) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery_goldens$/) | test(/^gate_m9_terminal::appkit_window_/)"
+filter = "test(/(^|::)(real::|real_)/) | package(nd-backend-appkit) | test(/^gate_m3::(overrides_goldens|appkit_chrome_intents|settings_window|matugen_live_recolour)$/) | test(/^gate_m6::gallery(_forms)?_goldens$/) | test(/^gate_m9_terminal::appkit_window_/)"
 test-group = "real-window"
 
 # The M10 flow builds and packs an app three times (release profile, one cold), so it gets room.
