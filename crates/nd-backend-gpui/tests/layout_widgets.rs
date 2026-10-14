@@ -51,6 +51,11 @@ enum Kind {
     Status,
     /// Nothing but a label, for the dialogs.
     Plain,
+    /// A toolbar: its own title or none, and an app item before the flexible space or none.
+    Bar {
+        title: Option<&'static str>,
+        leading_item: bool,
+    },
 }
 
 #[derive(Default)]
@@ -110,7 +115,20 @@ impl Render for Scene {
                     .child(button("new", "New Note")),
             ),
             Kind::Plain => root.child(text("Inbox")),
+            Kind::Bar { title, leading_item } => {
+                let bar = toolbar().sidebar_toggle();
+                let bar = match title {
+                    Some(title) => bar.title(title),
+                    None => bar,
+                };
+                let bar = if leading_item { bar.item(button("new", "New")) } else { bar };
+                return scaffold()
+                    .toolbar(bar.flexible_space().item(button("search", "Search")))
+                    .content(text("Body"))
+                    .into_any_element();
+            }
         }
+        .into_any_element()
     }
 }
 
@@ -139,9 +157,10 @@ fn open_with(kind: Kind, scheme: Scheme) -> Opened {
             let backend = app.backend_as::<GpuiBackend>().expect("GPUI backend").clone();
             backend.set_theme(registry(scheme));
             app.set_global(Chrome(GpuiChrome::new(backend)));
-            let handle = app.open_window(WindowOptions::main("layout").size(size(px(800.), px(560.))), |_, cx| {
-                cx.new(|_| Scene { kind, log: l, ratio: 0.5, refuse: false })
-            });
+            let options = WindowOptions::main("layout").size(size(px(800.), px(560.)));
+            let options = if matches!(kind, Kind::Bar { .. }) { options.title("Notes") } else { options };
+            let handle =
+                app.open_window(options, |_, cx| cx.new(|_| Scene { kind, log: l, ratio: 0.5, refuse: false }));
             opened = Some((handle.id(), handle.root().clone()));
         })
     });
@@ -313,6 +332,18 @@ mod gate_m6 {
         let title = paints.iter().find(|p| p.label == "No notes").expect("title painted");
         assert!(matches!(title.kind, PaintKind::Text { size, .. } if size == 20.), "title-1: {:?}", title.kind);
         assert!(paints.iter().any(|p| p.label == "status page icon"), "the icon slot painted");
+    }
+
+    pub fn gpui_toolbar_shows_a_title_in_an_empty_leading_run() {
+        let titles = |kind| {
+            let o = open(kind);
+            let paints = o.host.backend().paints(o.window).expect("paints");
+            ["Notes", "Inbox"].into_iter().filter(|t| paints.iter().any(|p| p.label == *t)).collect::<Vec<_>>()
+        };
+        assert_eq!(titles(Kind::Bar { title: None, leading_item: false }), ["Notes"], "the window's title by default");
+        assert!(titles(Kind::Bar { title: None, leading_item: true }).is_empty(), "not over the app's own items");
+        assert_eq!(titles(Kind::Bar { title: Some("Inbox"), leading_item: true }), ["Inbox"], "the toolbar's own");
+        assert!(titles(Kind::Bar { title: Some(""), leading_item: false }).is_empty(), "an empty title hides it");
     }
 
     pub fn gpui_alert_keys_answer_once() {
@@ -502,6 +533,10 @@ fn main() {
             gate_m6::gpui_split_hidden_subtree_is_not_hit_or_painted,
         ),
         ("gate_m6::gpui_status_page_lays_out_centred", gate_m6::gpui_status_page_lays_out_centred),
+        (
+            "gate_m6::gpui_toolbar_shows_a_title_in_an_empty_leading_run",
+            gate_m6::gpui_toolbar_shows_a_title_in_an_empty_leading_run,
+        ),
         ("gate_m6::gpui_alert_keys_answer_once", gate_m6::gpui_alert_keys_answer_once),
         ("gate_m6::gpui_alert_destructive_paints_danger", gate_m6::gpui_alert_destructive_paints_danger),
         ("gate_m6::gpui_alert_queues_and_blocks_input", gate_m6::gpui_alert_queues_and_blocks_input),
