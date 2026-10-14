@@ -21,7 +21,7 @@ nd-ui = { path = "crates/nd-ui" }
 nd-backend-appkit = { path = "crates/nd-backend-appkit" }
 nd-backend-gpui = { path = "crates/nd-backend-gpui" }
 ndshell = { path = "crates/ndshell" }
-nd-automation = { path = "crates/nd-automation" }
+nd-automation = { path = "crates/nd-automation", default-features = false }
 nd-test = { path = "crates/nd-test" }
 nd-theme = { path = "crates/nd-theme" }
 nd-components = { path = "crates/nd-components" }

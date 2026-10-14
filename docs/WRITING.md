@@ -58,11 +58,11 @@ that OS. A stale screenshot is never shown.
 Short, factual, specific. Write like an engineer leaving notes for the next one.
 
 - No em dashes, and no spaced en dashes. Use a comma, a colon, parentheses or two sentences.
-- No selling: comprehensive, robust, seamless, powerful, leverage, delve, elevate, streamline,
-  significantly, effortless. Say what the thing does.
-- No empty setup ("it's worth noting", "in summary", "let's dive in"), no rule-of-three lists
+- No selling words: `comprehensive`, `robust`, `seamless`, `powerful`, `leverage`, `delve`,
+  `elevate`, `streamline`, `significantly`, `effortless`. Say what the thing does.
+- No empty setup (`it's worth noting`, `in summary`, `let's dive in`), no rule-of-three lists
   for rhythm, no "it isn't X, it's Y", no generic upbeat closers.
 - Sentence-case headings. Plain "is" and "has" over "serves as" and "boasts".
-- Say "check it boots" or what the check does, never "smoke test".
+- Name the check by what it does ("check it boots"), never `smoke test`.
 
 `nd docs check` runs these rules over every page and every template `nd new` writes.

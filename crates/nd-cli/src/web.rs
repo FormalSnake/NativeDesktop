@@ -338,7 +338,7 @@ pub fn run_serve(args: ServeArgs) -> Result<ExitCode> {
     serve_dir(&out, args.port)
 }
 
-fn serve_dir(dir: &Path, port: u16) -> Result<ExitCode> {
+pub fn serve_dir(dir: &Path, port: u16) -> Result<ExitCode> {
     let server =
         tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("binding port {port}: {e}"))?;
     println!("nd serve: http://127.0.0.1:{port}/");

@@ -41,7 +41,7 @@ nd-ui = { workspace = true, optional = true }
 nd-diag = { workspace = true, optional = true }
 nd-gpui = { workspace = true, optional = true }
 nd-macros = { workspace = true, optional = true }
-nd-automation = { workspace = true, optional = true }
+nd-automation = { workspace = true, optional = true, features = ["server"] }
 nd-theme = { workspace = true, optional = true }
 nd-components = { workspace = true, optional = true }
 nd-virtual = { workspace = true, optional = true }
