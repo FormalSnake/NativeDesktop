@@ -15,7 +15,7 @@
 # there, never in another checkout. Every lane shares one target dir ($ND_LINUX_TARGET, default
 # ~/.cache/nd-build/target) and builds quietly: nice, idle IO class, two jobs, two test threads.
 # Before each build the shared target is cleaned once it passes $ND_LINUX_TARGET_CAP_GB (default
-# 40), so parallel lanes cannot fill the host's disk.
+# 25), so parallel lanes cannot fill the host's disk.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,16 +23,18 @@ host=${ND_LINUX_HOST:-g815}
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
 dir="Developer/nativedesktop-$branch"
 target=${ND_LINUX_TARGET:-'$HOME/.cache/nd-build/target'}
-cap=${ND_LINUX_TARGET_CAP_GB:-40}
+cap=${ND_LINUX_TARGET_CAP_GB:-25}
 
 remote() {
   # The login shell there may be fish; everything runs under bash.
   ssh "$host" "bash -lc $(printf %q "$1")" 2>&1 | grep -v -e 'post-quantum' -e 'store now' -e 'openssh.com/pq' || true
 }
 
-# Wraps a command in the dev shell with the shared target and the quiet settings.
+# Wraps a command in the dev shell with the shared target and the quiet settings. Every lane shares
+# g815's small root disk: one run at a time (the flock queues the rest), and no incremental cache,
+# which was a third of the shared target.
 in_shell() {
-  printf 'cd ~/%s && nice -n 19 ionice -c3 nix develop "path:$HOME/%s" -c env CARGO_TARGET_DIR="%s" CARGO_BUILD_BUILD_DIR="%s" CARGO_BUILD_JOBS=2 nice -n 19 ionice -c3 bash -c %q' \
+  printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && flock ~/.cache/nd-build/build.lock nice -n 19 ionice -c3 nix develop "path:$HOME/%s" -c env CARGO_TARGET_DIR="%s" CARGO_BUILD_BUILD_DIR="%s" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 nice -n 19 ionice -c3 bash -c %q' \
     "$dir" "$dir" "$target" "$target" "$1"
 }
 
