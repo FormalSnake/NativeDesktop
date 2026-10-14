@@ -165,6 +165,16 @@ pub struct BoundaryInsets {
     pub left: f32,
 }
 
+/// A window-level request from the app, outside any transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WindowCommand {
+    /// Brings the window forward and makes it key; in a tab group, selects its tab.
+    Activate,
+    /// Shows or hides the overview of the window's tab group (macOS "Show All Tabs").
+    ToggleTabOverview,
+}
+
 /// Where an op runs inside a transaction. Ordered: a transaction never sends an op of an
 /// earlier phase after one of a later phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -260,6 +270,12 @@ pub trait Backend: Any {
     ) -> Result<(), crate::semantics::ActionError> {
         Err(crate::semantics::ActionError::InputUnsupported)
     }
+
+    /// Carries out a window-level request. A no-op where the backend has no OS windows.
+    fn window_command(&mut self, _window: WindowId, _command: WindowCommand) {}
+
+    /// The window's title changed after it opened (a native tab shows it as the tab's title).
+    fn set_window_title(&mut self, _window: WindowId, _title: &str) {}
 
     /// Plays `haptic` on the trackpad, timed to the next drawn frame. A no-op where the OS has no
     /// haptics (everything but macOS).

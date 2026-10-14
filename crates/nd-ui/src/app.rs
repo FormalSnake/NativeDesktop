@@ -12,7 +12,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 
 use nd_core::{FrameTime, NodeId, Size, WindowId};
-use nd_gpui::gpui::{Action, KeyBinding, Keystroke};
+use nd_gpui::gpui::{Action, KeyBinding, Keystroke, SharedString};
 
 use crate::backend::Backend;
 use crate::dispatch::{DispatchTree, KeyDispatch};
@@ -217,6 +217,12 @@ pub struct App {
     pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
     pub(crate) current_window: Option<WindowId>,
+    /// Views that moved to another window in this frame; a second move is a render bug.
+    moved: HashSet<EntityId>,
+    /// Frames run so far.
+    pub(crate) frames: u64,
+    /// Titles set while a handler or a frame held the window, applied once it is back.
+    retitled: HashMap<WindowId, SharedString>,
 }
 
 impl App {
@@ -243,6 +249,9 @@ impl App {
             propagate_action: false,
             rendering: Vec::new(),
             current_window: None,
+            moved: HashSet::new(),
+            frames: 0,
+            retitled: HashMap::new(),
         }
     }
 
@@ -315,6 +324,16 @@ impl App {
             return;
         }
         self.flushing = true;
+        self.retitled.retain(|id, title| match self.windows.get_mut(id) {
+            Some(slot) => match slot.window.as_mut() {
+                Some(window) => {
+                    window.set_title(title.clone());
+                    false
+                }
+                None => true,
+            },
+            None => false,
+        });
         loop {
             while let Some(id) = self.notified.pop_front() {
                 self.run_observers(id);
@@ -520,6 +539,78 @@ impl App {
         self.with_dispatch(window, false, |tree, _| tree.platform_focused(node))
     }
 
+    /// The user asked to close the window (ARCHITECTURE.md 5.5). Runs its
+    /// [`Window::on_should_close`] handler and closes the window unless the handler holds it.
+    /// Hosts call it from a later run loop turn, never inside the OS callback. Returns whether
+    /// the window closed.
+    pub fn request_close(&mut self, id: WindowId) -> bool {
+        let handler = self.windows.get(&id).and_then(|w| w.window.as_ref()).and_then(|w| w.should_close.clone());
+        let close = match handler {
+            Some(handler) => self.with_window(id, true, |window, cx| handler(window, cx)),
+            None => true,
+        };
+        if close && self.windows.contains_key(&id) {
+            self.close_window(id);
+        }
+        self.flush_effects();
+        close
+    }
+
+    /// The user asked for a new tab next to `id` (the tab bar's `+`). Runs the window's
+    /// [`Window::on_new_tab`] handler; false when it has none.
+    pub fn request_new_tab(&mut self, id: WindowId) -> bool {
+        let handler = self.windows.get(&id).and_then(|w| w.window.as_ref()).and_then(|w| w.new_tab.clone());
+        let Some(handler) = handler else { return false };
+        self.with_window(id, (), |window, cx| handler(window, cx));
+        self.flush_effects();
+        true
+    }
+
+    /// Asks the platform to do `command` to the window: bring it forward (selecting its tab in a
+    /// tab group), or toggle its tab group's overview.
+    pub fn window_command(&mut self, id: WindowId, command: crate::backend::WindowCommand) {
+        if self.windows.contains_key(&id) {
+            self.backend.window_command(id, command);
+        }
+    }
+
+    /// Sets the window's title (a native tab's title on macOS).
+    pub fn set_window_title(&mut self, id: WindowId, title: impl Into<SharedString>) {
+        let title = title.into();
+        let Some(slot) = self.windows.get_mut(&id) else { return };
+        match slot.window.as_mut() {
+            Some(window) => window.set_title(title.clone()),
+            None => {
+                self.retitled.insert(id, title.clone());
+            }
+        }
+        self.backend.set_window_title(id, &title);
+    }
+
+    /// Brings the window forward and makes it key; in a tab group its tab is selected.
+    pub fn activate_window(&mut self, id: WindowId) {
+        self.window_command(id, crate::backend::WindowCommand::Activate);
+    }
+
+    /// Runs `f` with the window leased out of its slot, as an event handler would get it.
+    fn with_window<R>(&mut self, id: WindowId, absent: R, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
+        let Some(mut window) = self.windows.get_mut(&id).and_then(|w| w.window.take()) else { return absent };
+        let outer = self.current_window.replace(id);
+        let result = f(&mut window, self);
+        self.current_window = outer;
+        if let Some(slot) = self.windows.get_mut(&id) {
+            slot.window = Some(window);
+        }
+        result
+    }
+
+    /// Takes a mounted view out of `window` for another window to adopt with its native nodes.
+    pub(crate) fn lift_view(&mut self, window: WindowId, id: EntityId) -> Option<crate::tree::Lifted> {
+        assert!(self.moved.insert(id), "{id:?} is rendered in two windows");
+        let frame = self.frames;
+        self.windows.get_mut(&window)?.tree.as_mut()?.lift(id, frame)
+    }
+
     /// Closes the window: releases its retained tree in one last transaction.
     pub fn close_window(&mut self, id: WindowId) {
         let Some(slot) = self.windows.remove(&id) else { return };
@@ -604,9 +695,18 @@ impl App {
     /// drains native events. Hosts call it once per display frame while [`Self::needs_frame`].
     pub fn frame(&mut self) {
         self.flush_effects();
+        self.moved.clear();
+        self.frames += 1;
         let ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        for id in &ids {
+            self.draw(*id);
+        }
         for id in ids {
-            self.draw(id);
+            let Some(mut tree) = self.windows.get_mut(&id).and_then(|w| w.tree.take()) else { continue };
+            tree.release_parked(self);
+            if let Some(slot) = self.windows.get_mut(&id) {
+                slot.tree = Some(tree);
+            }
         }
         // Whatever is still dirty is not a mounted view (a model), or was notified by a
         // render; models need no frame and renders notifying themselves would loop.
@@ -678,6 +778,11 @@ impl App {
     /// per-view invalidation tests.
     pub fn render_count(&self, id: EntityId) -> u64 {
         self.render_counts.get(&id).copied().unwrap_or(0)
+    }
+
+    /// The view the window was opened with.
+    pub fn window_root(&self, id: WindowId) -> Option<EntityId> {
+        Some(self.windows.get(&id)?.tree.as_ref()?.root_view_id())
     }
 
     /// The native node a mounted view's output is rooted at.

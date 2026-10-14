@@ -1,6 +1,7 @@
 //! What the AppKit views draw, resolved from `nd-ui` props. Layout fields of a style arrive as
 //! frames; only the visual part is read here.
 
+use nd_gpui::gpui::Visibility;
 use nd_ui::StyleRefinement;
 use nd_ui::prelude::{AbsoluteLength, FontWeight, Hsla, px};
 use objc2::rc::Retained;
@@ -49,11 +50,14 @@ pub(crate) struct ViewLook {
     pub corner_radius: f32,
     pub border: Option<(f32, Color)>,
     pub opacity: f32,
+    /// `visibility: hidden`: the view keeps its frame but shows nothing and takes no clicks or
+    /// focus, its subviews included.
+    pub hidden: bool,
 }
 
 impl Default for ViewLook {
     fn default() -> Self {
-        Self { background: None, corner_radius: 0., border: None, opacity: 1. }
+        Self { background: None, corner_radius: 0., border: None, opacity: 1., hidden: false }
     }
 }
 
@@ -70,6 +74,7 @@ impl ViewLook {
             corner_radius: radius,
             border,
             opacity: style.opacity.unwrap_or(1.),
+            hidden: style.visibility == Some(Visibility::Hidden),
         }
     }
 }

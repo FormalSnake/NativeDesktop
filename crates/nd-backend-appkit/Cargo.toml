@@ -11,6 +11,7 @@ links = "nd-swift-appkit"
 nd-core.workspace = true
 nd-gesture.workspace = true
 nd-ui.workspace = true
+nd-gpui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
 nd-components.workspace = true
@@ -47,6 +48,16 @@ harness = false
 
 [[test]]
 name = "nav_components"
+harness = false
+
+# Tier 2: tabs, split, status page and the scaffold inspector mapped to AppKit's own classes.
+[[test]]
+name = "layout_widgets"
+harness = false
+
+# Tier 2: native window tabs, held closes, cross-window view moves, alerts and the about panel.
+[[test]]
+name = "layout_windows"
 harness = false
 
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`

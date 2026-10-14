@@ -15,7 +15,8 @@ use nd_diag::{FrameRecord, Watchdog};
 use nd_ui::dispatch::KeyDispatch;
 use nd_ui::{App, Keystroke, WindowKind};
 use objc2::rc::Retained;
-use objc2_foundation::MainThreadMarker;
+use objc2_app_kit::{NSApplication, NSWindow, NSWindowOrderingMode, NSWindowTabbingMode};
+use objc2_foundation::{MainThreadMarker, NSString};
 
 use crate::dispatch::node_for_responder;
 use crate::{AppKitBackend, KeyRouter, NdAppKitPlatform, NdWindow, WindowHost};
@@ -85,15 +86,17 @@ impl Host {
             let this = Rc::downgrade(self);
             host.clock().on_frame(move |_| tick(&this));
             ns_window.set_router(Some(Rc::new(AppRouter { host: Rc::downgrade(self), window: id })));
-            match options.kind {
-                WindowKind::Sheet { parent } => match windows.get(&parent) {
-                    Some(parent) => parent.window().beginSheet_completionHandler(&ns_window, None),
-                    None => {
-                        ns_window.center();
-                        self.platform.show(&ns_window);
-                    }
-                },
-                WindowKind::Normal | WindowKind::Settings => {
+            let sheet_parent = match options.kind {
+                WindowKind::Sheet { parent } => windows.get(&parent),
+                WindowKind::Normal | WindowKind::Settings => None,
+            };
+            match (sheet_parent, &options.tab_group) {
+                (Some(parent), _) => parent.window().beginSheet_completionHandler(&ns_window, None),
+                (None, Some(group)) if !matches!(options.kind, WindowKind::Sheet { .. }) => {
+                    join_tab_group(&ns_window, group);
+                    self.platform.show(&ns_window);
+                }
+                (None, _) => {
                     ns_window.center();
                     self.platform.show(&ns_window);
                 }
@@ -120,6 +123,36 @@ impl Host {
             }
         }
     }
+}
+
+/// Makes `window` a native tab of `group` (ARCHITECTURE.md 5.5): next to the group's key window,
+/// else its most recent visible one, at the trailing end of that window's tabs. Distinct groups
+/// carry distinct identifiers, so AppKit never merges them.
+fn join_tab_group(window: &NdWindow, group: &str) {
+    let identifier = NSString::from_str(&format!("nd.{group}"));
+    window.setTabbingMode(NSWindowTabbingMode::Preferred);
+    window.setTabbingIdentifier(&identifier);
+    let mtm = MainThreadMarker::from(window);
+    let this: &NSWindow = window;
+    let candidates: Vec<Retained<NSWindow>> = NSApplication::sharedApplication(mtm)
+        .windows()
+        .iter()
+        .filter(|w| !std::ptr::eq::<NSWindow>(&**w, this) && w.isVisible() && *w.tabbingIdentifier() == *identifier)
+        .collect();
+    let parent = candidates.iter().find(|w| w.isKeyWindow()).or(candidates.last());
+    let Some(parent) = parent else {
+        window.center();
+        return;
+    };
+    let group = parent.tabGroup();
+    // AppKit throws from addTabbedWindow while the overview shows.
+    if let Some(group) = &group
+        && group.isOverviewVisible()
+    {
+        group.setOverviewVisible(false);
+    }
+    let last = group.and_then(|g| g.windows().lastObject()).unwrap_or_else(|| parent.clone());
+    last.addTabbedWindow_ordered(window, NSWindowOrderingMode::Above);
 }
 
 /// On each display refresh: a layout pass (where the frame runs) while there is work, else the

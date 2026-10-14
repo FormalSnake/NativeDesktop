@@ -62,6 +62,7 @@ fn window(button_x: f32, with_label: bool) -> SemanticWindow {
         main: true,
         visible: true,
         frame: None,
+        tab_group: None,
         root: node(1, Role::Window, "", Rect::new(0., 0., 400., 300.), children),
     }
 }

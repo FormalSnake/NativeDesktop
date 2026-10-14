@@ -142,6 +142,9 @@ impl AppKitBackend {
         if let Native::Control(c) = native {
             c.control.probe(&mut probe);
         }
+        if let Native::Split(s) = native {
+            probe.value = s.ratio().map(|r| format!("{r:.3}"));
+        }
         probe
     }
 
@@ -207,6 +210,11 @@ impl AppKitBackend {
 
     pub(super) fn perform_action(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {
         if let Some(result) = self.perform_nav(node, action) {
+            return result;
+        }
+        if let Some(Native::Split(s)) = self.0.borrow().nodes.get(&node)
+            && let Some(result) = s.perform(action)
+        {
             return result;
         }
         if !matches!(action, SemanticAction::Focus)

@@ -37,6 +37,10 @@ pub enum Role {
     TreeItem,
     TabList,
     Tab,
+    /// The content a tab shows.
+    TabPanel,
+    /// Panes side by side or stacked, with a divider that resizes them.
+    SplitGroup,
     Menu,
     MenuItem,
     Toolbar,
@@ -84,6 +88,8 @@ impl Role {
             Role::TreeItem => "tree-item",
             Role::TabList => "tab-list",
             Role::Tab => "tab",
+            Role::TabPanel => "tab-panel",
+            Role::SplitGroup => "split-group",
             Role::Menu => "menu",
             Role::MenuItem => "menu-item",
             Role::Toolbar => "toolbar",
@@ -199,6 +205,9 @@ pub struct SemanticWindow {
     /// The window's frame in global top-left screen points, where the backend knows it.
     #[serde(with = "opt_rect")]
     pub frame: Option<Rect>,
+    /// The tab group the window opened in (`WindowOptions::tab_group`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_group: Option<String>,
     /// The content root, role `window`.
     pub root: SemanticNode,
 }
@@ -355,6 +364,7 @@ mod tests {
                 main: true,
                 visible: true,
                 frame: None,
+                tab_group: None,
                 root: node(1, Role::Window, "Hello", vec![node(2, Role::TextField, "", vec![])]),
             }],
         };

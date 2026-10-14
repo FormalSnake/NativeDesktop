@@ -62,6 +62,22 @@ fn gestures_of(node: &Node) -> Option<&GestureSet> {
     node.props.downcast_ref::<DivProps>().map(|d| &d.gestures).filter(|g| !g.is_empty())
 }
 
+/// A `visibility: Hidden` view keeps its box but shows nothing; nothing in it is hit.
+fn hidden(node: &Node) -> bool {
+    node.props.downcast_ref::<DivProps>().is_some_and(|d| d.style.visibility == Some(gpui::Visibility::Hidden))
+}
+
+fn in_hidden(nodes: &HashMap<NodeId, Node>, mut at: NodeId) -> bool {
+    while let Some(node) = nodes.get(&at) {
+        if hidden(node) {
+            return true;
+        }
+        let Some(parent) = node.parent else { return false };
+        at = parent;
+    }
+    false
+}
+
 fn contains(r: &Rect, p: Point) -> bool {
     p.x >= r.origin.x && p.y >= r.origin.y && p.x < r.origin.x + r.size.width && p.y < r.origin.y + r.size.height
 }
@@ -80,7 +96,7 @@ fn hit_start(
     let mut overlays: Vec<(NodeId, Modality)> = nodes
         .iter()
         .filter_map(|(id, n)| n.props.downcast_ref::<OverlayProps>().map(|p| (*id, p.modality)))
-        .filter(|(_, m)| *m != Modality::Passive)
+        .filter(|(id, m)| *m != Modality::Passive && !in_hidden(nodes, *id))
         .collect();
     // Node ids grow with creation, and a nested overlay is created after the one holding it.
     overlays.sort_by_key(|(id, _)| std::cmp::Reverse(*id));
@@ -104,7 +120,12 @@ fn hit_path(
     let mut path = vec![root];
     let mut cursor = root;
     while let Some(node) = nodes.get(&cursor) {
-        let next = node.children.iter().rev().find(|c| bounds.get(c).is_some_and(|b| contains(b, at)));
+        let next = node
+            .children
+            .iter()
+            .rev()
+            .filter(|c| !nodes.get(c).is_some_and(hidden))
+            .find(|c| bounds.get(c).is_some_and(|b| contains(b, at)));
         match next {
             Some(c) => {
                 path.push(*c);
@@ -264,6 +285,17 @@ impl Gestures {
 
     pub fn forget_window(&self, window: WindowId) {
         self.windows.borrow_mut().remove(&window);
+    }
+
+    /// Moves the physics of `nodes` to another window, which a view moved to.
+    pub fn hand_over(&self, from: WindowId, to: WindowId, nodes: &[NodeId]) {
+        let mut windows = self.windows.borrow_mut();
+        let Some(mut source) = windows.remove(&from) else { return };
+        let target = windows.entry(to).or_default();
+        for node in nodes {
+            source.router.hand_over(*node, &mut target.router);
+        }
+        windows.insert(from, source);
     }
 
     pub fn forget(&self, node: NodeId) {
