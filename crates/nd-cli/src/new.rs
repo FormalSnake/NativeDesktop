@@ -35,6 +35,7 @@ const FILES: &[(&str, &str)] = &[
     ("src/app.rs", include_str!("../templates/src/app.rs.tmpl")),
     ("src/demo.rs", include_str!("../templates/src/demo.rs.tmpl")),
     ("tests/app.rs", include_str!("../templates/tests/app.rs.tmpl")),
+    ("tests/appearance.rs", include_str!("../templates/tests/appearance.rs.tmpl")),
     ("CLAUDE.md", include_str!("../templates/CLAUDE.md.tmpl")),
     ("README.md", include_str!("../templates/README.md.tmpl")),
 ];
@@ -100,13 +101,13 @@ impl Vars {
                 let path = path.display();
                 (
                     format!("{{ path = \"{path}\" }}"),
-                    format!("{{ path = \"{path}\", features = [\"test\"] }}"),
+                    format!("{{ path = \"{path}\", features = [\"test\", \"audit\"] }}"),
                     format!("{{ path = \"{path}\", default-features = false, features = [\"build\"] }}"),
                 )
             }
             None => (
                 "\"0.1\"".to_string(),
-                "{ version = \"0.1\", features = [\"test\"] }".to_string(),
+                "{ version = \"0.1\", features = [\"test\", \"audit\"] }".to_string(),
                 "{ version = \"0.1\", default-features = false, features = [\"build\"] }".to_string(),
             ),
         };

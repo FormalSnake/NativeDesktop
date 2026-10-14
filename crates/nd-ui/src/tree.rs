@@ -20,8 +20,10 @@ use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKi
 use crate::dispatch::DispatchTree;
 use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
 use crate::layout::{to_taffy, with_titlebar_insets};
+use crate::overlay::{Modality, OverlayProps, is_overlay};
 use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::{TitlebarInsets, Window};
+use nd_gpui::layout::MinMax;
 
 mod semantic_walk;
 
@@ -60,9 +62,9 @@ struct RNode {
     frame: Option<Rect>,
     /// Created this frame; its own children are not inserted yet.
     fresh: bool,
-    /// The size a native layout container gives this node (3.15 layout boundaries); its own
+    /// The box a native layout container gives this node (3.15 layout boundaries); its own
     /// style's position and size are replaced by it.
-    boundary: Option<(Size, BoundaryInsets)>,
+    boundary: Option<Boundary>,
 }
 
 struct ViewSlot {
@@ -90,11 +92,17 @@ pub(crate) struct Tree {
     /// Views whose old position is gone this frame. They keep their nodes until the frame ends,
     /// so a view that moved to a parent reconciled later is adopted there, not rebuilt.
     orphans: Vec<EntityId>,
+    /// Views rendered in this frame, mounted or re-rendered. One that notifies itself while
+    /// rendering stays dirty for the next frame instead of rendering again in this one.
+    rendered: HashSet<EntityId>,
     /// Mirrors the native nodes as the backend has them, with each node's key context and
     /// action listeners.
     /// Nodes that emitted an event since the last frame (see [`Op::Reaffirm`]).
     pub(crate) reaffirm: HashSet<NodeId>,
     pub(crate) dispatch: DispatchTree<App>,
+    /// Open overlays, oldest first. Their focus (save, trap, restore, Escape) is the dispatch
+    /// tree's focus scopes; this list serves app deactivation.
+    overlays: Vec<NodeId>,
 }
 
 fn idents(elements: &[AnyElement]) -> Vec<Ident> {
@@ -115,10 +123,33 @@ fn idents(elements: &[AnyElement]) -> Vec<Ident> {
         .collect()
 }
 
+/// What a native layout container gives a child node.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Boundary {
+    /// A fixed box, with edges kept clear inside it.
+    Box(Size, BoundaryInsets),
+    /// A fixed width; the height is the content's (a row a native list hosts).
+    Width(f32),
+}
+
 /// The node's own style, or, inside a native layout container, that style pinned to the box
 /// the container gives it.
-fn pin_to_boundary(mut style: taffy::Style, boundary: Option<(Size, BoundaryInsets)>) -> taffy::Style {
-    if let Some((size, insets)) = boundary {
+fn pin_to_boundary(mut style: taffy::Style, boundary: Option<Boundary>) -> taffy::Style {
+    if let Some(Boundary::Width(width)) = boundary {
+        style.position = taffy::Position::Absolute;
+        style.inset = taffy::Rect {
+            left: taffy::LengthPercentageAuto::length(0.),
+            top: taffy::LengthPercentageAuto::length(0.),
+            right: taffy::LengthPercentageAuto::auto(),
+            bottom: taffy::LengthPercentageAuto::auto(),
+        };
+        style.margin = taffy::Rect::zero();
+        style.size = taffy::Size { width: taffy::Dimension::length(width), height: taffy::Dimension::auto() };
+        style.min_size.width = MinMax::auto();
+        style.max_size.width = MinMax::auto();
+        return style;
+    }
+    if let Some(Boundary::Box(size, insets)) = boundary {
         let add = |p: taffy::LengthPercentage, by: f32| match p.into_raw().tag() {
             taffy::CompactLength::LENGTH_TAG => taffy::LengthPercentage::length(p.into_raw().value() + by),
             _ => taffy::LengthPercentage::length(by),
@@ -208,7 +239,9 @@ impl Tree {
             placed: HashSet::new(),
             orphans: Vec::new(),
             reaffirm: HashSet::new(),
+            rendered: HashSet::new(),
             dispatch,
+            overlays: Vec::new(),
         }
     }
 
@@ -218,6 +251,15 @@ impl Tree {
 
     pub(crate) fn handler(&self, node: NodeId, event: TypeId) -> Option<Handler> {
         self.nodes.get(&node)?.handlers.iter().find(|(t, _)| *t == event).map(|(_, h)| h.clone())
+    }
+
+    /// Open overlays, oldest first.
+    pub(crate) fn open_overlays(&self) -> impl Iterator<Item = (NodeId, Modality)> + '_ {
+        self.overlays.iter().filter_map(|n| Some((*n, self.overlay_modality(*n)?)))
+    }
+
+    fn overlay_modality(&self, node: NodeId) -> Option<Modality> {
+        self.nodes.get(&node)?.props.downcast_ref::<OverlayProps>().map(|p| p.modality)
     }
 
     pub(crate) fn needs_frame(&self) -> bool {
@@ -255,12 +297,7 @@ impl Tree {
 
     /// The node's Taffy style: padded by the titlebar insets when it asks for them, pinned to
     /// the box a native layout container gives it.
-    fn taffy_style(
-        &self,
-        layout: &StyleRefinement,
-        props: &Props,
-        boundary: Option<(Size, BoundaryInsets)>,
-    ) -> taffy::Style {
+    fn taffy_style(&self, layout: &StyleRefinement, props: &Props, boundary: Option<Boundary>) -> taffy::Style {
         let style = if pads(props) { to_taffy(&with_titlebar_insets(layout, self.insets)) } else { to_taffy(layout) };
         pin_to_boundary(style, boundary)
     }
@@ -303,6 +340,7 @@ impl Tree {
     fn render_view(&mut self, view: &AnyView, window: &mut Window, app: &mut App) -> AnyElement {
         let id = view.entity_id();
         app.dirty.remove(&id);
+        self.rendered.insert(id);
         *app.render_counts.entry(id).or_default() += 1;
         view.render(window, app).resolve(window, app)
     }
@@ -325,6 +363,9 @@ impl Tree {
 
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
+        if is_overlay(el.kind) {
+            self.overlays.push(id);
+        }
         self.tx.push(Op::Create { node: id, kind: el.kind, props: el.props.clone() });
         let style = self.taffy_style(&el.layout, &el.props, None);
         let taffy = if el.measured { self.taffy.new_leaf_with_context(style, id) } else { self.taffy.new_leaf(style) };
@@ -431,6 +472,7 @@ impl Tree {
             Slot::Node(n) => {
                 let node = self.nodes.remove(&n).expect("node");
                 let _ = self.taffy.remove(node.taffy);
+                self.overlays.retain(|o| *o != n);
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {
                     if let Slot::View(e) = s {
@@ -682,7 +724,10 @@ impl Tree {
         // container gives them; Taffy lays out inside that box.
         let ids: Vec<NodeId> = self.nodes.keys().copied().collect();
         for id in ids {
-            let boundary = backend.boundary_size(id).map(|size| (size, backend.boundary_insets(id)));
+            let boundary = match backend.boundary_size(id) {
+                Some(size) => Some(Boundary::Box(size, backend.boundary_insets(id))),
+                None => backend.boundary_width(id).map(Boundary::Width),
+            };
             if boundary != self.nodes[&id].boundary {
                 self.nodes.get_mut(&id).expect("node").boundary = boundary;
                 let node = &self.nodes[&id];
@@ -737,6 +782,7 @@ impl App {
         };
         let outer = self.current_window.replace(id);
         tree.placed.clear();
+        tree.rendered.clear();
         let root_view = tree.root_view.clone();
         tree.placed.insert(root_view.entity_id());
         if !tree.views.contains_key(&root_view.entity_id()) {
@@ -754,12 +800,11 @@ impl App {
         }
         // Each view renders at most once per frame; one that notifies itself while rendering
         // stays dirty for the next frame instead of spinning here.
-        let mut rendered = HashSet::new();
         loop {
             let mut dirty: Vec<(u32, EntityId)> = self
                 .dirty
                 .iter()
-                .filter(|e| !rendered.contains(*e) && !tree.orphans.contains(e))
+                .filter(|e| !tree.rendered.contains(*e) && !tree.orphans.contains(e))
                 .filter_map(|e| tree.views.get(e).map(|v| (v.depth, *e)))
                 .collect();
             if dirty.is_empty() {
@@ -769,7 +814,7 @@ impl App {
             for (_, e) in dirty {
                 // A parent rendered earlier in this pass may have unmounted it or mounted it fresh.
                 let live = tree.views.contains_key(&e) && !tree.orphans.contains(&e);
-                if self.dirty.contains(&e) && live && rendered.insert(e) {
+                if self.dirty.contains(&e) && live && !tree.rendered.contains(&e) {
                     tree.rerender_view(e, &mut window, self);
                 }
             }

@@ -196,10 +196,16 @@ mod nav {
         }
     }
 
+    /// The palette draws in the overlay window over the handle's window (6.3); its field
+    /// editor is that window's first responder.
     fn field_editor(view: &NSView) -> Option<Retained<NSTextView>> {
-        let responder: Retained<NSResponder> = view.window()?.firstResponder()?;
-        let any: Retained<AnyObject> = responder.into();
-        any.downcast::<NSTextView>().ok()
+        let window = view.window()?;
+        let windows = window.childWindows().map(|c| c.to_vec()).unwrap_or_default();
+        windows.iter().chain(std::iter::once(&window)).find_map(|w| {
+            let responder: Retained<NSResponder> = w.firstResponder()?;
+            let any: Retained<AnyObject> = responder.into();
+            any.downcast::<NSTextView>().ok()
+        })
     }
 
     pub fn run() -> ! {
@@ -386,30 +392,31 @@ mod nav {
             &format!("Esc cancels once and closes ({} cancels)", log.borrow().cancels),
         );
 
-        // Unmounted while open: the backdrop on the frame view goes with it.
+        // Unmounted while open: the backdrop in the overlay window goes with it.
         handle.root().update(&mut env.app, |this, cx| {
             this.open = true;
             cx.notify();
         });
         env.settle();
-        let host = view.window().and_then(|w| w.contentView()).and_then(|v| unsafe { v.superview() });
-        let backdrops = |host: &Option<Retained<NSView>>| {
-            host.as_ref().map_or(0, |h| {
-                h.subviews()
-                    .iter()
-                    .filter(|v| v.class().name().to_str().is_ok_and(|n| n.contains("PaletteBackdrop")))
-                    .count()
-            })
+        let owner = view.window();
+        let backdrops = || {
+            let layers = owner.as_ref().and_then(|w| w.childWindows()).map(|c| c.to_vec()).unwrap_or_default();
+            layers
+                .iter()
+                .filter_map(|w| w.contentView())
+                .flat_map(|h| h.subviews().to_vec())
+                .filter(|v| v.class().name().to_str().is_ok_and(|n| n.contains("PaletteBackdrop")))
+                .count()
         };
-        let before = backdrops(&host);
+        let before = backdrops();
         handle.root().update(&mut env.app, |this, cx| {
             this.palette_mounted = false;
             cx.notify();
         });
         env.settle();
         c.check(
-            before == 1 && backdrops(&host) == 0 && log.borrow().cancels == 1,
-            &format!("an unmount while open removes the backdrop silently ({before} -> {})", backdrops(&host)),
+            before == 1 && backdrops() == 0 && log.borrow().cancels == 1,
+            &format!("an unmount while open removes the backdrop silently ({before} -> {})", backdrops()),
         );
     }
 

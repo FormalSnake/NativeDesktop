@@ -17,7 +17,11 @@ pub(crate) enum FileState {
     ReadOnly,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) use crate::vfs::{file_state, write_atomic};
+
 /// `store_roots` are the store directories (normally `/nix/store`), compared canonically.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn file_state(path: &Path, store_roots: &[PathBuf]) -> FileState {
     let Ok(meta) = fs::symlink_metadata(path) else { return FileState::Missing };
     let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
@@ -75,10 +79,12 @@ pub(crate) fn edit_document(text: &str, key: &str, value: Option<&toml::Value>) 
     Ok(doc.to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 static TMP: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `text` through a temp file beside the target and renames it over. A symlink to an
 /// ordinary file is followed, so a dotfiles link keeps pointing where it did.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     let real = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     if let Some(dir) = real.parent() {

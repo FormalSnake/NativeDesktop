@@ -28,8 +28,8 @@ pub use display::{
     ProgressProps, ProgressStyle, TextStyle, label, link, progress, spinner,
 };
 pub use rows::{
-    ButtonGroup, Clamp, FormField, RowActivated, SwitchRow, button_group, clamp, form_field, navigation_row, row,
-    settings_group, switch_row,
+    ButtonGroup, Clamp, FormField, RowActivated, SheetLayout, SwitchRow, button_group, clamp, form_field,
+    navigation_row, row, settings_group, sheet_layout, switch_row,
 };
 pub use text::{
     ComboBox, ComboBoxKind, ComboBoxProps, FieldIcon, FieldIconClicked, FieldStyle, IconEdge, TextArea, TextAreaKind,

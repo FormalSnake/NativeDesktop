@@ -11,11 +11,13 @@ links = "nd-swift"
 default = ["runtime"]
 # The app vocabulary. An app's build script depends on `nd` with `default-features = false,
 # features = ["build"]`, which keeps gpui out of the host build.
-runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components"]
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-update"]
 build = ["dep:toml"]
 # `settings_form::<T>()` over nd-settings' schema.
 settings-ui = ["runtime", "nd-components/settings"]
-test = ["runtime", "nd-ui/test-support"]
+test = ["runtime", "nd-ui/test-support", "dep:wasm-bindgen-test"]
+# `nd::audit`, the tier 2 appearance audit: both backend kinds, the GPUI one headless.
+audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
 # Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
 gpui = ["dep:nd-backend-gpui"]
@@ -32,7 +34,12 @@ nd-macros = { workspace = true, optional = true }
 nd-automation = { workspace = true, optional = true }
 nd-theme = { workspace = true, optional = true }
 nd-components = { workspace = true, optional = true }
+nd-virtual = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
+nd-update = { workspace = true, optional = true, features = ["client"] }
+
+[dev-dependencies]
+nd = { path = ".", features = ["audit"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
@@ -40,6 +47,14 @@ nd-backend-gpui = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 nd-backend-gpui = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nd-os-linux = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+nd-os-web = { workspace = true }
+# `#[nd::test]` runs tier 1 tests in a browser through it.
+wasm-bindgen-test = { version = "0.3", optional = true }
 
 # Tier 2 gate: a matugen `theme.json` write recolours a running app within 100 ms. AppKit owns
 # the main thread, so libtest's harness is off.
@@ -50,4 +65,13 @@ harness = false
 # Tier 2: every macOS chrome intent mapped to its system component, read back off AppKit.
 [[test]]
 name = "chrome"
+harness = false
+
+# Tier 2: every chrome intent through `nd::audit`, and the audit catching a view that breaks it.
+[[test]]
+name = "appearance"
+harness = false
+
+[[test]]
+name = "appearance_catches"
 harness = false

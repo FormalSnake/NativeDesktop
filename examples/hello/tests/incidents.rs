@@ -6,6 +6,7 @@
 
 #![cfg(target_os = "macos")]
 
+#[cfg(test)]
 mod gate_m1 {
     use std::fs;
     use std::path::{Path, PathBuf};

@@ -16,9 +16,14 @@ pub const RING: usize = 5000;
 
 pub(crate) type Ring = Arc<Mutex<VecDeque<Value>>>;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type LogFile = logroller::LogRoller;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type LogFile = std::io::Sink;
+
 pub(crate) struct RecorderLayer {
     pub ring: Ring,
-    pub file: Option<Mutex<logroller::LogRoller>>,
+    pub file: Option<Mutex<LogFile>>,
 }
 
 struct Fields(Map<String, Value>);

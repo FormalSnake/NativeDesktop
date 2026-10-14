@@ -10,20 +10,28 @@
 //!
 //! Keys reach nd dispatch first (3.12): a keystroke interceptor runs before GPUI's own dispatch,
 //! and stops it when an nd binding took the key.
+//!
+//! The resize gate's switches, as on AppKit: `ND_DEBUG_EXPOSE=1` paints magenta behind the app's
+//! tree, so area no node covers shows; `ND_DEBUG_DEFER_LIVE_LAYOUT=1` lays a resized window out
+//! at most every 300 ms, the late layout the gate must catch; `ND_DIAG_WINDOW=1` prints
+//! `nd: viewport WxH` per layout size, `nd: key <keystroke>` per key and `nd: window move` per
+//! drag-region move on stderr.
 
+use nd_core::time::{Duration, Instant};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::mpsc;
 use nd_core::{FrameTime, Point, Rect, Size, WindowId};
 use nd_diag::{FrameRecord, InputRecord, Watchdog};
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, AnyElement, AnyWindowHandle, AppContext, Bounds, Context, Decorations, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, Styled, TitlebarOptions, WindowBounds, div, px,
 };
+use nd_theme::Scheme;
 use nd_ui::dispatch::KeyDispatch;
 use nd_ui::semantics::{MouseButton, PointerPhase, SyntheticInput, WindowState};
 use nd_ui::{App, TitlebarInsets};
@@ -32,7 +40,7 @@ use crate::backend::{GpuiBackend, Wake, is_button};
 use crate::budget::Budget;
 use crate::clock::{DisplayClock, Pacing};
 use crate::os::{FrameRequest, NoOsHooks, OsHooks};
-use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH, Look};
+use crate::render::{Build, CONTROL_HEIGHT, CONTROL_WIDTH};
 
 fn point_of(p: gpui::Point<gpui::Pixels>) -> Point {
     Point { x: p.x.as_f32(), y: p.y.as_f32() }
@@ -70,6 +78,7 @@ pub struct NdView {
 impl Render for NdView {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.host.upgrade() {
+            Some(host) if host.single_canvas => host.render_canvas(window, cx),
             Some(host) => host.render_window(self.window, window, cx),
             None => div().into_any_element(),
         }
@@ -82,6 +91,29 @@ struct HostWindow {
     clock: DisplayClock,
     /// When the window last printed its pacing line.
     reported: Option<Instant>,
+    /// When the app last laid the window out at a new size.
+    resized: Option<Instant>,
+    /// The size the app asked for, which an in-canvas window keeps while the canvas has room.
+    requested: Size,
+}
+
+/// The resize gate's environment switches (module docs).
+#[derive(Clone, Copy)]
+struct DebugFlags {
+    expose: bool,
+    defer_layout: bool,
+    diag: bool,
+}
+
+impl DebugFlags {
+    fn from_env() -> Self {
+        let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v == "1");
+        Self {
+            expose: flag("ND_DEBUG_EXPOSE"),
+            defer_layout: flag("ND_DEBUG_DEFER_LIVE_LAYOUT"),
+            diag: flag("ND_DIAG_WINDOW"),
+        }
+    }
 }
 
 struct Inner {
@@ -96,15 +128,19 @@ struct Inner {
     sender: AppSender,
     budget: RefCell<Budget>,
     pacing: bool,
+    debug: DebugFlags,
     subscriptions: RefCell<Vec<gpui::Subscription>>,
     tasks: RefCell<Vec<gpui::Task<()>>>,
     watchdog: RefCell<Option<Watchdog>>,
+    /// Every app window draws into the first GPUI window (see [`HostBuilder::single_canvas`]).
+    single_canvas: bool,
 }
 
 /// Builds a [`GpuiHost`].
 pub struct HostBuilder {
     hooks: Rc<dyn OsHooks>,
     quit_when_empty: bool,
+    single_canvas: bool,
 }
 
 impl HostBuilder {
@@ -120,10 +156,20 @@ impl HostBuilder {
         self
     }
 
+    /// Draw every app window into one GPUI window: the first window fills it, later ones float
+    /// above it as in-canvas windows and sheets as dialogs with a scrim. On by default on the
+    /// web, where GPUI has one canvas and no second window.
+    pub fn single_canvas(mut self, single: bool) -> Self {
+        self.single_canvas = single;
+        self
+    }
+
     /// Builds the app with `init` (which opens its windows) inside GPUI's app `cx` and opens
     /// them.
     pub fn start(self, cx: &mut gpui::App, init: impl FnOnce(&mut App)) -> GpuiHost {
+        self.hooks.app_started(cx);
         let backend = GpuiBackend::new();
+        backend.set_platform_scheme(scheme_of(cx.window_appearance()));
         let mut app = App::with_backend(Box::new(backend.clone()));
         init(&mut app);
         let (tx, rx) = mpsc::unbounded();
@@ -139,9 +185,11 @@ impl HostBuilder {
             sender: AppSender(tx),
             budget: RefCell::new(Budget::from_env()),
             pacing: std::env::var_os("ND_PACING").is_some_and(|v| v == "1"),
+            debug: DebugFlags::from_env(),
             subscriptions: RefCell::default(),
             tasks: RefCell::default(),
             watchdog: RefCell::default(),
+            single_canvas: self.single_canvas,
         });
         let weak = Rc::downgrade(&inner);
         let wake: Wake = Rc::new(move |cx: &mut gpui::App| {
@@ -153,6 +201,10 @@ impl HostBuilder {
             });
         });
         inner.backend.attach_app(cx.to_async(), wake);
+        if inner.debug.diag {
+            let keys = cx.observe_keystrokes(|event, _, _| eprintln!("nd: key {}", event.keystroke.unparse()));
+            inner.subscriptions.borrow_mut().push(keys);
+        }
         inner.listen(cx, rx);
         if let Some(diag) = nd_diag::global() {
             let sender = inner.sender.clone();
@@ -170,7 +222,7 @@ pub struct GpuiHost(Rc<Inner>);
 
 impl GpuiHost {
     pub fn builder() -> HostBuilder {
-        HostBuilder { hooks: Rc::new(NoOsHooks), quit_when_empty: true }
+        HostBuilder { hooks: Rc::new(NoOsHooks), quit_when_empty: true, single_canvas: cfg!(target_arch = "wasm32") }
     }
 
     pub fn backend(&self) -> &GpuiBackend {
@@ -246,6 +298,13 @@ pub(crate) fn window_state(window: &gpui::Window) -> WindowState {
     }
 }
 
+fn scheme_of(appearance: gpui::WindowAppearance) -> Scheme {
+    match appearance {
+        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => Scheme::Dark,
+        gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight => Scheme::Light,
+    }
+}
+
 /// Where the OS controls sit when no OS crate says otherwise.
 fn default_insets(window: &gpui::Window) -> TitlebarInsets {
     if cfg!(target_os = "macos") {
@@ -308,6 +367,11 @@ impl Inner {
                     ..InputRecord::default()
                 });
             }
+            if event.keystroke.key == "escape" && inner.backend.close_menu(id) {
+                cx.stop_propagation();
+                (inner.wake())(cx);
+                return;
+            }
             if inner.backend.drawn_claims_key(&event.keystroke, window) {
                 return;
             }
@@ -339,6 +403,25 @@ impl Inner {
         self.subscriptions.borrow_mut().extend([keys, closed]);
     }
 
+    /// The platform switched light and dark: the backend's own theme follows, then the app's
+    /// listener (`nd` feeds its registry), and every window redraws.
+    fn platform_appearance(self: &Rc<Self>, cx: &mut gpui::App) {
+        let scheme = scheme_of(cx.window_appearance());
+        if !self.backend.set_platform_scheme(scheme) {
+            return;
+        }
+        let listener = self.backend.state.borrow().scheme_listener.clone();
+        if let Some(listener) = listener
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            listener(&mut app, scheme);
+            app.flush_effects();
+        }
+        let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
+        self.notify(cx, all.into_iter());
+        self.pump(cx);
+    }
+
     fn closed(&self, id: WindowId) {
         self.backend.forget_window(id);
         self.hooks.window_closed(id);
@@ -348,6 +431,23 @@ impl Inner {
     }
 
     fn pump(self: &Rc<Self>, cx: &mut gpui::App) {
+        let actions = self.backend.take_actions();
+        if !actions.is_empty()
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            for (window, action) in actions {
+                app.dispatch_action(window, &*action);
+            }
+        }
+        let deferred = self.backend.take_deferred();
+        if !deferred.is_empty()
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            for job in deferred {
+                job(&mut app);
+                app.flush_effects();
+            }
+        }
         for (id, event) in self.backend.take_pending() {
             if let Some(handle) = self.backend.window_handle(id) {
                 self.budget.borrow_mut().input(Instant::now());
@@ -379,6 +479,10 @@ impl Inner {
         self.sync_windows(cx);
         if needs_frame {
             self.frame_now(cx);
+        } else {
+            // A context menu opened or closed without a frame.
+            let dirty = self.backend.take_dirty();
+            self.notify(cx, dirty.into_iter());
         }
     }
 
@@ -434,7 +538,8 @@ impl Inner {
         for (id, handle) in gone {
             self.windows.borrow_mut().remove(&id);
             self.closed(id);
-            if let Some(handle) = handle {
+            // The canvas outlives the app windows drawn into it.
+            if let Some(handle) = handle.filter(|_| !self.single_canvas) {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
             }
         }
@@ -450,9 +555,29 @@ impl Inner {
     }
 
     fn open_window(self: &Rc<Self>, cx: &mut gpui::App, id: WindowId, title: SharedString, size: Size) {
-        self.windows
-            .borrow_mut()
-            .insert(id, HostWindow { view: None, handle: None, clock: DisplayClock::new(self.origin), reported: None });
+        let canvas = self
+            .single_canvas
+            .then(|| self.windows.borrow().values().find_map(|w| Some((w.handle?, w.view.clone()?))))
+            .flatten();
+        let (handle, view) = canvas.map_or((None, None), |(h, v)| (Some(h), Some(v)));
+        self.windows.borrow_mut().insert(
+            id,
+            HostWindow {
+                view,
+                handle,
+                clock: DisplayClock::new(self.origin),
+                reported: None,
+                resized: None,
+                requested: size,
+            },
+        );
+        if let Some(handle) = handle {
+            self.backend.set_window_handle(id, handle);
+            self.had_windows.set(true);
+            let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
+            self.notify(cx, all.into_iter());
+            return;
+        }
         let bounds = Bounds::centered(None, gpui::size(px(size.width), px(size.height)), cx);
         let mut options = gpui::WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -464,15 +589,59 @@ impl Inner {
         };
         self.hooks.window_options(id, &mut options);
         let host = Rc::downgrade(self);
-        let Ok(handle) = cx.open_window(options, |_, cx| cx.new(|_| NdView { host, window: id })) else {
+        let Ok(handle) = cx.open_window(options, |window, cx| {
+            let view = cx.new(|_| NdView { host, window: id });
+            // The window's first draw can open further app windows, which must find this one as
+            // their canvas before `open_window` returns.
+            if self.single_canvas {
+                if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
+                    w.handle = Some(window.window_handle());
+                    w.view = Some(view.clone());
+                }
+                self.backend.set_window_handle(id, window.window_handle());
+            }
+            view
+        }) else {
             eprintln!("nd: GPUI could not open window {id:?}");
             self.windows.borrow_mut().remove(&id);
             return;
         };
         let any: AnyWindowHandle = handle.into();
         self.backend.set_window_handle(id, any);
+        let weak = Rc::downgrade(self);
+        let weak_appearance = weak.clone();
         let view = handle.update(cx, |_, window, cx| {
             self.hooks.window_opened(id, window, cx);
+            // Light-dismiss overlays close when the app loses activation, checked a turn later so
+            // a key change between the app's own windows does not count.
+            let activation = cx.observe_window_activation(window, move |_, window, cx| {
+                if window.is_window_active() {
+                    return;
+                }
+                let weak = weak.clone();
+                cx.defer(move |cx| {
+                    let Some(inner) = weak.upgrade() else { return };
+                    let active =
+                        cx.windows().iter().any(|w| w.update(cx, |_, w, _| w.is_window_active()).unwrap_or(false));
+                    if !active {
+                        for window in inner.windows.borrow().keys() {
+                            inner.backend.close_menu(*window);
+                        }
+                        if let Ok(mut app) = inner.app.try_borrow_mut() {
+                            app.app_deactivated();
+                        }
+                        inner.pump(cx);
+                    }
+                });
+            });
+            self.subscriptions.borrow_mut().push(activation);
+            let weak = weak_appearance;
+            let appearance = window.observe_window_appearance(move |_, cx| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.platform_appearance(cx);
+                }
+            });
+            self.subscriptions.borrow_mut().push(appearance);
             cx.entity()
         });
         if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
@@ -483,17 +652,141 @@ impl Inner {
     }
 
     fn render_window(self: &Rc<Self>, id: WindowId, window: &mut gpui::Window, cx: &mut gpui::App) -> AnyElement {
-        let started = Instant::now();
         let size = window.viewport_size();
         let size = Size { width: size.width.as_f32(), height: size.height.as_f32() };
         let insets = self.hooks.titlebar_insets(id, window).unwrap_or_else(|| default_insets(window));
+        self.render_window_at(id, size, insets, window, cx)
+    }
+
+    /// The app windows of a single canvas: the oldest normal window fills it, the rest float
+    /// above in the order they opened.
+    fn render_canvas(self: &Rc<Self>, window: &mut gpui::Window, cx: &mut gpui::App) -> AnyElement {
+        let viewport = window.viewport_size();
+        let viewport = Size { width: viewport.width.as_f32(), height: viewport.height.as_f32() };
+        let open: Vec<(WindowId, Size)> = self.windows.borrow().iter().map(|(id, w)| (*id, w.requested)).collect();
+        let kinds: Vec<(WindowId, Size, nd_ui::WindowKind, SharedString)> = {
+            let Ok(app) = self.app.try_borrow() else {
+                window.request_animation_frame();
+                return div().into_any_element();
+            };
+            open.into_iter()
+                .filter_map(|(id, size)| app.window(id).map(|w| (id, size, w.options().kind, w.title().clone())))
+                .collect()
+        };
+        let base = kinds.iter().find(|(_, _, kind, _)| !matches!(kind, nd_ui::WindowKind::Sheet { .. })).map(|k| k.0);
+        let look = crate::render::Look::of(self.backend.state.borrow().theme.app_theme());
+        let (bar, dropdown) = {
+            let menus = self.backend.menu_bar.borrow();
+            if menus.is_empty() {
+                (None, None)
+            } else {
+                let toggle = {
+                    let menus = self.backend.menu_bar.clone();
+                    move |open: Option<usize>, window: &mut gpui::Window| {
+                        menus.borrow_mut().open = open;
+                        window.refresh();
+                    }
+                };
+                let choose = {
+                    let (menus, backend) = (self.backend.menu_bar.clone(), self.backend.clone());
+                    move |action: Box<dyn gpui::Action>, window: &mut gpui::Window| {
+                        menus.borrow_mut().open = None;
+                        window.refresh();
+                        let target = backend.window_for(window.window_handle());
+                        backend.defer(move |app| {
+                            if let Some(target) = target {
+                                app.dispatch_action(target, &*action);
+                            }
+                        });
+                    }
+                };
+                let (bar, dropdown) = crate::canvas::menu_bar(&menus, &look, toggle, choose);
+                (Some(bar), dropdown)
+            }
+        };
+        let viewport = match bar {
+            Some(_) => {
+                Size { width: viewport.width, height: (viewport.height - crate::canvas::MENU_BAR_HEIGHT).max(1.) }
+            }
+            None => viewport,
+        };
+        let mut stack = div().w(px(viewport.width)).h(px(viewport.height)).relative();
+        if let Some(base) = base {
+            let insets = self.hooks.titlebar_insets(base, window).unwrap_or_else(|| default_insets(window));
+            stack = stack.child(self.render_window_at(base, viewport, insets, window, cx));
+        }
+        let mut floating = 0;
+        for (id, requested, kind, title) in kinds.into_iter().filter(|k| Some(k.0) != base) {
+            let sheet = matches!(kind, nd_ui::WindowKind::Sheet { .. });
+            let chrome = if sheet { 0. } else { crate::canvas::TITLE_HEIGHT };
+            let size = crate::canvas::fit(requested, viewport, chrome);
+            let element = self.render_window_at(id, size, TitlebarInsets::default(), window, cx);
+            let close = {
+                let weak = Rc::downgrade(self);
+                move |cx: &mut gpui::App| {
+                    let Some(inner) = weak.upgrade() else { return };
+                    if let Ok(mut app) = inner.app.try_borrow_mut() {
+                        app.close_window(id);
+                    }
+                    inner.pump(cx);
+                }
+            };
+            stack = stack.child(if sheet {
+                crate::canvas::sheet(size, element, &look)
+            } else {
+                floating += 1;
+                crate::canvas::floating(floating, size, viewport, title, element, &look, close)
+            });
+        }
+        match bar {
+            Some(bar) => div()
+                .size_full()
+                .relative()
+                .flex()
+                .flex_col()
+                .child(bar)
+                .child(stack)
+                .children(dropdown)
+                .into_any_element(),
+            None => stack.into_any_element(),
+        }
+    }
+
+    fn render_window_at(
+        self: &Rc<Self>,
+        id: WindowId,
+        size: Size,
+        insets: TitlebarInsets,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> AnyElement {
+        let started = Instant::now();
         let animating = self.budget.borrow_mut().animating(started);
         let mut frame_time = None;
+        let mut laid_out = None;
         let (committed, needs_more) = match self.app.try_borrow_mut() {
             Ok(mut app) => {
                 if app.window(id).is_some_and(|w| w.viewport_size() != size) {
-                    app.resize_window(id, size);
+                    let deferred = self.debug.defer_layout
+                        && self
+                            .windows
+                            .borrow()
+                            .get(&id)
+                            .and_then(|w| w.resized)
+                            .is_some_and(|at| started.duration_since(at) < Duration::from_millis(300));
+                    if deferred {
+                        window.request_animation_frame();
+                    } else {
+                        app.resize_window(id, size);
+                        if let Some(w) = self.windows.borrow_mut().get_mut(&id) {
+                            w.resized = Some(started);
+                        }
+                        if self.debug.diag {
+                            eprintln!("nd: viewport {}x{}", size.width, size.height);
+                        }
+                    }
                 }
+                laid_out = app.window(id).map(|w| w.viewport_size());
                 app.set_titlebar_insets(id, insets);
                 if animating {
                     app.refresh_window(id);
@@ -513,7 +806,10 @@ impl Inner {
             // An automation job holds the app; draw the tree as it stands and come back.
             Err(_) => (Default::default(), true),
         };
-        self.notify(cx, committed.into_iter().filter(|w| *w != id));
+        // On a single canvas every app window is this view, which is drawing now.
+        if !self.single_canvas {
+            self.notify(cx, committed.into_iter().filter(|w| *w != id));
+        }
         self.backend.set_window_state(id, window_state(window));
         if needs_more || animating {
             window.request_animation_frame();
@@ -533,19 +829,13 @@ impl Inner {
 
         let state = self.backend.state.borrow();
         let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return div().into_any_element() };
-        let appearance = self.hooks.appearance(id, window).unwrap_or_else(|| window.appearance());
-        let build = Build {
-            backend: &self.backend,
-            nodes: &state.nodes,
-            insets,
-            look: Look::of(appearance),
-            wake: self.wake(),
-            hooks: &self.hooks,
-            window_id: id,
-            time: frame_time.unwrap_or_else(|| self.origin.elapsed().as_secs_f64()),
-        };
+        let mut build = Build::new(&self.backend, &state.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
+        build.time = frame_time.unwrap_or_else(|| self.origin.elapsed().as_secs_f64());
         let element = build.node(root, window, cx);
+        let menu = state.menus.get(&id).map(|m| build.menu(m, window));
+        let paints = build.take_paints();
         drop(state);
+        self.backend.state.borrow_mut().paints.insert(id, paints);
         // Building gave a drawn target GPUI focus; a request left over means nd focus is
         // somewhere no drawn control is.
         if self.backend.focus_requests.borrow_mut().remove(&id).is_some() {
@@ -560,8 +850,19 @@ impl Inner {
             Rc::downgrade(self),
             Rc::downgrade(self),
         );
+        let expose = self.debug.expose;
+        let (backend, fresh) = (self.backend.clone(), self.backend.clone());
         div()
             .size_full()
+            // A new press starts clean: a release owed to an earlier consumed press that never
+            // arrived (the compositor dropped it) must not eat this press's release.
+            .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))
+            .capture_any_mouse_up(move |_, _, cx| {
+                if backend.take_swallow(id) {
+                    cx.stop_propagation();
+                }
+            })
+            .when(expose, |d| d.bg(gpui::rgb(0xff00ff)))
             .capture_any_mouse_down(move |event, window, cx| {
                 if let Some(diag) = nd_diag::global() {
                     diag.record_input(InputRecord {
@@ -620,7 +921,15 @@ impl Inner {
                     });
                 }
             })
-            .child(element)
+            .map(|d| match laid_out {
+                // The drawn tree flexes to the GPUI window, so the deferred layout's stale size
+                // is applied here, where the nd layout would have put it.
+                Some(size) if self.debug.defer_layout => {
+                    d.child(div().w(px(size.width)).h(px(size.height)).child(element))
+                }
+                _ => d.child(element),
+            })
+            .children(menu)
             .into_any_element()
     }
 
@@ -629,7 +938,13 @@ impl Inner {
         let mut windows = self.windows.borrow_mut();
         let Some(w) = windows.get_mut(&id) else { return FrameTime::default() };
         w.clock.set_interval(window.refresh_interval(cx));
-        let request = FrameRequest { window: id, now: started, interval: w.clock.interval(), last: w.clock.last() };
+        let request = FrameRequest {
+            window: id,
+            now: started,
+            now_seconds: w.clock.seconds(started),
+            interval: w.clock.interval(),
+            last: w.clock.last(),
+        };
         let time = match self.hooks.frame_time(&request, window) {
             Some(measured) => {
                 let t = w.clock.seconds(started);
@@ -661,8 +976,15 @@ impl Inner {
         cx: &mut gpui::App,
         f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
     ) {
+        if self.backend.palette_covers(id) {
+            return;
+        }
         let outputs = {
             let state = self.backend.state.borrow();
+            // An open context menu's or palette's backdrop takes every press.
+            if state.menus.contains_key(&id) {
+                return;
+            }
             let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
             let bounds = self.backend.bounds.borrow();
             f(&self.backend.gestures, (&state.nodes, &bounds, root))

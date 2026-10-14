@@ -10,8 +10,16 @@
 //! Environment: `ND_LOG` (an `EnvFilter`, default `info`), `ND_DIAG_HANG_MS` (default 5000),
 //! `ND_DIAG_CRASH_HANDLER=0` (no crash helper process), `ND_DIAG_KEEP_TEXT=1` (keep typed text
 //! in release builds).
+//!
+//! On the web only the panic hook is installed (to the browser console); the rest needs files
+//! and threads a tab does not have.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 mod bundle;
+#[cfg(not(target_arch = "wasm32"))]
+mod crash;
+#[cfg(target_arch = "wasm32")]
+#[path = "crash_web.rs"]
 mod crash;
 mod hang;
 mod log;
@@ -149,6 +157,7 @@ impl Shared {
         Ok(dir)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_crash_snapshot(&self) -> io::Result<()> {
         let path = self.diagnostics.join(crash::SNAPSHOT);
         let tmp = path.with_extension("tmp");
@@ -193,6 +202,20 @@ pub fn global() -> Option<&'static Diag> {
 /// helper and the global [`Diag`]. When this process was launched as the crash helper it runs
 /// the helper and exits instead. Platform hosts call it first thing.
 pub fn init(config: Config) -> Option<&'static Diag> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // No files, processes or threads in a browser tab: panics go to the console, which is
+        // where a web app's diagnostics live.
+        let _ = config;
+        console_error_panic_hook::set_once();
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    init_native(config)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn init_native(config: Config) -> Option<&'static Diag> {
     let args: Vec<_> = std::env::args_os().collect();
     if args.get(1).is_some_and(|a| a == crash::ARG) && args.len() == 4 {
         crash::run_server(Path::new(&args[2]), Path::new(&args[3]));

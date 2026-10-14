@@ -49,12 +49,51 @@ struct Flat {
     frame: Option<Rect>,
 }
 
+/// What changed between two committed trees, kept typed: it becomes JSON only when a bundle is
+/// written, so recording costs a hash map walk per frame, not a serialization.
+struct LayoutDiff {
+    frame: u64,
+    window: u64,
+    added: Vec<(u64, Flat)>,
+    changed: Vec<(u64, Flat, Flat)>,
+    removed: Vec<u64>,
+}
+
+impl LayoutDiff {
+    fn to_json(&self) -> Value {
+        let added: Vec<Value> = self
+            .added
+            .iter()
+            .map(|(id, now)| json!({ "id": id, "parent": now.parent, "frame": rect(now.frame) }))
+            .collect();
+        let changed: Vec<Value> = self
+            .changed
+            .iter()
+            .map(|(id, was, now)| {
+                json!({
+                    "id": id,
+                    "from": rect(was.frame),
+                    "to": rect(now.frame),
+                    "reparented": was.parent != now.parent,
+                })
+            })
+            .collect();
+        json!({
+            "added": added,
+            "changed": changed,
+            "removed": self.removed,
+            "frame": self.frame,
+            "window": self.window,
+        })
+    }
+}
+
 #[derive(Default)]
 struct WindowRecord {
-    tree: Option<Value>,
+    tree: Option<SemanticWindow>,
     flat: HashMap<u64, Flat>,
     frames: VecDeque<FrameRecord>,
-    layout: VecDeque<Value>,
+    layout: VecDeque<LayoutDiff>,
 }
 
 #[derive(Default)]
@@ -81,28 +120,22 @@ fn flatten(node: &SemanticNode, parent: Option<u64>, out: &mut HashMap<u64, Flat
     }
 }
 
-/// What changed between two committed trees: nodes added, removed, moved or resized.
-fn layout_diff(before: &HashMap<u64, Flat>, after: &HashMap<u64, Flat>) -> Value {
-    let mut added: Vec<Value> = Vec::new();
-    let mut changed: Vec<Value> = Vec::new();
+/// Nodes added, removed, moved or resized between two committed trees, sorted by id.
+fn layout_diff(before: &HashMap<u64, Flat>, after: &HashMap<u64, Flat>, frame: u64, window: u64) -> LayoutDiff {
+    let mut added = Vec::new();
+    let mut changed = Vec::new();
     for (id, now) in after {
         match before.get(id) {
-            None => added.push(json!({ "id": id, "parent": now.parent, "frame": rect(now.frame) })),
-            Some(was) if was != now => changed.push(json!({
-                "id": id,
-                "from": rect(was.frame),
-                "to": rect(now.frame),
-                "reparented": was.parent != now.parent,
-            })),
+            None => added.push((*id, *now)),
+            Some(was) if was != now => changed.push((*id, *was, *now)),
             Some(_) => {}
         }
     }
     let mut removed: Vec<u64> = before.keys().filter(|id| !after.contains_key(id)).copied().collect();
-    let key = |v: &Value| v["id"].as_u64().unwrap_or(0);
-    added.sort_by_key(key);
-    changed.sort_by_key(key);
+    added.sort_by_key(|a| a.0);
+    changed.sort_by_key(|c| c.0);
     removed.sort_unstable();
-    json!({ "added": added, "changed": changed, "removed": removed })
+    LayoutDiff { frame, window, added, changed, removed }
 }
 
 impl Recorder {
@@ -116,12 +149,10 @@ impl Recorder {
         let Some(tree) = tree else { return };
         let mut flat = HashMap::new();
         flatten(&tree.root, None, &mut flat);
-        let mut diff = layout_diff(&w.flat, &flat);
-        diff.as_object_mut().expect("object").insert("frame".into(), frame.frame.into());
-        diff.as_object_mut().expect("object").insert("window".into(), window.into());
+        let diff = layout_diff(&w.flat, &flat, frame.frame, window);
         push(&mut w.layout, FRAMES, diff);
         w.flat = flat;
-        w.tree = serde_json::to_value(tree).ok();
+        w.tree = Some(tree.clone());
     }
 
     pub fn close_window(&mut self, window: u64) {
@@ -137,7 +168,7 @@ impl Recorder {
     }
 
     pub fn trees(&self) -> Vec<Value> {
-        self.windows.iter().filter_map(|w| w.1.tree.clone()).collect()
+        self.windows.values().filter_map(|w| w.tree.as_ref()).filter_map(|t| serde_json::to_value(t).ok()).collect()
     }
 
     pub fn frames(&self) -> BTreeMap<u64, Vec<FrameRecord>> {
@@ -145,6 +176,6 @@ impl Recorder {
     }
 
     pub fn layout(&self) -> Vec<Value> {
-        self.windows.values().flat_map(|w| w.layout.iter().cloned()).collect()
+        self.windows.values().flat_map(|w| w.layout.iter().map(LayoutDiff::to_json)).collect()
     }
 }

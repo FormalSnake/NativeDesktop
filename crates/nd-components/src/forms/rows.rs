@@ -204,3 +204,48 @@ impl IntoElement for ButtonGroup {
         self.0.into_any_element()
     }
 }
+
+/// A sheet's content (`window.open_sheet`): its title, the body, and a footer of buttons at the
+/// trailing edge with the default button last, as macOS sheets and libadwaita dialogs lay them.
+pub struct SheetLayout {
+    title: SharedString,
+    body: Vec<AnyElement>,
+    footer: Vec<AnyElement>,
+    style: StyleRefinement,
+}
+
+pub fn sheet_layout(title: impl Into<SharedString>) -> SheetLayout {
+    SheetLayout { title: title.into(), body: Vec::new(), footer: Vec::new(), style: StyleRefinement::default() }
+}
+
+impl SheetLayout {
+    /// Adds a footer button; add the default action last.
+    pub fn footer(mut self, button: impl IntoElement) -> Self {
+        self.footer.push(button.into_any_element());
+        self
+    }
+}
+
+impl ParentElement for SheetLayout {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.body.extend(elements);
+    }
+}
+
+impl Styled for SheetLayout {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl IntoElement for SheetLayout {
+    fn into_any_element(self) -> AnyElement {
+        let mut column = v_flex().size_full().p_5().gap_4();
+        column.style().refine(&self.style);
+        column
+            .child(label(self.title).text_style(TextStyle::Headline))
+            .child(v_flex().flex_1().min_h_0().children(self.body))
+            .when(!self.footer.is_empty(), |c| c.child(h_flex().justify_end().gap_2().children(self.footer)))
+            .into_any_element()
+    }
+}

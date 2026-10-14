@@ -566,3 +566,24 @@ mod gate_m4 {
         assert!(peak > 100., "an underdamped spring with velocity overshoots");
     }
 }
+
+#[test]
+fn a_shift_keeps_a_fling_going() {
+    use nd_core::{Point, Size};
+    use nd_gesture::{Axes, Scroller};
+    let mut s = Scroller::new(Axes { horizontal: false, vertical: true });
+    s.set_extent(Size { width: 100., height: 100. }, Size { width: 100., height: 10_000. });
+    s.begin(0.);
+    for i in 1..=10 {
+        s.track(Point { x: 0., y: 20. }, None, f64::from(i) * 0.008);
+    }
+    s.end(0.08);
+    assert!(s.is_animating());
+    s.step(0.1);
+    let before = s.offset().y;
+    s.shift(Point { x: 0., y: 500. });
+    assert_eq!(s.offset().y, before + 500.);
+    assert!(s.is_animating(), "the fling survives the shift");
+    s.step(0.12);
+    assert!(s.offset().y > before + 500., "and keeps moving forward from the shifted position");
+}

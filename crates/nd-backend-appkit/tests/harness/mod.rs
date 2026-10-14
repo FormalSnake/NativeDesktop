@@ -2,6 +2,10 @@
 //! test binaries that must own the main thread (`harness = false`, AppKit needs it). Each binary
 //! holds exactly one test.
 
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+pub mod resize;
+
 /// As [`main`] for a tier 3 test, which takes over the real cursor: it runs only under nextest
 /// (whose profiles keep `real_*` tests out of default runs) or with `ND_REAL=1`.
 #[allow(dead_code)]

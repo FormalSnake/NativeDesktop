@@ -33,6 +33,8 @@ mod goldens {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
+    use nd::appkit::objc2::rc::Retained;
+    use nd::appkit::objc2_app_kit::NSWindow;
     use nd::theme::Appearance;
 
     /// Per channel, out of 255: antialiasing and subpixel positioning drift by a few levels.
@@ -87,14 +89,27 @@ mod goldens {
         host.platform().pump(Duration::from_millis(100), Duration::from_millis(400));
     }
 
+    /// The overlay windows over `window` (ARCHITECTURE.md 6.3): the palette and toasts draw in
+    /// child panels covering its frame.
+    fn overlays(window: &nd::appkit::NdWindow) -> Vec<Retained<NSWindow>> {
+        let children = window.childWindows().map(|c| c.to_vec()).unwrap_or_default();
+        children.into_iter().filter(|c| c.isVisible()).collect()
+    }
+
+    /// The window, or the palette's overlay over it, has the keyboard in the active app. A key
+    /// overlay panel leaves its owner main, which keeps the owner's active chrome.
     fn is_key(host: &nd::appkit::AppHost, window: &nd::appkit::NdWindow) -> bool {
-        window.isKeyWindow() && host.platform().app().isActive()
+        let key = window.isKeyWindow() || overlays(window).iter().any(|o| o.isKeyWindow());
+        key && host.platform().app().isActive()
     }
 
     fn make_key(host: &nd::appkit::AppHost, window: &nd::appkit::NdWindow) -> bool {
         let deadline = Instant::now() + Duration::from_secs(2);
         while !is_key(host, window) && Instant::now() < deadline {
             host.platform().show(window);
+            for overlay in overlays(window).iter().filter(|o| o.canBecomeKeyWindow()) {
+                overlay.makeKeyWindow();
+            }
             host.platform().pump(Duration::from_millis(30), Duration::from_millis(150));
         }
         // One more turn so the active-state redraw has landed.
@@ -102,11 +117,27 @@ mod goldens {
         is_key(host, window)
     }
 
-    /// The window as the window server composites it (glass included), without its shadow.
-    fn screenshot(number: isize) -> Result<Vec<u8>, String> {
-        let path = std::env::temp_dir().join(format!("nd-gallery-{}-{number}.png", std::process::id()));
+    /// The window as the window server composites it (glass included), without its shadow. With
+    /// overlay windows over it (the palette and toasts, ARCHITECTURE.md 6.3) the capture is the
+    /// screen region of its frame, since their glass samples the window below and a capture of
+    /// either window alone would not show that.
+    fn screenshot(window: &nd::appkit::NdWindow) -> Result<Vec<u8>, String> {
+        if overlays(window).is_empty() {
+            return capture(&format!("-l{}", window.windowNumber()));
+        }
+        let mtm = nd::appkit::objc2_foundation::MainThreadMarker::new().expect("main thread");
+        let screens = nd::appkit::objc2_app_kit::NSScreen::screens(mtm);
+        let primary = screens.firstObject().map_or(0., |s| s.frame().size.height);
+        let f = window.frame();
+        let top = primary - (f.origin.y + f.size.height);
+        capture(&format!("-R{},{},{},{}", f.origin.x, top, f.size.width, f.size.height))
+    }
+
+    /// One window as the window server composites it, without its shadow.
+    fn capture(what: &str) -> Result<Vec<u8>, String> {
+        let path = std::env::temp_dir().join(format!("nd-gallery-{}.png", std::process::id()));
         let status = std::process::Command::new("/usr/sbin/screencapture")
-            .args(["-x", "-o", &format!("-l{number}")])
+            .args(["-x", "-o", what])
             .arg(&path)
             .status()
             .map_err(|e| format!("screencapture: {e}"))?;
@@ -135,7 +166,7 @@ mod goldens {
             if !make_key(host, &window) {
                 continue;
             }
-            let shot = screenshot(window.windowNumber())?;
+            let shot = screenshot(&window)?;
             if is_key(host, &window) {
                 capture = Some(shot);
                 break;

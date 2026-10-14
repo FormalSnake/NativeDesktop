@@ -1,30 +1,11 @@
-//! Stand-ins for what later milestones ship: list state (M5 virtualization), canvases and
-//! painting (M6), gestures (M4). They keep call sites compiling.
+//! Stand-ins for what later milestones ship: canvases and painting (M6), gestures (M4). They
+//! keep call sites compiling.
 
 use std::rc::Rc;
 
 use nd_gpui::gpui::{Bounds, Point};
 use nd_ui::StyleRefinement;
 use nd_ui::prelude::*;
-
-/// The rows a virtualized list shows, by key (`nd-virtual`, M5).
-pub struct ListState<K> {
-    items: Vec<K>,
-}
-
-impl<K: Clone> ListState<K> {
-    pub fn new(_cx: &mut App) -> Self {
-        Self { items: Vec::new() }
-    }
-
-    pub fn set_items(&mut self, items: Vec<K>, _cx: &mut App) {
-        self.items = items;
-    }
-
-    pub fn items(&self) -> &[K] {
-        &self.items
-    }
-}
 
 /// Painting primitives for `canvas` (`Painter`, 3.1).
 pub struct Painter {

@@ -50,6 +50,9 @@ pub struct FileAssociation {
     pub role: FileRole,
     /// Display name of the document type. Defaults to the first extension in upper case.
     pub name: Option<String>,
+    /// MIME type declared on Linux (`.desktop` `MimeType=` and shared-mime XML). Defaults to
+    /// `application/x-<last app.id segment>-<first ext>`.
+    pub mime: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -114,8 +117,9 @@ pub enum CefStyle {
 pub struct Updates {
     /// Base URL of the static feed directory. No default: each app sets its own.
     pub feed: Option<String>,
+    /// Channels `nd release --channel` accepts; the first is the default. Empty means `["stable"]`.
     pub channels: Vec<String>,
-    /// ed25519 public key the feed signature is checked against, base64.
+    /// ed25519 public key the feed signature is checked against: 32 bytes, standard base64.
     pub public_key: Option<String>,
     pub publish: Option<Publish>,
 }
@@ -131,19 +135,21 @@ pub enum Publish {
         /// Environment variable holding the endpoint URL.
         endpoint_env: Option<String>,
         bucket: String,
+        /// Key prefix inside the bucket, without a trailing slash.
         prefix: Option<String>,
+        /// Signing region. R2 takes `auto`, the default.
+        region: Option<String>,
     },
+    /// One rolling GitHub release tagged `updates` holding every channel's files, uploaded with
+    /// `gh`. The feed URL is then `https://github.com/<repo>/releases/download/updates`.
     Github {
         /// `owner/name`. Defaults to the repository of the current checkout.
         repo: Option<String>,
     },
-    Rsync {
-        target: String,
-    },
+    /// `rsync` destination, local or `host:path`.
+    Rsync { target: String },
     /// A local directory, also what `file://` update tests read.
-    Dir {
-        path: PathBuf,
-    },
+    Dir { path: PathBuf },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -172,6 +178,10 @@ pub struct Macos {
     /// Codesigning identity, as `security find-identity` prints it.
     pub signing_identity: Option<String>,
     pub notarize: bool,
+    /// `xcrun notarytool store-credentials` profile name, required when `notarize` is on.
+    pub notary_profile: Option<String>,
+    /// Developer ID Installer identity for the `.pkg` installer. Unsigned when absent.
+    pub installer_identity: Option<String>,
     /// Entitlement short names, for example `network.client`.
     pub entitlements: Vec<String>,
     /// SwiftPM package directories linked into the app, relative to this file.
@@ -293,7 +303,60 @@ impl Config {
                 "updates.feed and updates.public_key go together: a feed without a key cannot be verified".into()
             );
         }
+        if let Some(key) = &self.updates.public_key {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(key.trim());
+            if bytes.map_or(true, |b| b.len() != 32) {
+                return Err(format!("updates.public_key `{key}` is not a base64 ed25519 key (32 bytes)"));
+            }
+        }
+        if let Some(bad) = self.updates.channels.iter().find(|c| !is_channel(c)) {
+            return Err(format!("updates.channels entry `{bad}` must be lowercase letters, digits or -"));
+        }
+        if self.macos.notarize && self.macos.notary_profile.is_none() {
+            return Err(
+                "macos.notarize needs macos.notary_profile (an `xcrun notarytool store-credentials` profile)".into()
+            );
+        }
+        if self.macos.notarize && self.macos.signing_identity.is_none() {
+            return Err(
+                "macos.notarize needs macos.signing_identity: Apple only notarizes Developer ID signed code".into()
+            );
+        }
         Ok(())
+    }
+}
+
+fn is_channel(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+impl Config {
+    /// Name shown to users: `app.display_name`, else the Cargo package name.
+    pub fn display_name<'a>(&'a self, package: &'a str) -> &'a str {
+        self.app.display_name.as_deref().unwrap_or(package)
+    }
+}
+
+impl Updates {
+    /// The configured channels, `["stable"]` when none are listed.
+    pub fn channels(&self) -> Vec<String> {
+        if self.channels.is_empty() { vec!["stable".into()] } else { self.channels.clone() }
+    }
+}
+
+impl FileAssociation {
+    /// Display name of the document type.
+    pub fn type_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.ext.first().map(|e| e.to_uppercase()).unwrap_or_default())
+    }
+
+    /// MIME type declared on Linux.
+    pub fn mime_type(&self, app_id: &str) -> String {
+        self.mime.clone().unwrap_or_else(|| {
+            let app = app_id.rsplit('.').next().unwrap_or(app_id).to_lowercase();
+            format!("application/x-{app}-{}", self.ext.first().map(String::as_str).unwrap_or("file"))
+        })
     }
 }
 

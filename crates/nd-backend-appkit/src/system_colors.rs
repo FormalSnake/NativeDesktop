@@ -22,7 +22,7 @@ use objc2_foundation::{
     NSObject, NSObjectProtocol, NSString,
 };
 
-fn hsla(color: Retained<NSColor>) -> Option<Hsla> {
+pub(crate) fn hsla(color: Retained<NSColor>) -> Option<Hsla> {
     let c = color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
     Some(
         Rgba {

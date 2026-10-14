@@ -91,6 +91,7 @@ impl OpenDialog {
     }
 
     /// Picks one directory.
+    #[nd_macros::unavailable(web)]
     pub fn directory() -> Self {
         Self { directories: true, ..Self::default() }
     }

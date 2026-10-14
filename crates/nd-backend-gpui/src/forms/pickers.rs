@@ -500,7 +500,14 @@ pub(crate) fn color_well(
         });
         let palette = div().flex().flex_row().flex_wrap().w(px(5. * 30.)).children(swatches);
         let hex_field = line(&part, &editor, &f).w(px(5. * 30.)).aria_label("Hex").on_key_down(escape);
-        root = root.child(popover(look, close, [palette.into_any_element(), hex_field.mt(px(6.)).into_any_element()]));
+        root = root.child(popover(
+            b,
+            id,
+            window,
+            look,
+            close,
+            [palette.into_any_element(), hex_field.mt(px(6.)).into_any_element()],
+        ));
     }
     root.into_any_element()
 }

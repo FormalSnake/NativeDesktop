@@ -3,7 +3,8 @@
 //! and the controls draw unchanged.
 
 use nd_components::forms::TextStyle;
-use nd_gpui::gpui::{FontWeight, Hsla, Pixels, hsla, px};
+use nd_gpui::gpui::{FontWeight, Hsla, Pixels, px};
+use nd_theme::Theme;
 
 use crate::render::Look;
 
@@ -111,11 +112,9 @@ pub struct FormLook {
 impl FormLook {
     /// The Linux look on libadwaita metrics: 34 px controls, 6 px radius, 46x26 switch with a
     /// 20 px knob, 4 px slider track with a 20 px knob, 12 px popovers with 6 px item inset,
-    /// Adwaita blue accent, 2 px focus ring at 50% accent, 0.5 opacity when insensitive.
-    pub fn adwaita(look: &Look) -> Self {
-        let dark = look.background.l < 0.5;
-        let text = look.text;
-        let accent = hsla(213. / 360., 0.76, 0.55, 1.);
+    /// 0.5 opacity when insensitive. Every colour is the resolved theme's.
+    pub fn adwaita(theme: &Theme) -> Self {
+        let look = Look::of(theme);
         Self {
             control_height: px(34.),
             radius: px(6.),
@@ -128,23 +127,23 @@ impl FormLook {
             line_height: px(20.),
             icon_size: px(16.),
             glyph_stroke: px(1.75),
-            text,
-            secondary_text: text.opacity(0.55),
+            text: theme.text.primary,
+            secondary_text: theme.text.secondary,
             fill: look.control,
             fill_hover: look.control_hover,
             fill_active: look.control_active,
-            border: look.border,
-            popover: if dark { hsla(0., 0., 0.22, 1.) } else { hsla(0., 0., 1., 1.) },
-            raised: if dark { hsla(0., 0., 0.36, 1.) } else { hsla(0., 0., 1., 1.) },
-            accent,
-            on_accent: hsla(0., 0., 1., 1.),
-            accent_text: if dark { hsla(213. / 360., 0.77, 0.70, 1.) } else { hsla(213. / 360., 0.77, 0.48, 1.) },
-            selection: accent.opacity(if dark { 0.45 } else { 0.3 }),
-            focus_ring: accent.opacity(0.5),
-            danger: if dark { hsla(9. / 360., 1., 0.69, 1.) } else { hsla(356. / 360., 0.74, 0.43, 1.) },
-            track: text.opacity(0.15),
-            knob: if dark { hsla(0., 0., 0.87, 1.) } else { hsla(0., 0., 1., 1.) },
-            knob_edge: hsla(0., 0., 0., if dark { 0.4 } else { 0.18 }),
+            border: theme.border.subtle,
+            popover: theme.surface.overlay,
+            raised: theme.surface.raised,
+            accent: theme.accent,
+            on_accent: theme.text.on_accent,
+            accent_text: theme.accent,
+            selection: theme.selection,
+            focus_ring: theme.focus_ring,
+            danger: theme.danger,
+            track: theme.border.strong,
+            knob: theme.surface.raised,
+            knob_edge: theme.border.strong,
             check_size: px(18.),
             check_radius: px(5.),
             switch_width: px(46.),

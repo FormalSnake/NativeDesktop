@@ -1,0 +1,29 @@
+[package]
+name = "scroll-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The GPUI backend on macOS, picked with `ND_BACKEND=gpui`.
+gpui = ["nd/gpui"]
+
+[dependencies]
+nd = { path = "../../crates/nd" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
+
+# Tier 1 runs in a browser too; the tier 2 audit and the CLI stay native.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }
+
+[build-dependencies]
+nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
+
+# Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
+[[test]]
+name = "appearance"
+harness = false

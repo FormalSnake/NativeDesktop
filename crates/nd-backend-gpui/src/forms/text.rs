@@ -1152,7 +1152,7 @@ pub(crate) fn combo_box(
             menu_item(look, index, option.clone(), highlight == Some(index), false)
                 .on_click(move |_, window, cx| pick(index, window, cx))
         });
-        root = root.child(popover(look, close, items));
+        root = root.child(popover(b, id, window, look, close, items));
     }
     root.into_any_element()
 }
@@ -1185,41 +1185,60 @@ pub(crate) fn menu_item(
     if current { item.child(glyph(Glyph::Check, look.icon_size, look.text, look.glyph_stroke)) } else { item }
 }
 
-/// A light-dismiss popover below its control, above everything else in the window.
+/// A light-dismiss popover below its control, in the window's overlay layer: above every
+/// overlay its control sits in, with a backdrop that consumes an outside press and closes it, as
+/// `crate::overlay` does for nd overlays.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn popover(
+    b: &Build,
+    id: NodeId,
+    window: &Window,
     look: FormLook,
     close: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     items: impl IntoIterator<Item = impl IntoElement>,
 ) -> impl IntoElement {
-    deferred(
-        anchored().snap_to_window_with_margin(px(8.)).child(
-            div()
-                .id("popover")
-                .occlude()
-                .role(gpui::Role::MenuListPopup)
-                .mt(px(4.))
-                .min_w(px(160.))
-                .p(look.popover_inset)
-                .flex()
-                .flex_col()
-                .rounded(look.popover_radius)
-                .bg(look.popover)
-                .border_1()
-                .border_color(look.border)
-                .shadow(vec![gpui::BoxShadow {
-                    color: gpui::hsla(0., 0., 0., 0.18),
-                    offset: point(px(0.), px(4.)),
-                    blur_radius: px(12.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
-                .text_size(look.text_size)
-                .text_color(look.text)
-                .on_mouse_down_out(close)
-                .children(items),
-        ),
-    )
-    .with_priority(1)
+    let viewport = window.viewport_size();
+    let (backend, window_id) = (b.backend.clone(), b.window_id);
+    let backdrop = div()
+        .id("nd-form-backdrop")
+        .block_mouse_except_scroll()
+        .absolute()
+        .top_0()
+        .left_0()
+        .w(viewport.width)
+        .h(viewport.height)
+        .on_any_mouse_down(move |event, window, cx| {
+            cx.stop_propagation();
+            backend.swallow_release(window_id);
+            close(event, window, cx);
+        });
+    let card = anchored().snap_to_window_with_margin(px(8.)).child(
+        div()
+            .id("popover")
+            .occlude()
+            .role(gpui::Role::MenuListPopup)
+            .mt(px(4.))
+            .min_w(px(160.))
+            .p(look.popover_inset)
+            .flex()
+            .flex_col()
+            .rounded(look.popover_radius)
+            .bg(look.popover)
+            .border_1()
+            .border_color(look.border)
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::hsla(0., 0., 0., 0.18),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(12.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+            .text_size(look.text_size)
+            .text_color(look.text)
+            .children(items),
+    );
+    deferred(div().child(anchored().position(point(px(0.), px(0.))).child(backdrop)).child(card))
+        .with_priority(crate::overlay::PANEL_PRIORITY + 1 + b.overlay_depth(id))
 }
 
 /// A single-line field whose text is a value's rendering, committing through `parse`.

@@ -296,7 +296,7 @@ impl<T: Settings> SettingsHandle<T> {
         }
         let _gate = self.inner.gate.lock().expect("settings gate");
         let target = self.write_target();
-        let current = match std::fs::read_to_string(&target.path) {
+        let current = match crate::vfs::read_to_string(&target.path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(WriteError::Io(e)),
@@ -415,7 +415,7 @@ fn fingerprint(ctx: &Context<'_>) -> u64 {
     let mut hasher = DefaultHasher::new();
     for (_, path) in candidate_files(ctx) {
         path.hash(&mut hasher);
-        std::fs::read(&path).ok().hash(&mut hasher);
+        crate::vfs::read(&path).ok().hash(&mut hasher);
         (file_state(&path, ctx.store_roots) as u8).hash(&mut hasher);
     }
     hasher.finish()

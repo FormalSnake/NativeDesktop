@@ -138,6 +138,12 @@ pub struct WaylandWindowState {
     pending_frame_callback: Option<wl_callback::WlCallback>,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
+    /// An interactive-resize configure that arrived before the frame for the previous one. It is
+    /// acked when the next frame applies it, so the ack always goes out with a buffer of the
+    /// acked size: acking it right away let the compositor draw the new window geometry around
+    /// the old buffer for a frame.
+    deferred_configure: Option<(u32, InProgressConfigure)>,
+    last_presentation: Option<gpui::PresentationTime>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
@@ -636,6 +642,8 @@ impl WaylandWindowState {
             window_bounds: options.bounds,
             in_progress_configure: None,
             resize_throttle: false,
+            deferred_configure: None,
+            last_presentation: None,
             client,
             appearance,
             handle,
@@ -948,6 +956,12 @@ impl WaylandWindowStatePtr {
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
+        if let Some((serial, configure)) = state.deferred_configure.take() {
+            state.in_progress_configure = Some(configure);
+            drop(state);
+            self.handle_xdg_surface_event(xdg_surface::Event::Configure { serial });
+            state = self.state.borrow_mut();
+        }
         // GPUI may throttle this tick without calling draw, so leave the request
         // latched until a draw actually reaches the renderer.
         let force_render = state.redraw_requested;
@@ -1120,9 +1134,7 @@ impl WaylandWindowStatePtr {
                     state.visibility = configure.visibility;
                     // Limit interactive resizes to once per vblank
                     let throttled = configure.resizing && state.resize_throttle;
-                    if throttled {
-                        state.surface_state.ack_configure(serial);
-                    } else {
+                    if !throttled {
                         if configure.resizing {
                             state.resize_throttle = true;
                         }
@@ -1145,6 +1157,7 @@ impl WaylandWindowStatePtr {
                         self.report_visibility(configure.visibility);
                     }
                     if throttled {
+                        self.state.borrow_mut().deferred_configure = Some((serial, configure));
                         return;
                     }
                     if let Some(size) = configure.size {
@@ -1212,6 +1225,10 @@ impl WaylandWindowStatePtr {
             update_window(self.state.borrow_mut());
             self.request_redraw();
         }
+    }
+
+    pub fn set_last_presentation(&self, presentation: gpui::PresentationTime) {
+        self.state.borrow_mut().last_presentation = Some(presentation);
     }
 
     pub fn handle_fractional_scale_event(&self, event: wp_fractional_scale_v1::Event) {
@@ -2061,6 +2078,10 @@ impl PlatformWindow for WaylandWindow {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
         }
+        // Applies to the commit the renderer's present makes.
+        if let Some(presentation) = &state.globals.presentation {
+            presentation.feedback(&state.surface, &state.globals.qh, state.surface.id());
+        }
         if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
@@ -2250,6 +2271,10 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
         state.client.update_ime_position(bounds);
+    }
+
+    fn last_presentation(&self) -> Option<gpui::PresentationTime> {
+        self.borrow().last_presentation
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {

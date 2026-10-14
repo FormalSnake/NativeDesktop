@@ -10,10 +10,11 @@ use std::rc::Rc;
 
 use nd_core::{NodeId, Point, Rect, Size, WindowId};
 use nd_gpui::gpui::{self, AnyWindowHandle, AsyncApp};
+use nd_theme::{OsTheme, Preset, Scheme, ThemeRegistry};
 use nd_ui::backend::{Backend, Constraint, NodeKind, Props, PropsPatch, SurfaceOp};
 use nd_ui::events::EventQueue;
-use nd_ui::semantics::{ActionError, Capture, Probe, SemanticAction, SyntheticInput, WindowState};
-use nd_ui::{Button, ButtonProps, ClickEvent};
+use nd_ui::semantics::{ActionError, Capture, Paint, Probe, SemanticAction, SyntheticInput, WindowState};
+use nd_ui::{App, Button, ButtonProps, ClickEvent, InputCounts, SurfaceProps};
 
 pub(crate) struct Node {
     pub kind: NodeKind,
@@ -36,6 +37,12 @@ pub(crate) type PlatformFocus = Rc<RefCell<Vec<(WindowId, Option<NodeId>)>>>;
 /// Called from a native callback with GPUI's app, to schedule the host's pump on the next turn.
 pub(crate) type Wake = Rc<dyn Fn(&mut gpui::App)>;
 
+/// Work for the app at the host's next pump (see [`GpuiBackend::defer`]).
+pub(crate) type Deferred = Box<dyn FnOnce(&mut App)>;
+
+/// Told the platform's light or dark setting, with the app, when it changes.
+pub(crate) type SchemeListener = Rc<dyn Fn(&mut App, Scheme)>;
+
 pub(crate) struct State {
     pub nodes: HashMap<NodeId, Node>,
     pub windows: HashMap<WindowId, WindowRecord>,
@@ -47,6 +54,19 @@ pub(crate) struct State {
     pub wake: Option<Wake>,
     /// Synthetic input waiting for the host's next pump, which dispatches it with the app free.
     pending: Vec<(WindowId, gpui::PlatformInput)>,
+    /// Each window's open drawn context menu.
+    pub menus: HashMap<WindowId, crate::overlay::MenuOverlay>,
+    /// Menu items chosen since the last pump, dispatched from the window's focused node.
+    pub actions: Vec<(WindowId, Box<dyn gpui::Action>)>,
+    /// Windows whose next mouse release ends a press an overlay backdrop consumed.
+    pub swallow_up: std::collections::HashSet<WindowId>,
+    /// Every colour the elements paint comes from here: the app's registry once `nd` hands it
+    /// over, until then one following the platform's scheme.
+    pub theme: ThemeRegistry,
+    pub platform_scheme: Option<Scheme>,
+    pub scheme_listener: Option<SchemeListener>,
+    /// What each window painted in its last build.
+    pub paints: HashMap<WindowId, Vec<Paint>>,
 }
 
 /// The GPUI backend. A cheap handle: `nd-ui`'s `App` owns one clone as its `Box<dyn Backend>`, the
@@ -65,6 +85,14 @@ pub struct GpuiBackend {
     pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
     /// Focus the user gave a drawn control (a click), for the host to record in nd.
     pub(crate) platform_focus: PlatformFocus,
+    /// Pointer input each native surface received, written by its paint-time listeners.
+    pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
+    /// The app's menus, drawn above the windows of a single canvas.
+    pub(crate) menu_bar: Rc<RefCell<crate::canvas::MenuBar>>,
+    /// Work [`GpuiBackend::defer`] queued for the next pump.
+    deferred: Rc<RefCell<Vec<Deferred>>>,
+    /// Presenter state of each `nd-virtual` list, by its node.
+    pub(crate) lists: crate::virtual_list::Presenters,
     /// Gesture recognition and scroll physics per window.
     pub(crate) gestures: crate::gestures::Gestures,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
@@ -101,20 +129,110 @@ impl GpuiBackend {
                 app: None,
                 wake: None,
                 pending: Vec::new(),
+                menus: HashMap::new(),
+                actions: Vec::new(),
+                swallow_up: Default::default(),
+                theme: ThemeRegistry::new(Preset::current()),
+                platform_scheme: None,
+                scheme_listener: None,
+                paints: HashMap::new(),
             })),
             bounds: Rc::default(),
             form_drawn: Rc::default(),
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
+            surface_counts: Rc::default(),
+            deferred: Rc::default(),
+            menu_bar: Rc::default(),
+            lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
         }
+    }
+
+    /// Runs `f` on the app at the host's next pump, outside every entity lease and GPUI update.
+    /// For services answering from a browser or OS callback (a picked file, a clipboard read).
+    pub fn defer(&self, f: impl FnOnce(&mut App) + 'static) {
+        self.deferred.borrow_mut().push(Box::new(f));
+        let (app, wake) = {
+            let state = self.state.borrow();
+            (state.app.clone(), state.wake.clone())
+        };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
+    }
+
+    /// The app's menu bar, for a single canvas to draw (the web). Other GPUI desktops fold
+    /// menus into the command palette and ignore it.
+    pub fn set_menu_bar(&self, menus: Vec<nd_components::Menu>) {
+        self.menu_bar.borrow_mut().set(menus);
+        let mut state = self.state.borrow_mut();
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+    }
+
+    /// Puts `text` on the platform clipboard (the async Clipboard API on the web), on the next
+    /// turn, outside the GPUI update an app handler runs in.
+    pub fn write_clipboard_text(&self, text: String) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        app.spawn(async move |cx| cx.update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))))
+            .detach();
+    }
+
+    /// Reads the clipboard's text and hands it to `done` on the app. On the web the browser may
+    /// ask the user first, and refuses outside a user gesture; `done` then gets `None`.
+    pub fn read_clipboard_text(&self, done: impl FnOnce(Option<String>, &mut App) + 'static) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        let backend = self.clone();
+        app.spawn(async move |cx| {
+            let read = cx.update(|cx| cx.read_from_clipboard_async());
+            let text = read.await.ok().flatten().and_then(|item| item.text());
+            backend.defer(move |app| done(text, app));
+        })
+        .detach();
+    }
+
+    pub(crate) fn take_deferred(&self) -> Vec<Deferred> {
+        std::mem::take(&mut *self.deferred.borrow_mut())
     }
 
     pub(crate) fn attach_app(&self, app: AsyncApp, wake: Wake) {
         let mut state = self.state.borrow_mut();
         state.app = Some(app);
         state.wake = Some(wake);
+    }
+
+    /// The theme registry the windows paint from. Every window redraws.
+    pub fn set_theme(&self, registry: ThemeRegistry) {
+        let mut state = self.state.borrow_mut();
+        state.theme = registry;
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+    }
+
+    /// The platform's light or dark setting, as GPUI reports it.
+    pub fn platform_scheme(&self) -> Option<Scheme> {
+        self.state.borrow().platform_scheme
+    }
+
+    /// Calls `f` with the app whenever the platform's light or dark setting changes.
+    pub fn on_platform_scheme(&self, f: impl Fn(&mut App, Scheme) + 'static) {
+        self.state.borrow_mut().scheme_listener = Some(Rc::new(f));
+    }
+
+    /// Records the platform's scheme; true when it changed.
+    pub(crate) fn set_platform_scheme(&self, scheme: Scheme) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.platform_scheme == Some(scheme) {
+            return false;
+        }
+        state.platform_scheme = Some(scheme);
+        let os = OsTheme { scheme: Some(scheme), ..state.theme.os().clone() };
+        state.theme.set_os(os);
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        true
     }
 
     pub(crate) fn set_window_handle(&self, window: WindowId, handle: AnyWindowHandle) {
@@ -132,6 +250,7 @@ impl GpuiBackend {
         let mut state = self.state.borrow_mut();
         state.windows.remove(&window);
         state.dirty.remove(&window);
+        state.paints.remove(&window);
     }
 
     pub(crate) fn take_pending(&self) -> Vec<(WindowId, gpui::PlatformInput)> {
@@ -153,7 +272,27 @@ impl GpuiBackend {
 
     /// The nd window a GPUI window shows.
     pub fn window_for(&self, handle: AnyWindowHandle) -> Option<WindowId> {
-        self.state.borrow().windows.iter().find(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id)
+        // One GPUI window shows several app windows on a single canvas (the web); the newest
+        // is on top and takes the keys.
+        self.state.borrow().windows.iter().filter(|(_, r)| r.handle == Some(handle)).map(|(id, _)| *id).max()
+    }
+
+    /// The `nd-virtual` lists drawn so far, by node.
+    pub fn lists(&self) -> Vec<NodeId> {
+        let mut lists: Vec<NodeId> = self.lists.borrow().keys().copied().collect();
+        lists.sort();
+        lists
+    }
+
+    /// The rows the list painted in its last frame, in order, with their bounds in window
+    /// coordinates as GPUI laid them out; and the list's viewport (below a table's header).
+    pub fn painted_rows(&self, list: NodeId) -> Option<(Rect, Vec<(nd_virtual::RowId, Rect)>)> {
+        let lists = self.lists.borrow();
+        let p = lists.get(&list)?;
+        let bounds = self.bounds.borrow();
+        let rows =
+            p.painted.iter().map(|(row, node, placed)| (*row, bounds.get(node).copied().unwrap_or(*placed))).collect();
+        Some((p.viewport, rows))
     }
 
     /// The node's bounds in window coordinates, as GPUI last laid it out.
@@ -297,6 +436,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.surface_counts.borrow_mut().remove(&node);
         self.drawn.borrow_mut().remove(&node);
     }
 
@@ -328,6 +468,12 @@ impl Backend for GpuiBackend {
         {
             probe.name = n.props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string());
             probe.enabled = Some(true);
+        }
+        if let Ok(state) = self.state.try_borrow()
+            && let Some(p) = state.nodes.get(&node).and_then(|n| n.props.downcast_ref::<SurfaceProps>())
+            && p.count_input
+        {
+            probe.value = Some(self.surface_counts.borrow().get(&node).copied().unwrap_or_default().to_string());
         }
         self.probe_nav(node, &mut probe);
         probe
@@ -429,9 +575,21 @@ impl Backend for GpuiBackend {
             Err(ActionError::Unsupported("capture needs nd-backend-gpui's `capture` feature".into()))
         }
     }
+
+    fn paints(&self, window: WindowId) -> Result<Vec<Paint>, ActionError> {
+        self.paints_of(window)
+    }
 }
 
 impl GpuiBackend {
+    pub(crate) fn paints_of(&self, window: WindowId) -> Result<Vec<Paint>, ActionError> {
+        let state = self.state.try_borrow().map_err(|_| not_actionable("the backend is busy"))?;
+        if !state.windows.contains_key(&window) {
+            return Err(ActionError::WindowGone);
+        }
+        state.paints.get(&window).cloned().ok_or_else(|| not_actionable("the window has not drawn yet"))
+    }
+
     /// The props of a live node, for the element builder.
     pub(crate) fn button_label(props: &Props) -> &ButtonProps {
         self::props(props, "Button")

@@ -14,6 +14,7 @@ nd-ui.workspace = true
 nd-diag.workspace = true
 nd-theme.workspace = true
 nd-components.workspace = true
+nd-virtual.workspace = true
 serde_json = "1.0.154"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -23,6 +24,7 @@ objc2-app-kit = "0.3.2"
 objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
+objc2-web-kit = "0.3.2"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
 
@@ -53,6 +55,27 @@ harness = false
 name = "real_resize_gate"
 harness = false
 
+# Tier 3: the same gate with a WKWebView filling `examples/overlays` (`gate_m4_overlays::`).
+[[test]]
+name = "real_resize_webview_gate"
+harness = false
+
+[[test]]
+name = "virtual_list"
+harness = false
+
+[[test]]
+name = "scroll_view"
+harness = false
+
+[[test]]
+name = "row_actions"
+harness = false
+
+[[test]]
+name = "list_kinds"
+harness = false
+
 # Tier 3: a pinch and a page swipe through ndshell. `gate_m4::real_pinch_and_page_swipe`.
 [[test]]
 name = "real_gestures_gate"
@@ -60,6 +83,7 @@ harness = false
 
 [dev-dependencies]
 nd-gpui.workspace = true
+nd-virtual = { workspace = true, features = ["conformance"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 dispatch2 = "0.3.1"

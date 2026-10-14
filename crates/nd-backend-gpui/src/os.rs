@@ -8,7 +8,7 @@
 //! An OS crate implements [`OsHooks`] and hands it to [`crate::GpuiHost::builder`] (the `nd`
 //! facade does this per target).
 
-use std::time::Instant;
+use nd_core::time::Instant;
 
 use nd_core::{FrameTime, Point, WindowId};
 use nd_gpui::gpui::{self, AnyElement};
@@ -29,6 +29,8 @@ pub struct FrameRequest {
     pub window: WindowId,
     /// When the backend started this frame.
     pub now: Instant,
+    /// `now` on the clock's scale: seconds since the app started, which `FrameTime` counts in.
+    pub now_seconds: f64,
     /// The display interval GPUI reports for the window's current display, in seconds.
     pub interval: f64,
     /// The clock's previous frame.
@@ -36,6 +38,10 @@ pub struct FrameRequest {
 }
 
 pub trait OsHooks: 'static {
+    /// GPUI's app is up and the nd app is about to be built: fonts and app-wide platform state
+    /// that windows read are set up here (the web registers its bundled fonts).
+    fn app_started(&self, _cx: &mut gpui::App) {}
+
     /// Adjusts the options of a window before GPUI opens it: decorations, backdrop, app id,
     /// titlebar. The backend has set title, size, `inactive_frame_interval: None` (5.3: only
     /// hidden windows are throttled) and a transparent titlebar where `titlebar()` draws one.

@@ -22,7 +22,7 @@ fn phase(time: f64, seconds: f64) -> f32 {
 }
 
 pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Window) -> gpui::AnyElement {
-    let look = FormLook::adwaita(&b.look);
+    let look = FormLook::adwaita(&b.theme());
     let value = p.value.map(|v| v.clamp(0., 1.));
     let animated = value.is_none() || p.presentation == ProgressStyle::Spinner;
     if animated && p.enabled {
@@ -86,7 +86,7 @@ pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Wi
 }
 
 pub(crate) fn label(b: &Build, p: &LabelProps) -> gpui::AnyElement {
-    let look = FormLook::adwaita(&b.look);
+    let look = FormLook::adwaita(&b.theme());
     let (size, weight, line_height) = look.type_of(p.text_style);
     let color = match p.tone {
         LabelTone::Primary => look.text,

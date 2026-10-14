@@ -163,7 +163,7 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
             menu_item(look, index, option.clone(), highlight == Some(index), index == p.selected)
                 .on_click(move |_, window, cx| pick(index, window, cx))
         });
-        root = root.child(popover(look, close, items));
+        root = root.child(popover(b, id, window, look, close, items));
     }
     root.into_any_element()
 }

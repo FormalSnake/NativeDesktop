@@ -105,7 +105,7 @@ roles and labels from the semantic tree), never a second adapter.
 | Window composition: native surface between GPUI base and overlay layers | M4 | zed #62379 (open), shipped in gpui-fast |
 | Alpha-preserving content over glass | M3 | zed #58833 (open) |
 | Linux headless rendering, only if `gpui-pre 0.3.9` lacks it (checked in M0) | M0 | zed #64718 (merged) |
-| wasm fixes found while building the web backend | M11 | to file |
+| wasm fixes found while building the web backend: none needed, gpui-pre 0.3.9 ships `gpui_web` | M11 | none |
 
 ## 3. App programming model
 
@@ -691,23 +691,40 @@ declared accelerators pre-empt embedded pages. IME: NSTextField/NSTextView nativ
 GPUI's `text-input-v3`/XIM/TSF on GPUI backends, CEF OSR through the same input handler.
 
 ### 6.3 Overlays: no leaks, always on top
-Every floating element (popover, menu, tooltip, toast, command palette, sheet, dropdown) opens
-through `cx.overlay(spec)` or a built-in that uses it, with modality `Modal`, `LightDismiss` or
-`Passive`. macOS: system overlays stay system classes (`NSMenu` for menus, `NSPopover` for
-anchored popovers, window sheets), which keep the parent window's active chrome. Framework panels
-(command palette, hover cards, dropdowns, toasts) are a top-most in-window view above every
-content view, WKWebView, CEF and GPU surface views included (all ordinary sibling NSViews), with
-`hitTest:` returning the overlay for points it covers, so nothing below receives them. A
-non-activating `NSPanel` is used only when an overlay must extend past the window frame; a panel
-that must take typing never deactivates the owner's chrome. GPUI backends: one overlay stack per window; the
-input router checks it before content (outside press on `LightDismiss` closes and is consumed);
-overlays intersecting a registered native surface (WebView2, WPE, iframe) are promoted to GPUI's
-overlay composition surface under `nd-gpui/fast` (zed PR #62379) or to a child popup window;
-menus that do not fit use `xdg_popup` with grab or owned popups. Overlays close when their anchor
-subtree goes, on Esc, on a click outside, or when the app deactivates; never on a key change
-inside the app's own window group. Gate: a tier 3 test opens a popover over a live
-webview, clicks inside and outside and scrolls over it, and asserts the webview saw zero events,
-on all three OSes.
+Every floating element (popover, menu, tooltip, toast, command palette, sheet, dropdown) is an
+overlay element in the tree (`popover(id)`, `panel(id)`, `tooltip()` in `nd_ui::overlay`, or a
+built-in that uses one), with modality `Modal`, `LightDismiss` or `Passive`. Its parent is its
+anchor; it takes no room in the anchor's layout and closes with the anchor's subtree. Dismissal is
+the app's: `on_dismiss` hears `Dismissed { reason }` and the app drops the overlay. Every
+non-passive overlay is a focus scope (6.2): focus is saved on open and restored on close, a modal
+one traps Tab, and an Escape no listener took closes the innermost one.
+- Input inside an overlay never reaches what lies under it (press, scroll, hover), over native
+  views and surfaces included. A press outside a `LightDismiss` overlay closes it and is consumed
+  on every OS, its release too, matching what macOS menus already do; a `Modal` overlay consumes
+  outside presses and stays open; `Passive` takes no input.
+- macOS: every overlay is its own window above the owner, so the window server routes input, not
+  hit-testing inside one window (tracking areas, which drive hover and cursors, fire for covered
+  views too, so an in-window overlay would still leak hover into a WKWebView). Menus are `NSMenu`;
+  popovers are `NSPopover` (behaviour application-defined, so nd consumes outside presses instead
+  of AppKit's transient pass-through); panels and tooltips are borderless child `NSPanel`s that
+  never become key, so the owner keeps its key chrome and keys keep reaching nd dispatch. One local
+  event monitor applies the outside-press and Esc rules while any overlay is open. Declared
+  accelerators run through the main menu before the window's views, so an embedded web view cannot
+  swallow them.
+- GPUI backends: overlays draw in GPUI's deferred layer, nested ones above their parents, with a
+  transparent backdrop that consumes presses (a light-dismiss one lets scrolls through); nd's
+  gesture hit test starts inside the topmost overlay or hits nothing. Drawn context menus live in
+  the same layer. Native surfaces composited by the OS above GPUI (WebView2, WPE subsurfaces) need
+  the overlay composition surface under `nd-gpui/fast` (zed PR #62379) or a child popup window;
+  that lands with those engines in M8. Menus that do not fit use `xdg_popup` with grab or owned
+  popups.
+- Overlays close when their anchor subtree goes, on Esc, on a press outside, or when the app
+  deactivates; never on a key change inside the app's own window group.
+
+Gate: a tier 3 test opens a popover, a modal panel and a context menu over a live webview and a
+native button, clicks, moves and scrolls inside and outside, and asserts the page and button saw
+nothing they should not, on all three OSes (macOS: `gate_m4_overlays::real_overlay_leak_appkit`;
+GPUI in-process: `gate_m4_overlays::gpui_*`).
 
 ## 7. Virtualization
 
@@ -868,9 +885,11 @@ target/action (about 1.7 ms per click in the old repo).
 macOS: input posted as `NSEvent`s into the app's queue (no TCC, window may be in the background);
 `--real` uses the `ndshell` HID helper; gestures synthesised at the WindowServer layout fields;
 `ndshell grant` writes TCC rows with SIP off keyed to the signing identifier and real path;
-`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one
-`HYPRLAND_HEADLESS_ONLY=1` Hyprland per test with virtual pointer and keyboard,
-`ext-image-copy-capture`, `wp_presentation`; gestures injected at the platform event layer.
+`CGVirtualDisplay` gives 120/144/240 Hz displays without hardware. Linux: one headless Hyprland
+per test in a private runtime dir, nested on a headless labwc that lends it a render node (Hyprland
+0.56 ignores `HYPRLAND_HEADLESS_ONLY` and its headless backend has no allocator without a seat),
+with virtual pointer and keyboard, `ext-image-copy-capture`, `wp_presentation`; a headless Weston
+for the client-decorated path; gestures injected at the platform event layer.
 Windows: processes started by OpenSSH run outside the interactive desktop, so a resident
 `ndshell agent` starts at logon in the user's session (Task Scheduler, interactive) and `nd test`
 reaches it over ssh or a named pipe; it runs `SendInput` and Windows.Graphics.Capture jobs, refuses
@@ -952,6 +971,14 @@ publisher chosen in `[updates.publish]` (`s3` with endpoint/bucket for R2/S3/Min
 `nd release serve` serves the directory locally for update tests. The ed25519 public key ships in the
 app, so swapping hosts never weakens verification. Default domain: none baked in; each app sets `feed`.
 
+As built (M10): `releases.<os>-<channel>.json.sig` is base64 ed25519 over `nd-feed-v1\0<channel>\0<feed bytes>`,
+so a host cannot swap channels; Velopack channels are `mac-stable`, `linux-beta`, `win-stable`, so every OS
+shares one feed directory (`target/nd/releases`). `nd::build::app()` bakes `feed` and `public_key` into the
+binary unless `ND_NO_UPDATES=1` (set by `mkApp`); a binary under `/nix/store` refuses to update anyway.
+`vpk` is pinned to the `velopack` crate version and fetched into the user cache with `dotnet tool install`.
+On macOS the first update after a `.pkg` install is a full download (its postinstall clears Velopack's
+package cache, so there is no base for a delta); later updates are deltas.
+
 Settings layers: defaults < Nix-managed file < user `config.toml` < `config.local.toml` (writable
 overlay when the main file is a `/nix/store` symlink) < env `<APP>_*` < CLI flags. `toml` reads,
 `toml_edit` writes so comments survive; drop-in files in `config.d/*.toml` merge in name
@@ -985,10 +1012,11 @@ unchanged; app code has no `cfg`.
   overlays intersecting it promoted to a canvas stacked above; CEF, tray, notifications beyond the
   Notification API, credentials, global menus and native widgets without a drawn impl are
   unavailable.
-- Capability checks: `cx.supports(Feature::MultiWindow)`, `Feature::FileSystem`, `Feature::Cef`,
-  and so on, at runtime (the old `hasWidget`/`hasCommand` idea). APIs that cannot work on the web
+- Capability checks: `nd::platform::has(Feature::MultiWindow)`, `Feature::FileSystem`,
+  `Feature::Cef`, and so on, at runtime (the old `hasWidget`/`hasCommand` idea). A target, not a
+  window, decides them, so they need no `cx`. APIs that cannot work on the web
   return `Err(Unsupported)` and are marked `#[nd::unavailable(web)]`, which `nd check --target web`
-  turns into warnings at each call site that lacks a `supports` check.
+  turns into warnings at each call site that lacks a `has(..)` check.
 - Runtime, not only compilation: `std::time::Instant`, `SystemTime`, threads and `std::fs`
   compile on `wasm32-unknown-unknown` and panic at runtime, so `nd check --target web` denies them
   in app crates (use `nd::time`, executors, `Store`), and the M11 gate runs each example's tier 1

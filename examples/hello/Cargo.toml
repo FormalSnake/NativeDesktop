@@ -16,7 +16,19 @@ nd = { path = "../../crates/nd" }
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["audit"] }
 nd-cli = { path = "../../crates/nd-cli" }
+png = "0.17"
 serde_json = "1.0.154"
 tempfile = "3"
+tiny_http = "0.12"
+
+# Tier 1 runs in a browser too; the tier 2 audit and the CLI stay native.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+nd = { path = "../../crates/nd", features = ["test"] }
+
+# Tier 2: the appearance audit (`nd::audit`) over every window, light, dark and matugen.
+[[test]]
+name = "appearance"
+harness = false

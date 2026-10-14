@@ -2,3 +2,5 @@
 # One `git format-patch` file per line, written by `scripts/gpui-fork export`.
 0001-gpui_linux-pace-each-x11-window-at-the-refresh-of-th.patch
 0002-gpui_wgpu-create-the-gl-backend-only-when-vulkan-alo.patch
+0003-gpui_linux-ack-a-throttled-resize-configure-with-the.patch
+0004-gpui_linux-report-wp_presentation-present-times-thro.patch

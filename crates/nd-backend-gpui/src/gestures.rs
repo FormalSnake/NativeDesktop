@@ -5,10 +5,10 @@
 //! (zed#14473). Scroll views are drawn with their content shifted by the router's offset; GPUI's
 //! own div scrolling is not used, so there is one scroll model per window.
 
+use nd_core::time::Instant;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use nd_core::{NodeId, Point, Rect, Size, WindowId};
 use nd_gesture::{
@@ -19,9 +19,9 @@ use nd_gpui::gpui::{
     self, AnyElement, App, Bounds, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels,
     PressureStage, ScrollDelta, TouchPhase, point, px,
 };
-use nd_ui::DivProps;
 use nd_ui::backend::NodeKind;
 use nd_ui::events::{EventQueue, emit_gesture};
+use nd_ui::{DivProps, Modality, OverlayProps};
 
 use crate::backend::Node;
 
@@ -51,6 +51,11 @@ impl Default for Gestures {
 }
 
 fn gestures_of(node: &Node) -> Option<&GestureSet> {
+    if let NodeKind::Widget(w) = node.kind
+        && w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>()
+    {
+        return node.props.downcast_ref::<nd_virtual::ListProps>().map(|l| &l.gestures);
+    }
     if node.kind != NodeKind::View {
         return None;
     }
@@ -61,9 +66,41 @@ fn contains(r: &Rect, p: Point) -> bool {
     p.x >= r.origin.x && p.y >= r.origin.y && p.x < r.origin.x + r.size.width && p.y < r.origin.y + r.size.height
 }
 
-/// Nodes under `at`, innermost first: from the root, into the topmost child (the last painted)
-/// whose bounds contain the point.
-fn hit_path(nodes: &HashMap<NodeId, Node>, bounds: &HashMap<NodeId, Rect>, root: NodeId, at: Point) -> Vec<NodeId> {
+/// Where a hit test starts. Overlays draw above all content (`crate::overlay`): a point inside
+/// the topmost one starts there, and a point on an input-taking overlay's backdrop hits nothing,
+/// so no gesture under an overlay ever fires. Scrolls pass a light-dismiss backdrop, as GPUI's
+/// own scroll handlers do.
+fn hit_start(
+    nodes: &HashMap<NodeId, Node>,
+    bounds: &HashMap<NodeId, Rect>,
+    root: NodeId,
+    at: Point,
+    scroll: bool,
+) -> Option<NodeId> {
+    let mut overlays: Vec<(NodeId, Modality)> = nodes
+        .iter()
+        .filter_map(|(id, n)| n.props.downcast_ref::<OverlayProps>().map(|p| (*id, p.modality)))
+        .filter(|(_, m)| *m != Modality::Passive)
+        .collect();
+    // Node ids grow with creation, and a nested overlay is created after the one holding it.
+    overlays.sort_by_key(|(id, _)| std::cmp::Reverse(*id));
+    if let Some((inside, _)) = overlays.iter().find(|(o, _)| bounds.get(o).is_some_and(|b| contains(b, at))) {
+        return Some(*inside);
+    }
+    let blocks = |m: &Modality| !scroll || *m == Modality::Modal;
+    if overlays.iter().any(|(_, m)| blocks(m)) { None } else { Some(root) }
+}
+
+/// Nodes under `at`, innermost first: from the hit start, into the topmost child (the last
+/// painted) whose bounds contain the point.
+fn hit_path(
+    nodes: &HashMap<NodeId, Node>,
+    bounds: &HashMap<NodeId, Rect>,
+    root: NodeId,
+    at: Point,
+    scroll: bool,
+) -> Vec<NodeId> {
+    let Some(root) = hit_start(nodes, bounds, root, at, scroll) else { return Vec::new() };
     let mut path = vec![root];
     let mut cursor = root;
     while let Some(node) = nodes.get(&cursor) {
@@ -98,9 +135,10 @@ impl Gestures {
         bounds: &HashMap<NodeId, Rect>,
         root: NodeId,
         at: Point,
+        scroll: bool,
         f: impl FnOnce(&[HitEntry<'_>]) -> R,
     ) -> R {
-        let path = hit_path(nodes, bounds, root, at);
+        let path = hit_path(nodes, bounds, root, at, scroll);
         let hit: Vec<HitEntry<'_>> = path
             .iter()
             .filter_map(|n| {
@@ -116,7 +154,7 @@ impl Gestures {
         let mut windows = self.windows.borrow_mut();
         let w = windows.entry(window).or_default();
         if phase == PointerPhase::Down {
-            self.with_hit(tree.0, tree.1, tree.2, at, |hit| w.router.pointer(&input, hit))
+            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| w.router.pointer(&input, hit))
         } else if w.router.pointer_active() {
             w.router.pointer(&input, &[])
         } else {
@@ -143,7 +181,7 @@ impl Gestures {
         let w = windows.entry(window).or_default();
         let (phase, momentum) = w.momentum.classify(finger);
         let input = ScrollInput { position: at, delta, phase, momentum, time: self.now() };
-        self.with_hit(tree.0, tree.1, tree.2, at, |hit| w.router.scroll(&input, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| w.router.scroll(&input, hit))
     }
 
     pub fn os_gesture(&self, window: WindowId, event: GestureEvent, at: Point, tree: Tree<'_>) -> Option<Output> {
@@ -151,7 +189,7 @@ impl Gestures {
         let router = windows.get(&window).map(|w| &w.router);
         let fallback = GestureRouter::default();
         let router = router.unwrap_or(&fallback);
-        self.with_hit(tree.0, tree.1, tree.2, at, |hit| router.route(event, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| router.route(event, hit))
     }
 
     /// A pressure event: the step into the force stage is a force click.
@@ -186,6 +224,38 @@ impl Gestures {
             w.router.set_scroll_extent(node, set, viewport.size, extent);
         }
         w.router.scroll_offset(node)
+    }
+
+    /// A virtualized list's offset in the router as input and flings left it, `None` before the
+    /// list is registered.
+    pub fn list_offset(&self, window: WindowId, node: NodeId) -> Option<f32> {
+        let windows = self.windows.borrow();
+        windows.get(&window)?.router.scroller(node).map(|s| s.offset().y)
+    }
+
+    /// Puts the list's scroller on the model: registers the scrollable `range` the model reports,
+    /// then moves the scroller's coordinates so its in-range offset is the model's `position`,
+    /// keeping a fling or bounce running. Returns the offset after, rubber band included.
+    pub fn sync_list(
+        &self,
+        window: WindowId,
+        node: NodeId,
+        set: &GestureSet,
+        viewport: Size,
+        range: f32,
+        position: f32,
+    ) -> f32 {
+        let mut windows = self.windows.borrow_mut();
+        let w = windows.entry(window).or_default();
+        let content = Size { width: viewport.width, height: viewport.height + range.max(0.) };
+        w.router.set_scroll_extent(node, set, viewport, content);
+        let Some(s) = w.router.scroller_mut(node) else { return position };
+        let offset = s.offset().y;
+        let edge = offset.clamp(0., range.max(0.));
+        if (edge - position).abs() > 0.25 {
+            s.shift(Point { x: 0., y: position - edge });
+        }
+        s.offset().y
     }
 
     pub fn row_config(&self, window: WindowId, node: NodeId, set: &GestureSet, width: f32) {
