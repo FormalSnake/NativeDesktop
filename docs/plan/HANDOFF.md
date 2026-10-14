@@ -55,3 +55,10 @@ No `rm`/`mv` on variable paths; never `pkill -f` by pattern; never git reset/che
 one heavy macbook build at a time; disk checks before builds on both the cache drive and g815;
 `just clean-merged` after merging lanes; every merge pushed to GitHub main; fix bugs found, never
 note-and-move-on.
+
+## Scheduled resume
+
+A launchd job (`~/Library/LaunchAgents/dev.formalsnake.nd-resume.plist`, removes itself after it
+runs) fires 2026-10-20 14:00, or at the next wake after that: `scripts/resume-in-herdr` starts a fresh
+`claude` session in Herdr pane `w1F:p3` (a new workspace if that pane is gone) with
+`docs/plan/RESUME-PROMPT.md` as its first prompt. Log: `~/Library/Logs/nd-resume.log`.
