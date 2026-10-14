@@ -9,7 +9,7 @@ passed their own gates; `main` itself is being stabilized right now (see "Open")
 | --- | --- |
 | M0 skeleton, first mac window | done: resize gate with real HID drag, traffic lights by coordinates |
 | M1 diagnostics + harness | done: crash/hang bundles with UI tree, `nd diagnose`, locators, MCP, `nd new/check/test` |
-| M2 backends + pacing | macOS and Linux done (Hyprland no controls, headless Hyprland test runner, per-monitor pacing 144/241 Hz on g815); Windows run on hardware 2026-10-14: resize gate all but 1 to 3 of 100 frames, per-monitor pacing still missing |
+| M2 backends + pacing | macOS and Linux done (Hyprland no controls, headless Hyprland test runner, per-monitor pacing 144/241 Hz on g815); Windows run on hardware 2026-10-14: per-monitor vblank pacing (240/144), resize gate all but 1 to 3 of 100 frames |
 | M3 theme + mac chrome | done on macOS: tokens, matugen live reload (under 70 ms), `glass()`, sidebar/toolbar/inspector/settings as system components |
 | M4 input + overlays | done: gestures with momentum and rubber band, haptics, focus rules, overlays that never leak input (proven over a live webview on macOS and Hyprland) |
 | M5 virtualization | done: one list/table/grid/tree API, NSTableView natively, last-row bug class covered by tests; e1504g rerun pending |
@@ -35,7 +35,7 @@ on branch `zig`.
 
 - `main` stabilization agent running: a few tests broke after the last merges, and the full suite
   takes 47 min; target under 10.
-- Windows: hardware run done 2026-10-14 (`m2-windows-2`, TODO.md M2); open are the update check in the packaged app, per-monitor pacing and the system menu.
+- Windows: hardware run done 2026-10-14 (`m2-windows-2`, TODO.md M2); open is the text rendering on Mica (reported crisp/pixelated) before the merge.
 - e1504g: 100k-row scroll rerun pending (was offline).
 - Not started: M12 docs site, agent docs and README template polish, ports of messages,
   youtubemusic and nativebrowser.

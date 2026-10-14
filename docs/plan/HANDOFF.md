@@ -17,7 +17,7 @@ visibility, not merged unless noted):
 | `mac-polish` (21f5a387) | done: titlebar centre line, rounded multi-line field, centred status page, cmd-T crash fixed with tab bar at 2+ tabs, Mail inspector toggle trailing, title in empty titlebar; overrides goldens re-recorded | re-record gallery status-page and forms goldens, dark recaptures, check hello's title, clippy/fmt, merge |
 | `port-gaps` (f968d503, one wip commit) | rich text, animation/hover, role fills, GPUI canvas, SVG, font override, focus by id, automation rows written, mostly never compiled | `cargo test --no-run -p nd-components -p nd-backend-appkit`, fix; then video, AppKit canvas, out-of-tree `nd new` |
 | `linux-webview` (6349761d, wip) | Linux engine = CEF off-screen via nd-cef (no WPE in nixpkgs; WebKitGTK cannot embed in GPUI on Wayland), never compiled | `scripts/linux-gate run 'cargo check -p nd-cef -p nd-webview -p nd-os-linux --tests'`, fix, gates, e1504g screenshot (TODO.md M8) |
-| `m2-windows-2` (92d28686, local commit, not pushed) | hardware run done on 2026-10-14 (g815 in Windows, built on the machine): resize gate passes all but 1 to 3 of 100 frames one drag step behind; caption buttons match the title row height and DWM's own buttons no longer ghost through Mica; `nd new --nd-path`, `which` for `.exe`, agent reinstall fixed; packaging leg reaches Setup.exe install, release and delta | installed 0.1.0 never checks the feed (TODO.md M2 Windows), per-monitor pacing (144 Hz window draws at 240), system menu replacement for the cleared `WS_SYSMENU`, move the vendored resize fix into `scripts/gpui-fork` once g815 is back on NixOS, push |
+| `m2-windows-2` (22a07704, local, not pushed) | hardware run on g815 in Windows 2026-10-14: resize gate all but 1 to 3 of 100 frames; per-monitor vblank pacing (240/144 exact, 240 across the seam); window menu with drawn caption buttons; packaging, release and signed delta update pass. Fork patches 0005 and 0006 in the queue (zed branch `nd-windows/93d7456` on the cache drive); hand-made vendor copy gone | your text rendering report (TODO.md M2 Windows: grayscale AA on Mica), Windows clippy for this round, then merge. Patch numbers 0005/0006 collide with `gpui-polish`'s queue: renumber at merge |
 | `port-ytm-fixes` (402a0efa) | Wayland app id from `[app] id`, `nd new --nd-path` writes the GPUI patch block; untested | test, merge |
 
 Merged into main this session: icons on every backend (`nd-icons`, Lucide + SF Symbols), the notes
@@ -58,7 +58,8 @@ unchanged after a gate run.
   The g815 itself booted into Windows is `ssh windows` (desktop-vjmk52d): C: is nearly full, so
   build and run under `F:\nd-native` (`native-run.ps1 -Root F:\nd-native`). Leftover agent copies,
   26 `nd-*` scheduled tasks, temp dirs and this run's own files were removed there on 2026-10-14
-  (19 GB); only `.nd-tools` (zig, .NET SDK) stays. A fresh native build takes about 3 minutes.
+  (19 GB); only `.nd-tools` (zig, .NET SDK) stays. A fresh native build takes about 3 minutes;
+  a dev `hello.exe` needs its source tree next to it.
 
 ## Pending with the user
 
