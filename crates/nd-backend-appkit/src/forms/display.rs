@@ -53,12 +53,33 @@ pub(crate) fn preferred_font(style: TextStyle) -> Retained<NSFont> {
 
 pub(crate) struct LabelControl {
     field: Retained<NSTextField>,
+    /// The tone and explicit colour last applied, to resolve again when the appearance changes.
+    tone: std::cell::Cell<(LabelTone, Option<nd_ui::prelude::Hsla>)>,
+}
+
+/// The tone's system colour under `view`'s appearance, darkened or lightened until it reads at
+/// 4.5:1 on the window and control backgrounds: `secondaryLabelColor` and `systemRed` alone fall
+/// short on white (3.95:1, 3.57:1), and the theme holds its text tokens to that ratio.
+fn tone_color(view: &NSView, tone: LabelTone) -> Retained<NSColor> {
+    let resolved = std::cell::Cell::new(None);
+    let block = block2::RcBlock::new(|| {
+        let color = match tone {
+            LabelTone::Primary => NSColor::labelColor(),
+            LabelTone::Secondary => NSColor::secondaryLabelColor(),
+            LabelTone::Danger => NSColor::systemRedColor(),
+        };
+        let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
+        let under: Vec<_> = under.into_iter().filter_map(crate::system_colors::hsla).collect();
+        resolved.set(crate::system_colors::hsla(color).map(|c| nd_theme::color::legible(c, &under, 4.5)));
+    });
+    objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(view).performAsCurrentDrawingAppearance(&block);
+    resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color())
 }
 
 impl LabelControl {
     pub fn new(cx: Ctx, props: &LabelProps) -> Self {
         let field = NSTextField::labelWithString(&NSString::from_str(&props.text), cx.mtm);
-        let this = Self { field };
+        let this = Self { field, tone: std::cell::Cell::new((props.tone, props.style.text.color)) };
         this.apply(None, props);
         this
     }
@@ -73,13 +94,8 @@ impl LabelControl {
             f.setFont(Some(&ns_font(&new.style, preferred.pointSize()).unwrap_or(preferred)));
         }
         if old.is_none_or(|o| o.tone != new.tone || o.style.text.color != new.style.text.color) {
-            let color = match (new.style.text.color, new.tone) {
-                (Some(c), _) => Color::from(c).ns_color(),
-                (None, LabelTone::Primary) => NSColor::labelColor(),
-                (None, LabelTone::Secondary) => NSColor::secondaryLabelColor(),
-                (None, LabelTone::Danger) => NSColor::systemRedColor(),
-            };
-            f.setTextColor(Some(&color));
+            self.tone.set((new.tone, new.style.text.color));
+            self.apply_tone();
         }
         if old.is_none_or(|o| o.selectable != new.selectable) {
             f.setSelectable(new.selectable);
@@ -101,9 +117,24 @@ impl LabelControl {
     }
 }
 
+impl LabelControl {
+    fn apply_tone(&self) {
+        let color = match self.tone.get() {
+            (_, Some(c)) => Color::from(c).ns_color(),
+            (LabelTone::Primary, None) => NSColor::labelColor(),
+            (tone, None) => tone_color(&self.field, tone),
+        };
+        self.field.setTextColor(Some(&color));
+    }
+}
+
 impl FormControl for LabelControl {
     fn view(&self) -> &NSView {
         &self.field
+    }
+
+    fn appearance_changed(&self) {
+        self.apply_tone();
     }
 
     fn update(&mut self, old: &Props, new: &Props) -> bool {

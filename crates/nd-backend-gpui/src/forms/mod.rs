@@ -244,7 +244,7 @@ impl Build<'_> {
         } else if is::<ProgressKind>(kind) {
             display::progress(self, id, props.downcast_ref()?, window)
         } else if is::<LabelKind>(kind) {
-            display::label(self, props.downcast_ref()?)
+            display::label(self, id, props.downcast_ref()?)
         } else if is::<LinkKind>(kind) {
             display::link(self, id, props.downcast_ref()?, window, cx)
         } else {

@@ -71,12 +71,6 @@ pub trait OsHooks: 'static {
         None
     }
 
-    /// The appearance the window draws in. `None` follows the OS (`Window::appearance`); tests
-    /// pin light or dark here.
-    fn appearance(&self, _window: WindowId, _gpui_window: &gpui::Window) -> Option<gpui::WindowAppearance> {
-        None
-    }
-
     /// The window closed; per-window state can go.
     fn window_closed(&self, _window: WindowId) {}
 }

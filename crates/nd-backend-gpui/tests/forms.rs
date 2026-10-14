@@ -9,9 +9,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use nd_backend_gpui::{GpuiHost, OsHooks};
+use nd_backend_gpui::GpuiHost;
 use nd_components::forms::*;
-use nd_gpui::gpui::{self, HeadlessAppContext, WindowAppearance};
+use nd_gpui::gpui::{HeadlessAppContext, WindowAppearance};
+use nd_theme::{OsTheme, Preset, Scheme, ThemeRegistry};
 use nd_ui::prelude::*;
 use nd_ui::semantics::{ActionError, MouseButton, PointerPhase, SemanticAction, SyntheticInput};
 use nd_ui::{Keystroke, NodeId, Point, SemanticNode, WindowId};
@@ -267,14 +268,6 @@ impl Render for Gallery {
     }
 }
 
-struct Pinned(WindowAppearance);
-
-impl OsHooks for Pinned {
-    fn appearance(&self, _: WindowId, _: &gpui::Window) -> Option<WindowAppearance> {
-        Some(self.0)
-    }
-}
-
 fn headless() -> HeadlessAppContext {
     let text = nd_gpui::gpui_platform::current_platform(true).text_system();
     HeadlessAppContext::with_platform(text, Arc::new(()), nd_gpui::gpui_platform::current_headless_renderer)
@@ -308,7 +301,7 @@ fn open_with(appearance: WindowAppearance, animated: bool) -> Rig {
     let (l, v) = (log.clone(), view.clone());
     let mut window = None;
     let host = cx.update(|cx| {
-        GpuiHost::builder().quit_when_empty(false).hooks(Pinned(appearance)).start(cx, |app| {
+        GpuiHost::builder().quit_when_empty(false).start(cx, |app| {
             let handle = app.open_window(
                 WindowOptions::main("forms").title("Forms").size(size(px(SIZE.0), px(SIZE.1))),
                 |_, cx| {
@@ -320,6 +313,11 @@ fn open_with(appearance: WindowAppearance, animated: bool) -> Rig {
             window = Some(handle.id());
         })
     });
+    // The windows paint from the theme registry; pin its scheme as the OS would report it.
+    let mut registry = ThemeRegistry::new(Preset::current());
+    let scheme = if matches!(appearance, WindowAppearance::Dark) { Scheme::Dark } else { Scheme::Light };
+    registry.set_os(OsTheme { scheme: Some(scheme), ..registry.os().clone() });
+    host.backend().set_theme(registry);
     settle(&mut cx, &host);
     Rig { cx, host, window: window.expect("window"), log, view }
 }
@@ -553,6 +551,7 @@ mod forms {
         assert_eq!(rig.take(), Vec::<String>::new(), "a click opens the menu and picks nothing");
         rig.keys(&["down", "enter"]);
         assert_eq!(rig.take(), ["select:2"], "the open menu picks with the keyboard");
+        assert_ne!(rig.node("select").expanded, Some(true), "picking with Return closes the menu");
         rig.click_at("seg", 0.83, 0.5);
         assert_eq!(rig.take(), ["seg:2"]);
         rig.keys(&["right"]);

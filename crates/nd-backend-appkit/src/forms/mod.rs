@@ -58,6 +58,9 @@ pub(crate) trait FormControl {
     }
     /// The accent a theme override sets at this control.
     fn set_accent(&self, _accent: Option<Hsla>) {}
+    /// The view's appearance may have changed (a scheme flip, a forced appearance): colours the
+    /// control resolved itself are resolved again.
+    fn appearance_changed(&self) {}
 }
 
 /// What a control needs to report user changes.

@@ -85,7 +85,7 @@ pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Wi
     with_style(element, &p.style).into_any_element()
 }
 
-pub(crate) fn label(b: &Build, p: &LabelProps) -> gpui::AnyElement {
+pub(crate) fn label(b: &Build, id: NodeId, p: &LabelProps) -> gpui::AnyElement {
     let look = FormLook::adwaita(&b.theme());
     let (size, weight, line_height) = look.type_of(p.text_style);
     let color = match p.tone {
@@ -93,6 +93,8 @@ pub(crate) fn label(b: &Build, p: &LabelProps) -> gpui::AnyElement {
         LabelTone::Secondary => look.secondary_text,
         LabelTone::Danger => look.danger,
     };
+    let color = p.style.text.color.unwrap_or(color);
+    b.text_run(id, &p.text, crate::render::Run { size: size.as_f32(), weight: weight.0 }, Some(color), None);
     let mut text =
         div().text_size(size).line_height(line_height).font_weight(weight).text_color(color).child(p.text.clone());
     if !p.wraps {

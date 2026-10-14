@@ -21,6 +21,9 @@ use crate::render::Build;
 pub(crate) struct Menu {
     open: bool,
     highlight: Option<usize>,
+    /// Return or Space picked from the open menu; GPUI still reports the key as a click on
+    /// the button, which must not open the menu again.
+    picked_by_key: bool,
 }
 
 pub(crate) fn select(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut App) -> gpui::AnyElement {
@@ -104,7 +107,7 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
             let key = event.keystroke.key.as_str();
             if !m.open {
                 if key == "down" && count > 0 {
-                    *m = Menu { open: true, highlight: Some(selected.min(count - 1)) };
+                    *m = Menu { open: true, highlight: Some(selected.min(count - 1)), picked_by_key: false };
                     cx.stop_propagation();
                 }
                 return;
@@ -120,6 +123,7 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
                     window.prevent_default();
                     cx.stop_propagation();
                     pick(index, window, cx);
+                    menu.borrow_mut().picked_by_key = true;
                     return;
                 }
                 "escape" => *m = Menu::default(),
@@ -136,7 +140,14 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
                 sink.take_focus(window, cx);
             }
             let mut m = menu.borrow_mut();
-            *m = if m.open { Menu::default() } else { Menu { open: true, highlight: Some(selected) } };
+            if std::mem::take(&mut m.picked_by_key) && matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                return;
+            }
+            *m = if m.open {
+                Menu::default()
+            } else {
+                Menu { open: true, highlight: Some(selected), picked_by_key: false }
+            };
             drop(m);
             window.refresh();
         }

@@ -853,7 +853,10 @@ impl State {
                     }
                 }
                 Some(Native::Button(b)) => b.set_accent(theme.accent),
-                Some(Native::Control(c)) => c.control.set_accent(theme.accent),
+                Some(Native::Control(c)) => {
+                    c.control.set_accent(theme.accent);
+                    c.control.appearance_changed();
+                }
                 _ => {}
             }
         }
