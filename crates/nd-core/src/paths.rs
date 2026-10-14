@@ -21,3 +21,24 @@ pub fn app_data_dir(app: &str) -> PathBuf {
     };
     base.join(app)
 }
+
+/// Where an app keeps files it can rebuild (downloaded artwork, thumbnails): `cache` under
+/// `ND_APP_DATA_DIR` when that is set, else `~/Library/Caches/<app>` on macOS,
+/// `%LOCALAPPDATA%\<app>\cache` on Windows and `$XDG_CACHE_HOME/<app>` (`~/.cache/<app>`)
+/// elsewhere.
+pub fn app_cache_dir(app: &str) -> PathBuf {
+    if let Some(dir) = std::env::var_os("ND_APP_DATA_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir).join("cache");
+    }
+    let home = || PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    if cfg!(target_os = "macos") {
+        home().join("Library/Caches").join(app)
+    } else if cfg!(windows) {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join(app).join("cache")
+    } else {
+        std::env::var_os("XDG_CACHE_HOME")
+            .filter(|d| !d.is_empty())
+            .map_or_else(|| home().join(".cache"), PathBuf::from)
+            .join(app)
+    }
+}

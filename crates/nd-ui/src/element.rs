@@ -684,6 +684,8 @@ pub struct ButtonProps {
     pub variant: ButtonVariant,
     pub bezel: Bezel,
     pub tooltip: Option<SharedString>,
+    /// Greyed out and takes no clicks.
+    pub enabled: bool,
     /// The element's style: a background becomes the bezel colour, a text colour and font
     /// the title's, where the native control can express them.
     pub style: StyleRefinement,
@@ -697,6 +699,7 @@ impl ButtonProps {
             variant: ButtonVariant::Standard,
             bezel: Bezel::Automatic,
             tooltip: None,
+            enabled: true,
             style: StyleRefinement::default(),
         }
     }
@@ -733,6 +736,12 @@ impl Button {
 
     pub fn icon_name(mut self, icon: impl Into<SharedString>) -> Self {
         self.0.props_mut().icon = Some(icon.into());
+        self
+    }
+
+    /// Greys the button out; it takes no clicks and automation reports it disabled.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.0.props_mut().enabled = !disabled;
         self
     }
 }

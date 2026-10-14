@@ -299,7 +299,11 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
             (role, short_name(w.name).to_owned(), name)
         }
     };
-    Described { role, kind: kind_name, name, extra: Semantics::default() }
+    let mut extra = Semantics::default();
+    if let Some(button) = props.downcast_ref::<ButtonProps>() {
+        extra.enabled = Some(button.enabled);
+    }
+    Described { role, kind: kind_name, name, extra }
 }
 
 /// A widget kind's role and accessible name, read from its props.

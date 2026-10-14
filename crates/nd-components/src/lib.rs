@@ -2,7 +2,8 @@
 //! `titlebar`), `glass()`, menus, alerts and pickers, the override layers, button variants and
 //! `separator`, the forms family ([`forms`]: text fields, toggles, choices, values, pickers,
 //! progress, labels, settings rows and `settings_form`), and navigation and feedback: the
-//! command palette, the source tree, toasts and banners. Each is a widget
+//! command palette, the source tree, toasts and banners, and media and content ([`media`]:
+//! images, transport, lyrics, shelves, the composer, chat bubbles and avatars). Each is a widget
 //! kind every backend maps (ARCHITECTURE.md 3.6); this crate holds no platform code.
 
 pub mod controls;
@@ -12,6 +13,7 @@ pub mod forms;
 pub mod fuzzy;
 pub mod glass;
 pub mod icon;
+pub mod media;
 pub mod menu;
 pub mod overrides;
 pub mod palette;
@@ -28,6 +30,7 @@ pub use form::{Form, FormProps, FormRow, FormRowProps, FormSection, FormSectionP
 pub use forms::*;
 pub use glass::{Glass, GlassGroup, GlassGroupProps, GlassProps, glass, glass_group};
 pub use icon::Icon;
+pub use media::*;
 pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, MenuRole};
 pub use overrides::{HasScope, OnPlatform, Pattern, Patterns, ScopedContainer, SubtreeOverrides, SubtreeScope};
 pub use palette::{

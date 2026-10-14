@@ -18,6 +18,11 @@ nd-gpui.workspace = true
 nd-ui.workspace = true
 nd-macros.workspace = true
 nd-theme.workspace = true
+# The image pipeline decodes off the main thread at display size; GPUI already links it.
+image = { version = "0.25", default-features = false, features = ["gif", "webp", "png", "jpeg"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = "3.4"
 
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }

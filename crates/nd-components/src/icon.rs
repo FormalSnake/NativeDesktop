@@ -37,6 +37,20 @@ pub enum Icon {
     User,
     X,
     CircleX,
+    ArrowUp,
+    Image,
+    LocateFixed,
+    Music,
+    Paperclip,
+    Pause,
+    Play,
+    SkipBack,
+    SkipForward,
+    Smile,
+    Volume,
+    Volume1,
+    Volume2,
+    VolumeX,
 }
 
 impl Icon {
@@ -75,6 +89,20 @@ impl Icon {
             Icon::User => "user",
             Icon::X => "x",
             Icon::CircleX => "circle-x",
+            Icon::ArrowUp => "arrow-up",
+            Icon::Image => "image",
+            Icon::LocateFixed => "locate-fixed",
+            Icon::Music => "music",
+            Icon::Paperclip => "paperclip",
+            Icon::Pause => "pause",
+            Icon::Play => "play",
+            Icon::SkipBack => "skip-back",
+            Icon::SkipForward => "skip-forward",
+            Icon::Smile => "smile",
+            Icon::Volume => "volume",
+            Icon::Volume1 => "volume-1",
+            Icon::Volume2 => "volume-2",
+            Icon::VolumeX => "volume-x",
         }
     }
 }

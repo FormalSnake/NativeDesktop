@@ -38,6 +38,20 @@ const SYMBOLS: &[(&str, &str)] = &[
     ("user", "person"),
     ("x", "xmark"),
     ("circle-x", "xmark.circle.fill"),
+    ("arrow-up", "arrow.up"),
+    ("image", "photo"),
+    ("locate-fixed", "location.fill"),
+    ("music", "music.note"),
+    ("paperclip", "paperclip"),
+    ("pause", "pause.fill"),
+    ("play", "play.fill"),
+    ("skip-back", "backward.fill"),
+    ("skip-forward", "forward.fill"),
+    ("smile", "face.smiling"),
+    ("volume", "speaker.fill"),
+    ("volume-1", "speaker.wave.1.fill"),
+    ("volume-2", "speaker.wave.3.fill"),
+    ("volume-x", "speaker.slash.fill"),
 ];
 
 /// The SF Symbol for a Lucide name; `None` when nd has no mapping for it.

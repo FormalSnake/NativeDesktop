@@ -4329,6 +4329,7 @@ dependencies = [
 name = "nd-components"
 version = "0.1.0"
 dependencies = [
+ "image",
  "nd-core",
  "nd-gpui",
  "nd-macros",
@@ -4339,6 +4340,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
