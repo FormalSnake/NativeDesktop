@@ -258,6 +258,24 @@ impl GpuiBackend {
         self.state.borrow_mut().activation_listener = Some(Rc::new(f));
     }
 
+    /// The OS's own colours (the system accent), as the OS hooks last read them.
+    pub fn platform_palettes(&self) -> nd_theme::SchemePalettes {
+        self.state.borrow().theme.os().palettes
+    }
+
+    /// Records the OS's own colours; true when they changed.
+    pub(crate) fn set_os_palettes(&self, palettes: nd_theme::SchemePalettes) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.theme.os().palettes == palettes {
+            return false;
+        }
+        let os = OsTheme { palettes, ..state.theme.os().clone() };
+        state.theme.set_os(os);
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        true
+    }
+
     /// Records the platform's scheme; true when it changed.
     pub(crate) fn set_platform_scheme(&self, scheme: Scheme) -> bool {
         let mut state = self.state.borrow_mut();

@@ -4847,6 +4847,7 @@ dependencies = [
  "nd-backend-gpui",
  "nd-core",
  "nd-gpui",
+ "nd-theme",
  "nd-ui",
  "ndshell",
  "raw-window-handle",

@@ -31,12 +31,18 @@ pub struct WindowsHooks {
     expose: bool,
     diag: bool,
     chrome: RefCell<HashMap<WindowId, Rc<Chrome>>>,
+    colors_changed: RefCell<Option<Rc<dyn Fn(&mut gpui::App)>>>,
 }
 
 impl Default for WindowsHooks {
     fn default() -> Self {
         let flag = |name: &str| std::env::var_os(name).is_some_and(|v| v == "1");
-        Self { expose: flag("ND_DEBUG_EXPOSE"), diag: flag("ND_DIAG_WINDOW"), chrome: RefCell::default() }
+        Self {
+            expose: flag("ND_DEBUG_EXPOSE"),
+            diag: flag("ND_DIAG_WINDOW"),
+            chrome: RefCell::default(),
+            colors_changed: RefCell::default(),
+        }
     }
 }
 
@@ -88,7 +94,14 @@ impl OsHooks for WindowsHooks {
         let handle = gpui_window.window_handle();
         let async_cx = cx.to_async();
         let diag = self.diag;
+        let colors_changed = self.colors_changed.borrow().clone();
         chrome.on_event(move |event| {
+            if let ChromeEvent::Colors = event {
+                if let Some(changed) = colors_changed.clone() {
+                    async_cx.spawn(async move |cx| cx.update(|cx| changed(cx))).detach();
+                }
+                return;
+            }
             if let ChromeEvent::Pointer(p) = event {
                 if diag
                     && let Some(pen) = p.pen
@@ -156,6 +169,14 @@ impl OsHooks for WindowsHooks {
 
     fn backdrop(&self, _window: WindowId) -> bool {
         !self.expose
+    }
+
+    fn os_palettes(&self) -> nd_theme::SchemePalettes {
+        crate::colors::os_palettes()
+    }
+
+    fn on_os_colors_changed(&self, changed: Rc<dyn Fn(&mut gpui::App)>) {
+        *self.colors_changed.borrow_mut() = Some(changed);
     }
 
     fn window_closed(&self, window: WindowId) {

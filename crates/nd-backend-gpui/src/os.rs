@@ -8,6 +8,8 @@
 //! An OS crate implements [`OsHooks`] and hands it to [`crate::GpuiHost::builder`] (the `nd`
 //! facade does this per target).
 
+use std::rc::Rc;
+
 use nd_core::time::Instant;
 
 use nd_core::{FrameTime, Point, WindowId};
@@ -93,6 +95,15 @@ pub trait OsHooks: 'static {
 
     /// The window closed; per-window state can go.
     fn window_closed(&self, _window: WindowId) {}
+
+    /// The OS's own colours (the system accent) for both schemes, read at launch and again
+    /// whenever the callback from [`OsHooks::on_os_colors_changed`] fires.
+    fn os_palettes(&self) -> nd_theme::SchemePalettes {
+        nd_theme::SchemePalettes::default()
+    }
+
+    /// Installs the one callback the OS crate calls when the system colours change.
+    fn on_os_colors_changed(&self, _changed: Rc<dyn Fn(&mut gpui::App)>) {}
 }
 
 /// Plain GPUI windows: every hook at its default.

@@ -23,8 +23,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, TPM_RETURNCMD, TPM_RIGHTBUTTON,
     TrackPopupMenu, WM_CLOSE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
     WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONUP, WM_POINTERDOWN, WM_POINTERUP,
-    WM_POINTERUPDATE, WM_SYSCOMMAND, WS_SYSMENU,
+    WM_POINTERUPDATE, WM_SETTINGCHANGE, WM_SYSCOMMAND, WS_SYSMENU,
 };
+use windows::core::PCWSTR;
 
 use crate::caption::{CaptionButton, CaptionLayout, CaptionState, Edge, Hit};
 use crate::pointer::{self, PointerEvent, PointerKind};
@@ -43,6 +44,8 @@ pub enum ChromeEvent {
     Pointer(PointerEvent),
     /// The window moved to a monitor with another scale.
     Scale(f32),
+    /// The system colours changed (`WM_SETTINGCHANGE` "ImmersiveColorSet"): the accent.
+    Colors,
 }
 
 type Handler = Box<dyn FnMut(ChromeEvent)>;
@@ -290,6 +293,13 @@ unsafe extern "system" fn subclass_proc(
                 shared.emit(ChromeEvent::Pointer(event));
             }
             // DefWindowProc promotes the pointer to mouse messages, which the backend handles.
+            forward()
+        }
+        WM_SETTINGCHANGE
+            if lparam.0 != 0
+                && unsafe { PCWSTR(lparam.0 as *const u16).to_string() }.is_ok_and(|s| s == "ImmersiveColorSet") =>
+        {
+            shared.emit(ChromeEvent::Colors);
             forward()
         }
         WM_DPICHANGED => {

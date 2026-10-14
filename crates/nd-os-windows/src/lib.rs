@@ -15,6 +15,8 @@ pub mod backdrop;
 #[cfg(windows)]
 pub mod chrome;
 #[cfg(windows)]
+pub mod colors;
+#[cfg(windows)]
 pub mod dpi;
 #[cfg(windows)]
 mod hooks;
