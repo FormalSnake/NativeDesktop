@@ -273,7 +273,24 @@ fn http_get(url: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(target_arch = "wasm32")]
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
-    Err(format!("{url}: downloads are not available on the web backend yet"))
+    Err(format!("{url}: the web backend fetches asynchronously, through the pipeline's queue"))
+}
+
+/// `fetch(url)` in the page, resolved against the page's own URL.
+#[cfg(target_arch = "wasm32")]
+async fn web_fetch(url: &str) -> Result<Vec<u8>, String> {
+    use wasm_bindgen::JsCast;
+    let window = web_sys::window().ok_or("no window")?;
+    let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|e| format!("{url}: {e:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|_| format!("{url}: not a Response"))?;
+    if !response.ok() {
+        return Err(format!("{url}: HTTP {}", response.status()));
+    }
+    let buffer = response.array_buffer().map_err(|e| format!("{url}: {e:?}"))?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(buffer).await.map_err(|e| format!("{url}: {e:?}"))?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
 enum Slot {
@@ -293,6 +310,7 @@ struct State {
     waiting: HashMap<DecodeRequest, Vec<Done>>,
     queue: VecDeque<Job>,
     sizes: HashMap<ImageSource, Option<(u32, u32)>>,
+    #[cfg(not(target_arch = "wasm32"))]
     threads: usize,
 }
 
@@ -401,14 +419,39 @@ impl ImagePipeline {
 
     #[cfg(target_arch = "wasm32")]
     fn spawn_workers(&self, state: &mut State) {
-        // No threads on the web: decode now, on the caller's turn.
+        // No threads on the web: bytes decode now, on the caller's turn. A URL, or a path (which
+        // on the web is relative to the page, e.g. assets the bundle ships), is fetched first.
         while let Some(job) = state.queue.pop_front() {
-            let result = run(&self.0.config, &job.request);
-            let waiters = state.waiting.remove(&job.request).unwrap_or_default();
-            finish(&self.0.config, state, &job.request, &result);
-            for done in waiters {
-                done(result.clone());
-            }
+            let url = match &job.request.source {
+                ImageSource::Bytes { .. } => None,
+                ImageSource::Url(url) => Some(url.to_string()),
+                ImageSource::Path(path) => Some(path.to_string_lossy().into_owned()),
+            };
+            let Some(url) = url else {
+                let result = run(&self.0.config, &job.request);
+                let waiters = state.waiting.remove(&job.request).unwrap_or_default();
+                finish(&self.0.config, state, &job.request, &result);
+                for done in waiters {
+                    done(result.clone());
+                }
+                continue;
+            };
+            let shared = self.0.clone();
+            let request = job.request;
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = match web_fetch(&url).await {
+                    Ok(bytes) => decode(&bytes, &request, shared.config.animation_budget).map(Arc::new),
+                    Err(error) => Err(error),
+                };
+                let waiters = {
+                    let mut state = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    finish(&shared.config, &mut state, &request, &result);
+                    state.waiting.remove(&request).unwrap_or_default()
+                };
+                for done in waiters {
+                    done(result.clone());
+                }
+            });
         }
     }
 
@@ -420,6 +463,8 @@ impl ImagePipeline {
             return *found;
         }
         let size = match source {
+            // On the web a path is fetched like a URL: unknown until it has loaded.
+            ImageSource::Path(_) if cfg!(target_arch = "wasm32") => return None,
             ImageSource::Path(p) => header_size_file(p),
             ImageSource::Bytes { bytes, .. } => header_size_bytes(bytes),
             ImageSource::Url(url) => {

@@ -25,6 +25,13 @@ image = { version = "0.25", default-features = false, features = ["gif", "webp",
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "3.4"
 
+# Images on the web come through the page's `fetch`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3.106"
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+web-sys = { version = "0.3.106", features = ["Window", "Response"] }
+
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }
 schemars = "1.2.3"
