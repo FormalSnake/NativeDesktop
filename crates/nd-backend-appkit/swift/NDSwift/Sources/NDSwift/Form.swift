@@ -53,13 +53,12 @@ struct NDFormBody: View {
         }
     }
 
-    /// The grouped form, its first row the page title when it scrolls with the rows.
+    /// The grouped form. A title that scrolls with the rows goes above the first section's own
+    /// header, inside it, so that header keeps the style every other section header has.
     private func form(title: String?) -> some View {
         Form {
-            if let title {
-                Section {} header: {
-                    Text(title).font(.largeTitle.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
-                }
+            if let title, model.sections.isEmpty {
+                Section {} header: { pageTitle(title) }
             }
             ForEach(model.sections) { section in
                 Section {
@@ -76,8 +75,15 @@ struct NDFormBody: View {
                         }
                     }
                 } header: {
-                    if let title = section.title {
-                        Text(title)
+                    if let title, section.id == model.sections.first?.id {
+                        VStack(alignment: .leading, spacing: 12) {
+                            pageTitle(title)
+                            if let header = section.title {
+                                Text(header)
+                            }
+                        }
+                    } else if let header = section.title {
+                        Text(header)
                     }
                 } footer: {
                     if let footer = section.footer {
@@ -87,6 +93,11 @@ struct NDFormBody: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func pageTitle(_ title: String) -> some View {
+        Text(title).font(.largeTitle.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
+            .padding(.bottom, 8)
     }
 }
 

@@ -43,23 +43,23 @@ pub use runtime::*;
 pub use nd_components as components;
 #[cfg(feature = "runtime")]
 pub use nd_core as core;
-/// Layered settings and `Store<T>`. `#[derive(Settings)]` finds this path on its own; a settings
-/// type's `JsonSchema` derive needs `#[schemars(crate = "nd::schemars")]`.
-#[cfg(feature = "runtime")]
-pub use nd_settings as settings;
-#[cfg(feature = "runtime")]
-pub use nd_settings::schemars;
-/// Icons by Lucide name, and `icons::register` for an app's own.
-#[cfg(feature = "runtime")]
-pub use nd_icons as icons;
 /// Capability checks: `nd::platform::has(Feature::MultiWindow)`.
 #[cfg(feature = "runtime")]
 pub use nd_core::platform;
 /// Clocks that also work in a browser.
 #[cfg(feature = "runtime")]
 pub use nd_core::time;
+/// Icons by Lucide name, and `icons::register` for an app's own.
+#[cfg(feature = "runtime")]
+pub use nd_icons as icons;
 #[cfg(feature = "runtime")]
 pub use nd_macros::unavailable;
+/// Layered settings and `Store<T>`. `#[derive(Settings)]` finds this path on its own; a settings
+/// type's `JsonSchema` derive needs `#[schemars(crate = "nd::schemars")]`.
+#[cfg(feature = "runtime")]
+pub use nd_settings as settings;
+#[cfg(feature = "runtime")]
+pub use nd_settings::schemars;
 #[cfg(feature = "terminal")]
 pub use nd_terminal as terminal;
 #[cfg(feature = "runtime")]

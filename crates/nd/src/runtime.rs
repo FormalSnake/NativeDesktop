@@ -18,6 +18,8 @@ pub mod prelude {
 
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
+    #[cfg(feature = "settings-ui")]
+    pub use crate::AppSettings;
     pub use crate::chrome::fuzzy;
     pub use crate::chrome::panes::{self, PaneResized, dock_view, pane_tree, tiles_view};
     pub use crate::chrome::{
@@ -64,14 +66,13 @@ pub mod prelude {
     };
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
     #[cfg(feature = "settings-ui")]
-    pub use crate::AppSettings;
-    #[cfg(feature = "settings-ui")]
     pub use nd_components::forms::settings::settings_form;
     pub use nd_settings::Settings;
     pub use nd_settings::schemars::JsonSchema;
     pub use nd_virtual::{
-        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, SelectEvent, Selection,
-        RowAction, RowActions, RowEdge, SortChanged, SortDirection, TreeNode, column, grid, list, row_action, table, tree,
+        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, RowAction, RowActions,
+        RowEdge, SelectEvent, Selection, SortChanged, SortDirection, TreeNode, column, grid, list, row_action, table,
+        tree,
     };
 }
 
@@ -241,9 +242,9 @@ impl Application {
         let host = nd_backend_appkit::AppHost::new(move |cx| {
             mac::install(cx, &files, self.theme.unwrap_or_default(), self.patterns);
             for setup in self.setup {
- setup(cx);
- }
- init(cx);
+                setup(cx);
+            }
+            init(cx);
             crate::theme::sync(cx);
         });
         let sender = host.sender();
@@ -273,9 +274,9 @@ impl Application {
                     mac::install(cx, &files, self.theme.unwrap_or_default(), self.patterns);
                     nd_backend_appkit::on_file_drop(crate::system::file_dropped);
                     for setup in self.setup {
- setup(cx);
- }
- init(cx);
+                        setup(cx);
+                    }
+                    init(cx);
                     crate::theme::sync(cx);
                 },
                 move |sender| {
@@ -332,9 +333,9 @@ impl Application {
                     }
                 }
                 for setup in self.setup {
- setup(cx);
- }
- init(cx);
+                    setup(cx);
+                }
+                init(cx);
                 crate::theme::sync(cx);
             },
             move |sender| {
