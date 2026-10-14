@@ -60,7 +60,9 @@ fn report(presenter: &str, step: isize, work: &[f64]) -> f64 {
 
 fn settings() -> (usize, usize) {
     let lines = std::env::var("ND_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(100_000);
-    let frames = std::env::var("ND_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
+    // Debug builds only report, so they run a short pass.
+    let default_frames = if cfg!(debug_assertions) { 60 } else { 600 };
+    let frames = std::env::var("ND_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(default_frames);
     (lines, frames)
 }
 

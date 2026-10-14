@@ -327,28 +327,17 @@ define_class!(
 
         #[unsafe(method(copy:))]
         fn copy(&self, _sender: Option<&AnyObject>) {
-            let Some(text) = self.session().and_then(|s| s.selection_text()) else { return };
-            let pasteboard = NSPasteboard::generalPasteboard();
-            pasteboard.clearContents();
-            pasteboard.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString });
+            self.copy_selection();
         }
 
         #[unsafe(method(paste:))]
         fn paste(&self, _sender: Option<&AnyObject>) {
-            let pasteboard = NSPasteboard::generalPasteboard();
-            let Some(text) = pasteboard.stringForType(unsafe { NSPasteboardTypeString }) else { return };
-            if let Some(session) = self.session() {
-                session.paste(&text.to_string());
-                self.after_input();
-            }
+            self.paste_clipboard();
         }
 
         #[unsafe(method(selectAll:))]
         fn select_all(&self, _sender: Option<&AnyObject>) {
-            if let Some(session) = self.session() {
-                session.select_all();
-                self.after_input();
-            }
+            self.select_everything();
         }
     }
 
@@ -538,6 +527,29 @@ impl NdTerminalView {
             });
         });
         self.with_term(|t| t.guard = Some(guard));
+    }
+
+    fn copy_selection(&self) {
+        let Some(text) = self.session().and_then(|s| s.selection_text()) else { return };
+        let pasteboard = NSPasteboard::generalPasteboard();
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString });
+    }
+
+    fn paste_clipboard(&self) {
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let Some(text) = pasteboard.stringForType(unsafe { NSPasteboardTypeString }) else { return };
+        if let Some(session) = self.session() {
+            session.paste(&text.to_string());
+            self.after_input();
+        }
+    }
+
+    fn select_everything(&self) {
+        if let Some(session) = self.session() {
+            session.select_all();
+            self.after_input();
+        }
     }
 
     /// Frames this view has presented, for tests.
@@ -821,10 +833,18 @@ impl NdTerminalView {
         let Some(session) = self.session() else { return false };
         let flags = event.modifierFlags();
         let mods = mods_of(flags);
-        if mods.contains(Mods::SUPER) {
-            return false;
-        }
         let key = key_for_mac_keycode(event.keyCode());
+        if mods.contains(Mods::SUPER) {
+            // A menu with these key equivalents takes them before `keyDown:`; an app without an
+            // Edit menu still gets copy, paste and select all here.
+            match (key, mods == Mods::SUPER) {
+                (Key::C, true) => self.copy_selection(),
+                (Key::V, true) => self.paste_clipboard(),
+                (Key::A, true) => self.select_everything(),
+                _ => return false,
+            }
+            return true;
+        }
         let action = if event.isARepeat() { KeyAction::Repeat } else { KeyAction::Press };
         let unshifted = event
             .charactersByApplyingModifiers(NSEventModifierFlags::empty())

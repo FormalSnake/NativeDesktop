@@ -9,6 +9,11 @@
 //! let session = TerminalSession::spawn(&Command::shell(), SessionOptions::default())?;
 //! terminal("shell", &session).size_full().on_title_changed(|e, _, _| println!("{}", e.title))
 //! ```
+//!
+//! Building libghostty-vt needs Zig 0.16 on `PATH` (the dev shell has it) and network for the
+//! first build. Its build script compiles Ghostty in Zig's Debug mode whenever the profile has
+//! debug info, which parses output thousands of times slower, so an app's workspace sets
+//! `[profile.dev.package.libghostty-vt-sys] debug = false`.
 
 #[cfg(target_os = "macos")]
 pub mod appkit;
