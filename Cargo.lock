@@ -4102,7 +4102,6 @@ dependencies = [
 [[package]]
 name = "libghostty-vt-sys"
 version = "0.2.1"
-source = "git+https://github.com/uzaaft/libghostty-rs?rev=d2036baeb6#d2036baeb605d31d09a9e2ba6d0c923e04c34d54"
 
 [[package]]
 name = "libloading"
@@ -7916,6 +7915,7 @@ name = "terminal"
 version = "0.1.0"
 dependencies = [
  "nd",
+ "nd-terminal",
  "nd-ui",
  "ndshell",
 ]
