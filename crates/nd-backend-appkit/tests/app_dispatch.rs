@@ -1,7 +1,8 @@
 //! Tier 2: an `nd-ui` app on [`AppHost`] with a real window. Key events are NSEvents posted into
 //! the app's own queue, so they reach `NSApp.sendEvent` like hardware input and travel
 //! `NdWindow` -> `App::dispatch_keystroke` -> the elements' `key_context`/`on_action`. Focus moves
-//! by Tab over `focusable` elements and AppKit's first responder follows. Prints
+//! by Tab over `focusable` elements and AppKit's first responder follows. A key whose action
+//! opens a window gets that window its host before the frame that mounts it. Prints
 //! `ND_APP_DISPATCH_OK`.
 
 mod harness;
@@ -25,7 +26,7 @@ mod app {
     use nd_ui::prelude::*;
     use nd_ui::{KeyBinding, NodeId, WindowId};
 
-    gpui::actions!(app_dispatch, [Ping]);
+    gpui::actions!(app_dispatch, [Ping, OpenSecond]);
 
     struct List {
         log: Vec<&'static str>,
@@ -40,6 +41,9 @@ mod app {
                 .p(px(12.))
                 .key_context("List")
                 .on_action(cx.listener(|this, _: &Ping, _, _| this.log.push("list")))
+                .on_action(|_: &OpenSecond, _, cx| {
+                    cx.open_window(WindowOptions::main("second").title("Second"), |_, cx| cx.new(|_| Second));
+                })
                 .child(row("first"))
                 .child(
                     row("second")
@@ -51,7 +55,16 @@ mod app {
         }
     }
 
+    struct Second;
+
+    impl Render for Second {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex().size_full().child(text("second"))
+        }
+    }
+
     const KEY_K: u16 = 0x28;
+    const KEY_COMMA: u16 = 0x2B;
     const KEY_TAB: u16 = 0x30;
 
     struct Checks(u32);
@@ -96,7 +109,7 @@ mod app {
         let mut window_id = WindowId(0);
         let mut root = None;
         let host = AppHost::new(|cx| {
-            cx.bind_keys([KeyBinding::new("cmd-k", Ping, None)]);
+            cx.bind_keys([KeyBinding::new("cmd-k", Ping, None), KeyBinding::new("cmd-,", OpenSecond, None)]);
             let handle = cx.open_window(WindowOptions::main("dispatch").title("App dispatch"), |_, cx| {
                 cx.new(|_| List { log: Vec::new() })
             });
@@ -147,6 +160,14 @@ mod app {
             window.makeFirstResponder(Some(view));
         }
         c.check(focused(&host) == order.get(1).copied(), "an AppKit-side focus change is mirrored into nd");
+
+        post_key(platform, &window, ",", KEY_COMMA, NSEventModifierFlags::Command);
+        let second = host.update(|app| app.window_ids().find(|id| *id != window_id));
+        let second_window = second.and_then(|id| host.ns_window(id));
+        c.check(second_window.is_some(), "a window opened by a key's action gets a host, no panic in its first frame");
+        if let Some(second) = second_window {
+            second.close();
+        }
 
         window.close();
         if c.0 == 0 {

@@ -184,10 +184,15 @@ impl KeyRouter for AppRouter {
         // now, and a listener's focus move reaches AppKit now, so the next key in the same event
         // batch already goes to the new first responder.
         app.drain_events();
-        if app.needs_frame() {
+        drop(app);
+        // The frame mounts every app window, so one the key opened needs its host first. A
+        // key-down is outside AppKit's layout pass, where opening a window is safe.
+        host.sync_windows();
+        if let Ok(mut app) = host.app.try_borrow_mut()
+            && app.needs_frame()
+        {
             app.frame();
         }
-        drop(app);
         host.after_frame();
         result
     }

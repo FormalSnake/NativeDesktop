@@ -34,7 +34,9 @@ pub use watcher::ThemeFileWatcher;
 
 /// Where an app's theme files live. `ND_THEME_JSON` / `ND_THEME_TOML` override each path (an
 /// empty value turns the source off). matugen's `theme.json` is read by default on Linux
-/// only; elsewhere it is opt-in through `ND_THEME_JSON` or [`ThemeFiles::matugen`].
+/// only; elsewhere it is opt-in through `ND_THEME_JSON` or [`ThemeFiles::matugen`]. On Linux
+/// the first existing file wins: `<config>/<app>/theme.json`, then FormalShell's
+/// `$XDG_STATE_HOME/formalshell/theme.json`; with neither present the app path is watched.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ThemeFiles {
     pub toml: Option<PathBuf>,
@@ -55,18 +57,34 @@ fn config_dir(app: &str) -> PathBuf {
     }
 }
 
+/// The palette FormalShell publishes on every wallpaper change.
+fn shell_theme_json() -> Option<PathBuf> {
+    let state = std::env::var_os("XDG_STATE_HOME").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").filter(|d| !d.is_empty()).map(|h| PathBuf::from(h).join(".local/state"))
+    })?;
+    Some(state.join("formalshell/theme.json"))
+}
+
+fn discover(own: PathBuf, shell: Option<PathBuf>) -> PathBuf {
+    if own.exists() {
+        return own;
+    }
+    shell.filter(|p| p.exists()).unwrap_or(own)
+}
+
 fn from_env(name: &str) -> Option<Option<PathBuf>> {
     std::env::var_os(name).map(|v| (!v.is_empty()).then(|| PathBuf::from(v)))
 }
 
 impl ThemeFiles {
     /// The default locations for app `name`: `<config>/<name>/theme.toml` everywhere, and
-    /// `~/.config/<name>/theme.json` on Linux.
+    /// `~/.config/<name>/theme.json` on Linux, falling back to the shell's own palette file.
     pub fn for_app(name: &str) -> ThemeFiles {
         let dir = config_dir(name);
         let toml = from_env("ND_THEME_TOML").unwrap_or_else(|| Some(dir.join("theme.toml")));
         let matugen = from_env("ND_THEME_JSON").unwrap_or_else(|| {
-            (cfg!(target_os = "linux") || cfg!(target_os = "freebsd")).then(|| dir.join("theme.json"))
+            (cfg!(target_os = "linux") || cfg!(target_os = "freebsd"))
+                .then(|| discover(dir.join("theme.json"), shell_theme_json()))
         });
         ThemeFiles { toml, matugen }
     }
@@ -75,5 +93,23 @@ impl ThemeFiles {
     pub fn matugen(mut self, path: impl Into<PathBuf>) -> Self {
         self.matugen = Some(path.into());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_prefers_the_app_file_then_the_shell_file() {
+        let root = std::env::temp_dir().join(format!("nd-theme-discover-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (own, shell) = (root.join("own.json"), root.join("shell.json"));
+        assert_eq!(discover(own.clone(), Some(shell.clone())), own);
+        std::fs::write(&shell, "{}").unwrap();
+        assert_eq!(discover(own.clone(), Some(shell.clone())), shell);
+        std::fs::write(&own, "{}").unwrap();
+        assert_eq!(discover(own.clone(), Some(shell)), own);
+        assert_eq!(discover(own.clone(), None), own);
     }
 }

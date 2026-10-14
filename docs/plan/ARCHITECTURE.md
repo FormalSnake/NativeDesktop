@@ -597,8 +597,9 @@ Linux compositor blur where the compositor offers it (KDE blur protocol; on Hypr
 surface the compositor blurs by rule) else a translucent matugen surface; web plain GPUI
 translucency. It takes every override like any other element.
 
-Palette sources, first hit wins: app or user `theme.toml`; on Linux the matugen `theme.json` at
-`~/.config/<app>/theme.json` (watched with `notify` on the parent directory, 50 ms debounce, 1 s
+Palette sources, first hit wins: app or user `theme.toml`; on Linux the matugen `theme.json`, first existing of `ND_THEME_JSON`,
+`~/.config/<app>/theme.json`, FormalShell's `$XDG_STATE_HOME/formalshell/theme.json` (shadcn keys
+plus `mode`, so a FormalShell desktop needs no template; watched with `notify` on the parent directory, 50 ms debounce, 1 s
 mtime fallback, half-written files keep the last palette; the app never spawns matugen; token map
 in `docs/research/linux-nix-config.md` section 1, with `success`/`warning` from matugen
 `custom_colors`); OS appearance and accent (`NSAppearance`, `UISettings`, portal `color-scheme` and
