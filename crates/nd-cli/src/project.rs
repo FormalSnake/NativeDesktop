@@ -76,6 +76,9 @@ impl Project {
     pub fn build_release(&self, target: Option<&str>) -> Result<PathBuf> {
         let mut cargo = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
         cargo.args(["build", "--release", "--bin", &self.bin]).current_dir(&self.root);
+        if crate::package::cef::enabled(self) {
+            cargo.args(["--features", "nd/cef"]);
+        }
         if let Some(target) = target {
             cargo.args(["--target", target]);
         }

@@ -6,6 +6,7 @@
 
 use nd::core::WindowId;
 use nd::prelude::*;
+use nd::webview::{WebView, webview};
 
 actions!(tabs_app, [NewTab, CloseTab, ShowAllTabs]);
 
@@ -17,12 +18,13 @@ pub struct Page {
     pub number: u32,
     address: Entity<TextFieldState>,
     pub url: Option<SharedString>,
+    web: WebView,
 }
 
 impl Render for Page {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.url {
-            Some(url) => webview(format!("page-{}", self.number), url.clone()).size_full().into_any_element(),
+            Some(_) => webview(SharedString::from(format!("page-{}", self.number)), &self.web).size_full().into_any_element(),
             None => status_page("New Tab")
                 .id("new-tab")
                 .icon(Icon::Globe)
@@ -39,6 +41,7 @@ impl Render for Page {
                             let url = if typed.contains("://") { typed.to_owned() } else { format!("https://{typed}") };
                             // The window's title is the tab's title.
                             cx.set_window_title(window.id(), typed.to_owned());
+                            this.web.load(url.clone());
                             this.url = Some(url.into());
                             cx.notify();
                         }
@@ -109,7 +112,7 @@ pub fn open_tab(cx: &mut App, browser: &Entity<Browser>) -> WindowHandle<TabWind
             false
         });
         let address = cx.new(|_| TextFieldState::default());
-        let page = cx.new(|_| Page { number, address, url: None });
+        let page = cx.new(|_| Page { number, address, url: None, web: WebView::new() });
         cx.new(|_| TabWindow { browser, page })
     });
     let page = handle.root().read(cx).page.clone();

@@ -40,13 +40,13 @@ pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, St
 pub use overlay::{
     DismissCause, Dismissed, Modality, OverlayElement, OverlayKind, OverlayProps, Placement, panel, popover, tooltip,
 };
-pub use surface::{InputCounts, SurfaceProps, SurfaceSource, native_surface, webview};
+pub use surface::{InputCounts, SurfaceProps, SurfaceSource, native_surface};
 pub use window::{Titlebar, TitlebarInsets, Window, WindowHandle, WindowKind, WindowOptions};
 
 /// What an app imports: the vocabulary plus GPUI's geometry and colour helpers.
 pub mod prelude {
     pub use crate::overlay::{DismissCause, Dismissed, Modality, OverlayKind, Placement, panel, popover, tooltip};
-    pub use crate::surface::{SurfaceSource, native_surface, webview};
+    pub use crate::surface::{SurfaceSource, native_surface};
     pub use crate::{
         AnyElement, AnyView, App, Button, ClickEvent, Context, Div, Entity, EntityId, FluentBuilder,
         InteractiveElement, IntoElement, NativeElement, ParentElement, Render, Styled, Subscription, Text, WeakEntity,

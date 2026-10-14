@@ -1,0 +1,8 @@
+#:schema ../../target/nd/nativedesktop.schema.json
+[app]
+id = "dev.formalsnake.browser"
+display_name = "Browser"
+
+[webview]
+# `cef` bundles Chromium; build with `--features cef` (nd package does it from this setting).
+engine = "system"

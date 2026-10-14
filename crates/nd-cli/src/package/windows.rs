@@ -16,6 +16,9 @@ use crate::project::{Project, fresh_dir};
 use crate::vpk;
 
 pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
+    if super::cef::enabled(project) {
+        bail!("[webview] engine = \"cef\": bundling Chromium for Windows is not implemented yet (macOS only)");
+    }
     let work = project.nd_dir().join("package/windows");
     fresh_dir(&work)?;
     let exe = match &opts.binary {

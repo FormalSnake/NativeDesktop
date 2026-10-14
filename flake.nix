@@ -95,6 +95,9 @@
             PATH=$(printf %s "$PATH" | tr ':' '\n' | grep -v -e '-xcbuild-' -e '-xcrun' -e '-cctools' -e '-clang' -e '-binutils' -e '-rustc-wrapper' -e '-cargo-1' | paste -sd: -)
             export PATH="/usr/bin:$PATH"
             for v in $(env | sed -n 's/^\(NIX_\(CC\|BINTOOLS\|CFLAGS\|LDFLAGS\|HARDENING\|APPLE\)[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+            # nd-cef's build script downloads the CEF binary distribution (about 500 MB unpacked) into
+            # $CEF_PATH; on the macbook that is the cache drive, next to the cargo build dir.
+            export CEF_PATH="/Volumes/Kyan Drive/dev-cache.noindex/cef"
           ''
           + lib.optionalString stdenv.hostPlatform.isLinux ''
             export LD_LIBRARY_PATH="${lib.makeLibraryPath gpuLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

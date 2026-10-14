@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use nd_config::FileRole;
 
-use super::{Options, Packed, icon};
+use super::{Options, Packed, cef, icon};
 use crate::project::{Project, fresh_dir, write, xml_escape};
 use crate::vpk;
 
@@ -28,9 +28,21 @@ pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
         None => project.build_release(None)?,
     };
     let app = stage_bundle(project, &exe, &work.join("stage"))?;
+    let mut entitlements_list = project.config.macos.entitlements.clone();
+    if cef::enabled(project) {
+        let dist = cef::distribution(project)?;
+        let helper = cef::build_helper(project)?;
+        cef::bundle_mac(project, &app, &dist, &helper)?;
+        entitlements_list.extend(cef::ENTITLEMENTS.iter().map(|e| (*e).to_owned()));
+    } else {
+        let findings = cef::chromium_findings(&app);
+        if !findings.is_empty() {
+            bail!("the app does not use CEF but its bundle carries Chromium:\n{}", findings.join("\n"));
+        }
+    }
     // vpk insists on the `.entitlements` extension.
     let entitlements = work.join("app.entitlements");
-    write(&entitlements, entitlements_plist(&project.config.macos.entitlements))?;
+    write(&entitlements, entitlements_plist(&entitlements_list))?;
 
     let vpk = vpk::locate()?;
     std::fs::create_dir_all(&opts.releases)?;

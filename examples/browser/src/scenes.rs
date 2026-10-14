@@ -1,0 +1,145 @@
+//! The gate scenes: what `examples/overlays` shows, with the page in a `webview()` on whichever
+//! engine the run picked.
+
+use nd::prelude::*;
+use nd::webview::{WebView, webview};
+
+actions!(browser_scenes, [Choose]);
+
+const PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;background:#2f8f5b;\
+font:15px -apple-system;color:white;display:flex;align-items:center;justify-content:center\">\
+page</body></html>";
+
+const EDGE_PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;background:#2f8f5b\"></body></html>";
+
+struct Overlays {
+    page: WebView,
+    popover: bool,
+    panel: bool,
+    under: u32,
+    chosen: u32,
+}
+
+impl Overlays {
+    fn status(&self) -> String {
+        format!(
+            "under={} chosen={} popover={} panel={}",
+            self.under,
+            self.chosen,
+            if self.popover { "open" } else { "closed" },
+            if self.panel { "open" } else { "closed" },
+        )
+    }
+}
+
+impl Render for Overlays {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .p(px(16.))
+            .gap(px(12.))
+            .on_action(cx.listener(|this, _: &Choose, _, cx| {
+                this.chosen += 1;
+                cx.notify();
+            }))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .id("anchor")
+                            .w(px(320.))
+                            .h(px(28.))
+                            .child(button("open-popover", "Popover").on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
+                                    this.popover = true;
+                                    cx.notify();
+                                },
+                            )))
+                            .when(self.popover, |d| {
+                                d.child(
+                                    popover("pop")
+                                        .w(px(300.))
+                                        .h(px(200.))
+                                        .p(px(12.))
+                                        .child(text("Clicks in here stay in here."))
+                                        .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
+                                            this.popover = false;
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
+                    .child(button("open-panel", "Panel").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.panel = true;
+                        cx.notify();
+                    }))),
+            )
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap(px(12.))
+                    .flex_1()
+                    .child(button("under", "Under").w(px(150.)).h(px(32.)).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.under += 1;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        div()
+                            .id("menu-zone")
+                            .w(px(40.))
+                            .h(px(260.))
+                            .bg(rgb(0x8899aa))
+                            .context_menu(|menu, _, _| menu.item("Choose", Choose).separator().item("Again", Choose)),
+                    )
+                    .child(webview("web", &self.page).count_input().flex_1().h(px(320.))),
+            )
+            .child(text(self.status()).id("status"))
+            .when(self.panel, |d| {
+                d.child(
+                    panel("panel")
+                        .w(px(260.))
+                        .h(px(120.))
+                        .p(px(12.))
+                        .child(text("A modal panel. Esc closes it."))
+                        .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
+                            this.panel = false;
+                            cx.notify();
+                        })),
+                )
+            })
+    }
+}
+
+/// A popover, a modal panel and a context menu over a native button and a page counting the
+/// pointer input it sees (`gate_m8_webview::real_overlay_leak_*`).
+pub fn overlays(cx: &mut App) {
+    let page = WebView::new();
+    page.load_html(PAGE, None);
+    let options = WindowOptions::main("main").title("Overlays").size(size(px(720.), px(520.)));
+    cx.open_window(options, move |_window, cx| {
+        cx.new(move |_cx| Overlays { page, popover: false, panel: false, under: 0, chosen: 0 })
+    });
+}
+
+struct Edge {
+    page: WebView,
+}
+
+impl Render for Edge {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // The page is the root's only child: with `ND_DEBUG_EXPOSE` any frame where it lags the
+        // window shows the magenta window background.
+        webview("web", &self.page).size_full()
+    }
+}
+
+/// A flat page filling the window, for the real-drag resize gate.
+pub fn resize(cx: &mut App) {
+    let page = WebView::new();
+    page.load_html(EDGE_PAGE, None);
+    let options = WindowOptions::main("main").title("Resize").size(size(px(720.), px(520.)));
+    cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
+}

@@ -80,7 +80,7 @@ impl<C: 'static> AppKitDispatch<C> {
     /// the chain like any other node's view.
     pub fn sync_key_view_loop(&self) {
         let order = self.tree.borrow().focus_order();
-        let chain: Vec<Retained<NSView>> = order.iter().filter_map(|n| self.backend.view(*n)).collect();
+        let chain: Vec<Retained<NSView>> = order.iter().filter_map(|n| self.backend.key_view(*n)).collect();
         for (i, view) in chain.iter().enumerate() {
             let next = &chain[(i + 1) % chain.len()];
             unsafe { view.setNextKeyView(Some(next)) };

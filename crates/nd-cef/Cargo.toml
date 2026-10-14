@@ -1,0 +1,39 @@
+[package]
+name = "nd-cef"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+nd-core.workspace = true
+nd-ui.workspace = true
+nd-webview.workspace = true
+tracing = "0.1.44"
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CEF 154. Its build script downloads the binary distribution into $CEF_PATH (the dev shell
+# points it at the cache drive) and builds the C++ wrapper; the framework itself is loaded at
+# run time from the app bundle, so nothing of Chromium is linked into the binary.
+cef = { version = "=154.5.0", default-features = false }
+# Named directly only for its `CEF_DIR` build metadata (build.rs), the dev fallback for
+# finding the framework.
+cef-dll-sys = { version = "=154.5.0", default-features = false }
+nd-backend-appkit.workspace = true
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-metal = { version = "0.3.2", features = ["objc2-io-surface"] }
+objc2-io-surface = "0.3.2"
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+
+# The Chromium subprocess executable. `nd package mac` copies it into the five helper bundles.
+[[bin]]
+name = "nd-cef-helper"
+path = "src/bin/helper.rs"
