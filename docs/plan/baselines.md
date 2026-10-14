@@ -122,6 +122,8 @@ g815 booted into Windows 11, RTX 5070 Laptop with the Intel iGPU, a 2560x1600 24
 2560x1440 144 Hz monitor, debug builds made on the machine. Resize gate with the `WM_SIZING` fix
 (vendored `gpui-pre-windows`): 1 to 3 of 100 captured frames show the content one drag step
 (4 to 5 px) short of the edge, never magenta; the deferred-layout control is caught in 102 to 105
-of about 114 frames. Pacing: GPUI reports 240 and 144 Hz for the two monitors and swaps them when
-the windows move, but both windows draw at 235 to 252 Hz wherever they sit, so the 144 Hz one
-overdraws by about 100 frames a second.
+of about 114 frames. Pacing before fork patch 0006: both windows drew at 235 to 252 Hz wherever
+they sat (one `DwmFlush` clock at the fastest display's rate). Skipping ticks of that clock gave
+the 144 Hz window 121 to 127 Hz, since 240 Hz ticks cannot line up with a 144 Hz panel's
+vblanks. With a `WaitForVBlank` thread per monitor: 239.8 to 240.2 Hz and 144.0 to 144.1 Hz,
+swapped after a move, and 240 Hz for a window across the seam.
