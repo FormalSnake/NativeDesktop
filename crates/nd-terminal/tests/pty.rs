@@ -114,4 +114,20 @@ mod gate_m9_terminal {
         drop(remote);
         pump_until(&s, "the hang-up", TerminalSession::is_closed);
     }
+
+    /// A child that exits right after writing keeps its output: at about 4% of runs it used to
+    /// arrive empty once the pty's last slave closed before the master read.
+    #[test]
+    fn short_lived_children_keep_their_output() {
+        let mut lost = 0;
+        for _ in 0..100 {
+            let s =
+                TerminalSession::spawn(&Command::new("printf").arg("hello"), SessionOptions::default()).expect("spawn");
+            pump_until(&s, "printf to finish", |s| s.exit_status().is_some() && s.is_closed());
+            if s.screen_text() != "hello" {
+                lost += 1;
+            }
+        }
+        assert_eq!(lost, 0, "{lost} of 100 runs lost their output");
+    }
 }

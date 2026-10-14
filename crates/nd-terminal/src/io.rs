@@ -184,8 +184,10 @@ impl Transport {
             builder.env(key, value);
         }
         let mut child = pair.slave.spawn_command(builder).map_err(io::Error::other)?;
-        // The child holds its own copy; ours would keep the master from seeing end of stream.
-        drop(pair.slave);
+        // Ours stays open until the child is gone: when a short-lived child's session ends with
+        // no slave left open, macOS can drop the output it wrote before the master reads it.
+        // Closing ours after the exit is what lets the master see end of stream.
+        let slave = pair.slave;
         let pid = child.process_id();
         let killer = child.clone_killer();
         let reader = pair.master.try_clone_reader().map_err(io::Error::other)?;
@@ -198,6 +200,7 @@ impl Transport {
                 Ok(s) => ExitStatus { code: s.exit_code(), signal: s.signal().map(str::to_owned) },
                 Err(_) => ExitStatus { code: 1, signal: None },
             };
+            drop(slave);
             waiter.inbox.lock().unwrap().exit = Some(status);
             waiter.wake();
         })?;
