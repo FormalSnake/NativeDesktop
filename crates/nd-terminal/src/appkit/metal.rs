@@ -746,9 +746,8 @@ impl Renderer {
         &self.queue
     }
 
-    /// Renders the built instances offscreen and reads the pixels back, as RGBA rows: for
-    /// goldens and tests, without a window.
-    pub fn render_image(&self, width: u32, height: u32, clear: Hsla) -> Option<(u32, u32, Vec<u8>)> {
+    /// A `width` by `height` texture to draw into without a view.
+    pub fn target(&self, width: u32, height: u32) -> Option<Retained<ProtocolObject<dyn MTLTexture>>> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::BGRA8Unorm,
@@ -759,11 +758,20 @@ impl Renderer {
         };
         desc.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
         desc.setStorageMode(MTLStorageMode::Shared);
-        let target = self.device.newTextureWithDescriptor(&desc)?;
-        let command_buffer = self.queue.commandBuffer()?;
-        self.encode(&command_buffer, &target, clear);
+        self.device.newTextureWithDescriptor(&desc)
+    }
+
+    /// Draws the built instances into `target` and waits for the GPU to finish.
+    pub fn draw_to(&self, target: &ProtocolObject<dyn MTLTexture>, clear: Hsla) {
+        let Some(command_buffer) = self.queue.commandBuffer() else { return };
+        self.encode(&command_buffer, target, clear);
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
+    }
+
+    /// `target`'s pixels as RGBA rows.
+    pub fn read(target: &ProtocolObject<dyn MTLTexture>) -> (u32, u32, Vec<u8>) {
+        let (width, height) = (target.width() as u32, target.height() as u32);
         let mut bgra = vec![0u8; (width * height * 4) as usize];
         unsafe {
             target.getBytes_bytesPerRow_fromRegion_mipmapLevel(
@@ -779,6 +787,6 @@ impl Renderer {
         for px in bgra.chunks_exact_mut(4) {
             px.swap(0, 2);
         }
-        Some((width, height, bgra))
+        (width, height, bgra)
     }
 }

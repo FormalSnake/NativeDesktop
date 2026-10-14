@@ -68,6 +68,27 @@ struct NodeState {
     layout: StdCell<Option<GridLayout>>,
     /// Whether the grid's font has a glyph for an icon codepoint, by font family and codepoint.
     coverage: RefCell<HashMap<(SharedString, char), bool>>,
+    /// Shaped and placed graphemes, for the font, size and scale in `shaped_for`.
+    shapes: RefCell<HashMap<ShapeKey, Rc<[Placed]>>>,
+    shaped_for: RefCell<Option<(SharedString, f32, f32, usize)>>,
+}
+
+/// A grapheme, its bold and italic bits and the cells its box spans.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ShapeKey {
+    Char(char, u8, u16),
+    Str(Box<str>, u8, u16),
+}
+
+/// One glyph of a shaped grapheme, its pen position from the cell's top left.
+#[derive(Clone, Copy, Debug)]
+struct Placed {
+    font: gpui::FontId,
+    glyph: gpui::GlyphId,
+    x: f32,
+    y: f32,
+    size: Pixels,
+    emoji: bool,
 }
 
 impl NodeState {
@@ -84,6 +105,8 @@ impl NodeState {
             sprites: RefCell::default(),
             layout: StdCell::default(),
             coverage: RefCell::default(),
+            shapes: RefCell::default(),
+            shaped_for: RefCell::default(),
         }
     }
 
@@ -338,6 +361,14 @@ impl Element for TerminalElement {
         );
         window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, self.theme.background));
+            // Font ids belong to one text system; a node id can outlive its app in tests.
+            let system = Arc::as_ptr(window.text_system()) as usize;
+            let shaped_for =
+                (prepainted.fonts.regular.family.clone(), prepainted.fonts.size.as_f32(), layout.scale, system);
+            if self.state.shaped_for.borrow().as_ref() != Some(&shaped_for) {
+                self.state.shapes.borrow_mut().clear();
+                *self.state.shaped_for.borrow_mut() = Some(shaped_for);
+            }
             let session = self.state.session();
             session.frame(|frame| self.paint_grid(frame, &layout, &prepainted.fonts, window, cx));
         });
@@ -555,7 +586,7 @@ impl TerminalElement {
         }
         // Text, one shaped line per row so GPUI's layout cache keeps it between frames.
         for (y, row) in frame.rows.iter().enumerate() {
-            self.paint_row(frame, row, y as u16, layout, fonts, block_cursor, window, cx);
+            self.paint_row(frame, row, y as u16, layout, fonts, block_cursor, window);
         }
         // Cursor shapes drawn over the text.
         if let Some(c) = cursor.filter(|c| c.shape != CursorShape::Block || self.state.marked.borrow().is_some()) {
@@ -598,14 +629,8 @@ impl TerminalElement {
         fonts: &Fonts,
         block_cursor: Option<crate::frame::Cursor>,
         window: &mut Window,
-        cx: &mut App,
     ) {
         let theme = &self.theme;
-        let (cw, ch) = (layout.cell_width, layout.cell_height);
-        // The row's shaped text: every non-sprite grapheme, with the cell each starts at.
-        let mut text = String::new();
-        let mut runs: Vec<TextRun> = Vec::new();
-        let mut starts: Vec<(usize, usize)> = Vec::new();
         for (x, cell) in row.cells.iter().enumerate() {
             if cell.is_blank() || cell.attrs.contains(Attrs::INVISIBLE) {
                 continue;
@@ -617,6 +642,7 @@ impl TerminalElement {
             }
             let o = layout.cell_origin(x as u16, y);
             let single = single_char(g);
+            let cells = glyph::box_cells(row, x);
             if let Some(c) = single.filter(|c| sprite::is_sprite(*c)) {
                 self.paint_mask(c, 1, o, layout, fg, window, |w, h| {
                     sprite::draw(c, w, h, (layout.scale.round() as u32).max(1))
@@ -624,53 +650,61 @@ impl TerminalElement {
             } else if let Some(c) =
                 single.filter(|c| glyph::is_symbol(*c) && icons::covers(*c) && !self.primary_covers(*c, fonts, window))
             {
-                let cells = glyph::box_cells(row, x);
                 let ppem = fonts.size.as_f32() * layout.scale;
                 let baseline = layout.baseline.as_f32() * layout.scale;
                 self.paint_mask(c, cells, o, layout, fg, window, |w, h| icons::mask(c, ppem, w, h, baseline));
             } else {
-                starts.push((text.len(), x));
-                text.push_str(g);
-                runs.push(TextRun {
-                    len: g.len(),
-                    font: fonts.pick(cell.attrs).clone(),
-                    color: fg,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                });
+                let placed = self.shaped(g, single, cell.attrs, cells, layout, fonts, window);
+                for p in placed.iter() {
+                    let origin = point(o.x + px(p.x), o.y + px(p.y));
+                    if p.emoji {
+                        let _ = window.paint_emoji(origin, p.font, p.glyph, p.size);
+                    } else {
+                        let _ = window.paint_glyph(origin, p.font, p.glyph, p.size, fg);
+                    }
+                }
             }
             self.paint_decorations(cell, o, layout, fg, window);
         }
-        if text.is_empty() {
-            return;
+    }
+
+    /// The glyphs of grapheme `g` placed in its box: shaped once per grapheme, style and box
+    /// size, so a frame of scrolled text costs lookups, not shaping.
+    #[allow(clippy::too_many_arguments)]
+    fn shaped(
+        &self,
+        g: &str,
+        single: Option<char>,
+        attrs: Attrs,
+        cells: u16,
+        layout: &GridLayout,
+        fonts: &Fonts,
+        window: &mut Window,
+    ) -> Rc<[Placed]> {
+        let style = u8::from(attrs.contains(Attrs::BOLD)) | u8::from(attrs.contains(Attrs::ITALIC)) << 1;
+        let key = match single {
+            Some(c) => ShapeKey::Char(c, style, cells),
+            None => ShapeKey::Str(g.into(), style, cells),
+        };
+        if let Some(placed) = self.state.shapes.borrow().get(&key) {
+            return placed.clone();
         }
-        let shaped = window.text_system().shape_line(SharedString::from(text), fonts.size, &runs, None);
-        // The x the first glyph of each cluster was shaped at, so a cluster's later glyphs (a
-        // combining mark) keep their offset from it.
-        let mut cluster: Option<(usize, Pixels)> = None;
-        let mut run_index = 0;
+        let (cw, ch) = (layout.cell_width, layout.cell_height);
+        let run = TextRun {
+            len: g.len(),
+            font: fonts.pick(attrs).clone(),
+            color: self.theme.foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shaped = window.text_system().shape_line(SharedString::from(g.to_owned()), fonts.size, &[run], None);
+        let symbol = single.is_some_and(glyph::is_symbol);
+        let mut placed = Vec::new();
         for shaped_run in &shaped.runs {
-            for g in &shaped_run.glyphs {
-                let at = starts.partition_point(|(byte, _)| *byte <= g.index).saturating_sub(1);
-                let (byte, col) = starts[at];
-                let first_x = match cluster {
-                    Some((c, x)) if c == byte => x,
-                    _ => {
-                        cluster = Some((byte, g.position.x));
-                        g.position.x
-                    }
-                };
-                while run_index + 1 < starts.len() && starts[run_index + 1].0 <= g.index {
-                    run_index += 1;
-                }
-                let color = runs[at].color;
-                let cell = &row.cells[col];
-                let cells = glyph::box_cells(row, col);
-                let symbol = row.grapheme(cell).chars().next().is_some_and(glyph::is_symbol) || g.is_emoji;
-                let first = row.grapheme(cell).chars().next();
-                let ink = match (first, single_char(row.grapheme(cell))) {
-                    (Some(c), Some(_)) if !g.is_emoji => {
+            for (i, gl) in shaped_run.glyphs.iter().enumerate() {
+                let ink = match single {
+                    Some(c) if !gl.is_emoji => {
                         window.text_system().typographic_bounds(shaped_run.font_id, fonts.size, c).ok().map(|b| Ink {
                             x: b.origin.x.as_f32(),
                             // Font bounds are y up from the baseline.
@@ -683,29 +717,39 @@ impl TerminalElement {
                 }
                 .unwrap_or_else(|| {
                     // A cluster or an emoji: its advance by the line's height.
-                    let next = shaped_run.glyphs.iter().find(|n| n.index > g.index).map(|n| n.position.x);
-                    let advance = next.map_or(cw * f32::from(cell.width()), |x| x - g.position.x);
+                    let next = shaped_run.glyphs.get(i + 1).map(|n| n.position.x);
+                    let advance = next.map_or(shaped.width, |x| x) - gl.position.x;
                     Ink {
                         x: 0.,
                         y: -shaped.ascent.as_f32(),
-                        width: advance.as_f32(),
+                        width: advance.as_f32().max(cw.as_f32()),
                         height: (shaped.ascent + shaped.descent).as_f32(),
                     }
                 });
-                let fit =
-                    glyph::fit(ink, cw.as_f32() * f32::from(cells), ch.as_f32(), layout.baseline.as_f32(), symbol);
-                let o = layout.cell_origin(col as u16, y);
-                let offset = (g.position.x - first_x).as_f32() * fit.scale;
-                let origin = point(o.x + px(fit.x + offset), o.y + px(fit.y));
-                let size = fonts.size * fit.scale;
-                if g.is_emoji {
-                    let _ = window.paint_emoji(origin, shaped_run.font_id, g.id, size);
-                } else {
-                    let _ = window.paint_glyph(origin, shaped_run.font_id, g.id, size, color);
-                }
+                let fit = glyph::fit(
+                    ink,
+                    cw.as_f32() * f32::from(cells),
+                    ch.as_f32(),
+                    layout.baseline.as_f32(),
+                    symbol || gl.is_emoji,
+                );
+                placed.push(Placed {
+                    font: shaped_run.font_id,
+                    glyph: gl.id,
+                    x: fit.x + gl.position.x.as_f32() * fit.scale,
+                    y: fit.y,
+                    size: fonts.size * fit.scale,
+                    emoji: gl.is_emoji,
+                });
             }
         }
-        let _ = cx;
+        let placed: Rc<[Placed]> = placed.into();
+        let mut shapes = self.state.shapes.borrow_mut();
+        if shapes.len() > 20_000 {
+            shapes.clear();
+        }
+        shapes.insert(key, placed.clone());
+        placed
     }
 
     /// True when the grid's own font draws `c`: a Nerd Font the user picked keeps its icons.

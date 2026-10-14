@@ -184,7 +184,11 @@ impl TerminalSession {
         }));
         let scheme: Rc<StdCell<Option<ColorScheme>>> = Rc::default();
         let mut term = Terminal::new(options.cols, options.rows)?;
-        term.set_scrollback_max_lines(Some(options.scrollback))?.set_terminfo_name("xterm-256color")?;
+        // The line count is the limit apps ask for; libghostty's default byte cap would cut a
+        // wide grid's history well short of it.
+        term.set_scrollback_max_lines(Some(options.scrollback))?
+            .set_scrollback_max_bytes(None)?
+            .set_terminfo_name("xterm-256color")?;
         {
             let e = effects.clone();
             term.on_pty_write(move |_, data| e.borrow_mut().out.extend_from_slice(data))?;

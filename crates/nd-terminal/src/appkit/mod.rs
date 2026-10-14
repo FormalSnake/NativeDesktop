@@ -17,7 +17,7 @@ use nd_backend_appkit::custom::{CustomCx, CustomNative, CustomPaint, CustomWidge
 use nd_core::NodeId;
 use nd_theme::Theme;
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyObject, NSObjectProtocol, Sel};
+use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
     NSCursor, NSEvent, NSEventModifierFlags, NSPasteboard, NSPasteboardTypeString, NSResponder, NSTextInputClient,
@@ -27,7 +27,7 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSAttributedStringKey, NSNotFound, NSPoint, NSRange, NSRangePointer,
     NSRect, NSSize, NSString, NSUInteger,
 };
-use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLDrawable, MTLPixelFormat};
+use objc2_metal::{MTLCommandBuffer, MTLCommandQueue, MTLDrawable, MTLPixelFormat, MTLTexture};
 use objc2_quartz_core::{CALayer, CAMetalDrawable, CAMetalLayer};
 
 use crate::element::{FocusChanged, LinkActivated, TerminalProps, TerminalWidget, emit_session_events};
@@ -849,26 +849,48 @@ impl Drop for TermIvars {
     }
 }
 
-/// Renders `session` as the AppKit presenter would, offscreen, into an RGBA image: for tier 2
-/// goldens without a window. `size` is in points; `scale` the backing scale.
-pub fn render_offscreen(
-    session: &TerminalSession,
-    tokens: &Theme,
-    font_size: f32,
+/// The view's renderer without the view: draws a session into an offscreen texture exactly as
+/// the view presents it, for tier 2 goldens and the scroll budget, with no window.
+pub struct Offscreen {
+    renderer: Renderer,
+    fonts: Fonts,
+    theme: TerminalTheme,
     padding: f32,
-    size: (f64, f64),
-    scale: f64,
-) -> Option<(u32, u32, Vec<u8>)> {
-    let theme = TerminalTheme::from_theme(tokens, &Default::default());
-    session.set_theme(&theme);
-    let fonts = Fonts::new(Some(&tokens.fonts.mono.family), f64::from(font_size), scale);
-    let pad = f64::from(padding) * scale;
-    let (w, h) = ((size.0 * scale) as u32, (size.1 * scale) as u32);
-    let cols = ((f64::from(w) - 2. * pad) / f64::from(fonts.cell_width)).floor().max(1.) as u16;
-    let rows = ((f64::from(h) - 2. * pad) / f64::from(fonts.cell_height)).floor().max(1.) as u16;
-    session.resize(GridSize { cols, rows, cell_width: fonts.cell_width, cell_height: fonts.cell_height });
-    let mut renderer = Renderer::new()?;
-    let overlay = Overlay { marked: None, hover: None };
-    session.frame(|frame| renderer.build(frame, &theme, &fonts, (pad as f32, pad as f32), &overlay));
-    renderer.render_image(w, h, theme.background)
+    target: Retained<ProtocolObject<dyn objc2_metal::MTLTexture>>,
+}
+
+impl Offscreen {
+    /// A `size` (points) surface at `scale`, in `tokens`' colours and monospace face.
+    pub fn new(tokens: &Theme, font_size: f32, padding: f32, size: (f64, f64), scale: f64) -> Option<Self> {
+        let renderer = Renderer::new()?;
+        let fonts = Fonts::new(Some(&tokens.fonts.mono.family), f64::from(font_size), scale);
+        let target = renderer.target((size.0 * scale) as u32, (size.1 * scale) as u32)?;
+        let theme = TerminalTheme::from_theme(tokens, &Default::default());
+        Some(Self { renderer, fonts, theme, padding: padding * scale as f32, target })
+    }
+
+    /// Themes `session` and fits its grid to the surface, as the view does on a resize.
+    pub fn fit(&self, session: &TerminalSession) {
+        session.set_theme(&self.theme);
+        let pad = f64::from(self.padding);
+        let w = self.target.width() as f64 - 2. * pad;
+        let h = self.target.height() as f64 - 2. * pad;
+        let cols = (w / f64::from(self.fonts.cell_width)).floor().max(1.) as u16;
+        let rows = (h / f64::from(self.fonts.cell_height)).floor().max(1.) as u16;
+        session.resize(GridSize { cols, rows, cell_width: self.fonts.cell_width, cell_height: self.fonts.cell_height });
+    }
+
+    /// One frame: the snapshot, the instances and the GPU pass, waited for.
+    pub fn draw(&mut self, session: &TerminalSession) {
+        let overlay = Overlay { marked: None, hover: None };
+        let pad = self.padding;
+        session.frame(|frame| self.renderer.build(frame, &self.theme, &self.fonts, (pad, pad), &overlay));
+        self.renderer.draw_to(&self.target, self.theme.background);
+    }
+
+    /// Draws a frame and reads it back as RGBA rows.
+    pub fn image(&mut self, session: &TerminalSession) -> (u32, u32, Vec<u8>) {
+        self.draw(session);
+        Renderer::read(&self.target)
+    }
 }

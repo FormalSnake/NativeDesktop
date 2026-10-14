@@ -30,9 +30,10 @@ mod gate_m9_terminal {
             registry.set_os(OsTheme { scheme: Some(scheme), ..registry.os().clone() });
             let session = TerminalSession::spawn(&support::printf_command(), SessionOptions::default()).expect("spawn");
             wait_for_exit(&session);
-            let (w, h, rgba) =
-                nd_terminal::appkit::render_offscreen(&session, registry.app_theme(), 13., 6., (720., 140.), 2.)
-                    .expect("Metal renders");
+            let mut surface =
+                nd_terminal::appkit::Offscreen::new(registry.app_theme(), 13., 6., (720., 140.), 2.).expect("Metal");
+            surface.fit(&session);
+            let (w, h, rgba) = surface.image(&session);
             let image = image::RgbaImage::from_raw(w, h, rgba).expect("sized");
             let name = format!("printf-appkit-{}-macos", if scheme.is_dark() { "dark" } else { "light" });
             if let Err(e) = support::compare(&name, &image) {

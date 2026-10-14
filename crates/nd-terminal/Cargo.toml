@@ -52,6 +52,11 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 name = "appkit"
 harness = false
 
+# The 100k-line scroll budget on each presenter this target links.
+[[test]]
+name = "scroll_budget"
+harness = false
+
 # Tier 2 on the GPUI presenter in GPUI's headless app.
 [[test]]
 name = "gpui"
