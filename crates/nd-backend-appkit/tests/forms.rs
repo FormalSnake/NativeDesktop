@@ -2,7 +2,7 @@
 //! class, its props reach the native object, a native change comes back as the control's
 //! event, feeding that event's value back sets nothing (echo), and props set from inside the
 //! control's own handler neither loop nor emit twice (reentrancy). Automation's `setValue`
-//! acts through the native control. Holds the ndshell machine lock while windows are up.
+//! acts through the native control.
 //! Prints `ND_FORMS_MAPPING_OK`.
 
 mod harness;
@@ -25,7 +25,6 @@ mod forms {
     pub use rig::{Checks, Rig};
 
     pub fn run() -> ! {
-        let _lock = ndshell::lock::acquire("nd-backend-appkit forms mapping").expect("machine lock");
         let rig = Rig::new();
         let mut c = Checks(0);
         text::run(&rig, &mut c);

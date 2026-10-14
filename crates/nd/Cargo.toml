@@ -17,7 +17,7 @@ build = ["dep:toml"]
 settings-ui = ["runtime", "nd-components/settings"]
 test = ["runtime", "nd-ui/test-support", "dep:wasm-bindgen-test"]
 # `nd::audit`, the tier 2 appearance audit: both backend kinds, the GPUI one headless.
-audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support"]
+audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support", "dep:ndshell"]
 # The GPUI backend on macOS as well, picked at launch with `ND_BACKEND=gpui`, for running the
 # Linux and Windows backend on the macbook. Off by default: AppKit apps never link `gpui_macos`.
 gpui = ["dep:nd-backend-gpui", "nd-terminal?/gpui"]
@@ -44,9 +44,14 @@ nd-terminal = { workspace = true, optional = true }
 [dev-dependencies]
 nd = { path = ".", features = ["audit"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit = { workspace = true, optional = true }
 nd-backend-gpui = { workspace = true, optional = true }
+# The audit's AppKit variant holds the machine-wide window lock.
+ndshell = { workspace = true, optional = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 nd-backend-gpui = { workspace = true }

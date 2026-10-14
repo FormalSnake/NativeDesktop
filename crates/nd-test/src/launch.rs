@@ -194,7 +194,7 @@ pub fn launch_app(options: LaunchOptions) -> Result<AppHandle> {
     }
     let lock = if options.machine_lock {
         let purpose = format!("nd-test launch {}", options.bin.display());
-        Some(ndshell::lock::acquire(&purpose).map_err(|e| Error::Launch(format!("real-input lock: {e}")))?)
+        Some(ndshell::lock::acquire_bounded(&purpose).map_err(|e| Error::Launch(format!("real-input lock: {e}")))?)
     } else {
         None
     };

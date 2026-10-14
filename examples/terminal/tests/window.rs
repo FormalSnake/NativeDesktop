@@ -64,7 +64,7 @@ mod window {
     }
 
     pub fn run() {
-        let _lock = ndshell::lock::acquire("terminal window").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gate_m9_terminal::appkit_window_keys_reach_cat");
         let dir = std::env::temp_dir().join(format!("nd-terminal-window-{}", std::process::id()));
         unsafe {
             std::env::set_var("ND_APP_DATA_DIR", &dir);

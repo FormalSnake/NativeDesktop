@@ -90,6 +90,3 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 - [ ] M14 youtubemusic (after M7; daemon on `nd-ipc`)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
-
-## Known flakes
-- Tier 2 AppKit tests that need a key window (`dispatch_spike`, `app_dispatch`, `gate_m3` chrome and goldens, `gate_m6::gallery_goldens`) only serialize inside one nextest run. Two agents running suites at once on the macbook make them fail (2026-10-14: both failed during a concurrent run, both pass alone). Fix: every window-owning test takes the ndshell machine lock, not just the nextest group.

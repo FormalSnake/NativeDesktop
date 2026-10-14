@@ -47,6 +47,6 @@ pub fn real_input(purpose: &str) -> Result<ndshell::lock::MachineLock> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        ndshell::lock::acquire(purpose).map_err(|e| Error::Launch(format!("real-input lock: {e}")))
+        ndshell::lock::acquire_bounded(purpose).map_err(|e| Error::Launch(format!("real-input lock: {e}")))
     }
 }

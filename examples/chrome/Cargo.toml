@@ -12,6 +12,9 @@ nd = { path = "../../crates/nd" }
 [dev-dependencies]
 nd = { path = "../../crates/nd", features = ["audit"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+ndshell = { path = "../../crates/ndshell" }
+
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }
 

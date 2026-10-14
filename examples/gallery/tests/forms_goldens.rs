@@ -243,7 +243,7 @@ mod goldens {
             std::env::set_var("ND_THEME_TOML", "");
             std::env::set_var("ND_THEME_JSON", "");
         }
-        let _lock = ndshell::lock::acquire("gallery forms goldens").expect("machine lock");
+        let _lock = ndshell::lock::window_test("gallery forms goldens");
         let host = gallery::app().host(|_cx| {});
         let mut failed = 0;
         for (appearance, scheme) in [(Appearance::Light, "light"), (Appearance::Dark, "dark")] {

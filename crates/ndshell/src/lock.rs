@@ -12,7 +12,7 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const LOCK_FILE: &str = "real-input.lock";
 
@@ -108,6 +108,68 @@ pub fn acquire_in(dir: &Path, purpose: &str) -> io::Result<MachineLock> {
     }
     record(&mut file, purpose)?;
     Ok(MachineLock { file, path })
+}
+
+/// How long [`window_test`] waits for the lock before failing, in seconds. Under nextest the
+/// wait counts against the test's slow-timeout, so the window-group slow-timeout in .config/nextest.toml is larger.
+pub const WINDOW_WAIT_SECS: u64 = 600;
+
+/// [`acquire_in`] that gives up after `timeout` with a `TimedOut` error naming the holder.
+pub fn acquire_timeout_in(dir: &Path, purpose: &str, timeout: Duration) -> io::Result<MachineLock> {
+    let (mut file, path) = open(dir)?;
+    let start = Instant::now();
+    let mut announced = false;
+    loop {
+        match file.try_lock() {
+            Ok(()) => break,
+            Err(TryLockError::WouldBlock) => {
+                if !announced {
+                    announced = true;
+                    let held_by = holder_in(dir);
+                    let held_by = if held_by.is_empty() { "another run".to_owned() } else { held_by };
+                    eprintln!("ndshell: waiting for the real-input lock ({}), held by {held_by}", path.display());
+                }
+                if start.elapsed() >= timeout {
+                    let held_by = holder_in(dir);
+                    let held_by = if held_by.is_empty() { "unknown holder".to_owned() } else { held_by };
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "{purpose} waited {}s for the machine lock {}, held by {held_by}",
+                            timeout.as_secs(),
+                            path.display()
+                        ),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(TryLockError::Error(e)) => return Err(e),
+        }
+    }
+    record(&mut file, purpose)?;
+    Ok(MachineLock { file, path })
+}
+
+/// The lock a test holds for as long as it has an on-screen window or needs key status, taken
+/// once at the top of the test and kept until it ends. Every such test goes through this (the
+/// AppKit harness's `main` does it for its binaries), so concurrent runs on one machine queue
+/// instead of stealing focus. `test` names the test in the holder line a waiting run prints.
+/// Panics after [`WINDOW_WAIT_SECS`] (`ND_WINDOW_LOCK_TIMEOUT_SECS` overrides), naming the holder.
+/// Not reentrant: a test already holding it must not take it again. Headless tests skip it.
+#[track_caller]
+pub fn window_test(test: &str) -> MachineLock {
+    match acquire_bounded(test) {
+        Ok(lock) => lock,
+        Err(e) => panic!("window lock: {e}"),
+    }
+}
+
+/// [`acquire`] bounded by [`WINDOW_WAIT_SECS`] (`ND_WINDOW_LOCK_TIMEOUT_SECS` overrides), for
+/// callers that report the error themselves.
+pub fn acquire_bounded(purpose: &str) -> io::Result<MachineLock> {
+    let secs =
+        std::env::var("ND_WINDOW_LOCK_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(WINDOW_WAIT_SECS);
+    acquire_timeout_in(&lock_dir(), purpose, Duration::from_secs(secs))
 }
 
 /// Takes the lock only if it is free.

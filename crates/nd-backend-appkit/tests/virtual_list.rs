@@ -53,6 +53,8 @@ mod mac {
     }
 
     fn open(setup: Setup) -> Mac {
+        static WINDOW_LOCK: std::sync::OnceLock<ndshell::lock::MachineLock> = std::sync::OnceLock::new();
+        WINDOW_LOCK.get_or_init(|| ndshell::lock::window_test("gate_m5::appkit_conformance"));
         let mut opened = None;
         let host = AppHost::new(|app| {
             let content = Rc::new(RefCell::new(HashMap::new()));
