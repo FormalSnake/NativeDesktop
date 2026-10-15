@@ -17,6 +17,7 @@ Status legend: `[ ]` open, `[~]` in progress, `[x]` done and verified.
 - [x] Testing/ndshell: input simulation, frame recording, SIP, profiling, crash logs, all platforms
 - [x] Parity inventory: every feature of the `zig` branch (`docs/parity/zig.md`)
 - [x] App inventory: repeated patterns and handrolled components in messages, youtubemusic, nativebrowser, GPUI apps (`docs/parity/apps.md`)
+- [ ] Native feel borrowed from react-native-gpui (`docs/research/react-native-gpui.md`): `NSScrollView`-driven scroll for the terminal and CEF surfaces, cross-label text selection on GPUI, DirectManipulation on Windows, dock badge
 
 ## Phase 2: architecture
 - [x] `docs/plan/ARCHITECTURE.md` drafted (AppKit on macOS, GPUI on Linux, GPUI Fluent skin on Windows, GPUI on web; one GPUI-shaped vocabulary)
