@@ -1,0 +1,14 @@
+// The public docs site: static assets only, built by `nd docs build` into target/nd/docs-site.
+// CI deploys it on every push to main (.github/workflows/ci.yml, job `docs-deploy`).
+{
+  "name": "nativedesktop-docs",
+  "account_id": "3d6d29be99bd80065c86623d073fa783",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "../target/nd/docs-site",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "nativedesktop.formalsnake.dev", "custom_domain": true }],
+  "workers_dev": true
+}

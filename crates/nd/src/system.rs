@@ -133,7 +133,13 @@ pub fn quick_look(window: nd_ui::WindowId, items: Vec<PreviewItem>, index: usize
             let node = tree.as_ref()?.root.iter().find(|n| n.test_id.as_deref() == Some(id.as_ref()))?;
             nd_backend_appkit::quick_look::screen_rect(ns_window.as_deref()?, node.bounds?)
         };
-        let items = items.into_iter().map(|i| { let f = i.source.as_ref().and_then(frame); (i.path, f) }).collect();
+        let items = items
+            .into_iter()
+            .map(|i| {
+                let f = i.source.as_ref().and_then(frame);
+                (i.path, f)
+            })
+            .collect();
         nd_backend_appkit::quick_look::show(items, index);
         true
     }

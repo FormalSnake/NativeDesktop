@@ -1,13 +1,14 @@
 //! The docs content model shared by the docs app (`docs/app`) and `nd docs`: pages from
 //! `docs/content`, code cut from `examples/` by anchor, the example registry
 //! (`docs/examples.toml`), per-OS captures, the generated component reference, the link and
-//! prose checks, and the raw-markdown export with `llms.txt`.
+//! prose checks, and the static export: HTML pages, raw markdown and `llms.txt`.
 //!
 //! No UI here: `nd-cli` depends on it, and the CLI stays free of the framework's runtime.
 
 pub mod captures;
 pub mod components;
 pub mod examples;
+pub mod html;
 pub mod links;
 pub mod markdown;
 pub mod model;
@@ -88,12 +89,17 @@ pub fn load(repo: &Path) -> Result<Site> {
     Ok(Site { sections: nav.section, pages, examples })
 }
 
-/// `<out>/<id>.md` for every page and `<out>/llms.txt` (an index) plus `llms-full.txt` (every
-/// page in sidebar order), for agents and anyone reading without the app.
-pub fn export(site: &Site, out: &Path) -> Result<()> {
+/// `<out>/<id>.md` and `<out>/<id>.html` for every page, `<out>/llms.txt` (an index) and
+/// `llms-full.txt` (every page in sidebar order), for agents and anyone reading without the app.
+/// Links in the markdown are rewritten to absolute URLs, so a page read on its own or inside
+/// `llms-full.txt` still points somewhere real.
+pub fn export(site: &Site, captures: &captures::Manifest, out: &Path) -> Result<()> {
     std::fs::create_dir_all(out)?;
-    let mut index = String::from(
-        "# NativeDesktop\n\n> One Rust view tree, native on macOS (AppKit), Linux and Windows (GPUI), and plain GPUI on the web.\n\n",
+    let site_url = html::SITE_URL;
+    let mut index = format!(
+        "# NativeDesktop\n\n> One Rust view tree, native on macOS (AppKit), Linux and Windows (GPUI), and plain GPUI on the web.\n\n\
+         Every page below is markdown. All of them in one file: {site_url}/llms-full.txt. \
+         Building an app with nd: start at {site_url}/agents/index.md.\n\n",
     );
     let mut full = String::new();
     for section in &site.sections {
@@ -104,18 +110,55 @@ pub fn export(site: &Site, out: &Path) -> Result<()> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&path, &page.markdown)?;
+            let markdown = absolute_links(&page.markdown, id);
+            std::fs::write(&path, &markdown)?;
             let description =
                 if page.description.is_empty() { String::new() } else { format!(": {}", page.description) };
-            index.push_str(&format!("- [{}]({id}.md){description}\n", page.title));
-            full.push_str(&page.markdown);
+            index.push_str(&format!("- [{}]({site_url}/{id}.md){description}\n", page.title));
+            full.push_str(&format!("<!-- {site_url}/{id}.md -->\n\n"));
+            full.push_str(&markdown);
             full.push_str("\n\n");
         }
         index.push('\n');
     }
     std::fs::write(out.join("llms.txt"), index)?;
     std::fs::write(out.join("llms-full.txt"), full)?;
-    Ok(())
+    html::write(site, captures, out)
+}
+
+/// `markdown` from page `id` with every relative inline link made absolute: pages to their
+/// `.md` on the site, repository files to GitHub. Same-page anchors stay as they are.
+pub fn absolute_links(markdown: &str, id: &str) -> String {
+    use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
+    let base = match id.rsplit_once('/') {
+        Some((dir, _)) => format!("docs/content/{dir}"),
+        None => "docs/content".to_owned(),
+    };
+    let mut edits = Vec::new();
+    for (event, range) in Parser::new_ext(markdown, Options::ENABLE_TABLES).into_offset_iter() {
+        let Event::Start(Tag::Link { link_type: LinkType::Inline, dest_url, .. }) = event else { continue };
+        if dest_url.starts_with('#') {
+            continue;
+        }
+        let href = match markdown::classify(&dest_url, id, &base) {
+            Link::Page { id, anchor } => {
+                format!("{}/{id}.md{}", html::SITE_URL, anchor.map(|a| format!("#{a}")).unwrap_or_default())
+            }
+            Link::Repo(path) => html::repo_url(&path),
+            Link::External(_) => continue,
+        };
+        let text = &markdown[range.clone()];
+        let Some(open) = text.rfind("](") else { continue };
+        let start = range.start + open + 2;
+        if markdown[start..].starts_with(dest_url.as_ref()) {
+            edits.push((start..start + dest_url.len(), href));
+        }
+    }
+    let mut out = markdown.to_owned();
+    for (range, href) in edits.into_iter().rev() {
+        out.replace_range(range, &href);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -127,5 +170,16 @@ mod tests {
         assert!(!site.pages.is_empty());
         let (findings, _) = super::links::check(&repo, &site);
         assert!(findings.is_empty(), "{findings:#?}");
+    }
+
+    #[test]
+    fn links_become_absolute() {
+        let md = "See [theming](../concepts/theming.md#tokens), [here](#x), [src](../../../examples/hello) \
+                  and [web](https://example.com).";
+        let out = super::absolute_links(md, "guides/web");
+        assert!(out.contains("(https://nativedesktop.formalsnake.dev/concepts/theming.md#tokens)"), "{out}");
+        assert!(out.contains("[here](#x)"));
+        assert!(out.contains("(https://github.com/FormalSnake/NativeDesktop/blob/main/examples/hello)"));
+        assert!(out.contains("(https://example.com)"));
     }
 }

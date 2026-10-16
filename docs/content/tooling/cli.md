@@ -10,6 +10,7 @@ same flags as below.
 | Command | Does |
 | --- | --- |
 | [`new`](#new) | Creates an app. |
+| [`upgrade`](#upgrade) | Moves the app to a newer nd release. |
 | [`check`](#check) | fmt, clippy, framework lints, appearance audit. |
 | [`test`](#test) | Runs the test tiers through nextest. |
 | [`build`](#build) | Native release build, or the web bundle. |
@@ -28,11 +29,27 @@ and names that are not a lowercase package name.
 
 - `<name>`: directory to create; its last component is the package name.
 - `--id <id>`: reverse-DNS app id, default `com.example.<name>`.
-- `--nd-path <path>` (env `ND_PATH`): depend on a local checkout of the `nd` crate instead of crates.io.
+- `--nd-path <path>` (env `ND_PATH`): depend on a local checkout of the `nd` crate (`crates/nd`)
+  instead of the CLI's release tag.
+- `--nd-git <url>` (env `ND_GIT`): the repository nd is fetched from, default
+  `https://github.com/FormalSnake/NativeDesktop`, for a mirror or a fork.
 - `--standalone`: add an empty `[workspace]` so the app builds on its own inside another workspace.
 
 ```sh
 nd new notes --id es.canarycoders.notes && cd notes && nd check && nd test
+```
+
+## upgrade
+
+Moves every `nd` dependency and the GPUI `[patch.crates-io]` entries from their current tag to a
+newer one, re-resolves `Cargo.lock` (other locked versions stay) and prints the `CHANGELOG.md`
+entries between the two versions. If cargo cannot resolve the new tag, `Cargo.toml` is put back.
+
+- `--to <tag>`: the tag to move to, default the newest `vX.Y.Z` tag on the remote.
+- `--path <dir>`: the app's directory, default the current one.
+
+```sh
+nd upgrade --to v0.6.1
 ```
 
 ## check
@@ -178,8 +195,10 @@ repository.
   report per OS. `--require macos` fails on a missing or stale macOS capture, `--compile` checks
   every example natively and the web ones for wasm32, `--web` builds the site and each web
   example and loads them in headless Chrome.
-- `nd docs build`: the docs app's web bundle with each page's markdown, `llms.txt` and
-  `llms-full.txt` beside it, in `target/nd/docs-site/`. `nd docs serve` builds and serves it.
+- `nd docs build`: the static site in `target/nd/docs-site/`: an HTML page and the raw markdown
+  for every page, `llms.txt`, `llms-full.txt`, and the docs app's web bundle under `app/`.
+  `nd docs serve` builds and serves it. CI deploys it to https://nativedesktop.formalsnake.dev on
+  every push to main.
 - `nd docs capture [example..]`: runs each example through the test harness on this OS, light
   and dark, and records its source hash in the capture manifest. `--stale` takes only examples
   whose capture is missing or out of date. A changed example shows "not captured yet" until it
