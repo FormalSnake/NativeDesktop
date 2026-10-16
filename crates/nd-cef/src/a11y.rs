@@ -4,6 +4,7 @@
 //! values and frames of the nodes, and their nesting; actions and live-region notifications are
 //! not.
 
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 
 use cef::*;
@@ -38,6 +39,7 @@ fn dict_json(d: &DictionaryValue) -> Json {
     Json::Object(map)
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Node {
     pub role: String,
@@ -49,17 +51,20 @@ pub(crate) struct Node {
     pub children: Vec<i64>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Debug, Default)]
 pub(crate) struct Tree {
     pub nodes: HashMap<i64, Node>,
     pub root: Option<i64>,
 }
 
+#[cfg(target_os = "macos")]
 fn bounds(b: &Json) -> (f64, f64, f64, f64) {
     let n = |k: &str| b[k].as_f64().unwrap_or(0.);
     (n("x"), n("y"), n("width"), n("height"))
 }
 
+#[cfg(target_os = "macos")]
 impl Tree {
     pub(crate) fn apply(&mut self, change: &Json) {
         for update in change["updates"].as_array().into_iter().flatten() {
@@ -146,7 +151,7 @@ pub(crate) fn ns_role(role: &str) -> Option<&'static str> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use serde_json::json;

@@ -18,6 +18,7 @@ pub(crate) mod flag {
     pub const PRECISION_SCROLLING_DELTA: u32 = 1 << 14;
 }
 
+#[cfg(target_os = "macos")]
 /// An edit command a shortcut stands for (Cmd on macOS, Ctrl on Linux).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Edit {
@@ -30,6 +31,7 @@ pub(crate) enum Edit {
     SelectAll,
 }
 
+#[cfg(target_os = "macos")]
 /// The edit command of a shortcut, by its unmodified key, shift and the platform's alternate
 /// modifier (Option on macOS, Alt elsewhere).
 pub(crate) fn edit_command(key: &str, shift: bool, alternate: bool) -> Option<Edit> {
@@ -54,6 +56,7 @@ pub(crate) fn zoom_level(factor: f64) -> f64 {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn shortcuts_are_edit_commands() {
         assert_eq!(edit_command("c", false, false), Some(Edit::Copy));

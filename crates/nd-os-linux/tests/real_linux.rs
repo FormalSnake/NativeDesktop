@@ -142,7 +142,7 @@ mod gate_m2 {
     #[test]
     fn real_wayland_app_id_is_the_manifest_id() {
         let hyprland = start();
-        let (_probe, client) = Probe::ready(&hyprland, &[]);
+        let (_probe, client) = ready(&hyprland, &[]);
         assert_eq!(client.class, "dev.formalsnake.hello", "hello's `[app] id` is the window's class: {client:?}");
     }
 

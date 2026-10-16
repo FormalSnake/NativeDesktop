@@ -122,7 +122,7 @@ async fn run_loop(mut rx: UnboundedReceiver<Msg>, cx: &mut AsyncApp) {
         if let Some(msg) = msg {
             handle(msg, &mut deadline);
         }
-        while let Ok(Some(msg)) = rx.try_next() {
+        while let Ok(msg) = rx.try_recv() {
             handle(msg, &mut deadline);
         }
         if due || Instant::now() >= deadline {

@@ -97,15 +97,15 @@
               # nd-terminal's build script compiles libghostty-vt at the commit libghostty-vt-sys
               # pins, which needs Zig 0.16.
               zig_0_16
+              # cef-dll-sys builds CEF's C++ wrapper with CMake and Ninja.
+              cmake
+              ninja
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux (
               [
                 pkg-config
                 clang
                 mold
-                cmake
-                # cef-dll-sys builds CEF's C++ wrapper with Ninja.
-                ninja
                 wayland-scanner
                 mesa
                 # Headless compositors for tier 3: labwc lends each test's Hyprland a render node

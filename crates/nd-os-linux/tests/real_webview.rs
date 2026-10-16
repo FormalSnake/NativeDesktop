@@ -8,6 +8,8 @@
 //!   and a live page that counts every mousedown, mouseup, mousemove and wheel it sees. Nothing
 //!   inside an overlay reaches the page; a press that dismisses a light-dismiss overlay is
 //!   consumed, release included. Positive controls show the same input reaching the page.
+//! - `real_input_cef`: a click focuses a text field in the page, keys typed on the compositor's
+//!   keyboard (shift included) land in it and the wheel scrolls the page.
 //! - `real_resize_cef`: the resize gate with one flat page filling the window
 //!   (`BROWSER_SCENE=resize`, `ND_DEBUG_EXPOSE=1`): in no presented frame of a border drag does
 //!   the window background (magenta) or the compositor's show. Until Chromium's frame for a new
@@ -29,7 +31,7 @@ mod gate_m8_webview {
     use nd_test::{Session, connect_app};
     use nd_ui::InputCounts;
     use ndshell::hyprland::{Client, Hyprland, Options};
-    use ndshell::wayland::{Capture, VirtualInput, keys};
+    use ndshell::wayland::{Capture, Modifier, VirtualInput, keys};
 
     use crate::common::probe::Probe;
     use crate::common::resize::{analyze, edge_drags, near};
@@ -52,7 +54,10 @@ mod gate_m8_webview {
     #[test]
     fn real_parity_cef() {
         let hyprland = start();
-        let probe = Probe::launch(hyprland.command(browser_bin()), &[("BROWSER_SCENE", "parity")]);
+        let probe = Probe::launch(
+            hyprland.command(browser_bin()),
+            &[("BROWSER_SCENE", "parity"), ("ND_WEBVIEW_ENGINE", "cef")],
+        );
         let end = Instant::now() + Duration::from_secs(240);
         let result = loop {
             if let Some(line) = probe.last("ND_WEBVIEW_PARITY_") {
@@ -95,6 +100,11 @@ mod gate_m8_webview {
 
         fn status(&self) -> String {
             find(&self.root(), "status").map(|n| n.name.clone()).unwrap_or_default()
+        }
+
+        /// The page's title, which a web view reports as its name.
+        fn title(&self) -> String {
+            find(&self.root(), "web").map(|n| n.name.clone()).unwrap_or_default()
         }
 
         /// The counts the page wrote into its title, which a web view reports as its name.
@@ -285,6 +295,31 @@ mod gate_m8_webview {
         drop(app);
         let _ = std::fs::remove_dir_all(&dir);
         println!("ND_M8_OVERLAY_LEAK_CEF_LINUX_OK");
+    }
+
+    #[test]
+    fn real_input_cef() {
+        let hyprland = start();
+        let dir = std::env::temp_dir().join(format!("nd-webview-input-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let app = launch(&hyprland, "input", &dir);
+        app.wait("the page loaded", |a| a.title().starts_with("typed="));
+        let mut input = VirtualInput::connect(&hyprland).unwrap();
+        let (left, top) = app.at("web", 0., 0.).unwrap();
+        // The field sits 24 px in from the page's top left and is about 24 px tall.
+        click(&mut input, (left + 60., top + 36.));
+        for (key, mods) in [(keys::A, &[][..]), (keys::S, &[]), (keys::SPACE, &[]), (keys::A, &[Modifier::Shift])] {
+            input.key(key, mods).unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+        }
+        app.wait("the typed text in the field", |a| a.title().starts_with("typed=as A "));
+        let inside = app.at("web", 0.5, 0.6).unwrap();
+        input.scroll(inside.0, inside.1, 5).unwrap();
+        app.wait("the page scrolled", |a| a.title().rsplit_once("y=").is_some_and(|(_, y)| y.parse::<u32>().is_ok_and(|y| y > 0)));
+        println!("{}", app.title());
+        drop(app);
+        let _ = std::fs::remove_dir_all(&dir);
+        println!("ND_M8_INPUT_CEF_LINUX_OK");
     }
 
     /// The page's colour, `#2f8f5b`.

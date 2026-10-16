@@ -40,9 +40,13 @@ fn runtime_dir() -> Result<PathBuf, String> {
     }
 }
 
-/// Checks the runtime once; `libcef.so` itself is loaded with the executable.
+/// Checks the runtime and picks the API version; `libcef.so` itself is loaded with the
+/// executable. Every wrapper object reports the version set here, and Chromium aborts on the
+/// first one if none was.
 pub(crate) fn load() -> Result<(), String> {
-    runtime_dir().map(|_| ())
+    runtime_dir()?;
+    let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
+    Ok(())
 }
 
 /// The resources, and the app's own executable as every subprocess.

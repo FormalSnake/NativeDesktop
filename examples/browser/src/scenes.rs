@@ -10,6 +10,14 @@ const PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;bac
 font:15px -apple-system;color:white;display:flex;align-items:center;justify-content:center\">\
 page</body></html>";
 
+/// A text field and a page tall enough to scroll; the title says what reached it.
+const INPUT_PAGE: &str = "<!doctype html><html><head><title>typed= y=0</title></head>\
+<body style=\"margin:0;height:3000px;background:#2f8f5b\">\
+<input id=\"field\" style=\"margin:24px;width:240px;font:18px sans-serif\">\
+<script>function t(){document.title='typed='+document.getElementById('field').value+' y='+Math.round(scrollY);}\
+document.getElementById('field').addEventListener('input',t);addEventListener('scroll',t);</script>\
+</body></html>";
+
 const EDGE_PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;background:#2f8f5b\"></body></html>";
 
 struct Overlays {
@@ -141,5 +149,14 @@ pub fn resize(cx: &mut App) {
     let page = WebView::new();
     page.load_html(EDGE_PAGE, None);
     let options = WindowOptions::main("main").title("Resize").size(size(px(720.), px(520.)));
+    cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
+}
+
+/// A page with a text field filling the window, for the input gate: clicks focus the field,
+/// typed keys reach it and the wheel scrolls the page.
+pub fn input(cx: &mut App) {
+    let page = WebView::new();
+    page.load_html(INPUT_PAGE, None);
+    let options = WindowOptions::main("main").title("Input").size(size(px(720.), px(520.)));
     cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
 }

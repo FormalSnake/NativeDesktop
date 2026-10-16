@@ -179,6 +179,7 @@ impl CefPage {
         self.browser.borrow().as_ref()?.main_frame()
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn focused_frame(&self) -> Option<Frame> {
         let browser = self.browser.borrow();
         let browser = browser.as_ref()?;
