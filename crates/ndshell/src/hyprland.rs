@@ -11,6 +11,13 @@
 //! aquamarine binds `xdg_wm_base` v6 and sway and cage offer v5. Hyprland's own output on labwc is
 //! disabled; tests run on `HEADLESS-1`, created over IPC the way Hyprland's `hyprtester` does it.
 //!
+//! Both compositors talk to a private session bus in the runtime dir ([`PrivateBus`]), never the
+//! user's: Hyprland and labwc update the D-Bus and systemd activation environment on start and
+//! exit (each skips it here, Hyprland for `HYPRLAND_NO_SD_VARS` and a nested backend, labwc for a
+//! headless one), and with the user's bus inherited one slip leaves the user manager with this
+//! run's `WAYLAND_DISPLAY` and no `XDG_CURRENT_DESKTOP`. On the private bus `systemctl --user`
+//! and `dbus-update-activation-environment --systemd` find no systemd to write to.
+//!
 //! Windows float, borders are 2 px [`BORDER`], the background is [`BACKGROUND`], and animations,
 //! rounding, shadows and blur are off, so captures show exact geometry. `ND_HYPRLAND` and
 //! `ND_LABWC` override the binaries (default: on `PATH`), `ND_RENDER_NODE` the render node (default:
@@ -20,6 +27,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -62,6 +70,7 @@ pub struct Client {
 pub struct Hyprland {
     child: Child,
     parent: Child,
+    bus: PrivateBus,
     runtime_dir: PathBuf,
     signature: String,
     wayland_display: String,
@@ -71,7 +80,8 @@ pub struct Hyprland {
 impl Hyprland {
     pub fn start(options: Options) -> Result<Self, String> {
         let runtime_dir = new_runtime_dir()?;
-        let mut parent = start_parent(&runtime_dir)?;
+        let bus = PrivateBus::start(&runtime_dir)?;
+        let mut parent = start_parent(&runtime_dir, &bus)?;
         let parent_display = match wait_socket(&runtime_dir, &mut parent, "labwc") {
             Ok(display) => display,
             Err(why) => {
@@ -91,7 +101,7 @@ impl Hyprland {
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("XDG_CONFIG_HOME", runtime_dir.join("config"))
             .env("WAYLAND_DISPLAY", &parent_display)
-            // Keeps the instance out of the user's systemd and dbus activation environment.
+            .env("DBUS_SESSION_BUS_ADDRESS", bus.address())
             .env("HYPRLAND_NO_SD_VARS", "1")
             .env_remove("DISPLAY")
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
@@ -99,6 +109,10 @@ impl Hyprland {
             // with the system's driver.
             .env_remove("LD_LIBRARY_PATH")
             .env_remove("VK_ICD_FILENAMES")
+            // Aquamarine opens a libseat session even when nested, and the builtin backend forks
+            // an embedded seatd that ignores SIGTERM and outlives Hyprland. Its own group lets
+            // drop take that fork down too.
+            .process_group(0)
             .current_dir(&runtime_dir)
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
@@ -112,7 +126,7 @@ impl Hyprland {
             }
         };
         let mut this =
-            Self { child, parent, runtime_dir, signature: String::new(), wayland_display: String::new(), options };
+            Self { child, parent, bus, runtime_dir, signature: String::new(), wayland_display: String::new(), options };
         this.wait_ready()?;
         Ok(this)
     }
@@ -242,19 +256,21 @@ impl Hyprland {
 
 impl Drop for Hyprland {
     fn drop(&mut self) {
-        use rustix::process::{Pid, Signal, kill_process};
-        let _ = kill_process(Pid::from_child(&self.child), Signal::TERM);
+        use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process, kill_process_group, waitid};
+        let pid = Pid::from_child(&self.child);
+        let _ = kill_process(pid, Signal::TERM);
+        // NOWAIT leaves the exited child unreaped, so its pid, the group id, cannot be reused
+        // before the group kill below.
+        let exited = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
         let end = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < end {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                break;
-            }
+        while Instant::now() < end && matches!(waitid(WaitId::Pid(pid), exited), Ok(None)) {
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = self.child.kill();
+        let _ = kill_process_group(pid, Signal::KILL);
         let _ = self.child.wait();
         let _ = self.parent.kill();
         let _ = self.parent.wait();
+        self.bus.stop();
         if std::env::var_os("ND_KEEP_HYPRLAND").is_none() {
             let _ = fs::remove_dir_all(&self.runtime_dir);
         }
@@ -290,7 +306,7 @@ fn render_node() -> Result<PathBuf, String> {
 
 /// labwc on wlroots' headless backend: no outputs to show, no input devices, its config and
 /// sockets in `dir`.
-fn start_parent(dir: &Path) -> Result<Child, String> {
+fn start_parent(dir: &Path, bus: &PrivateBus) -> Result<Child, String> {
     let log = fs::File::create(dir.join("labwc.log")).map_err(|e| format!("log: {e}"))?;
     let binary = std::env::var_os("ND_LABWC").unwrap_or_else(|| "labwc".into());
     Command::new(&binary)
@@ -299,6 +315,8 @@ fn start_parent(dir: &Path) -> Result<Child, String> {
         .env("WLR_BACKENDS", "headless")
         .env("WLR_LIBINPUT_NO_DEVICES", "1")
         .env("WLR_RENDER_DRM_DEVICE", render_node()?)
+        .env("DBUS_SESSION_BUS_ADDRESS", bus.address())
+        .env("LABWC_UPDATE_ACTIVATION_ENV", "0")
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("DISPLAY")
         .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
@@ -308,6 +326,60 @@ fn start_parent(dir: &Path) -> Result<Child, String> {
         .stderr(log)
         .spawn()
         .map_err(|e| format!("{}: {e} (the nd dev shell provides labwc)", Path::new(&binary).display()))
+}
+
+/// A `dbus-daemon --session` listening on `<dir>/bus`, for the compositors of one run.
+#[derive(Debug)]
+pub(crate) struct PrivateBus {
+    child: Child,
+    address: String,
+}
+
+impl PrivateBus {
+    pub(crate) fn start(dir: &Path) -> Result<Self, String> {
+        let socket = dir.join("bus");
+        let address = format!("unix:path={}", socket.display());
+        let log = fs::File::create(dir.join("dbus.log")).map_err(|e| format!("log: {e}"))?;
+        let mut child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile", "--nosyslog"])
+            .arg(format!("--address={address}"))
+            .env("XDG_RUNTIME_DIR", dir)
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().map_err(|e| e.to_string())?)
+            .stderr(log)
+            .spawn()
+            .map_err(|e| format!("dbus-daemon: {e}"))?;
+        let end = Instant::now() + Duration::from_secs(5);
+        while UnixStream::connect(&socket).is_err() {
+            let exited = child.try_wait().ok().flatten();
+            if exited.is_some() || Instant::now() > end {
+                let _ = child.kill();
+                let _ = child.wait();
+                let log = fs::read_to_string(dir.join("dbus.log")).unwrap_or_default();
+                return Err(format!("private dbus-daemon did not listen on {}: {log}", socket.display()));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(Self { child, address })
+    }
+
+    pub(crate) fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Kills the daemon; call after the compositors are gone, so their exit path has a bus.
+    pub(crate) fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for PrivateBus {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 /// The parent's Wayland socket name, once it listens.
