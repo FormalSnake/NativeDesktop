@@ -110,8 +110,7 @@ mod gate_m2 {
         drop(probe);
 
         // Control: content laid out 300 ms late must be caught.
-        let (control, client) =
-            ready(&hyprland, &[("ND_DEBUG_EXPOSE", "1"), ("ND_DEBUG_DEFER_LIVE_LAYOUT", "1")]);
+        let (control, client) = ready(&hyprland, &[("ND_DEBUG_EXPOSE", "1"), ("ND_DEBUG_DEFER_LIVE_LAYOUT", "1")]);
         let recording = Arc::new(Mutex::new(Recording::default()));
         if let Some(out) = gate_out() {
             recording.lock().unwrap().keep = vec![("control", 20, out.join("control.bmp"))];

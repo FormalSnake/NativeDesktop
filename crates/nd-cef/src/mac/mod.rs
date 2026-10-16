@@ -45,8 +45,7 @@ fn framework_dir() -> Option<PathBuf> {
     candidates.into_iter().find(|c| c.join("Chromium Embedded Framework").is_file())
 }
 
-const MISSING: &str =
-    "the Chromium Embedded Framework is missing: package with `[webview] engine = \"cef\"`, or set ND_CEF_FRAMEWORK_DIR";
+const MISSING: &str = "the Chromium Embedded Framework is missing: package with `[webview] engine = \"cef\"`, or set ND_CEF_FRAMEWORK_DIR";
 
 thread_local! {
     static LOADED: Cell<bool> = const { Cell::new(false) };

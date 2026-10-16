@@ -20,9 +20,9 @@ use nd_core::{NodeId, WindowId};
 use nd_gpui::gpui::{
     self, AnyElement, AnyWindowHandle, App, AppContext, AsyncApp, Bounds, ContentMask, Corners, CursorStyle,
     DispatchPhase, Element, ElementId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, LayoutId, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage, ScrollWheelEvent, Style, StyleRefinement,
-    UTF16Selection, Window, fill, point, px, size,
+    IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, LayoutId, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, RenderImage, ScrollWheelEvent, Style, StyleRefinement, UTF16Selection, Window, fill,
+    point, px, size,
 };
 use nd_webview::WebViewProps;
 use nd_webview::menu::Entry;
@@ -774,10 +774,8 @@ impl gpui::InputHandler for Input {
             style: CompositionUnderlineStyle::SOLID,
             ..CompositionUnderline::default()
         };
-        let selection = selected.map_or(cef::Range { from: len, to: len }, |r| cef::Range {
-            from: r.start as u32,
-            to: r.end as u32,
-        });
+        let selection = selected
+            .map_or(cef::Range { from: len, to: len }, |r| cef::Range { from: r.start as u32, to: r.end as u32 });
         host.ime_set_composition(Some(&CefString::from(text)), Some(&[underline]), None, Some(&selection));
     }
 

@@ -156,15 +156,13 @@ pub fn bundle_mac(project: &Project, app: &Path, dist: &Path, helper: &Path) -> 
 }
 
 /// What Chromium needs beside the executable on Linux, as the CEF distribution lays it out.
-pub const LINUX_RUNTIME: [&str; 12] = [
+pub const LINUX_RUNTIME: [&str; 10] = [
     "libcef.so",
     "icudtl.dat",
     "v8_context_snapshot.bin",
     "resources.pak",
     "chrome_100_percent.pak",
     "chrome_200_percent.pak",
-    "libEGL.so",
-    "libGLESv2.so",
     "libvk_swiftshader.so",
     "vk_swiftshader_icd.json",
     "libvulkan.so.1",

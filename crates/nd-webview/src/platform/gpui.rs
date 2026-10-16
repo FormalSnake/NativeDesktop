@@ -149,7 +149,8 @@ impl CustomWidget for Presenter {
         if let Some(element) = engine.as_ref().and_then(|e| e.element(cx, window)) {
             return element;
         }
-        let reason = error.unwrap_or_else(|| format!("the {} engine cannot draw in this window", props.page.engine().name()));
+        let reason =
+            error.unwrap_or_else(|| format!("the {} engine cannot draw in this window", props.page.engine().name()));
         let theme = cx.theme();
         let mut notice = div()
             .size_full()

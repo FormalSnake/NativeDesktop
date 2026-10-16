@@ -25,7 +25,9 @@ pub(crate) fn modifiers(m: &Modifiers) -> u32 {
 pub(crate) fn wheel_delta(delta: &ScrollDelta) -> (i32, i32, bool) {
     match delta {
         ScrollDelta::Pixels(p) => (p.x.as_f32().round() as i32, p.y.as_f32().round() as i32, true),
-        ScrollDelta::Lines(l) => ((l.x * PIXELS_PER_LINE).round() as i32, (l.y * PIXELS_PER_LINE).round() as i32, false),
+        ScrollDelta::Lines(l) => {
+            ((l.x * PIXELS_PER_LINE).round() as i32, (l.y * PIXELS_PER_LINE).round() as i32, false)
+        }
     }
 }
 
@@ -90,7 +92,8 @@ pub(crate) fn virtual_key(key: &str) -> i32 {
 /// The XKB keycode (evdev + 8) of the key on a US layout, from which Chromium derives the DOM
 /// `code`; 0 when unknown.
 pub(crate) fn native_key(key: &str) -> i32 {
-    const ROWS: [(&str, i32); 4] = [("1234567890-=", 2), ("qwertyuiop[]", 16), ("asdfghjkl;'`", 30), ("zxcvbnm,./", 44)];
+    const ROWS: [(&str, i32); 4] =
+        [("1234567890-=", 2), ("qwertyuiop[]", 16), ("asdfghjkl;'`", 30), ("zxcvbnm,./", 44)];
     const SHIFTED: [(&str, &str); 4] =
         [("!@#$%^&*()_+", "1234567890-="), ("{}", "[]"), (":\"~", ";'`"), ("<>?", ",./")];
     let mut chars = key.chars();

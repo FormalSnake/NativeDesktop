@@ -10,12 +10,16 @@ const PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;bac
 font:15px -apple-system;color:white;display:flex;align-items:center;justify-content:center\">\
 page</body></html>";
 
-/// A text field and a page tall enough to scroll; the title says what reached it.
-const INPUT_PAGE: &str = "<!doctype html><html><head><title>typed= y=0</title></head>\
+/// A text field and a page tall enough to scroll; the title says what reached it: the field's
+/// text, the scroll offset, whether the field has focus and the last press the page saw. It reads
+/// `loading` until its script runs.
+const INPUT_PAGE: &str = "<!doctype html><html><head><title>loading</title></head>\
 <body style=\"margin:0;height:3000px;background:#2f8f5b\">\
 <input id=\"field\" style=\"margin:24px;width:240px;font:18px sans-serif\">\
-<script>function t(){document.title='typed='+document.getElementById('field').value+' y='+Math.round(scrollY);}\
-document.getElementById('field').addEventListener('input',t);addEventListener('scroll',t);</script>\
+<script>var f=document.getElementById('field'),at='none';\
+function t(){document.title='typed='+f.value+' y='+Math.round(scrollY)+' f='+(document.activeElement===f?1:0)+' at='+at;}\
+f.addEventListener('input',t);f.addEventListener('focus',t);f.addEventListener('blur',t);addEventListener('scroll',t);\
+addEventListener('mousedown',function(e){at=e.clientX+','+e.clientY;t();},true);t();</script>\
 </body></html>";
 
 const EDGE_PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;background:#2f8f5b\"></body></html>";

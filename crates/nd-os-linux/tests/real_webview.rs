@@ -123,8 +123,9 @@ mod gate_m8_webview {
             while !f(self) {
                 assert!(
                     start.elapsed() < Duration::from_secs(30),
-                    "timed out waiting for {what}: {}\n{}",
+                    "timed out waiting for {what}: status {:?}, page {:?}\n{}",
                     self.status(),
+                    self.title(),
                     self.probe.log()
                 );
                 std::thread::sleep(Duration::from_millis(30));
@@ -171,7 +172,8 @@ mod gate_m8_webview {
             assert!(start.elapsed() < Duration::from_secs(30), "no automation socket:\n{}", probe.log());
             std::thread::sleep(Duration::from_millis(50));
         };
-        let client = hyprland.wait_for_client(probe.child.id(), Duration::from_secs(10)).expect("browser maps a window");
+        let client =
+            hyprland.wait_for_client(probe.child.id(), Duration::from_secs(10)).expect("browser maps a window");
         App { probe, session, origin: (f64::from(client.at.0), f64::from(client.at.1)) }
     }
 
@@ -283,7 +285,11 @@ mod gate_m8_webview {
         std::thread::sleep(Duration::from_millis(500));
         click(&mut input, under);
         std::thread::sleep(Duration::from_millis(400));
-        assert!(app.status().contains("under=1 "), "the press that closed the menu clicked the button: {}", app.status());
+        assert!(
+            app.status().contains("under=1 "),
+            "the press that closed the menu clicked the button: {}",
+            app.status()
+        );
         let after_menu = app.counts();
         assert_eq!(
             (after_menu.down, after_menu.up, after_menu.wheel),
@@ -303,19 +309,28 @@ mod gate_m8_webview {
         let dir = std::env::temp_dir().join(format!("nd-webview-input-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let app = launch(&hyprland, "input", &dir);
-        app.wait("the page loaded", |a| a.title().starts_with("typed="));
+        app.wait("the page's script", |a| a.title().starts_with("typed="));
         let mut input = VirtualInput::connect(&hyprland).unwrap();
         let (left, top) = app.at("web", 0., 0.).unwrap();
         // The field sits 24 px in from the page's top left and is about 24 px tall.
-        click(&mut input, (left + 60., top + 36.));
+        // The pointer enters the window before it presses, as a hand's does: a press in the same
+        // batch as the motion that enters the surface can reach the app before its pointer focus.
+        let field = (left + 60., top + 36.);
+        wiggle(&mut input, (field.0 - 20., field.1));
+        click(&mut input, field);
+        app.wait("the click to focus the field", |a| a.title().contains(" f=1"));
+        assert!(app.title().ends_with(" at=60,36"), "the press lands where it was made: {}", app.title());
         for (key, mods) in [(keys::A, &[][..]), (keys::S, &[]), (keys::SPACE, &[]), (keys::A, &[Modifier::Shift])] {
             input.key(key, mods).unwrap();
             std::thread::sleep(Duration::from_millis(60));
         }
-        app.wait("the typed text in the field", |a| a.title().starts_with("typed=as A "));
+        app.wait("the typed text in the field", |a| a.title().starts_with("typed=as A y="));
         let inside = app.at("web", 0.5, 0.6).unwrap();
         input.scroll(inside.0, inside.1, 5).unwrap();
-        app.wait("the page scrolled", |a| a.title().rsplit_once("y=").is_some_and(|(_, y)| y.parse::<u32>().is_ok_and(|y| y > 0)));
+        let scrolled = |a: &App| {
+            a.title().split_whitespace().find_map(|w| w.strip_prefix("y=")?.parse::<u32>().ok()).is_some_and(|y| y > 0)
+        };
+        app.wait("the page scrolled", scrolled);
         println!("{}", app.title());
         drop(app);
         let _ = std::fs::remove_dir_all(&dir);
