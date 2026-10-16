@@ -27,6 +27,8 @@ mod controls;
 #[cfg(feature = "runtime")]
 pub mod files;
 #[cfg(feature = "runtime")]
+pub mod hud;
+#[cfg(feature = "runtime")]
 pub mod media;
 #[cfg(feature = "runtime")]
 pub mod native;
@@ -49,6 +51,8 @@ pub use nd_core::platform;
 /// Clocks that also work in a browser.
 #[cfg(feature = "runtime")]
 pub use nd_core::time;
+#[cfg(feature = "runtime")]
+pub use nd_diag as diag;
 /// Icons by Lucide name, and `icons::register` for an app's own.
 #[cfg(feature = "runtime")]
 pub use nd_icons as icons;

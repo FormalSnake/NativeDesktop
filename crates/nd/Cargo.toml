@@ -102,6 +102,11 @@ harness = false
 name = "appearance_catches"
 harness = false
 
+# Tier 2: the frame HUD toggled by F12's action, reading the window's recorded frames.
+[[test]]
+name = "frame_hud"
+harness = false
+
 # Tier 2: an app-defined widget's objc2 view in a real window, and the drawn fallback.
 [[test]]
 name = "native_widget"

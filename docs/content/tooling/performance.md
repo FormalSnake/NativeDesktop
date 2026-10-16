@@ -91,7 +91,12 @@ yet.
 
 The frame timing histograms in every incident bundle's `profile.json` ([diagnostics](diagnostics.md))
 are always on. For a timeline, build `nd-diag` with the `tracy` feature and attach Tracy. The
-`nd::trace!` macros and the in-app HUD described in ARCHITECTURE.md 9.1 are not shipped yet.
+`nd::trace!` macros described in ARCHITECTURE.md 9.1 are not shipped yet.
+
+`nd::hud::FrameHud` is the in-app frame HUD: F12 cycles it hidden, minimal (frames per second) and
+full (frame time against the display interval, the slowest frame, dropped frames), read from the
+same recorded frames. Put the view in the window's overlay and answer the action at the root:
+`scaffold().on_action(frame_hud_toggle(&hud)).overlay(hud.clone())`.
 
 ## Rules that keep an app inside the budget
 

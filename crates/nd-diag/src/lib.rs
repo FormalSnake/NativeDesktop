@@ -40,7 +40,7 @@ use tracing_subscriber::layer::SubscriberExt;
 
 pub use bundle::{BundleInfo, Kind, Retention, Snapshot, enforce_retention, list_bundles};
 pub use hang::{PostToMain, Watchdog};
-pub use record::{FrameRecord, InputRecord};
+pub use record::{FrameRecord, FrameSummary, InputRecord};
 
 const LOG_KEEP: u64 = 7;
 const LOG_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
@@ -337,6 +337,11 @@ impl Diag {
     pub fn record_frame(&self, window: u64, frame: FrameRecord, tree: Option<&SemanticWindow>) {
         self.0.recorder().frame(window, frame, tree);
         self.0.touch();
+    }
+
+    /// The window's recorded frames, oldest first, as many as the recorder keeps.
+    pub fn window_frames(&self, window: u64) -> Vec<FrameRecord> {
+        self.0.recorder().window_frames(window)
     }
 
     pub fn close_window(&self, window: u64) {
