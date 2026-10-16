@@ -8,6 +8,7 @@
 mod app_host;
 mod backend;
 mod button;
+mod canvas;
 mod controls;
 pub mod custom;
 mod diag;

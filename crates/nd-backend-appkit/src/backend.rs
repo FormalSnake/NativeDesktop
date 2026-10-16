@@ -1290,7 +1290,16 @@ impl Backend for AppKitBackend {
                 };
                 Native::Custom(custom.create(&cx))
             }
-            NodeKind::Canvas | NodeKind::Image | NodeKind::Widget(_) => {
+            NodeKind::Canvas => Native::Custom(crate::canvas::create(&crate::custom::CustomCx {
+                mtm,
+                node,
+                window,
+                props: p,
+                emit: emit(),
+                wake: crate::custom::Waker(state.wake.clone()),
+                theme: state.theme_of(node, window),
+            })),
+            NodeKind::Image | NodeKind::Widget(_) => {
                 panic!("the AppKit backend has no {kind:?} yet")
             }
         };

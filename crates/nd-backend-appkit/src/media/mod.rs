@@ -8,7 +8,7 @@
 //! contents decoded by the shared pipeline off the main thread.
 
 mod chat;
-mod image;
+pub(crate) mod image;
 mod lyrics;
 mod seek;
 mod shelf;
