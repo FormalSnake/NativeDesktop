@@ -355,7 +355,6 @@ mod gate_m2 {
     fn weak_gpu_drag(hyprland: &Hyprland, swapchain: &str) -> usize {
         let (probe, client) = Probe::ready(hyprland, &[("ND_DEBUG_EXPOSE", "1"), ("ND_DEBUG_SWAPCHAIN", swapchain)]);
         let mut input = VirtualInput::connect(hyprland).unwrap();
-        let recording = Arc::new(Mutex::new(Recording::default()));
         let before = probe.count("nd: viewport");
         edge_drags(&mut input, &client, 240.);
         let laid_out = probe.count("nd: viewport") - before;
