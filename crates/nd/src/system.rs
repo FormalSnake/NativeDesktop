@@ -113,6 +113,51 @@ pub fn open_url(url: &str) -> Result<()> {
     system().shell().open_url(url)
 }
 
+/// A file [`quick_look`] shows, and the element (by id) it zooms out of.
+#[derive(Clone, Debug)]
+pub struct PreviewItem {
+    pub path: std::path::PathBuf,
+    pub source: Option<nd_ui::prelude::SharedString>,
+}
+
+/// Shows `items` in the system's preview panel, at `index`: Quick Look on macOS, the panel
+/// Finder opens with Space, each item zooming out of its source element; the arrow keys step,
+/// Space and Esc close it. Returns `false` on a platform without one, where the app shows its
+/// own preview.
+pub fn quick_look(window: nd_ui::WindowId, items: Vec<PreviewItem>, index: usize, cx: &mut nd_ui::App) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let ns_window = cx.backend_as::<nd_backend_appkit::AppKitBackend>().and_then(|b| b.ns_window(window));
+        let tree = cx.semantic_window(window);
+        let frame = |id: &nd_ui::prelude::SharedString| {
+            let node = tree.as_ref()?.root.iter().find(|n| n.test_id.as_deref() == Some(id.as_ref()))?;
+            nd_backend_appkit::quick_look::screen_rect(ns_window.as_deref()?, node.bounds?)
+        };
+        let items = items.into_iter().map(|i| { let f = i.source.as_ref().and_then(frame); (i.path, f) }).collect();
+        nd_backend_appkit::quick_look::show(items, index);
+        true
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, items, index, cx);
+        false
+    }
+}
+
+/// Closes the preview panel [`quick_look`] opened.
+pub fn close_quick_look() {
+    #[cfg(target_os = "macos")]
+    nd_backend_appkit::quick_look::close();
+}
+
+/// Whether the preview panel is open.
+pub fn quick_look_open() -> bool {
+    #[cfg(target_os = "macos")]
+    return nd_backend_appkit::quick_look::is_open();
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
 /// Opens `path` in its default app.
 #[nd_macros::unavailable(web)]
 pub fn open_path(path: impl AsRef<Path>) -> Result<()> {
