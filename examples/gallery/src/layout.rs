@@ -83,6 +83,7 @@ impl Render for TabsDemo {
                     })),
             )
             .child(
+                // docs:begin tab-view
                 tab_view("documents")
                     .presentation(TabStyle::Strip)
                     .add_button(true)
@@ -107,7 +108,7 @@ impl Render for TabsDemo {
                         this.documents.push(name.clone());
                         this.document = name;
                         cx.notify();
-                    })),
+                    })), // docs:end tab-view
             )
             .child(text(self.last.clone()).text_color(secondary))
     }
@@ -120,6 +121,7 @@ pub struct SplitDemo {
 }
 
 impl SplitDemo {
+    // docs:begin pane-model
     pub fn new(_cx: &mut Context<Self>) -> Self {
         let tree = panes::seed_panes(vec![SharedString::from("Editor"), SharedString::from("Preview")]);
         Self { tree, next: 1 }
@@ -131,6 +133,7 @@ impl SplitDemo {
         self.next += 1;
         self.tree = panes::split_pane(&self.tree, &focused, axis, name, None);
     }
+    // docs:end pane-model
 }
 
 impl Render for SplitDemo {
@@ -160,6 +163,7 @@ impl Render for SplitDemo {
             )
             .child(
                 div().h(px(260.)).w_full().child(
+                    // docs:begin pane-tree
                     pane_tree("panes", &self.tree, move |leaf, focused| {
                         let id = leaf.id.clone();
                         let weak = weak.clone();
@@ -183,7 +187,7 @@ impl Render for SplitDemo {
                             this.tree = next;
                             cx.notify();
                         }
-                    })),
+                    })), // docs:end pane-tree
                 ),
             )
     }

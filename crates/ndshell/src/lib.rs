@@ -18,3 +18,5 @@ pub mod preflight;
 pub mod wayland;
 #[cfg(target_os = "linux")]
 pub mod weston;
+#[cfg(target_os = "macos")]
+pub mod window_list;

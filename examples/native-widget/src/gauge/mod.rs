@@ -15,6 +15,7 @@ pub struct GaugeProps {
     pub label: SharedString,
 }
 
+// docs:begin gauge-widget
 pub struct GaugeWidget;
 
 impl NativeWidget for GaugeWidget {
@@ -65,6 +66,7 @@ impl NativeWidget for GaugeWidget {
         backends
     }
 }
+// docs:end gauge-widget
 
 #[derive(IntoElement)]
 pub struct Gauge {

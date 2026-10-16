@@ -276,6 +276,16 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
             extra,
         };
     }
+    if let NodeKind::View = kind
+        && let Some(extra) = props.downcast_ref::<crate::DivProps>().and_then(|p| p.scope.as_ref()?.get::<Semantics>())
+    {
+        return Described {
+            role: extra.role.unwrap_or(Role::Group),
+            kind: "view".to_owned(),
+            name: extra.name.clone(),
+            extra: extra.clone(),
+        };
+    }
     let (role, kind_name, name) = match kind {
         NodeKind::Root => (Role::Window, "root".to_owned(), String::new()),
         NodeKind::View => match props.downcast_ref::<crate::DivProps>().and_then(|p| p.role.clone()) {

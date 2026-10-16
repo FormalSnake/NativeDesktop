@@ -48,7 +48,8 @@ fn tool_dir() -> PathBuf {
 
 pub fn which(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join(program)).find(|p| p.is_file())
+    let exe = format!("{program}{}", std::env::consts::EXE_SUFFIX);
+    std::env::split_paths(&path).map(|dir| dir.join(&exe)).find(|p| p.is_file())
 }
 
 /// A `vpk` invocation of `args`. An OS directive (`[linux]`, `[win]`) has to come before every

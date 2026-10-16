@@ -16,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
-    FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
+    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormProps, FormRow, FormRowProps,
+    FormSection, FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
     ScaffoldProps, SeparatorKind, SeparatorProps, SourceTreeKind, SourceTreeProps, SplitKind, SplitPaneKind,
     SplitPaneProps, SplitProps, StatusPageKind, StatusPageProps, SubtreeScope, SystemItemProps, Titlebar,
     TitlebarInset, TitlebarInsetProps, TitlebarProps, ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem,
@@ -1194,7 +1194,11 @@ impl Backend for AppKitBackend {
                 state.wake.clone(),
                 props::<nd_virtual::ListProps>(p, "List"),
             )),
-            NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
+            NodeKind::Widget(w) if is::<Form>(w) => {
+                let mut form = FormNative::new(mtm);
+                form.props = props::<FormProps>(p, "Form").clone();
+                Native::Form(form)
+            }
             NodeKind::Widget(w) if is::<Overlay>(w) => Native::Overlay(OverlayNative::new(
                 mtm,
                 node,
@@ -1361,7 +1365,10 @@ impl Backend for AppKitBackend {
                 *p = props::<FormRowProps>(&patch.new, "FormRow").clone();
                 form_changed = true;
             }
-            Native::Form(_) => {}
+            Native::Form(f) => {
+                f.props = props::<FormProps>(&patch.new, "Form").clone();
+                form_changed = true;
+            }
             Native::Overlay(o) => o.update(props(&patch.new, "Overlay")),
             Native::Surface(s) => {
                 let p: &SurfaceProps = props(&patch.new, "NativeSurface");

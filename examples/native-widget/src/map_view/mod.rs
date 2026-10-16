@@ -45,6 +45,7 @@ pub enum MapEvent {
     PinSelected(PinSelected),
 }
 
+// docs:begin map-widget
 pub struct MapWidget;
 
 impl NativeWidget for MapWidget {
@@ -66,6 +67,7 @@ impl NativeWidget for MapWidget {
         backends
     }
 }
+// docs:end map-widget
 
 #[derive(IntoElement)]
 pub struct MapView {

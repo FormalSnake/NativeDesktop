@@ -24,14 +24,19 @@ pub fn install() -> Result<String, String> {
         let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         std::fs::write(&token, hex).map_err(|e| format!("{}: {e}", token.display()))?;
     }
-    if stop().is_ok() {
-        // The exe is locked until the ended process is gone.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
+    let _ = stop();
     let exe = home.join("ndshell.exe");
     let current = std::env::current_exe().map_err(|e| e.to_string())?;
     if current != exe {
-        std::fs::copy(&current, &exe).map_err(|e| format!("copy to {}: {e}", exe.display()))?;
+        // The exe stays locked until the ended agent has exited, which can take seconds.
+        let mut tries = 0;
+        while let Err(e) = std::fs::copy(&current, &exe) {
+            tries += 1;
+            if tries == 40 {
+                return Err(format!("copy to {}: {e}", exe.display()));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
     }
     let action = format!("\"{}\" agent run", exe.display());
     schtasks(&["/Create", "/F", "/TN", TASK, "/SC", "ONLOGON", "/IT", "/RL", "LIMITED", "/TR", &action])?;

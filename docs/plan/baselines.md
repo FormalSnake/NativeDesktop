@@ -99,3 +99,31 @@ the dev shell's `LD_LIBRARY_PATH` on e1504g, then `nd diag scroll --rows 100000 
 with the Hyprland session's `WAYLAND_DISPLAY`. Headless work budget anywhere:
 `cargo nextest run --cargo-profile release -p nd-backend-gpui --test scroll_budget` (`ND_ROWS`,
 `ND_SCROLL_STEP`, `ND_FRAMES`).
+
+## Windows pacing in the g815 VM (2026-10-14)
+
+`examples/pacing` with `ND_PACING=1`, two windows, in the KVM guest of g815's Windows install
+(Microsoft Basic Display Adapter, no GPU, one 1280x800 virtual display). GPUI reports a 64 Hz
+display; both windows measure 55.5 to 57.3 Hz. The guest has one virtual display and no vsync of
+real hardware, so it proves nothing about per-monitor pacing: the 240 + 144 Hz check (5.3) needs
+a dual-boot session on the real pair.
+
+The resize gate in the same guest (`gate_m2_windows::real_resize_drag`) passes everything but the
+frame check: during a right-edge drag 3 to 11 of about 60 captured frames show the content one
+drag step (4 px) short of the window edge, never magenta. GPUI resizes its composition swap chain
+in `WM_SIZE` and draws on its next timer tick, so DWM shows a grown window with the previous
+frame. A forced draw from the window subclass inside `WM_SIZE` did not remove it; the fix belongs
+in the fork's Windows renderer (5.2: draw in `WM_WINDOWPOSCHANGED`, one DirectComposition
+commit), and is to be re-measured on hardware since WARP rendering in the guest adds latency.
+
+## Windows on g815 hardware (2026-10-14)
+
+g815 booted into Windows 11, RTX 5070 Laptop with the Intel iGPU, a 2560x1600 240 Hz panel and a
+2560x1440 144 Hz monitor, debug builds made on the machine. Resize gate with the `WM_SIZING` fix
+(vendored `gpui-pre-windows`): 1 to 3 of 100 captured frames show the content one drag step
+(4 to 5 px) short of the edge, never magenta; the deferred-layout control is caught in 102 to 105
+of about 114 frames. Pacing before fork patch 0006: both windows drew at 235 to 252 Hz wherever
+they sat (one `DwmFlush` clock at the fastest display's rate). Skipping ticks of that clock gave
+the 144 Hz window 121 to 127 Hz, since 240 Hz ticks cannot line up with a 144 Hz panel's
+vblanks. With a `WaitForVBlank` thread per monitor: 239.8 to 240.2 Hz and 144.0 to 144.1 Hz,
+swapped after a move, and 240 Hz for a window across the seam.

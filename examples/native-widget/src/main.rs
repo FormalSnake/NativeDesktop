@@ -14,27 +14,20 @@ struct Place {
 
 struct Places {
     places: Vec<Place>,
-    list: ListState<usize>,
+    selected: usize,
     center: LatLng,
     zoom: f64,
 }
 
 impl Places {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(_cx: &mut Context<Self>) -> Self {
         let places = vec![
             Place { name: "Lisbon", at: LatLng { lat: 38.7223, lng: -9.1393 }, visited: true },
             Place { name: "Porto", at: LatLng { lat: 41.1579, lng: -8.6291 }, visited: false },
             Place { name: "Las Palmas", at: LatLng { lat: 28.1235, lng: -15.4363 }, visited: true },
         ];
-        let mut list = ListState::new(cx);
-        list.set_items((0..places.len()).collect(), cx);
         let center = places[0].at;
-        Self { places, list, center, zoom: 11.0 }
-    }
-
-    fn row(&mut self, ix: usize, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let place = &self.places[ix];
-        source_row(if place.visited { Icon::CircleCheck } else { Icon::MapPin }, place.name)
+        Self { places, selected: 0, center, zoom: 11.0 }
     }
 }
 
@@ -42,6 +35,9 @@ impl Render for Places {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let visited = self.places.iter().filter(|p| p.visited).count();
         let pins = self.places.iter().map(|p| Pin { at: p.at, title: p.name.into() });
+        let items = self.places.iter().enumerate().map(|(ix, p)| {
+            source_item(ix.to_string(), p.name).icon(if p.visited { Icon::CircleCheck } else { Icon::MapPin })
+        });
 
         scaffold()
             .toolbar(toolbar().leading(window_controls().embedded()).title("Places"))
@@ -49,17 +45,23 @@ impl Render for Places {
                 sidebar().child(
                     v_flex()
                         .size_full()
-                        .child(source_list("places", &self.list, cx.processor(Self::row)).flex_1().on_select(
-                            cx.listener(|this, e: &SelectEvent<usize>, _window, cx| {
-                                this.center = this.places[e.key].at;
-                                cx.notify();
-                            }),
-                        ))
+                        .child(
+                            source_list("places").items(items).selected(self.selected.to_string()).flex_1().on_select(
+                                cx.listener(|this, e: &SourceSelected, _window, cx| {
+                                    if let Ok(ix) = e.id.parse::<usize>() {
+                                        this.selected = ix;
+                                        this.center = this.places[ix].at;
+                                        cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
                         .child(h_flex().p_3().justify_center().child(
                             gauge("visited", visited as f64).range(0.0, self.places.len() as f64).label("Visited"),
                         )),
                 ),
             )
+            // docs:begin places-view
             .content(
                 map_view("map", self.center)
                     .zoom(self.zoom)
@@ -77,6 +79,7 @@ impl Render for Places {
                         }
                     })),
             )
+        // docs:end places-view
     }
 }
 

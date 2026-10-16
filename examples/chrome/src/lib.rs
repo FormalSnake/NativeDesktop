@@ -5,7 +5,9 @@
 
 use nd::prelude::*;
 
+// docs:begin actions
 actions!(chrome, [NewMessage, DeleteMessage, OpenFile, OpenSettings, ToggleInspector]);
+// docs:end actions
 
 pub struct Mail {
     folder: SharedString,
@@ -14,6 +16,7 @@ pub struct Mail {
 }
 
 impl Mail {
+    // docs:begin delete-alert
     fn delete(&mut self, _: &DeleteMessage, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
         let alert =
@@ -25,6 +28,7 @@ impl Mail {
             });
         });
     }
+    // docs:end delete-alert
 
     fn open(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
@@ -44,6 +48,7 @@ impl Render for Mail {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         scaffold()
+            // docs:begin dispatch
             .key_context("Mail")
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::open))
@@ -54,6 +59,8 @@ impl Render for Mail {
                 this.inspector = !this.inspector;
                 cx.notify();
             }))
+            // docs:end dispatch
+            // docs:begin toolbar
             .toolbar(
                 toolbar()
                     .title("Inbox")
@@ -63,6 +70,8 @@ impl Render for Mail {
                     .flexible_space()
                     .inspector_toggle(),
             )
+            // docs:end toolbar
+            // docs:begin sidebar
             .sidebar(
                 sidebar().min_w(px(180.)).child(
                     source_list("folders")
@@ -82,6 +91,8 @@ impl Render for Mail {
                         })),
                 ),
             )
+            // docs:end sidebar
+            // docs:begin content
             .content(
                 v_flex()
                     .size_full()
@@ -91,12 +102,15 @@ impl Render for Mail {
                     .child(text(self.status.clone()).text_color(theme.text.secondary))
                     .child(glass().rounded_lg().p_3().child(text("Drafts sync when you are online."))),
             )
+            // docs:end content
+            // docs:begin inspector
             .inspector(
                 inspector()
                     .collapsed(!self.inspector)
                     .min_w(px(200.))
                     .child(v_flex().p_3().child(text("Details").text_color(theme.text.secondary))),
             )
+        // docs:end inspector
     }
 }
 
@@ -115,6 +129,7 @@ impl Settings {
 impl Render for Settings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if self.tab.as_ref() == "general" {
+            // docs:begin controlled
             form().child(
                 form_section()
                     .title("Reading")
@@ -135,6 +150,7 @@ impl Render for Settings {
                         )),
                     )),
             )
+            // docs:end controlled
         } else {
             form().child(
                 form_section()
@@ -145,6 +161,7 @@ impl Render for Settings {
         };
         div()
             .size_full()
+            // docs:begin settings-tabs
             .child(
                 toolbar()
                     .tab("general", "General", Icon::Settings)
@@ -155,6 +172,7 @@ impl Render for Settings {
                         cx.notify();
                     })),
             )
+            // docs:end settings-tabs
             .child(body)
     }
 }
@@ -163,12 +181,15 @@ pub fn app() -> Application {
     Application::new(nd::manifest!())
 }
 
+// docs:begin settings-window
 /// Opens the settings window, or brings it forward.
 pub fn open_settings_window(cx: &mut App) -> Option<WindowHandle<Settings>> {
     open_settings(cx, |_, cx| cx.new(|_| Settings { tab: "general".into(), density: 0, size: 15. }))
 }
+// docs:end settings-window
 
 pub fn init(cx: &mut App) -> WindowHandle<Mail> {
+    // docs:begin menus
     cx.bind_keys([
         KeyBinding::new("secondary-n", NewMessage, Some("Mail")),
         KeyBinding::new("secondary-backspace", DeleteMessage, Some("Mail")),
@@ -186,6 +207,7 @@ pub fn init(cx: &mut App) -> WindowHandle<Mail> {
             Menu::new("View").items([MenuItem::action("Show Inspector", ToggleInspector)]),
         ],
     );
+    // docs:end menus
     cx.open_window(WindowOptions::main("mail").title("Mail").size(size(px(980.), px(620.))), |_, cx| {
         cx.new(|_| Mail { folder: "inbox".into(), inspector: true, status: "Ready".into() })
     })

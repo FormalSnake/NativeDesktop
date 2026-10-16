@@ -1,3 +1,5 @@
+// The Nix-managed test is unix only; its imports go unused on Windows.
+#![cfg_attr(windows, allow(unused_imports))]
 mod common;
 
 use common::{Dirs, NotesSettings};
@@ -62,6 +64,8 @@ fn plugin_sections_layer_over_plugin_defaults_and_feed_the_host() {
     assert!(settings.get().compact_rows);
 }
 
+// Nix-managed means a symlink into the store, which only exists on unix.
+#[cfg(unix)]
 #[test]
 fn plugin_keys_are_typed_form_fields_and_nix_managed_keys_are_read_only() {
     let (_rt, host) = host();

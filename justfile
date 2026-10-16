@@ -27,3 +27,14 @@ clean-merged:
         (cd "$wt" && cargo clean -q)
     done
     df -h "/Volumes/Kyan Drive" | tail -1
+
+# The docs (ARCHITECTURE.md 13): pages, links, prose and the capture report; `docs-capture` takes
+# this OS's missing or stale captures, `docs-serve` builds the web site and serves it on :8080.
+docs-check:
+    cargo run -p nd-cli -- docs check
+
+docs-capture:
+    cargo run -p nd-cli -- docs capture --stale
+
+docs-serve:
+    cargo run -p nd-cli -- docs serve

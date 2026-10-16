@@ -6,7 +6,7 @@
 use std::ffi::{CString, c_char, c_void};
 use std::sync::OnceLock;
 
-use nd_components::{FormRowProps, FormSectionProps};
+use nd_components::{FormProps, FormRowProps, FormSectionProps};
 use nd_core::NodeId;
 use objc2::rc::Retained;
 use objc2_app_kit::{
@@ -69,7 +69,7 @@ pub(crate) struct SectionSpec {
     pub rows: Vec<RowSpec>,
 }
 
-fn json(sections: &[SectionSpec]) -> String {
+fn json(form: &FormProps, sections: &[SectionSpec]) -> String {
     let opt = |s: &Option<nd_ui::prelude::SharedString>| match s {
         Some(s) => serde_json::Value::String(s.to_string()),
         None => serde_json::Value::Null,
@@ -89,7 +89,7 @@ fn json(sections: &[SectionSpec]) -> String {
             })
         })
         .collect();
-    serde_json::Value::Array(value).to_string()
+    serde_json::json!({ "title": opt(&form.title), "pinned": form.title_pinned, "sections": value }).to_string()
 }
 
 enum Body {
@@ -101,6 +101,7 @@ pub(crate) struct FormNative {
     pub outer: Retained<NSView>,
     body: Body,
     pub sections: Vec<NodeId>,
+    pub props: FormProps,
 }
 
 fn fill(view: &NSView, parent: &NSView) {
@@ -124,7 +125,7 @@ impl FormNative {
             }
             None => Body::Grid(None),
         };
-        Self { outer, body, sections: Vec::new() }
+        Self { outer, body, sections: Vec::new(), props: FormProps::default() }
     }
 
     /// Shows `sections` and their controls.
@@ -133,7 +134,7 @@ impl FormNative {
             Body::Swift(view) => {
                 let swift = swift().expect("resolved at create");
                 let raw: *mut c_void = Retained::as_ptr(view).cast_mut().cast();
-                let text = CString::new(json(sections)).expect("no NUL in JSON");
+                let text = CString::new(json(&self.props, sections)).expect("no NUL in JSON");
                 unsafe { (swift.set)(raw, text.as_ptr()) };
                 for row in sections.iter().flat_map(|s| &s.rows) {
                     let child =
@@ -147,6 +148,17 @@ impl FormNative {
                 }
                 let fresh = NSGridView::gridViewWithNumberOfColumns_rows(2, 0, mtm);
                 fresh.columnAtIndex(0).setXPlacement(NSGridCellPlacement::Trailing);
+                if let Some(title) = &self.props.title {
+                    let label = NSTextField::labelWithString(&NSString::from_str(title), mtm);
+                    label.setFont(Some(&NSFont::boldSystemFontOfSize(NSFont::systemFontSize() * 2.)));
+                    let row = fresh.addRowWithViews(&NSArray::from_retained_slice(&[
+                        Retained::into_super(Retained::into_super(label)),
+                        NSView::new(mtm),
+                    ]));
+                    let index = fresh.indexOfRow(&row);
+                    fresh
+                        .mergeCellsInHorizontalRange_verticalRange(NSRange::new(0, 2), NSRange::new(index as usize, 1));
+                }
                 for section in sections {
                     if let Some(title) = &section.props.title {
                         let label = NSTextField::labelWithString(&NSString::from_str(title), mtm);

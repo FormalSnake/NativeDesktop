@@ -117,12 +117,53 @@ pub fn start(path: &Path, exec: impl Executor) -> io::Result<PathBuf> {
     Ok(path.to_owned())
 }
 
-#[cfg(not(unix))]
+/// The named pipe a socket path stands for on Windows: the path itself when it already names a
+/// pipe (`\\.\pipe\..`), else a pipe named after it, so `ND_AUTOMATION_SOCKET` and the
+/// per-pid default keep working unchanged.
+pub fn pipe_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if text.starts_with(r"\\.\pipe\") {
+        return path.to_owned();
+    }
+    // FNV-1a: stable across processes, unlike `DefaultHasher`.
+    let hash = text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    PathBuf::from(format!(r"\\.\pipe\nd-automation-{hash:016x}"))
+}
+
+#[cfg(windows)]
+fn serve(stream: interprocess::local_socket::Stream, exec: Arc<dyn Executor>) {
+    let (mut reader, mut writer) = (&stream, &stream);
+    while let Ok(Some(request)) = read_frame(&mut reader) {
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        let reply = response(id, dispatch(&*exec, &request));
+        if write_frame(&mut writer, &reply).is_err() {
+            return;
+        }
+    }
+}
+
+/// Listens on the named pipe for `path` ([`pipe_path`]) and serves requests through `exec`
+/// until the process exits. Returns the pipe's path, which `ND_AUTOMATION_LISTENING` reports.
+#[cfg(windows)]
+pub fn start(path: &Path, exec: impl Executor) -> io::Result<PathBuf> {
+    use interprocess::local_socket::prelude::*;
+    use interprocess::local_socket::{GenericFilePath, ListenerOptions};
+    let pipe = pipe_path(path);
+    let listener = ListenerOptions::new().name(pipe.as_path().to_fs_name::<GenericFilePath>()?).create_sync()?;
+    let exec: Arc<dyn Executor> = Arc::new(exec);
+    std::thread::Builder::new().name("nd-automation".into()).spawn(move || {
+        for stream in listener.incoming().map_while(Result::ok) {
+            let exec = exec.clone();
+            let _ = std::thread::Builder::new().name("nd-automation-conn".into()).spawn(move || serve(stream, exec));
+        }
+    })?;
+    eprintln!("ND_AUTOMATION_LISTENING path={}", pipe.display());
+    Ok(pipe)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn start(_path: &Path, _exec: impl Executor) -> io::Result<PathBuf> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "the automation socket needs unix sockets (named pipes land with the Windows backend)",
-    ))
+    Err(io::Error::new(io::ErrorKind::Unsupported, "no local sockets on this target"))
 }
 
 /// Starts the server when `NATIVE_AUTOMATION=1`. `Ok(None)` when it is not enabled.

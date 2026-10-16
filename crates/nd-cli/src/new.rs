@@ -38,6 +38,12 @@ const FILES: &[(&str, &str)] = &[
     ("tests/appearance.rs", include_str!("../templates/tests/appearance.rs.tmpl")),
     ("CLAUDE.md", include_str!("../templates/CLAUDE.md.tmpl")),
     ("README.md", include_str!("../templates/README.md.tmpl")),
+    ("docs/agents/patterns.md", include_str!("../templates/docs/agents/patterns.md")),
+    ("docs/agents/widgets.md", include_str!("../templates/docs/agents/widgets.md")),
+    ("docs/agents/testing.md", include_str!("../templates/docs/agents/testing.md")),
+    ("docs/agents/styling.md", include_str!("../templates/docs/agents/styling.md")),
+    ("docs/agents/performance.md", include_str!("../templates/docs/agents/performance.md")),
+    ("docs/agents/donts.md", include_str!("../templates/docs/agents/donts.md")),
 ];
 
 const RESERVED: &[&str] = &["nd", "test", "std", "core", "alloc", "proc_macro", "self", "crate", "super"];
@@ -98,11 +104,14 @@ impl Vars {
         let (nd_dep, nd_dev_dep, nd_build_dep) = match nd_path {
             Some(path) => {
                 let path = std::fs::canonicalize(path).with_context(|| format!("--nd-path {}", path.display()))?;
-                let path = path.display();
+                // A TOML literal string, so Windows backslashes stay as written; canonicalize's
+                // verbatim `\\?\` prefix goes, since build scripts mishandle it.
+                let path = path.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
                 (
-                    format!("{{ path = \"{path}\" }}"),
-                    format!("{{ path = \"{path}\", features = [\"test\", \"audit\"] }}"),
-                    format!("{{ path = \"{path}\", default-features = false, features = [\"build\"] }}"),
+                    format!("{{ path = '{path}' }}"),
+                    format!("{{ path = '{path}', features = [\"test\", \"audit\"] }}"),
+                    format!("{{ path = '{path}', default-features = false, features = [\"build\"] }}"),
                 )
             }
             None => (
@@ -154,5 +163,26 @@ mod tests {
             assert!(!out.contains('\u{2014}'), "{path} has an em dash");
         }
         assert!(vars.render("{{title}} {{env}} {{id}}").contains("My App MY_APP com.example.my_app"));
+    }
+
+    #[test]
+    fn agent_docs_are_written() {
+        let vars = Vars::new("my-app", None, None, true).unwrap();
+        let wanted = ["CLAUDE.md", "patterns", "widgets", "testing", "styling", "performance", "donts"];
+        for name in wanted {
+            let path = if name == "CLAUDE.md" { name.to_string() } else { format!("docs/agents/{name}.md") };
+            let (_, template) =
+                FILES.iter().find(|(p, _)| *p == path).unwrap_or_else(|| panic!("{path} is not written"));
+            let out = vars.render(template);
+            assert!(out.starts_with("# "), "{path} starts with its title");
+            assert!(!out.contains('\u{2014}') && !out.contains(" \u{2013} "), "{path} has an em or en dash");
+            if path != "CLAUDE.md" {
+                assert!(!template.contains("{{"), "{path} is copied as is and takes no placeholders");
+            }
+        }
+        let claude = vars.render(FILES.iter().find(|(p, _)| *p == "CLAUDE.md").unwrap().1);
+        for page in wanted.iter().skip(1) {
+            assert!(claude.contains(&format!("docs/agents/{page}.md")), "CLAUDE.md links docs/agents/{page}.md");
+        }
     }
 }
