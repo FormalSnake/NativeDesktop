@@ -16,8 +16,9 @@
 # (~/.cache/nd-build/targets/<branch>, or $ND_LINUX_TARGET) and builds quietly: nice, idle IO class,
 # two jobs, two test threads. A shared target is unsafe: cargo's metadata hash for path crates
 # ignores the checkout path and rsync keeps the macbook's older mtimes, so one lane reused another
-# lane's stale nd crates. Once all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 40), the least
-# recently used ones are dropped, under the build lock so no running build loses its target.
+# lane's stale nd crates. While all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 40) or the disk
+# has less than $ND_LINUX_FREE_FLOOR_GB free (default 25), the least recently used ones are dropped,
+# under the build lock so no running build loses its target.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,6 +28,7 @@ dir="Developer/nativedesktop-$branch"
 targets='$HOME/.cache/nd-build/targets'
 target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
 cap=${ND_LINUX_TARGET_CAP_GB:-40}
+floor=${ND_LINUX_FREE_FLOOR_GB:-25}
 
 remote() {
   # The login shell there may be fish; everything runs under bash.
@@ -41,10 +43,10 @@ remote() {
 in_shell() {
   local evict body
   evict="t=\"$target\"; mkdir -p \"$targets\" \"\$t\" && touch \"\$t\"
-while gb=\$(du -s --block-size=1G \"$targets\" | cut -f1); [ \"\$gb\" -gt $cap ]; do
+while gb=\$(du -s --block-size=1G \"$targets\" | cut -f1); free=\$(df --output=avail -BG / | tail -1 | tr -dc 0-9); [ \"\$gb\" -gt $cap ] || [ \"\$free\" -lt $floor ]; do
   old=\$(ls -1dt \"$targets\"/*/ | grep -vxF \"\$t/\" | tail -n 1)
   [ -n \"\$old\" ] || break
-  echo \"linux-gate: targets at \$gb GB (cap $cap), dropping \$old\"
+  echo \"linux-gate: targets at \$gb GB (cap $cap), \$free GB free (floor $floor), dropping \$old\"
   rm -rf -- \"\${old:?}\"
 done
 echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / | tail -1"
