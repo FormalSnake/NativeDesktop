@@ -8,6 +8,7 @@
 //!   and placement, which keep the owner's key chrome.
 //! - Panels and tooltips are borderless child `NSPanel`s that never become key, so the owner keeps
 //!   its key chrome and keys keep reaching nd dispatch (Esc included). Tooltips ignore the mouse.
+//!   A panel fades in when it opens and out when it closes, unless Reduce Motion is on.
 //! - One local event monitor serves every open overlay: a press outside the innermost overlays
 //!   closes each light-dismiss one above the pressed window and is consumed when it landed in an
 //!   nd window; Esc pressed while an overlay window is key closes the innermost one. Presses in
@@ -28,9 +29,9 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSAppearanceCustomization, NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType,
-    NSPanel, NSPopover, NSPopoverBehavior, NSResponder, NSView, NSViewController, NSWindow, NSWindowOrderingMode,
-    NSWindowStyleMask,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSAppearanceCustomization, NSBackingStoreType, NSColor, NSEvent,
+    NSEventMask, NSEventModifierFlags, NSEventType, NSPanel, NSPopover, NSPopoverBehavior, NSResponder, NSView,
+    NSViewController, NSWindow, NSWindowOrderingMode, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSRectEdge, NSSize};
 
@@ -43,6 +44,23 @@ use crate::views::NdLayerView;
 const TOOLTIP_GAP: f64 = 6.; // nd-lint: allow, AppKit has no tooltip offset to read
 /// A panel's top edge sits this far down the owner's content, as a fraction of its height.
 const PANEL_TOP: f64 = 0.18;
+/// How long a panel takes to fade in or out, in seconds.
+const PANEL_FADE: f64 = 0.18;
+
+fn fades() -> bool {
+    !NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
+/// Animates `panel`'s alpha to `to`, then runs `done`.
+fn fade(panel: &NSPanel, to: f64, done: impl Fn() + 'static) {
+    let fading = panel.retain();
+    let changes = RcBlock::new(move |context: std::ptr::NonNull<NSAnimationContext>| {
+        unsafe { context.as_ref() }.setDuration(PANEL_FADE);
+        fading.animator().setAlphaValue(to);
+    });
+    let done = RcBlock::new(done);
+    NSAnimationContext::runAnimationGroup_completionHandler(&changes, Some(&done));
+}
 
 enum Presenter {
     Popover(Retained<NSPopover>),
@@ -191,10 +209,20 @@ impl OverlayNative {
                 };
                 panel.setFrame_display(frame, true);
                 panel.setAppearance(owner.appearance().as_deref());
-                if panel.parentWindow().is_none() {
+                let opening = panel.parentWindow().is_none();
+                if opening {
                     unsafe { owner.addChildWindow_ordered(panel, NSWindowOrderingMode::Above) };
                 }
+                let fade_in = opening && self.props.kind == OverlayKind::Panel && fades();
+                if fade_in {
+                    panel.setAlphaValue(0.);
+                }
                 panel.orderFront(None);
+                if fade_in {
+                    fade(panel, 1., || {});
+                } else if opening {
+                    panel.setAlphaValue(1.);
+                }
             }
         }
         register(self);
@@ -209,10 +237,22 @@ impl OverlayNative {
                 }
             }
             Presenter::Panel(panel) => {
-                if let Some(parent) = panel.parentWindow() {
+                let parent = panel.parentWindow();
+                if let Some(parent) = &parent {
                     parent.removeChildWindow(panel);
                 }
-                panel.orderOut(None);
+                if parent.is_some() && self.props.kind == OverlayKind::Panel && panel.isVisible() && fades() {
+                    // The panel window outlives the node for the fade: the block holds it.
+                    let closing = panel.retain();
+                    // Reopened while it faded: it is a child window again and stays up.
+                    fade(panel, 0., move || {
+                        if closing.parentWindow().is_none() {
+                            closing.orderOut(None);
+                        }
+                    });
+                } else {
+                    panel.orderOut(None);
+                }
             }
         }
     }

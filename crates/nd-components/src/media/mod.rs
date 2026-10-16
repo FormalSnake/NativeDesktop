@@ -40,4 +40,4 @@ pub use transport::{
     NowPlaying, PlayerBar, SEEK, SeekBar, SeekBarKind, SeekBarProps, SeekMetrics, SeekModel, SeekPhase, Seeked,
     TransportCommand, TransportLayout, player_bar, seek_bar, volume_icon,
 };
-pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProps, VideoReady, video};
+pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProgress, VideoProps, VideoReady, video};

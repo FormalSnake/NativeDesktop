@@ -15,8 +15,10 @@ use objc2_app_kit::{NSFont, NSFontWeightRegular, NSFontWeightSemibold, NSView};
 use crate::forms::display::NdLabelField;
 use objc2_core_foundation::CGFloat;
 use objc2_core_graphics::CGMutablePath;
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-use objc2_quartz_core::{CALayer, CAShapeLayer, CATextLayer, CATransaction, kCAAlignmentCenter};
+use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
+use objc2_quartz_core::{
+    CABasicAnimation, CALayer, CAMediaTiming, CAShapeLayer, CATextLayer, CATransaction, kCAAlignmentCenter,
+};
 
 use super::image::ImageSlot;
 use super::seek::{set_font, set_string};
@@ -25,7 +27,7 @@ use crate::custom::{CustomCx, CustomNative, CustomPaint, CustomWidget};
 
 /// A rounded rect with its own radius per corner, `[top_left, top_right, bottom_right,
 /// bottom_left]`, in flipped coordinates.
-fn rounded(path: &CGMutablePath, r: NSRect, radii: [f64; 4]) {
+pub(super) fn rounded(path: &CGMutablePath, r: NSRect, radii: [f64; 4]) {
     let (x0, y0) = (r.origin.x, r.origin.y);
     let (x1, y1) = (x0 + r.size.width, y0 + r.size.height);
     let max = r.size.width.min(r.size.height) / 2.;
@@ -43,7 +45,7 @@ fn rounded(path: &CGMutablePath, r: NSRect, radii: [f64; 4]) {
 
 /// The tail: a lobe leaving the bubble's bottom outer corner and curving out to a point level
 /// with its bottom edge.
-fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
+pub(super) fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
     let (tw, th) = (f64::from(BUBBLE.tail_width), f64::from(BUBBLE.tail_height));
     let bottom = bubble.origin.y + bubble.size.height;
     let (edge, out) = match side {
@@ -51,18 +53,24 @@ fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
         BubbleSide::Received => (bubble.origin.x, -1.),
     };
     let m = std::ptr::null();
+    let start = (edge - out * th, bottom - th);
+    let corner = (edge, bottom - th);
+    let tip = (edge + out * tw, bottom);
+    let end = (edge - out * th, bottom - 3.);
+    // The lobe winds the same way as the rounded rect on both sides: mirrored, it would wind the
+    // other way and cut a hole where the two overlap under the non-zero fill rule.
     unsafe {
-        CGMutablePath::move_to_point(Some(path), m, edge - out * th, bottom - th);
-        CGMutablePath::add_line_to_point(Some(path), m, edge, bottom - th);
-        CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., edge + out * tw, bottom);
-        CGMutablePath::add_quad_curve_to_point(
-            Some(path),
-            m,
-            edge - out * tw * 0.5,
-            bottom,
-            edge - out * th,
-            bottom - 3.,
-        );
+        if side == BubbleSide::Sent {
+            CGMutablePath::move_to_point(Some(path), m, start.0, start.1);
+            CGMutablePath::add_line_to_point(Some(path), m, corner.0, corner.1);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., tip.0, tip.1);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge - out * tw * 0.5, bottom, end.0, end.1);
+        } else {
+            CGMutablePath::move_to_point(Some(path), m, end.0, end.1);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge - out * tw * 0.5, bottom, tip.0, tip.1);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., corner.0, corner.1);
+            CGMutablePath::add_line_to_point(Some(path), m, start.0, start.1);
+        }
     }
     CGMutablePath::close_subpath(Some(path));
 }
@@ -114,9 +122,11 @@ impl CustomWidget for BubbleWidget {
             pills: RefCell::new(Vec::new()),
             props: RefCell::new(props),
             theme: RefCell::new(cx.theme().clone()),
+            shown: std::cell::Cell::new(false),
         });
         inner.view.set_input(Rc::downgrade(&inner) as Weak<dyn Input>);
         inner.restyle();
+        inner.shown.set(true);
         Box::new(BubbleNative { inner })
     }
 }
@@ -132,6 +142,23 @@ struct BubbleInner {
     pills: RefCell<Vec<(Retained<CALayer>, Retained<CATextLayer>)>>,
     props: RefCell<ChatBubbleProps>,
     theme: RefCell<Theme>,
+    /// Painted once: a reaction that lands after that fades in.
+    shown: std::cell::Cell<bool>,
+}
+
+/// A reaction pill landing on a bubble already on screen fades in, as in Messages.
+fn fade_in(layer: &CALayer) {
+    if super::reduce_motion() {
+        return;
+    }
+    let fade = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str("opacity")));
+    let (from, to) = (NSNumber::new_f32(0.), NSNumber::new_f32(1.));
+    unsafe {
+        fade.setFromValue(Some(&from));
+        fade.setToValue(Some(&to));
+    }
+    fade.setDuration(0.18);
+    layer.addAnimation_forKey(&fade, Some(&NSString::from_str("nd-enter")));
 }
 
 impl BubbleInner {
@@ -156,6 +183,9 @@ impl BubbleInner {
             unsafe { text.setAlignmentMode(kCAAlignmentCenter) };
             pill.addSublayer(&text);
             root.addSublayer(&pill);
+            if self.shown.get() {
+                fade_in(&pill);
+            }
             pills.push((pill, text));
         }
         while pills.len() > props.reactions.len() {
