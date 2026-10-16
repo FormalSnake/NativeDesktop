@@ -803,7 +803,16 @@ impl<K: RowKey> ListState<K> {
             scroll: nd_gesture::Axes { horizontal: false, vertical: true },
             ..Default::default()
         };
-        ListProps { handle: ListHandle(inner.core.clone()), kind, generation, selection, selected, style, gestures, inset }
+        ListProps {
+            handle: ListHandle(inner.core.clone()),
+            kind,
+            generation,
+            selection,
+            selected,
+            style,
+            gestures,
+            inset,
+        }
     }
 
     fn children(&self) -> Vec<AnyElement> {

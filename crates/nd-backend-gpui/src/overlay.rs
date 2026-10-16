@@ -280,7 +280,8 @@ impl Build<'_> {
                     list = list.child(match item {
                         MenuItem::Separator => separator(),
                         MenuItem::Action { label, action, enabled, checked, .. } => {
-                            let (backend, wake, action) = (self.backend.clone(), self.wake.clone(), action.boxed_clone());
+                            let (backend, wake, action) =
+                                (self.backend.clone(), self.wake.clone(), action.boxed_clone());
                             let choose = Rc::new(move |cx: &mut gpui::App| {
                                 backend.choose(window_id, action.boxed_clone());
                                 wake(cx);
@@ -395,7 +396,9 @@ impl GpuiBackend {
         let replaced = {
             let mut state = self.state.borrow_mut();
             state.dirty.insert(window);
-            state.menus.insert(window, MenuOverlay { node, at: Point { x: origin.x + at.x, y: origin.y + at.y }, content })
+            state
+                .menus
+                .insert(window, MenuOverlay { node, at: Point { x: origin.x + at.x, y: origin.y + at.y }, content })
         };
         if let Some(old) = replaced {
             old.dismissed();

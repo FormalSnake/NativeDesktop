@@ -73,7 +73,8 @@ impl Build<'_> {
             let size = gpui::px(props.size);
             let stroke = gpui::px((props.size / 24. * nd_icons::STROKE).max(1.));
             use gpui::IntoElement as _;
-            crate::forms::glyph::glyph(crate::forms::glyph::Glyph::of(props.icon), size, color, stroke).into_any_element()
+            crate::forms::glyph::glyph(crate::forms::glyph::Glyph::of(props.icon), size, color, stroke)
+                .into_any_element()
         } else {
             return None;
         };

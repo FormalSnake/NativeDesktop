@@ -30,8 +30,8 @@ mod gaps {
         video,
     };
     use nd_components::{Icon, icon};
-    use nd_ui::prelude::*;
     use nd_ui::panel;
+    use nd_ui::prelude::*;
 
     pub use rig::{Checks, Rig};
 
@@ -131,8 +131,7 @@ mod gaps {
             let mut draft = Draft::default();
             draft.text = "hi".into();
             v_flex().p(px(12.)).w(px(400.)).child(
-                composer("c", &draft)
-                    .when(self.editing, |c| c.send_icon(Icon::Check, "Save Edit").send_fill(green)),
+                composer("c", &draft).when(self.editing, |c| c.send_icon(Icon::Check, "Save Edit").send_fill(green)),
             )
         }
     }
@@ -229,7 +228,14 @@ mod gaps {
                         .rounded_lg()
                         .on_load(cx.listener(loaded)),
                 )
-                .child(image(ImageSource::from(svg)).id("plain").w(px(120.)).h(px(90.)).rounded_lg().on_load(cx.listener(loaded)))
+                .child(
+                    image(ImageSource::from(svg))
+                        .id("plain")
+                        .w(px(120.))
+                        .h(px(90.))
+                        .rounded_lg()
+                        .on_load(cx.listener(loaded)),
+                )
         }
     }
 
