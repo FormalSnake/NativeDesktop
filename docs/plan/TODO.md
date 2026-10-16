@@ -130,3 +130,18 @@ green, `clippy --workspace` clean on g815.
 Open: a GPUI video surface; tier 2 for the font override and automation rows on AppKit; GPUI
 goldens (forms, media, nav) fail on g815; their re-record is
 also open on main (HANDOFF, `m2-windows-2`), so it was not done here.
+
+## Messages port gaps (branch msg-gaps)
+
+What the messages parity pass needed on top of port-gaps. AppKit tier 2 in
+`nd-backend-appkit/tests/msg_gaps.rs`.
+- `Label::lines(n)`: wraps and clamps, the last line ends in an ellipsis (AppKit, GPUI `line_clamp`).
+- `icon(Icon, size)`: a standalone icon (`NSImageView` with the SF Symbol, GPUI glyph); icons
+  `bell-off`, `file`, `moon`, `reply`, `video`.
+- Composer `send_icon` and `send_fill` (a check while editing, green for SMS); GPUI buttons take
+  an explicit background as their fill, as AppKit's do.
+- `video()`: `VideoProgress` about once a second and on seek or pause, `.seek(request, seconds)`.
+- `image().bubble_tail(side)`: the picture cut to a bubble with its tail (AppKit; GPUI draws no tail).
+- AppKit panels fade in and out; reactions landing on a shown bubble fade in.
+- `WindowOptions::background()`: opens without taking focus or activating the app.
+
