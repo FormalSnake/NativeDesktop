@@ -24,6 +24,9 @@ impl State {
             Native::Palette(p) => {
                 let model = p.model();
                 probe.expanded = Some(model.is_presented());
+                // The card lives in its own overlay window; the handle in the content is a
+                // zero-size anchor, so it says nothing about whether the palette shows.
+                probe.visible = Some(model.is_presented());
                 probe.value = Some(model.field_text());
                 if let Some(content) = content {
                     probe.bounds = Some(p.card_frame_in(content).map_or(Rect::default(), rect));

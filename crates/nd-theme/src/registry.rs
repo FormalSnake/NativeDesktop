@@ -97,7 +97,7 @@ impl ThemeRegistry {
             os: OsTheme::default(),
             app: ThemeRefinement::default(),
             windows: HashMap::new(),
-            app_theme: Theme::derive(preset, Scheme::Light, Palette::baked(Scheme::Light), Metrics::preset(preset), 1.),
+            app_theme: Theme::derive(preset, Scheme::Light, Palette::baked_for(preset, Scheme::Light), Metrics::preset(preset), 1.),
             window_themes: HashMap::new(),
             generation: 0,
         };
@@ -222,7 +222,7 @@ impl ThemeRegistry {
         if let Some(matugen) = &self.matugen {
             palette = palette.over(*matugen.palettes.get(scheme));
         }
-        let palette = palette.over(*self.os.palettes.get(scheme)).complete(&Palette::baked(scheme));
+        let palette = palette.over(*self.os.palettes.get(scheme)).complete(&Palette::baked_for(self.preset, scheme));
         let metrics = Metrics::preset(self.preset).with_system(&self.os.metrics).with_fonts(&self.os.fonts);
         let theme = Theme::derive(self.preset, scheme, palette, metrics, stack.radius_scale.unwrap_or(1.));
         stack.with_fonts(theme)
@@ -293,6 +293,20 @@ mod tests {
         r.set_user(ThemeRefinement::new().token("accent", hex("#555555")));
         assert_eq!(r.app_theme().accent, hex("#555555"));
         assert_eq!(r.app_theme().surface.base, baked.surface);
+    }
+
+    #[test]
+    fn fluent_falls_back_to_winui_colours() {
+        let mut r = ThemeRegistry::new(Preset::Fluent);
+        assert_eq!(r.app_theme().surface.sidebar, hex("#f3f3f3"));
+        assert_eq!(r.app_theme().accent, hex("#005fb8"));
+        r.set_os(OsTheme { scheme: Some(Scheme::Dark), ..Default::default() });
+        assert_eq!(r.app_theme().surface.sidebar, hex("#202020"));
+        // The OS accent still wins over the baked one.
+        let mut os = OsTheme { scheme: Some(Scheme::Dark), ..Default::default() };
+        os.palettes.dark.accent = Some(hex("#ff8800"));
+        r.set_os(os);
+        assert_eq!(r.app_theme().accent, hex("#ff8800"));
     }
 
     #[test]

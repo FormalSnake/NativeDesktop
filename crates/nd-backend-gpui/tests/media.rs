@@ -481,6 +481,19 @@ mod media {
         quiet(&mut rig);
     }
 
+    /// The send button sits inside the field at its trailing bottom corner, as the composer lays
+    /// it out (a button's own position and inset reach GPUI).
+    pub fn composer_send_sits_inside_the_field() {
+        let rig = opened();
+        let field = rig.node("composer.field").bounds.expect("field laid out");
+        let send = rig.node("composer.send").bounds.expect("send laid out");
+        let (fr, fb) = (field.origin.x + field.size.width, field.origin.y + field.size.height);
+        let (sr, sb) = (send.origin.x + send.size.width, send.origin.y + send.size.height);
+        assert!(send.origin.x > field.origin.x && sr <= fr + 0.5, "send {send:?} inside field {field:?} across");
+        assert!(send.origin.y >= field.origin.y - 0.5 && sb <= fb + 0.5, "send {send:?} inside field {field:?} down");
+        assert!(fr - sr < 8., "send hugs the trailing edge ({} px in)", fr - sr);
+    }
+
     pub fn disabled_button_takes_no_click() {
         let mut rig = opened();
         rig.click_point(rig.at("off", 0.5, 0.5));
@@ -604,6 +617,7 @@ fn main() {
             "media::text_area_return_submits_and_shift_return_breaks",
             media::text_area_return_submits_and_shift_return_breaks,
         ),
+        ("media::composer_send_sits_inside_the_field", media::composer_send_sits_inside_the_field),
         ("media::disabled_button_takes_no_click", media::disabled_button_takes_no_click),
         ("media::echo", media::echo),
         ("media::reentrancy", media::reentrancy),

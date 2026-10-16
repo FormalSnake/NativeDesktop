@@ -22,7 +22,7 @@ const ICON_COMPACT: f32 = 64.;
 /// The header: icon, title and description, centred in a column no wider than the theme's
 /// readable width.
 pub fn status_page_view(props: &StatusPageProps, theme: &Theme, marks: &Marks) -> AnyElement {
-    let look = FormLook::adwaita(theme);
+    let look = FormLook::of(theme);
     let compact = props.compact;
     let (title_size, title_weight, title_line) =
         look.type_of(if compact { TextStyle::Title2 } else { TextStyle::Title1 });

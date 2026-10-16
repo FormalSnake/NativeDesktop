@@ -1,6 +1,6 @@
 //! The token set every drawn forms control reads. One struct, one constructor per skin: the
-//! Linux (libadwaita) look is [`FormLook::adwaita`]; a Fluent skin supplies its own constructor
-//! and the controls draw unchanged.
+//! Linux (libadwaita) look is [`FormLook::adwaita`], Windows' is [`FormLook::fluent`], and
+//! [`FormLook::of`] picks by the theme's preset; the controls draw unchanged.
 
 use nd_components::forms::TextStyle;
 use nd_gpui::gpui::{FontWeight, Hsla, Pixels, px};
@@ -109,6 +109,8 @@ pub struct FormLook {
     pub spinner_seconds: f64,
     /// Size, weight and line height per text style: the theme's.
     pub type_scale: TextStyles,
+    /// A field's outline at rest: WinUI's control stroke; libadwaita's entries have none.
+    pub field_stroke: Option<Hsla>,
 }
 
 impl FormLook {
@@ -170,6 +172,48 @@ impl FormLook {
             indeterminate_segment: 0.3,
             spinner_seconds: 0.9,
             type_scale: theme.text_styles,
+            field_stroke: None,
+        }
+    }
+
+    /// The look of `theme`'s preset.
+    pub fn of(theme: &Theme) -> Self {
+        if theme.preset == nd_theme::Preset::Fluent { Self::fluent(theme) } else { Self::adwaita(theme) }
+    }
+
+    /// WinUI 3's controls: 32 px tall at the 4 px control radius, 8 px flyouts, fills a few
+    /// percent of white over the layer (ControlFillColorDefault, Secondary, Tertiary) with a
+    /// hairline stroke, a 40x20 toggle switch with a 12 px knob, 20 px check boxes.
+    pub fn fluent(theme: &Theme) -> Self {
+        // From tokens, so the appearance audit can trace them: the card's white over a light
+        // layer, the text's white thinly over a dark one.
+        let dark = theme.is_dark();
+        let (ink, card, base) = (theme.text.primary, theme.surface.raised, theme.surface.base);
+        let (fill, fill_hover, fill_active) = if dark {
+            (with_alpha(ink, 0.06), with_alpha(ink, 0.08), with_alpha(ink, 0.03))
+        } else {
+            (with_alpha(card, 0.7), with_alpha(base, 0.5), with_alpha(base, 0.3))
+        };
+        Self {
+            control_height: px(32.),
+            radius: theme.radius.md,
+            popover_radius: theme.radius.lg,
+            popover_inset: px(4.),
+            padding_x: px(11.),
+            field_padding_x: px(9.),
+            padding_y: px(5.),
+            fill,
+            fill_hover,
+            fill_active,
+            border: with_alpha(theme.text.primary, if dark { 0.07 } else { 0.06 }),
+            check_size: px(20.),
+            check_radius: theme.radius.md,
+            switch_width: px(40.),
+            switch_height: px(20.),
+            switch_inset: px(4.),
+            slider_knob: px(20.),
+            field_stroke: Some(with_alpha(theme.text.primary, 0.07)),
+            ..Self::adwaita(theme)
         }
     }
 

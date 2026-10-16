@@ -592,7 +592,18 @@ impl<'a> Build<'a> {
         let props = node.props.downcast_ref::<nd_virtual::ListProps>().expect("ListProps").clone();
         let emit = self.backend.state.borrow().events.emitter(id);
         let look = self.look();
-        let selection = look.control_active;
+        let theme = self.theme();
+        let fluent = theme.preset == nd_theme::Preset::Fluent;
+        // A sidebar's selection is the platform's subtle one, the surface under it one hover
+        // step deeper: libadwaita's navigation sidebar tints the row with a tenth of the text
+        // colour, WinUI's navigation view with its subtle fill and an accent pill. Other lists
+        // keep the pressed control fill.
+        let selection = if props.inset { theme.hover(self.top().background) } else { look.control_active };
+        let sidebar = crate::virtual_list::SidebarSelection {
+            inset: if fluent { 4. } else { 6. },
+            radius: theme.radius.md.as_f32(),
+            pill: fluent.then_some(theme.accent),
+        };
         let rows = node
             .children
             .iter()
@@ -636,6 +647,7 @@ impl<'a> Build<'a> {
             gestures: self.backend.gestures.clone(),
             window_id: self.window_id,
             selection_color: selection,
+            sidebar,
             disclosure_color: self.top().text,
         }
         .into_any_element()
@@ -734,8 +746,18 @@ impl<'a> Build<'a> {
         let wake = self.wake.clone();
         let look = self.look();
         let theme = self.theme();
-        // An icon-only button draws its glyph; one with no glyph here shows its tooltip.
-        let glyph = if props.label.is_empty() { props.icon.as_deref().and_then(Glyph::named) } else { None };
+        // An icon-only button draws its glyph; one with no glyph here shows its tooltip. An
+        // accent button with a circled icon (the composer's send) is the filled circle itself,
+        // with the bare mark in it, as Messages draws it.
+        let explicit_fill = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let filled_circle = (props.variant == ButtonVariant::Accent || explicit_fill.is_some())
+            && props.label.is_empty()
+            && props.icon.as_deref().is_some_and(|i| i.strip_prefix("circle-").and_then(Glyph::named).is_some());
+        let glyph = match props.icon.as_deref() {
+            _ if !props.label.is_empty() => None,
+            Some(icon) if filled_circle => icon.strip_prefix("circle-").and_then(Glyph::named),
+            icon => icon.and_then(Glyph::named),
+        };
         let label = if props.label.is_empty() {
             props.tooltip.clone().or_else(|| props.icon.clone()).unwrap_or_default()
         } else {
@@ -743,7 +765,7 @@ impl<'a> Build<'a> {
         };
         let name = if props.label.is_empty() { label.clone() } else { props.label.clone() };
         // A background the element sets is the bezel colour, as on AppKit.
-        let explicit = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let explicit = explicit_fill;
         let accent = props.variant == ButtonVariant::Accent || explicit.is_some();
         let (fill, ink) = match explicit {
             Some(fill) => (fill, props.style.text.color.unwrap_or_else(|| readable_ink(fill))),
@@ -782,7 +804,7 @@ impl<'a> Build<'a> {
         if bezel {
             button = button.border_1().border_color(look.border).bg(fill);
         }
-        if props.bezel == Bezel::Circle {
+        if props.bezel == Bezel::Circle || filled_circle {
             button = button.rounded_full();
         }
         let button = crate::forms::with_style(button, &props.style);

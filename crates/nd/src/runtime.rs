@@ -373,7 +373,7 @@ pub(crate) mod gpui_host {
     /// The registry from the platform's light or dark setting and the app's files, kept
     /// following the platform as it changes.
     pub fn install(cx: &mut App, files: &ThemeFiles, app_theme: ThemeRefinement, patterns: Patterns) {
-        let preset = if cfg!(target_os = "macos") { Preset::Adwaita } else { Preset::current() };
+        let preset = if cfg!(target_os = "macos") { Preset::forced().unwrap_or(Preset::Adwaita) } else { Preset::current() };
         let mut registry = ThemeRegistry::new(preset);
         if let Some(backend) = cx.backend_as::<GpuiBackend>() {
             let palettes = backend.platform_palettes();

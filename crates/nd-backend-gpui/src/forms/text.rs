@@ -854,7 +854,7 @@ pub(crate) fn chrome(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, f: &Fie
         .rounded(look.radius)
         .bg(look.fill)
         .border_2()
-        .border_color(if ctl.focused { look.focus_ring } else { gpui::transparent_black() })
+        .border_color(if ctl.focused { look.focus_ring } else { look.field_stroke.unwrap_or(gpui::transparent_black()) })
         .text_size(look.text_size)
         .line_height(look.line_height)
         .text_color(look.text);
@@ -1069,14 +1069,18 @@ pub(crate) fn text_area(
         Some(max) => content.max(min).min(look.line_height * f32::from(max.max(p.min_lines).max(1))),
         None => min,
     };
+    // A rounded area (a chat composer) keeps its outline at rest, and one line of it is as tall
+    // as the composer's buttons beside and inside it, so they line up with its text.
+    let rounded = p.style.corner_radii.top_left.is_some();
+    let padding_y =
+        if rounded { ((px(nd_components::COMPOSER_ROW) - look.line_height - px(4.)) / 2.).max(px(0.)) } else { look.padding_y };
     let mut area = chrome(&ctl, &editor, &f)
         .role(gpui::Role::MultilineTextInput)
         .aria_label(name)
         .aria_value(p.text.clone())
         .min_w(look.field_min_width)
-        .h(text_height + look.padding_y * 2. + px(4.));
-    // A rounded area (a chat composer) keeps its outline at rest.
-    let rounded = p.style.corner_radii.top_left.is_some();
+        .py(padding_y)
+        .h(text_height + padding_y * 2. + px(4.));
     if rounded && !ctl.focused {
         area = area.border_color(look.border);
     }
@@ -1090,6 +1094,10 @@ pub(crate) fn text_area(
         }
     }
     let mut area = with_style(area.child(text_element(&ctl, &editor, &f)), &p.style);
+    // WinUI rounds a text box at the control radius, a composer's too.
+    if rounded && b.theme().preset == nd_theme::Preset::Fluent {
+        area = area.rounded(b.theme().radius.md);
+    }
     if p.trailing_room > 0. {
         area = area.pr(px(p.trailing_room));
     }

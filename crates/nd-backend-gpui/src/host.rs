@@ -1114,6 +1114,12 @@ impl Inner {
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         let body_font = state.theme.window_theme(id).fonts.body.clone();
+        // Text nothing sized is the look's body style (Adwaita and Fluent set it at 14 px), not
+        // GPUI's 16 px rem. The macOS preset keeps the rem its goldens were drawn at.
+        let body = {
+            let theme = state.theme.window_theme(id);
+            (theme.preset != nd_theme::Preset::MacOs).then(|| theme.text_styles[nd_theme::TextStyle::Body])
+        };
         let look = crate::render::Look::of(state.theme.window_theme(id));
         let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
         let paints = build.take_paints();
@@ -1139,6 +1145,10 @@ impl Inner {
         div()
             .size_full()
             .font(body_font)
+            // Relative, so text sized smaller below keeps the body's leading, not its 20 px.
+            .when_some(body, |d, body| {
+                d.text_size(body.size).line_height(gpui::relative(body.line_height.as_f32() / body.size.as_f32()))
+            })
             // A new press starts clean: a release owed to an earlier consumed press that never
             // arrived (the compositor dropped it) must not eat this press's release.
             .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))

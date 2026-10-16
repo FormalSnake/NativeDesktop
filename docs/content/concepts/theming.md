@@ -54,6 +54,17 @@ WinUI uses for each scheme (AccentDark1 in light, AccentLight2 in dark) and foll
 Settings while the app runs; grayscale text is rendered without grid fitting, as Windows' own apps
 draw it on Mica.
 
+Unsized text is the preset's body style on the GPUI backend (14 px on Fluent and Adwaita). The
+last colour source, the baked palette, is Fluent's own on that preset: WinUI 3's Mica base,
+layer and card fills, its text opacities and the default accent, so a Windows build with no
+system accent and the Fluent look drawn elsewhere both read as Windows.
+
+`ND_PRESET=fluent` (or `adwaita`, `macos`, `plain`) makes a GPUI build draw another platform's
+look: the Fluent skin on Linux, without Mica or caption buttons, to check it with no Windows
+machine. That look's palette comes with it (on Linux a forced preset reads no matugen file),
+`on_windows`/`on_linux` follow it, and `appearance = "dark"` in the `theme.toml` that
+`ND_THEME_TOML` names picks the scheme. The AppKit backend ignores it.
+
 ## Where the colours come from
 
 For each of the 16 base colours the first source that sets it wins:

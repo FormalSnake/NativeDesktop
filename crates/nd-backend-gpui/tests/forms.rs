@@ -295,6 +295,10 @@ struct Rig {
 const SIZE: (f32, f32) = (680., 760.);
 
 fn open_with(appearance: WindowAppearance, animated: bool) -> Rig {
+    open_in(Preset::current(), appearance, animated)
+}
+
+fn open_in(preset: Preset, appearance: WindowAppearance, animated: bool) -> Rig {
     let mut cx = headless();
     let log: Log = Rc::default();
     let view = Rc::new(RefCell::new(None));
@@ -314,7 +318,7 @@ fn open_with(appearance: WindowAppearance, animated: bool) -> Rig {
         })
     });
     // The windows paint from the theme registry; pin its scheme as the OS would report it.
-    let mut registry = ThemeRegistry::new(Preset::current());
+    let mut registry = ThemeRegistry::new(preset);
     let scheme = if matches!(appearance, WindowAppearance::Dark) { Scheme::Dark } else { Scheme::Light };
     registry.set_os(OsTheme { scheme: Some(scheme), ..registry.os().clone() });
     host.backend().set_theme(registry);
@@ -642,6 +646,15 @@ mod forms {
             let rig = open_with(appearance, false);
             let capture = rig.host.job(|app| app.capture(rig.window)).expect("capture");
             compare(scheme, &capture.png);
+        }
+        // The Windows skin drawn on Linux (what `ND_PRESET=fluent` shows), so it is checked
+        // without a Windows machine.
+        if cfg!(target_os = "linux") {
+            for (scheme, appearance) in [("fluent-light", WindowAppearance::Light), ("fluent-dark", WindowAppearance::Dark)] {
+                let rig = open_in(Preset::Fluent, appearance, false);
+                let capture = rig.host.job(|app| app.capture(rig.window)).expect("capture");
+                compare(scheme, &capture.png);
+            }
         }
     }
 

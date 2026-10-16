@@ -203,7 +203,7 @@ impl Build<'_> {
         };
         let ctl = Ctl {
             id,
-            look: FormLook::adwaita(&self.theme()),
+            look: FormLook::of(&self.theme()),
             focused: focus.is_focused(window),
             sink,
             time: self.time,

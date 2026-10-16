@@ -26,8 +26,38 @@ pub enum Preset {
 }
 
 impl Preset {
-    /// The preset of the platform this binary was built for.
+    /// The look drawn backends use: the one `ND_PRESET` names, else [`Preset::native`].
     pub fn current() -> Preset {
+        Preset::forced().unwrap_or_else(Preset::native)
+    }
+
+    /// The preset `ND_PRESET` names (`macos`, `fluent`, `adwaita`, `plain`), read once. It lets a
+    /// GPUI build draw another platform's look, the Fluent skin on Linux, without its OS
+    /// materials or captions. The AppKit backend is native and ignores it.
+    pub fn forced() -> Option<Preset> {
+        static FORCED: std::sync::OnceLock<Option<Preset>> = std::sync::OnceLock::new();
+        *FORCED.get_or_init(|| {
+            let name = std::env::var("ND_PRESET").ok().filter(|n| !n.is_empty())?;
+            let preset = Preset::parse(&name);
+            if preset.is_none() {
+                eprintln!("nd: ND_PRESET={name} is not one of macos, fluent, adwaita, plain");
+            }
+            preset
+        })
+    }
+
+    pub fn parse(name: &str) -> Option<Preset> {
+        match name.to_ascii_lowercase().as_str() {
+            "macos" | "mac" => Some(Preset::MacOs),
+            "fluent" | "windows" => Some(Preset::Fluent),
+            "adwaita" | "linux" => Some(Preset::Adwaita),
+            "plain" | "web" => Some(Preset::Plain),
+            _ => None,
+        }
+    }
+
+    /// The preset of the platform this binary was built for.
+    pub fn native() -> Preset {
         if cfg!(target_os = "macos") {
             Preset::MacOs
         } else if cfg!(target_os = "windows") {
@@ -459,4 +489,19 @@ fn adwaita_text_styles() -> TextStyles {
         (12., 400., 16.),
         (11., 400., 14.),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Preset;
+
+    #[test]
+    fn nd_preset_names_parse() {
+        assert_eq!(Preset::parse("fluent"), Some(Preset::Fluent));
+        assert_eq!(Preset::parse("Windows"), Some(Preset::Fluent));
+        assert_eq!(Preset::parse("adwaita"), Some(Preset::Adwaita));
+        assert_eq!(Preset::parse("macos"), Some(Preset::MacOs));
+        assert_eq!(Preset::parse("plain"), Some(Preset::Plain));
+        assert_eq!(Preset::parse("aqua"), None);
+    }
 }
