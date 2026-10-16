@@ -59,7 +59,7 @@ impl State {
 
 /// A key's virtual code and the characters AppKit reports for it (`HIToolbox/Events.h`, ANSI).
 fn key_code(key: &str) -> Option<(u16, String)> {
-    const NAMED: [(&str, u16, u32); 15] = [
+    const NAMED: [(&str, u16, u32); 26] = [
         ("enter", 0x24, 0x0d),
         ("tab", 0x30, 0x09),
         ("space", 0x31, 0x20),
@@ -75,6 +75,17 @@ fn key_code(key: &str) -> Option<(u16, String)> {
         ("down", 0x7d, 0xf701),
         ("up", 0x7e, 0xf700),
         ("f1", 0x7a, 0xf704),
+        ("f2", 0x78, 0xf705),
+        ("f3", 0x63, 0xf706),
+        ("f4", 0x76, 0xf707),
+        ("f5", 0x60, 0xf708),
+        ("f6", 0x61, 0xf709),
+        ("f7", 0x62, 0xf70a),
+        ("f8", 0x64, 0xf70b),
+        ("f9", 0x65, 0xf70c),
+        ("f10", 0x6d, 0xf70d),
+        ("f11", 0x67, 0xf70e),
+        ("f12", 0x6f, 0xf70f),
     ];
     if let Some((_, code, ch)) = NAMED.iter().find(|(name, ..)| *name == key) {
         return Some((*code, char::from_u32(*ch)?.to_string()));
