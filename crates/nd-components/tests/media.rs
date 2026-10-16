@@ -740,3 +740,51 @@ fn svg_data_urls_render_at_the_box_size_and_take_a_tint() {
     assert_eq!(&bytes[..], svg.as_bytes());
     assert_eq!(load(&p, request).unwrap().width, 32, "the pipeline decodes it off the main thread");
 }
+
+#[derive(Default)]
+struct Clips {
+    playing: bool,
+    ready: Vec<VideoReady>,
+    ended: u32,
+    failed: Vec<String>,
+}
+
+#[test]
+fn video_carries_play_state_as_props_and_reports_its_events() {
+    let mut rig = Rig::new(Clips::default(), |s, cx| {
+        video("/tmp/clip.mp4")
+            .id("clip")
+            .alt("Clip")
+            .playing(s.playing)
+            .muted(true)
+            .size(px(200.))
+            .on_ready(cx.listener(|h, e: &VideoReady, _, cx| {
+                h.s.ready.push(*e);
+                cx.notify();
+            }))
+            .on_end(cx.listener(|h, _: &VideoEnded, _, cx| {
+                h.s.ended += 1;
+                cx.notify();
+            }))
+            .on_error(cx.listener(|h, e: &VideoFailed, _, cx| {
+                h.s.failed.push(e.error.clone());
+                cx.notify();
+            }))
+            .into_any_element()
+    });
+    assert!(rig.kind_is::<VideoKind>("clip"));
+    let node = rig.sem("clip");
+    assert_eq!((node.role, node.name.as_str()), (Role::Image, "Clip"));
+    let props = rig.props::<VideoProps>("clip");
+    assert_eq!(props.source.as_deref(), Some("/tmp/clip.mp4"));
+    assert!(!props.playing && props.muted && !props.looping);
+    assert_eq!(props.fit, ImageFit::Contain, "letterboxed unless asked to crop");
+    rig.mutate(|s| s.playing = true);
+    assert!(rig.props::<VideoProps>("clip").playing);
+    rig.emit("clip", VideoReady { width: 640, height: 360, duration: Some(3.5) });
+    rig.emit("clip", VideoEnded);
+    rig.emit("clip", VideoFailed { error: "gone".into() });
+    rig.cx.run_until_idle();
+    let s = rig.state();
+    assert_eq!((s.ready.len(), s.ended, s.failed.as_slice()), (1, 1, &["gone".to_string()][..]));
+}

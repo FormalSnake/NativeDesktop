@@ -26,6 +26,8 @@ objc2-app-kit = "0.3.2"
 objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-quartz-core", "AVAnimation", "AVPlayer", "AVPlayerItem", "AVPlayerLayer"] }
+objc2-core-media = "0.3.2"
 objc2-web-kit = "0.3.2"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"

@@ -1,7 +1,8 @@
 //! Tier 2: what the messages port needed from the AppKit backend. Rich text reaches a label as
 //! attributed runs; a bubble's fill role picks its fill; a canvas draws its display list as
 //! layers and redraws when it changes; an SVG data URL decodes into an image; hover reports
-//! enter and exit; `focus_id` hands the keyboard to a field. Prints `ND_PORT_GAPS_OK`.
+//! enter and exit; `focus_id` hands the keyboard to a field; a video opens, plays to its end and
+//! reports a missing file. Prints `ND_PORT_GAPS_OK`.
 
 mod harness;
 
@@ -26,7 +27,9 @@ mod gaps {
     use nd_backend_appkit::objc2_app_kit::{NSEvent, NSFontAttributeName, NSTextField, NSTextView, NSView};
     use nd_backend_appkit::objc2_foundation::{NSRange, NSString};
     use nd_components::forms::{label, text_field};
-    use nd_components::media::{BubbleSide, ImageLoaded, ImageSource, chat_bubble, image};
+    use nd_components::media::{
+        BubbleSide, ImageLoaded, ImageSource, VideoEnded, VideoFailed, VideoReady, chat_bubble, image, video,
+    };
     use nd_theme::FillRole;
     use objc2_core_graphics::CGColor;
     use objc2_quartz_core::CAShapeLayer;
@@ -42,6 +45,7 @@ mod gaps {
         canvases(&rig, &mut c);
         svg(&rig, &mut c);
         hover_and_focus(&rig, &mut c);
+        videos(&rig, &mut c);
         if c.0 == 0 {
             println!("ND_PORT_GAPS_OK");
             std::process::exit(0);
@@ -248,6 +252,63 @@ mod gaps {
                     .is_some_and(|d| Retained::as_ptr(&d).cast::<()>() == target)
         });
         c.check(in_second, "focus: the second field has the keyboard");
+        rig.close(opened);
+    }
+
+    #[derive(Default)]
+    struct Clip {
+        source: String,
+        ready: Option<VideoReady>,
+        ended: u32,
+        failed: Option<String>,
+    }
+
+    impl Render for Clip {
+        fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex().p(px(12.)).child(
+                video(self.source.clone())
+                    .id("clip")
+                    .playing(true)
+                    .muted(true)
+                    .w(px(160.))
+                    .h(px(90.))
+                    .on_ready(cx.listener(|this, e: &VideoReady, _, cx| {
+                        this.ready = Some(*e);
+                        cx.notify();
+                    }))
+                    .on_end(cx.listener(|this, _: &VideoEnded, _, cx| {
+                        this.ended += 1;
+                        cx.notify();
+                    }))
+                    .on_error(cx.listener(|this, e: &VideoFailed, _, cx| {
+                        this.failed = Some(e.error.clone());
+                        cx.notify();
+                    })),
+            )
+        }
+    }
+
+    fn videos(rig: &Rig, c: &mut Checks) {
+        let clip = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/clip.mp4");
+        let opened = rig.open("video", |_| Clip { source: clip.into(), ..Clip::default() });
+        let win = opened.id();
+        let ready = until(rig, Duration::from_secs(10), || rig.read(&opened, |s| s.ready.is_some()));
+        let got = rig.read(&opened, |s| s.ready);
+        c.check(ready, &format!("video: the clip opens ({:?})", rig.read(&opened, |s| s.failed.clone())));
+        c.check(got.is_some_and(|r| (r.width, r.height) == (64, 36)), &format!("video: its size ({got:?})"));
+        c.check(
+            got.and_then(|r| r.duration).is_some_and(|d| (d - 0.5).abs() < 0.15),
+            &format!("video: its length ({got:?})"),
+        );
+        c.check(sublayer_count(&rig.view(win, "clip")) == 1, "video: one player layer");
+        let ended = until(rig, Duration::from_secs(10), || rig.read(&opened, |s| s.ended == 1));
+        c.check(ended, "video: playing to the end reports it once");
+        rig.update(&opened, |s, cx| {
+            s.source = "/nonexistent/clip.mp4".into();
+            cx.notify();
+        });
+        let failed = until(rig, Duration::from_secs(10), || rig.read(&opened, |s| s.failed.is_some()));
+        c.check(failed, "video: a missing file reports a failure");
         rig.close(opened);
     }
 }

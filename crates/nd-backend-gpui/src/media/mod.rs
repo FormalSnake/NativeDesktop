@@ -1,8 +1,8 @@
 //! The media and content kinds (`nd_components::media`) drawn on GPUI from theme tokens: images
-//! from the shared pipeline, the seek bar, synced lyrics, the sideways shelf, chat bubbles and
-//! avatars. The models in `nd-components` hold every rule; this module draws them and turns
-//! input into their calls. Per-node state lives with the forms controls' (`Build::ctl`), so a
-//! released node drops it.
+//! from the shared pipeline, the seek bar, synced lyrics, the sideways shelf, chat bubbles,
+//! avatars and the video placeholder. The models in `nd-components` hold every rule; this
+//! module draws them and turns input into their calls. Per-node state lives with the forms
+//! controls' (`Build::ctl`), so a released node drops it.
 
 mod chat;
 mod image;
@@ -10,10 +10,13 @@ mod lyrics;
 pub(crate) mod paint;
 mod seek;
 mod shelf;
+mod video;
 
 use std::any::TypeId;
 
-use nd_components::{AvatarKind, ChatBubbleKind, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind};
+use nd_components::{
+    AvatarKind, ChatBubbleKind, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind, VideoKind,
+};
 use nd_core::NodeId;
 use nd_core::time::Instant;
 use nd_gpui::gpui::{self, AbsoluteLength, AnyElement, DefiniteLength, Length};
@@ -61,6 +64,8 @@ impl Build<'_> {
             chat::bubble(self, id, props.downcast_ref()?, &marks, window, cx)
         } else if is::<AvatarKind>(kind) {
             chat::avatar(self, id, props.downcast_ref()?, &marks, window, cx)
+        } else if is::<VideoKind>(kind) {
+            video::video(self, id, props.downcast_ref()?, &marks, window, cx)
         } else {
             return None;
         };
