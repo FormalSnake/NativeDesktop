@@ -1750,7 +1750,13 @@ impl Backend for AppKitBackend {
 
     fn boundary_insets(&self, node: NodeId) -> nd_ui::backend::BoundaryInsets {
         match self.0.try_borrow().ok().as_ref().and_then(|s| s.nodes.get(&node)) {
-            Some(Native::Pane(p)) if p.role != PaneRole::Overlay => p.insets(),
+            Some(Native::Pane(p)) if p.role != PaneRole::Overlay => {
+                let mut insets = p.insets();
+                if p.props.under_toolbar {
+                    insets.top = 0.;
+                }
+                insets
+            }
             _ => nd_ui::backend::BoundaryInsets::default(),
         }
     }

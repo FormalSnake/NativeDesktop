@@ -15,7 +15,9 @@ gpui::actions!(
         Confirm,
         /// Escape: listeners on the focus path see it first; unhandled, it dismisses the innermost
         /// focus scope that asked for it (the innermost overlay).
-        Cancel
+        Cancel,
+        /// F12: cycles the frame HUD hidden, minimal and full (`nd::hud`).
+        ToggleFrameHud
     ]
 );
 
@@ -26,5 +28,6 @@ pub fn standard_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-tab", FocusPrevious, None),
         KeyBinding::new("enter", Confirm, None),
         KeyBinding::new("escape", Cancel, None),
+        KeyBinding::new("f12", ToggleFrameHud, None),
     ]
 }

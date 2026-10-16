@@ -120,6 +120,9 @@ pub struct Shared {
     /// Rows the model wanted rendered when the presenter last asked the app.
     asked: RefCell<Vec<RowId>>,
     edges: Cell<(bool, bool)>,
+    /// Points of the list under the window's bars at its top: model offset 0 sits this far down
+    /// the clip view, so rows scroll under the bars (which blur them) and rest clear of them.
+    bars: Cell<f64>,
 }
 
 impl Shared {
@@ -139,6 +142,7 @@ impl Shared {
             user_top: Cell::new(None),
             asked: RefCell::default(),
             edges: Cell::new((false, false)),
+            bars: Cell::new(0.),
         }
     }
 
@@ -374,7 +378,7 @@ define_class!(
             let Some(clip) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSClipView>().ok()) else {
                 return;
             };
-            let y = clip.bounds().origin.y;
+            let y = clip.bounds().origin.y + shared.bars.get();
             let top = {
                 let mut core = shared.handle.0.borrow_mut();
                 core.scroll_to_offset(y);
@@ -805,9 +809,11 @@ impl TableNative {
         } else {
             0.
         };
+        let bars = bars(&self.scroll);
+        shared.bars.set(bars);
         {
             let mut core = self.props.handle.0.borrow_mut();
-            core.set_viewport(f64::from(self.size.width), (visible.height - header).max(0.));
+            core.set_viewport(f64::from(self.size.width), (visible.height - header - bars).max(0.));
         }
         let generation = self.props.handle.0.borrow().generation();
         let structural = self.generation != Some(generation);
@@ -908,22 +914,23 @@ impl TableNative {
 fn place_clip(scroll: &NSScrollView, shared: &Shared, handle: &ListHandle) {
     let layout = handle.0.borrow_mut().layout();
     let clip = scroll.contentView();
-    let inset = (-layout.scroll_top).max(0.);
+    let bars = shared.bars.get();
+    let inset = (-layout.scroll_top).max(0.) + bars;
     let current = scroll.contentInsets();
     if (current.top - inset).abs() > 0.25 {
         scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. });
     }
     let origin = clip.bounds().origin;
-    let target = layout.scroll_top;
+    let target = layout.scroll_top - bars;
     let model_moved = match shared.user_top.take() {
-        Some(user) => (user - target).abs() > 0.25,
+        Some(user) => (user - layout.scroll_top).abs() > 0.25,
         None => true,
     };
     if model_moved && (origin.y - target).abs() > 0.25 {
         clip.scrollToPoint(NSPoint::new(origin.x, target));
         scroll.reflectScrolledClipView(&clip);
     } else if !model_moved {
-        shared.user_top.set(Some(target));
+        shared.user_top.set(Some(layout.scroll_top));
     }
 }
 
@@ -935,6 +942,11 @@ impl Drop for TableNative {
             self.table.setDelegate(None);
         }
     }
+}
+
+/// How far the window's bars (a toolbar over full-size content) reach down over the scroll view.
+fn bars(scroll: &NSScrollView) -> f64 {
+    scroll.safeAreaInsets().top.max(0.)
 }
 
 fn index_set(indices: &[usize]) -> Retained<NSIndexSet> {
@@ -1032,7 +1044,7 @@ define_class!(
             let Some(clip) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSClipView>().ok()) else {
                 return;
             };
-            let y = clip.bounds().origin.y;
+            let y = clip.bounds().origin.y + shared.bars.get();
             let top = {
                 let mut core = shared.handle.0.borrow_mut();
                 core.scroll_to_offset(y);
@@ -1207,7 +1219,9 @@ impl GridNative {
     pub fn commit(&mut self) -> bool {
         let shared = self.shared.clone();
         let clip = self.scroll.contentView().bounds().size;
-        self.props.handle.0.borrow_mut().set_viewport(clip.width, clip.height);
+        let bars = bars(&self.scroll);
+        shared.bars.set(bars);
+        self.props.handle.0.borrow_mut().set_viewport(clip.width, (clip.height - bars).max(0.));
         let generation = self.props.handle.0.borrow().generation();
         shared.programmatic(|| {
             if self.generation != Some(generation) {

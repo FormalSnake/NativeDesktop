@@ -54,6 +54,8 @@ pub struct ToolbarItemProps {
     pub leading: bool,
     /// Kept in the middle of the toolbar whatever sits beside it (`centeredItemIdentifiers`).
     pub centered: bool,
+    /// Starts the content's part of the toolbar, ahead of the title (`isNavigational`).
+    pub navigation: bool,
 }
 
 /// An item the OS draws and implements itself.
@@ -128,6 +130,11 @@ impl Toolbar {
     /// Sits before the title: window controls embedded in the toolbar, a back button.
     pub fn leading(self, item: impl IntoElement) -> Self {
         self.push(item, ToolbarItemProps { leading: true, ..ToolbarItemProps::default() })
+    }
+
+    /// Starts the content's part of the toolbar, ahead of the title: a compose or back button.
+    pub fn navigation(self, item: impl IntoElement) -> Self {
+        self.push(item, ToolbarItemProps { navigation: true, ..ToolbarItemProps::default() })
     }
 
     /// Kept in the middle of the window's toolbar: the conversation in a chat window.
