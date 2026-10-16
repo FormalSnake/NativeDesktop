@@ -66,6 +66,8 @@ ensure_rev() {
     git -C "$zed" remote add origin "$(get remote)"
   fi
   git -C "$zed" cat-file -e "$rev^{commit}" 2>/dev/null || git -C "$zed" fetch -q --depth 1 origin "$rev"
+  # A shared clone of a checkout without refs comes out empty: a tag keeps the snapshot in it.
+  git -C "$zed" rev-parse -q --verify "refs/tags/nd-snapshot-$rev" >/dev/null || git -C "$zed" tag "nd-snapshot-$rev" "$rev"
 }
 
 # Applies the queue onto the snapshot in a throwaway clone, staged but not committed, and prints
