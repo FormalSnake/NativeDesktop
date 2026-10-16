@@ -73,6 +73,8 @@
                 # client-decorated case (ndshell::weston).
                 labwc
                 weston
+                # dbus-daemon: each headless run's compositors get a private session bus.
+                dbus
                 # nd-system's audio dlopens GStreamer; these give its tests playbin, spectrum and wavparse.
                 gst_all_1.gstreamer
                 gst_all_1.gst-plugins-base
