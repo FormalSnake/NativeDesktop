@@ -354,13 +354,12 @@ impl Input for ImageInner {
             self.slot.place(bounds, scale_of(&self.view));
             return;
         };
-        // The picture fills the whole box, tail strip included; the mask cuts the bubble and its
-        // tail out of it, so the tail shows the picture's own corner.
-        let tw = f64::from(nd_components::media::BUBBLE.tail_width);
-        let x = if side == nd_components::media::BubbleSide::Received { tw } else { 0. };
+        // The picture fills the whole box, the room under it included; the mask cuts the bubble
+        // and its tail out of it, so the tail shows the picture's own corner.
+        let drop = f64::from(nd_components::media::BUBBLE.tail_drop);
         let body = objc2_foundation::NSRect::new(
-            objc2_foundation::NSPoint::new(x, 0.),
-            objc2_foundation::NSSize::new((bounds.size.width - tw).max(0.), bounds.size.height),
+            objc2_foundation::NSPoint::new(0., 0.),
+            objc2_foundation::NSSize::new(bounds.size.width, (bounds.size.height - drop).max(0.)),
         );
         let radius = style_radius(&self.props.borrow().style, body.size.width, body.size.height);
         let path = objc2_core_graphics::CGMutablePath::new();

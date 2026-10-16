@@ -23,23 +23,24 @@ use crate::forms::with_style;
 use crate::nav::Marks;
 use crate::render::Build;
 
-/// The tail: a lobe curving out of the bubble's bottom outer corner, filling the corner's
-/// rounding under it so bubble and tail read as one shape.
+/// The tail: a lobe hanging under the bubble's bottom outer corner, `BUBBLE.tail_drop` below it
+/// and inside its width, as Messages draws it on macOS 26.
 fn tail(color: Hsla, sent: bool) -> impl IntoElement {
-    let (r, w, h) = (BUBBLE.radius, BUBBLE.tail_width, BUBBLE.tail_height);
+    let (reach, drop) = (BUBBLE.tail_height, BUBBLE.tail_drop);
     let el = canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
             let o = bounds.origin;
-            let at = |x: f32, y: f32| {
-                let x = if sent { x } else { r + w - x };
+            // In the canvas: the bubble's outer edge at `reach`, its bottom at 6.
+            let at = |inset: f32, y: f32| {
+                let x = if sent { reach - inset } else { inset };
                 point(o.x + px(x), o.y + px(y))
             };
             let mut path = PathBuilder::fill();
-            path.move_to(at(r, 0.));
-            path.curve_to(at(r + w, h), at(r, h * 0.8));
-            path.line_to(at(0., h));
-            path.line_to(at(0., 0.));
+            path.move_to(at(reach, 0.));
+            path.line_to(at(8., 0.));
+            path.curve_to(at(5.5, 6. + drop), at(5., 5.));
+            path.curve_to(at(reach, 6.), at(10., 7.));
             path.close();
             if let Ok(path) = path.build() {
                 window.paint_path(path, color);
@@ -48,9 +49,9 @@ fn tail(color: Hsla, sent: bool) -> impl IntoElement {
     )
     .absolute()
     .bottom_0()
-    .w(px(r + w))
-    .h(px(h));
-    if sent { el.right(px(-w)) } else { el.left(px(-w)) }
+    .w(px(reach))
+    .h(px(6. + drop));
+    if sent { el.right_0() } else { el.left_0() }
 }
 
 pub(super) fn bubble(
@@ -119,7 +120,7 @@ pub(super) fn bubble(
                 .child(body),
         );
         if p.has_tail() {
-            root = root.child(tail(fill, sent));
+            root = root.pb(px(BUBBLE.tail_drop)).child(tail(fill, sent));
         }
     }
     if !p.reactions.is_empty() {

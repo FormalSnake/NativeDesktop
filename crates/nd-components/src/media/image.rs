@@ -119,8 +119,8 @@ fn image_at(source: Option<ImageSource>, site: &'static Location<'static>) -> Im
 impl Image {
     /// Cuts the picture into a message bubble whose tail leaves the bottom corner on `side`'s
     /// outer edge, the picture running into the tail, as Messages draws a photo that ends a run.
-    /// The tail takes [`BUBBLE.tail_width`](super::BUBBLE) of the element's width on that edge;
-    /// the corner radius is the style's. GPUI backends draw the rounded picture without the
+    /// The tail takes [`BUBBLE.tail_drop`](super::BUBBLE) of the element's height at its
+    /// bottom; the corner radius is the style's. GPUI backends draw the rounded picture without the
     /// tail.
     pub fn bubble_tail(mut self, side: BubbleSide) -> Self {
         self.0.props_mut().tail = Some(side);
