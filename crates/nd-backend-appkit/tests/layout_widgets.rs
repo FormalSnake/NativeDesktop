@@ -31,9 +31,10 @@ mod layout {
     use nd_backend_appkit::objc2::runtime::AnyObject;
     use nd_backend_appkit::objc2_app_kit::{
         NSApplication, NSControl, NSSegmentedControl, NSSplitView, NSSplitViewController,
-        NSToolbarInspectorTrackingSeparatorItemIdentifier, NSToolbarToggleInspectorItemIdentifier, NSView,
+        NSToolbarFlexibleSpaceItemIdentifier, NSToolbarInspectorTrackingSeparatorItemIdentifier,
+        NSToolbarToggleInspectorItemIdentifier, NSView,
     };
-    use nd_backend_appkit::objc2_foundation::{MainThreadMarker, NSPoint, NSSize};
+    use nd_backend_appkit::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
     use nd_components::split::Axis;
     use nd_components::*;
     use nd_ui::prelude::*;
@@ -204,6 +205,19 @@ mod layout {
         host.backend().view(node_id(host, window, test_id)).unwrap_or_else(|| panic!("{test_id} has no view"))
     }
 
+    /// The rect, in the view's top-down points, of everything the status page draws.
+    fn status_page_body(view: &NSView) -> NSRect {
+        let rep = view.bitmapImageRepForCachingDisplayInRect(view.bounds()).expect("a bitmap");
+        view.cacheDisplayInRect_toBitmapImageRep(view.bounds(), &rep);
+        let (w, h) = (rep.pixelsWide(), rep.pixelsHigh());
+        let ink = |x, y| rep.colorAtX_y(x, y).is_some_and(|c| c.alphaComponent() > 0.1);
+        let rows: Vec<isize> = (0..h).filter(|&y| (0..w).any(|x| ink(x, y))).collect();
+        let (Some(first), Some(last)) = (rows.first(), rows.last()) else { return NSRect::ZERO };
+        let scale = h as f64 / view.bounds().size.height;
+        let (top, bottom) = (*first as f64 / scale, (*last + 1) as f64 / scale);
+        NSRect::new(NSPoint::new(0., top), NSSize::new(view.bounds().size.width, bottom - top))
+    }
+
     /// The control's action sent to its target, as a click ends.
     fn send_action(control: &NSControl) {
         let mtm = MainThreadMarker::new().expect("main thread");
@@ -372,6 +386,14 @@ mod layout {
         c.check(class.contains("NSHostingView"), &format!("the status page is an NSHostingView ({class})"));
         let s = status.frame().size;
         c.check(s.width > 0. && s.height > 0., &format!("it measures and lays out non-zero ({s:?})"));
+        // Measured as its icon, title and description, without ContentUnavailableView's own
+        // margins and action room, so the status page centres what it shows.
+        let page = status_page_body(&status);
+        let (top, bottom) = (page.origin.y, s.height - (page.origin.y + page.size.height));
+        c.check(
+            (top - bottom).abs() <= 2. && top.abs() <= 6.,
+            &format!("the page's content sits centred in its measured frame (top {top}, bottom {bottom})"),
+        );
 
         // Inspector: the toolbar's system toggle collapses it, reported once.
         let shell_window = host.ns_window(shell).expect("shell window");
@@ -385,6 +407,11 @@ mod layout {
         c.check(
             matches!((t, g), (Some(t), Some(g)) if t < g),
             &format!("the inspector tracking separator sits ahead of the inspector toggle ({ids:?})"),
+        );
+        let flexible = unsafe { NSToolbarFlexibleSpaceItemIdentifier }.to_string();
+        c.check(
+            g.is_some_and(|g| g > 0 && ids[g - 1] == flexible),
+            &format!("a flexible space keeps the inspector toggle at the trailing edge ({ids:?})"),
         );
         let controller = shell_window
             .contentViewController()

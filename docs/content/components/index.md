@@ -43,7 +43,9 @@ the command palette:
 - `switch`, `checkbox`, `radio_group`, `segmented`, `select`, `slider`, `stepper`: the AppKit
   control of the same name. `select` can map to a pop-up, a segmented control or a radio group.
 - `date_picker` and `color_well`: `NSDatePicker` and `NSColorWell` on macOS.
-- `form`, `form_section`, `form_row`, `settings_group` and `settings_form`: grouped rows. See
+- `form`, `form_section`, `form_row`, `settings_group` and `settings_form`: grouped rows. A form
+  scrolls itself; `form().title("Forms")` sets a page title that scrolls away with the rows, and
+  `.pin_title()` keeps it above them, as Windows Settings does. See
   [settings and config](../guides/settings-and-config.md) for `settings_form`.
 
 ## Layout and windows
@@ -73,3 +75,8 @@ On Linux and Windows everything is drawn through GPUI with that platform's prese
 component still follows [theming](../concepts/theming.md), so light and dark, the accent and radii
 are the same code path. If you need a component that is not here, define one with
 [native widgets](../concepts/native-widgets.md).
+
+Icons are one vocabulary, `Icon` from `nd-icons`, named after Lucide. macOS draws the matching SF
+Symbol, Windows the matching Segoe Fluent Icons glyph (the font Windows 11's own apps use), and
+Linux and the web the Lucide shape. An icon an app registers itself is drawn from its SVG where
+no system glyph exists.

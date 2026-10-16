@@ -8,6 +8,8 @@
 //! An OS crate implements [`OsHooks`] and hands it to [`crate::GpuiHost::builder`] (the `nd`
 //! facade does this per target).
 
+use std::rc::Rc;
+
 use nd_core::time::Instant;
 
 use nd_core::{FrameTime, Point, WindowId};
@@ -64,6 +66,26 @@ pub trait OsHooks: 'static {
         None
     }
 
+    /// Drawn above the window's content and below its menus on every frame, whether or not the
+    /// app placed a `window_controls()` node: chrome the OS expects on every window, such as the
+    /// caption buttons of a window whose title bar the app draws (Windows). `title_height` is
+    /// the bottom of the app's title rows as last laid out, 0 when it has none.
+    fn window_overlay(
+        &self,
+        _window: WindowId,
+        _look: Look,
+        _title_height: f32,
+        _gpui_window: &mut gpui::Window,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    /// The OS draws a material behind the window (Mica), so the window's root paints no surface
+    /// of its own and the material shows wherever the app's content is not filled.
+    fn backdrop(&self, _window: WindowId) -> bool {
+        false
+    }
+
     /// The time of the frame about to be drawn. `None` uses the backend's estimate: now, with
     /// the target one display interval later. An OS crate that measures presentation returns
     /// the measured previous present as `timestamp` and its prediction as `target`.
@@ -73,6 +95,15 @@ pub trait OsHooks: 'static {
 
     /// The window closed; per-window state can go.
     fn window_closed(&self, _window: WindowId) {}
+
+    /// The OS's own colours (the system accent) for both schemes, read at launch and again
+    /// whenever the callback from [`OsHooks::on_os_colors_changed`] fires.
+    fn os_palettes(&self) -> nd_theme::SchemePalettes {
+        nd_theme::SchemePalettes::default()
+    }
+
+    /// Installs the one callback the OS crate calls when the system colours change.
+    fn on_os_colors_changed(&self, _changed: Rc<dyn Fn(&mut gpui::App)>) {}
 }
 
 /// Plain GPUI windows: every hook at its default.

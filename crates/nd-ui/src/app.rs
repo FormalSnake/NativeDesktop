@@ -217,6 +217,9 @@ pub struct App {
     /// click dispatching a menu command): listeners need that window, so they run once the
     /// handler hands it back.
     deferred_actions: Vec<(WindowId, Box<dyn Action>)>,
+    /// Focus requests by element id made while the window's dispatch tree was leased to an action
+    /// listener: they land once the tree is back.
+    deferred_focus: Vec<(WindowId, String)>,
     /// The views rendering now, innermost last.
     pub(crate) rendering: Vec<EntityId>,
     /// The window whose views are rendering or whose handlers are running.
@@ -254,6 +257,7 @@ impl App {
             bindings: Vec::new(),
             propagate_action: false,
             deferred_actions: Vec::new(),
+            deferred_focus: Vec::new(),
             rendering: Vec::new(),
             current_window: None,
             moved: HashSet::new(),
@@ -573,6 +577,17 @@ impl App {
         self.with_dispatch(window, false, |tree, _| tree.focus(node))
     }
 
+    /// Moves the window's focus to the element given `.id(id)`. False when none is mounted or it
+    /// is not focusable. Inside an action listener the tree is out, so the request waits for it.
+    pub fn focus_id(&mut self, window: WindowId, id: &str) -> bool {
+        if self.windows.get(&window).is_some_and(|w| w.tree.is_none()) {
+            self.deferred_focus.push((window, id.to_owned()));
+            return true;
+        }
+        let node = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.node_with_id(id));
+        node.is_some_and(|node| self.focus(window, node))
+    }
+
     pub fn blur(&mut self, window: WindowId) {
         self.with_dispatch(window, (), |tree, _| tree.blur());
     }
@@ -826,6 +841,9 @@ impl App {
             }
             for (window, action) in std::mem::take(&mut self.deferred_actions) {
                 self.dispatch_action(window, &*action);
+            }
+            for (window, id) in std::mem::take(&mut self.deferred_focus) {
+                self.focus_id(window, &id);
             }
             self.flush_effects();
         }

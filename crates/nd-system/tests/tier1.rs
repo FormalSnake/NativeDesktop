@@ -282,7 +282,14 @@ fn command_lines_become_open_requests() {
     let doc = dir.path().join("a.md");
     std::fs::write(&doc, "").unwrap();
     let mut events = sys.events();
-    sys.open_from_args(["--verbose", "nd-demo://open?x=1", doc.to_str().unwrap(), "C:", "missing.txt", "mailto:a@b.c"]);
+    sys.open_from_args([
+        "--verbose",
+        "nd-demo://open?x=1",
+        doc.to_str().unwrap(),
+        "Z:missing",
+        "missing.txt",
+        "mailto:a@b.c",
+    ]);
     assert_eq!(
         events.try_next(),
         Some(SystemEvent::OpenUrls(vec!["nd-demo://open?x=1".into(), "mailto:a@b.c".into()]))

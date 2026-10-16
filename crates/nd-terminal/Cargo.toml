@@ -46,7 +46,12 @@ nd-theme.workspace = true
 nd-gpui = { workspace = true, features = ["platform", "test-support"] }
 nd-backend-gpui.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[target.'cfg(unix)'.dev-dependencies]
 libc = "0.2.190"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 # Tier 2 on the AppKit presenter's Metal renderer, offscreen.
 [[test]]

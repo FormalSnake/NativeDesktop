@@ -46,13 +46,14 @@ spellcheck = false
         // docs:end round-trip
     }
 
+    // Home Manager links into the Nix store; neither exists on Windows.
+    #[cfg(unix)]
     #[test]
     fn store_symlinked_file_is_read_only_and_edits_go_to_the_overlay() {
         // docs:begin read-only
         let dirs = Dirs::new();
         let managed = dirs.store.join("abc-notes-config.toml");
         fs::write(&managed, "editor_font_size = 20\n").unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&managed, dirs.user()).unwrap();
 
         let settings = SettingsHandle::<NotesSettings>::load(dirs.options("notes")).unwrap();
@@ -202,6 +203,8 @@ spellcheck = false
         assert_eq!(fixed.changed, ["compact_rows"]);
     }
 
+    // Home Manager links into the Nix store; neither exists on Windows.
+    #[cfg(unix)]
     #[test]
     fn watcher_sees_a_symlink_swap_into_the_store() {
         let dirs = Dirs::new();
@@ -218,7 +221,6 @@ spellcheck = false
         let managed = dirs.store.join("gen2-config.toml");
         fs::write(&managed, "compact_rows = true\n").unwrap();
         let link = dirs.config.join("swap");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&managed, &link).unwrap();
         fs::rename(&link, dirs.user()).unwrap();
 

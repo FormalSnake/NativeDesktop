@@ -32,6 +32,7 @@ pub use watch::WatchGuard;
 // The derive names `::nd_settings`, which is also this crate.
 extern crate self as nd_settings;
 
+pub use schemars;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;

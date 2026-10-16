@@ -1,6 +1,7 @@
 //! `text_field`, `secure_field` and `search_field` as `NSTextField`, `NSSecureTextField` and
-//! `NSSearchField`; `text_area` as an `NSTextView` in a bezeled `NSScrollView`; `combo_box` as
-//! `NSComboBox`. One delegate per control reports edits, Return and combo picks.
+//! `NSSearchField`; `text_area` as an `NSTextView` in an `NSScrollView` wearing a text field's
+//! rounded bezel; `combo_box` as `NSComboBox`. One delegate per control reports edits, Return
+//! and combo picks.
 //!
 //! Field icons on plain and secure fields are borderless SF Symbol buttons inside the field's
 //! bezel, and the field's cell draws and edits its text in the rect between them. A search
@@ -29,11 +30,12 @@ use objc2_app_kit::{
     NSAccessibility, NSActionCell, NSAppearanceCustomization, NSApplication, NSAttributedStringNSExtendedStringDrawing,
     NSAttributedStringNSStringDrawing, NSBitmapImageFileType, NSBitmapImageRep, NSBorderType, NSButton, NSCell,
     NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
-    NSControlTextEditingDelegate, NSEventModifierFlags, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSPasteboard, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSResponder,
-    NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField,
-    NSSecureTextFieldCell, NSStandardKeyBindingResponding, NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle,
-    NSTextFieldCell, NSTextFieldDelegate, NSTextView, NSTextViewDelegate, NSView,
+    NSControlTextEditingDelegate, NSEventModifierFlags, NSFocusRingType, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSPasteboard, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
+    NSPasteboardTypeTIFF, NSResponder, NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell,
+    NSSearchFieldDelegate, NSSecureTextField, NSSecureTextFieldCell, NSStandardKeyBindingResponding, NSText,
+    NSTextDelegate, NSTextField, NSTextFieldBezelStyle, NSTextFieldCell, NSTextFieldDelegate, NSTextView,
+    NSTextViewDelegate, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSPoint,
@@ -850,6 +852,94 @@ define_class!(
     }
 );
 
+#[derive(Default)]
+pub struct AreaScrollIvars {
+    bezel: RefCell<Option<Retained<NSTextField>>>,
+}
+
+define_class!(
+    // SAFETY: the subclass overrides `tile` (calling super first) and the focus ring mask
+    // methods (falling back to super), and does not implement Drop.
+    #[unsafe(super(NSScrollView, NSView, NSResponder))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = AreaScrollIvars]
+    struct NdAreaScroll;
+
+    impl NdAreaScroll {
+        // AppKit asks the scroll view for the ring while its text view is first responder, so
+        // the system focus ring goes round the rounded bezel, as it does round a text field.
+        #[unsafe(method(focusRingMaskBounds))]
+        fn focus_ring_mask_bounds(&self) -> NSRect {
+            match self.bezel() {
+                Some(bezel) => bezel.frame(),
+                None => unsafe { msg_send![super(self), focusRingMaskBounds] },
+            }
+        }
+
+        #[unsafe(method(drawFocusRingMask))]
+        fn draw_focus_ring_mask(&self) {
+            let Some((frame, cell)) = self.bezel().and_then(|b| Some((b.frame(), b.cell()?))) else {
+                return unsafe { msg_send![super(self), drawFocusRingMask] };
+            };
+            // The cell draws its rounded mask only while it shows first responder status, which
+            // the inert bezel never has on its own.
+            cell.setShowsFirstResponder(true);
+            cell.drawFocusRingMaskWithFrame_inView(frame, self);
+            cell.setShowsFirstResponder(false);
+        }
+
+        #[unsafe(method(tile))]
+        fn tile(&self) {
+            let _: () = unsafe { msg_send![super(self), tile] };
+            if let Some(bezel) = self.ivars().bezel.borrow().as_ref() {
+                bezel.setFrame(self.bounds());
+            }
+        }
+    }
+);
+
+impl NdAreaScroll {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(AreaScrollIvars::default());
+        unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+    }
+
+    /// The rounded bezel AppKit draws for a text field, behind the scrolled text: an empty,
+    /// inert `NSTextField`, so the bezel, its fill and its disabled look are the system's own
+    /// on every release. `None` takes it away.
+    fn set_bezel(&self, bezel: Option<Retained<NSTextField>>) {
+        if let Some(old) = self.ivars().bezel.replace(bezel.clone()) {
+            old.removeFromSuperview();
+        }
+        let clip = self.contentView();
+        clip.setDrawsBackground(bezel.is_none());
+        self.setFocusRingType(if bezel.is_some() { NSFocusRingType::Exterior } else { NSFocusRingType::Default });
+        if let Some(text) = self.documentView().and_then(|v| v.downcast::<NSTextView>().ok()) {
+            text.setDrawsBackground(bezel.is_none());
+        }
+        if let Some(bezel) = bezel {
+            self.addSubview_positioned_relativeTo(&bezel, objc2_app_kit::NSWindowOrderingMode::Below, Some(&clip));
+            bezel.setFrame(self.bounds());
+        }
+    }
+
+    fn bezel(&self) -> Option<Retained<NSTextField>> {
+        self.ivars().bezel.borrow().clone()
+    }
+}
+
+/// An empty rounded-bezel text field that never takes focus or clicks.
+fn inert_bezel(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let bezel = NSTextField::new(mtm);
+    bezel.setBezeled(true);
+    bezel.setBezelStyle(NSTextFieldBezelStyle::RoundedBezel);
+    bezel.setEditable(false);
+    bezel.setSelectable(false);
+    bezel.setRefusesFirstResponder(true);
+    bezel.setAccessibilityElement(false);
+    bezel
+}
+
 fn media_types() -> Vec<&'static NSPasteboardType> {
     unsafe { vec![NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF] }
 }
@@ -906,8 +996,13 @@ impl NdAreaView {
     }
 }
 
+/// The text container inset inside the rounded bezel: with the line fragment padding, the
+/// text starts where a rounded field's does, and its first line sits as far below the top
+/// edge as a field's single line.
+const BEZEL_INSET: (f64, f64) = (2., 4.);
+
 pub(crate) struct TextAreaControl {
-    scroll: Retained<NSScrollView>,
+    scroll: Retained<NdAreaScroll>,
     text_view: Retained<NdAreaView>,
     core: Rc<Core>,
     _delegate: Retained<NdTextDelegate>,
@@ -918,8 +1013,7 @@ pub(crate) struct TextAreaControl {
 impl TextAreaControl {
     pub fn new(cx: Ctx, props: &TextAreaProps) -> Self {
         let mtm = cx.mtm;
-        let scroll = NSScrollView::new(mtm);
-        scroll.setBorderType(NSBorderType::BezelBorder);
+        let scroll = NdAreaScroll::new(mtm);
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         let text_view = NdAreaView::new(mtm);
@@ -956,6 +1050,9 @@ impl TextAreaControl {
             let color = if new.enabled { NSColor::textColor() } else { NSColor::disabledControlTextColor() };
             tv.setTextColor(Some(&color));
             self.enabled.set(new.enabled);
+            if let Some(bezel) = self.scroll.bezel() {
+                bezel.setEnabled(new.enabled);
+            }
         }
         apply_common(None, tv, old.map(|o| (o.enabled, &o.tooltip)), new.enabled, &new.tooltip);
         if old.is_none_or(|o| o.label != new.label) {
@@ -978,13 +1075,27 @@ impl TextAreaControl {
         self.core.apply(&new.text);
     }
 
-    /// A style with rounded corners draws the area as a capsule: a hairline in the system
-    /// separator colour instead of the square bezel, the text kept clear of the curve.
+    /// By default the area wears the rounded bezel of AppKit's text fields, so it matches the
+    /// single-line fields beside it, and the system focus ring follows that bezel. A style with
+    /// rounded corners draws it as a capsule instead: a hairline in the system separator colour,
+    /// the text kept clear of the curve. A zero radius asks for the square scroll view bezel.
     fn apply_shape(&self, props: &TextAreaProps) {
-        let radius = props.style.corner_radii.top_left.map(crate::look::length).unwrap_or(0.);
+        let radius = props.style.corner_radii.top_left.map(crate::look::length);
+        let mtm = self.core.cx.mtm;
+        self.scroll.setWantsLayer(false);
+        let Some(radius) = radius else {
+            self.scroll.setBorderType(NSBorderType::NoBorder);
+            let bezel = inert_bezel(mtm);
+            bezel.setEnabled(self.enabled.get());
+            self.scroll.set_bezel(Some(bezel));
+            // The text keeps clear of the bezel's edge and corners, as a field's text does.
+            self.text_view.setTextContainerInset(NSSize::new(BEZEL_INSET.0, BEZEL_INSET.1));
+            return;
+        };
+        self.scroll.set_bezel(None);
         if radius <= 0. {
             self.scroll.setBorderType(NSBorderType::BezelBorder);
-            self.scroll.setWantsLayer(false);
+            self.text_view.setTextContainerInset(NSSize::new(0., 0.));
             return;
         }
         self.scroll.setBorderType(NSBorderType::NoBorder);

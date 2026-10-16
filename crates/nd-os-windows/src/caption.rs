@@ -70,6 +70,10 @@ pub struct CaptionLayout {
     /// the caption and get the mouse.
     pub interactive: Vec<Rect>,
     pub resizable: bool,
+    /// The title row's free area drags. Off when the backend marks its own drag regions (the
+    /// GPUI backend's toolbar and `drag_region()`), which then answer for everything that is not
+    /// a caption button or the resize band.
+    pub title_drags: bool,
 }
 
 impl CaptionLayout {
@@ -84,7 +88,15 @@ impl CaptionLayout {
                 (button, Rect::new(x, 0., FLUENT_BUTTON_WIDTH, title_height))
             })
             .collect();
-        Self { width, title_height, buttons, drag: Vec::new(), interactive: Vec::new(), resizable: true }
+        Self {
+            width,
+            title_height,
+            buttons,
+            drag: Vec::new(),
+            interactive: Vec::new(),
+            resizable: true,
+            title_drags: true,
+        }
     }
 
     pub fn button(&self, which: CaptionButton) -> Option<Rect> {
@@ -117,7 +129,7 @@ impl CaptionLayout {
         if self.interactive.iter().any(|r| r.contains(x, y)) {
             return Hit::Client;
         }
-        let in_title = y >= 0. && y < self.title_height && x >= 0. && x < self.width;
+        let in_title = self.title_drags && y >= 0. && y < self.title_height && x >= 0. && x < self.width;
         if in_title || self.drag.iter().any(|r| r.contains(x, y)) {
             return Hit::Caption;
         }
@@ -183,5 +195,8 @@ mod tests {
         assert_eq!(l.hit(300., 100., false, 4.), Hit::Client);
         l.drag.push(Rect::new(0., 32., 200., 400.));
         assert_eq!(l.hit(100., 100., false, 4.), Hit::Caption);
+        l.title_drags = false;
+        assert_eq!(l.hit(500., 16., false, 4.), Hit::Client);
+        assert_eq!(l.hit(730., 16., false, 4.), Hit::Button(CaptionButton::Maximize));
     }
 }

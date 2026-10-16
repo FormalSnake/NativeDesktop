@@ -1,0 +1,9 @@
+[package]
+name = "nd-icons"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# The vendored Lucide icons are ISC (lucide/LICENSE).
+license = "MIT OR Apache-2.0 AND ISC"
+publish.workspace = true
+build = "build.rs"

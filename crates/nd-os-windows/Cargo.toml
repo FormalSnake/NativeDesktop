@@ -13,6 +13,10 @@ raw-window-handle = "0.6"
 # `nd` reaches the GPUI backend through this crate on Windows (lib.rs).
 [target.'cfg(windows)'.dependencies]
 nd-backend-gpui.workspace = true
+nd-core.workspace = true
+nd-gpui.workspace = true
+nd-theme.workspace = true
+nd-ui.workspace = true
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
@@ -27,12 +31,8 @@ features = [
     "Win32_UI_Input_Pointer",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    "UI_ViewManagement",
 ]
-
-# `win_hello` stands in for `examples/hello` on Windows until nd-backend-gpui hosts it: the same
-# tree drawn through GPUI with this crate's chrome on its HWND.
-[target.'cfg(windows)'.dev-dependencies]
-nd-gpui = { workspace = true, features = ["platform"] }
 
 [dev-dependencies]
 ndshell.workspace = true

@@ -180,6 +180,7 @@ impl HostBuilder {
         self.hooks.app_started(cx);
         let backend = GpuiBackend::new();
         backend.set_platform_scheme(scheme_of(cx.window_appearance()));
+        backend.set_os_palettes(self.hooks.os_palettes());
         let mut app = App::with_backend(Box::new(backend.clone()));
         init(&mut app);
         let (tx, rx) = mpsc::unbounded();
@@ -218,6 +219,12 @@ impl HostBuilder {
             inner.subscriptions.borrow_mut().push(keys);
         }
         inner.listen(cx, rx);
+        let weak = Rc::downgrade(&inner);
+        inner.hooks.on_os_colors_changed(Rc::new(move |cx| {
+            if let Some(inner) = weak.upgrade() {
+                inner.os_colors(cx);
+            }
+        }));
         let weak = Rc::downgrade(&inner);
         cx.set_global(CloseHook(Rc::new(move |handle, cx| {
             if let Some(inner) = weak.upgrade() {
@@ -460,6 +467,25 @@ impl Inner {
 
     /// The platform switched light and dark: the backend's own theme follows, then the app's
     /// listener (`nd` feeds its registry), and every window redraws.
+    /// The system colours changed (the accent): the backend's theme takes them, then the app's
+    /// listener, which re-reads them into its registry, and every window redraws.
+    fn os_colors(self: &Rc<Self>, cx: &mut gpui::App) {
+        if !self.backend.set_os_palettes(self.hooks.os_palettes()) {
+            return;
+        }
+        let scheme = scheme_of(cx.window_appearance());
+        let listener = self.backend.state.borrow().scheme_listener.clone();
+        if let Some(listener) = listener
+            && let Ok(mut app) = self.app.try_borrow_mut()
+        {
+            listener(&mut app, scheme);
+            app.flush_effects();
+        }
+        let all: Vec<WindowId> = self.windows.borrow().keys().copied().collect();
+        self.notify(cx, all.into_iter());
+        self.pump(cx);
+    }
+
     fn platform_appearance(self: &Rc<Self>, cx: &mut gpui::App) {
         let scheme = scheme_of(cx.window_appearance());
         if !self.backend.set_platform_scheme(scheme) {
@@ -632,6 +658,7 @@ impl Inner {
             }
         }
         for (id, title, size, group) in wanted {
+            self.backend.state.borrow_mut().windows.entry(id).or_default().title = title.clone();
             if self.windows.borrow().contains_key(&id) {
                 continue;
             }
@@ -1085,6 +1112,8 @@ impl Inner {
             None => element,
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
+        let look = crate::render::Look::of(state.theme.window_theme(id));
+        let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
         let paints = build.take_paints();
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
@@ -1189,6 +1218,7 @@ impl Inner {
                 }
                 _ => d.child(element),
             })
+            .children(overlay)
             .children(menu)
             .into_any_element()
     }

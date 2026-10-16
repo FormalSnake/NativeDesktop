@@ -155,13 +155,25 @@ mod gate_m1 {
         let a = diag.write_incident(Kind::Report, "blob", &vec![0; 4000]).expect("bundle");
         let b = diag.write_incident(Kind::Report, "blob", &vec![0; 4000]).expect("bundle");
         let fifteen_days = SystemTime::now() - Duration::from_secs(15 * 24 * 3600);
-        fs::File::open(&old).unwrap().set_modified(fifteen_days).unwrap();
+        open_dir(&old).set_modified(fifteen_days).unwrap();
         let removed = enforce_retention(diag.diagnostics_dir(), Retention { max_bytes: 6000, ..Retention::default() })
             .expect("retention");
         assert!(!old.exists(), "older than 14 days");
         assert!(!a.exists(), "oldest goes first over the size cap");
         assert!(b.exists());
         assert_eq!(removed.len(), 2);
+    }
+
+    /// A directory handle that can change the directory's times.
+    fn open_dir(dir: &std::path::Path) -> fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_BACKUP_SEMANTICS: the only way to open a directory on Windows.
+            fs::OpenOptions::new().write(true).custom_flags(0x0200_0000).open(dir).unwrap()
+        }
+        #[cfg(not(windows))]
+        fs::File::open(dir).unwrap()
     }
 
     /// A stand-in main thread: runs posted closures in order, or blocks when told to.
