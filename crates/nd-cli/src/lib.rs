@@ -1,10 +1,11 @@
 //! The `nd` command line: `new`, `check`, `test`, `build`, `serve`, `diagnose`, `package`, `release`,
-//! `diag`, `docs`.
+//! `diag`, `docs`, `doctor`.
 
 pub mod check;
 pub mod diag;
 pub mod diagnose;
 pub mod docs;
+pub mod doctor;
 pub mod lints;
 pub mod new;
 pub mod package;
@@ -49,6 +50,8 @@ pub enum Command {
     Diag(diag::DiagArgs),
     /// The docs: `nd docs check`, `build`, `serve` and `capture`.
     Docs(docs::DocsArgs),
+    /// Checks that what the app needs at run time is in place: its web engine.
+    Doctor(doctor::DoctorArgs),
 }
 
 pub fn run(cli: Cli) -> Result<ExitCode> {
@@ -63,5 +66,6 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         Command::Release(args) => release::run(args).map(|()| ExitCode::SUCCESS),
         Command::Diag(args) => diag::run(args),
         Command::Docs(args) => docs::run(args),
+        Command::Doctor(args) => doctor::run(args),
     }
 }

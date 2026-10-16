@@ -115,6 +115,7 @@ pub fn os_theme(mtm: MainThreadMarker) -> OsTheme {
         control_large: control_height(mtm, NSControlSize::Large),
         reduce_motion: Some(NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()),
     };
+    os.fonts = nd_theme::fonts::resolve();
     os
 }
 

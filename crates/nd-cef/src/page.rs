@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
-use block2::RcBlock;
 use cef::*;
 use nd_webview::events::*;
 use nd_webview::menu::filter;
@@ -13,19 +12,13 @@ use nd_webview::{
     Command, ContextMenuMode, Cookie, Download, DownloadControl, EngineView, FindOptions, MenuItem, Once, Page,
     PermissionDecision, PermissionResponder, SameSite, UserScript, WebViewProps,
 };
-use objc2::MainThreadOnly;
-use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel,
-    NSTextField, NSView,
-};
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 use serde_json::json;
 
-use super::devtools::{self, Devtools};
-use super::keys;
-use super::menu::{self, Choice};
-use super::view::OsrView;
+use crate::devtools::{self, Devtools};
+use crate::keys;
+use crate::menu::{self, Choice};
+use crate::platform::dialogs;
+use crate::platform::view::View;
 
 thread_local! {
     static PAGES: RefCell<HashMap<u64, Weak<CefPage>>> = RefCell::default();
@@ -105,7 +98,7 @@ struct DownloadEntry {
 pub(crate) struct CefPage {
     pub(crate) id: u64,
     pub(crate) page: Page,
-    pub(crate) view: Retained<OsrView>,
+    pub(crate) view: View,
     browser: RefCell<Option<Browser>>,
     pub(crate) devtools: Devtools,
     st: RefCell<State>,
@@ -114,9 +107,8 @@ pub(crate) struct CefPage {
 
 impl CefPage {
     fn new(page: Page) -> Rc<CefPage> {
-        let mtm = MainThreadMarker::new().expect("pages are created on the main thread");
         let id = NEXT.with(|n| n.replace(n.get() + 1));
-        let view = OsrView::new(mtm, id);
+        let view = crate::platform::view::new(id);
         let this = Rc::new(CefPage {
             id,
             page,
@@ -130,27 +122,16 @@ impl CefPage {
         this
     }
 
-    fn window_info(&self) -> WindowInfo {
-        WindowInfo {
-            windowless_rendering_enabled: 1,
-            shared_texture_enabled: 1,
-            external_begin_frame_enabled: 1,
-            parent_view: Retained::as_ptr(&self.view).cast_mut().cast(),
-            runtime_style: RuntimeStyle::ALLOY,
-            ..WindowInfo::default()
-        }
-    }
-
     fn browser_settings() -> BrowserSettings {
         BrowserSettings { windowless_frame_rate: 60, background_color: 0xffff_ffff, ..BrowserSettings::default() }
     }
 
     pub(crate) fn create(page: Page) -> Result<Rc<dyn EngineView>, String> {
         let this = Self::new(page);
-        let mut context = super::context(&this.page.options().profile);
-        let mut client = super::client::client(this.id);
+        let mut context = crate::context(&this.page.options().profile);
+        let mut client = crate::client::client(this.id);
         let browser = browser_host_create_browser_sync(
-            Some(&this.window_info()),
+            Some(&this.view.window_info()),
             Some(&mut client),
             Some(&CefString::from("")),
             Some(&Self::browser_settings()),
@@ -198,14 +179,11 @@ impl CefPage {
         self.browser.borrow().as_ref()?.main_frame()
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn focused_frame(&self) -> Option<Frame> {
         let browser = self.browser.borrow();
         let browser = browser.as_ref()?;
         browser.focused_frame().or_else(|| browser.main_frame())
-    }
-
-    pub(crate) fn paint(&self, popup: bool, surface: *mut std::ffi::c_void) {
-        self.view.present(popup, surface);
     }
 
     /// The framework's page-side agent, for what Chromium reports nowhere else off-screen:
@@ -254,7 +232,7 @@ impl CefPage {
     }
 
     pub(crate) fn load_end(&self) {
-        let url = self.main_frame().map(|f| super::text(&f.url())).unwrap_or_default();
+        let url = self.main_frame().map(|f| crate::text(&f.url())).unwrap_or_default();
         self.st.borrow_mut().committed_url = url;
         self.report_security(None);
         // Off-screen (Alloy style) Chromium does not always report favicon URLs; the page's
@@ -293,7 +271,7 @@ impl CefPage {
     /// TLS state of the shown page, from the visible navigation entry.
     fn report_security(&self, error: Option<String>) {
         let Some(entry) = self.host().and_then(|h| h.visible_navigation_entry()) else { return };
-        let url = super::text(&entry.url());
+        let url = crate::text(&entry.url());
         let https = url.starts_with("https:");
         let (secure, insecure) = match entry.sslstatus() {
             Some(ssl) if https => {
@@ -334,15 +312,9 @@ impl CefPage {
         }
     }
 
+    /// Tab off the page's last field: nd's traversal continues past the view.
     pub(crate) fn take_focus(&self, next: bool) {
-        // Tab off the page's last field: nd's traversal continues past the view.
-        if let Some(window) = self.view.window() {
-            if next {
-                window.selectNextKeyView(None);
-            } else {
-                window.selectPreviousKeyView(None);
-            }
-        }
+        self.view.take_focus(next);
     }
 
     fn disposition(d: WindowOpenDisposition) -> Disposition {
@@ -394,8 +366,8 @@ impl CefPage {
         };
         let popup = self.page.popup(|page| {
             let child = CefPage::new(page);
-            *info = child.window_info();
-            *client = Some(super::client::client(child.id));
+            *info = child.view.window_info();
+            *client = Some(crate::client::client(child.id));
             *settings = Self::browser_settings();
             child as Rc<dyn EngineView>
         });
@@ -441,7 +413,7 @@ impl CefPage {
         }
     }
 
-    /// Shows the menu on the next turn of the run loop, outside Chromium's message loop work.
+    /// Shows the menu on the next turn of the main loop, outside Chromium's message loop work.
     pub(crate) fn run_context_menu(
         &self,
         params: &ContextMenuParams,
@@ -449,39 +421,41 @@ impl CefPage {
         callback: RunContextMenuCallback,
     ) -> bool {
         let hit = menu::hit(params);
-        let point = NSPoint::new(f64::from(params.xcoord()), f64::from(params.ycoord()));
+        let at = (f64::from(params.xcoord()), f64::from(params.ycoord()));
         let (model, id) = (model.clone(), self.id);
-        let page_url = super::text(&params.page_url());
-        super::run_later(move || {
+        let page_url = crate::text(&params.page_url());
+        crate::platform::run_later(move || {
             let Some(page) = get(id) else {
                 callback.cancel();
                 return;
             };
             let items = page.st.borrow().menu_items.clone();
             let entries = filter(&items, &hit);
-            let mtm = page.view.mtm();
-            let built = menu::build(mtm, Some(&model), &entries);
-            built.menu.popUpMenuPositioningItem_atLocation_inView(None, point, Some(&page.view));
-            let chosen = built.chosen.borrow_mut().take();
-            match chosen {
-                Some(Choice::Chromium(command)) => callback.cont(command, EventFlags::default()),
-                Some(Choice::App(item)) => {
+            page.view.show_menu(at, &model, &entries, move |chosen| {
+                let Some(page) = get(id) else {
                     callback.cancel();
-                    let (checked, was_checked) = nd_webview::menu::implied_check(&item);
-                    page.page.emit(ContextMenuItemClicked {
-                        id: item.id,
-                        page_url: page_url.clone(),
-                        link_url: hit.link.clone(),
-                        image_url: hit.image.clone(),
-                        selection_text: hit.selection.clone(),
-                        editable: hit.editable,
-                        checked,
-                        was_checked,
-                    });
+                    return;
+                };
+                match chosen {
+                    Some(Choice::Chromium(command)) => callback.cont(command, EventFlags::default()),
+                    Some(Choice::App(item)) => {
+                        callback.cancel();
+                        let (checked, was_checked) = nd_webview::menu::implied_check(&item);
+                        page.page.emit(ContextMenuItemClicked {
+                            id: item.id,
+                            page_url,
+                            link_url: hit.link,
+                            image_url: hit.image,
+                            selection_text: hit.selection,
+                            editable: hit.editable,
+                            checked,
+                            was_checked,
+                        });
+                    }
+                    None => callback.cancel(),
                 }
-                None => callback.cancel(),
-            }
-            page.view.wake();
+                page.view.wake();
+            });
         });
         true
     }
@@ -494,8 +468,8 @@ impl CefPage {
     ) -> bool {
         let id = item.id();
         self.st.borrow_mut().downloads.insert(id, DownloadEntry { before: Some(callback), item: None, path: None });
-        let url = super::text(&item.url());
-        let mime = Some(super::text(&item.mime_type())).filter(|m| !m.is_empty());
+        let url = crate::text(&item.url());
+        let mime = Some(crate::text(&item.mime_type())).filter(|m| !m.is_empty());
         let total = u64::try_from(item.total_bytes()).ok().filter(|t| *t > 0);
         let control = Rc::new(DownloadHandle { page: self.id, id, decided: Cell::new(false) });
         let download = Download::new(u64::from(id), url, suggested, mime, total, control);
@@ -509,7 +483,7 @@ impl CefPage {
             let mut st = self.st.borrow_mut();
             let Some(entry) = st.downloads.get_mut(&id) else { return };
             entry.item = Some(callback);
-            let full = super::text(&item.full_path());
+            let full = crate::text(&item.full_path());
             if !full.is_empty() {
                 entry.path = Some(PathBuf::from(full));
             }
@@ -542,10 +516,6 @@ impl CefPage {
         }
     }
 
-    fn sheet(&self) -> Option<Retained<objc2_app_kit::NSWindow>> {
-        self.view.window()
-    }
-
     pub(crate) fn js_dialog(
         &self,
         kind: JsdialogType,
@@ -560,11 +530,11 @@ impl CefPage {
         } else {
             ("The page says", &["OK"], None)
         };
-        let Some(window) = self.sheet() else {
+        if !dialogs::available(&self.view) {
             callback.cont(0, None);
             return true;
-        };
-        sheet(&window, title, &message, buttons, field, move |answer| match answer {
+        }
+        dialogs::message(&self.view, title, &message, buttons, field, move |answer| match answer {
             Some(text) => callback.cont(1, Some(&CefString::from(text.as_str()))),
             None => callback.cont(0, None),
         });
@@ -572,13 +542,14 @@ impl CefPage {
     }
 
     pub(crate) fn before_unload(&self, reload: bool, callback: JsdialogCallback) -> bool {
-        let Some(window) = self.sheet() else {
+        if !dialogs::available(&self.view) {
             callback.cont(1, None);
             return true;
-        };
+        }
         let (title, button) = if reload { ("Reload this page?", "Reload") } else { ("Leave this page?", "Leave") };
         let id = self.id;
-        sheet(&window, title, "Changes you made may not be saved.", &[button, "Cancel"], None, move |answer| {
+        let message = "Changes you made may not be saved.";
+        dialogs::message(&self.view, title, message, &[button, "Cancel"], None, move |answer| {
             callback.cont(i32::from(answer.is_some()), None);
             if answer.is_none()
                 && let Some(p) = get(id)
@@ -597,45 +568,20 @@ impl CefPage {
         extensions: Vec<String>,
         callback: FileDialogCallback,
     ) -> bool {
-        let Some(window) = self.sheet() else {
+        if !dialogs::available(&self.view) {
             callback.cancel();
             return true;
-        };
-        let mtm = self.view.mtm();
-        let save = mode == FileDialogMode::SAVE;
-        let panel: Retained<NSSavePanel> = if save {
-            let panel = NSSavePanel::savePanel(mtm);
-            if let Some(name) = std::path::Path::new(&default).file_name() {
-                panel.setNameFieldStringValue(&NSString::from_str(&name.to_string_lossy()));
-            }
-            panel
-        } else {
-            let panel = NSOpenPanel::openPanel(mtm);
-            panel.setCanChooseFiles(mode != FileDialogMode::OPEN_FOLDER);
-            panel.setCanChooseDirectories(mode == FileDialogMode::OPEN_FOLDER);
-            panel.setAllowsMultipleSelection(mode == FileDialogMode::OPEN_MULTIPLE);
-            Retained::into_super(panel)
-        };
-        let _ = extensions;
-        let chosen = panel.clone();
-        let handler = RcBlock::new(move |response: NSModalResponse| {
-            if response != NSModalResponseOK {
-                callback.cancel();
-                return;
-            }
-            let mut list = CefStringList::new();
-            let urls: Vec<_> = match chosen.downcast_ref::<NSOpenPanel>() {
-                Some(open) => open.URLs().iter().collect(),
-                None => chosen.URL().into_iter().collect(),
-            };
-            for url in urls {
-                if let Some(path) = url.path() {
-                    list.append(&path.to_string());
+        }
+        dialogs::files(&self.view, mode, default, extensions, move |paths| match paths {
+            Some(paths) => {
+                let mut list = CefStringList::new();
+                for path in paths {
+                    list.append(&path.to_string_lossy());
                 }
+                callback.cont(Some(&mut list));
             }
-            callback.cont(Some(&mut list));
+            None => callback.cancel(),
         });
-        panel.beginSheetModalForWindow_completionHandler(&window, &handler);
         true
     }
 
@@ -775,7 +721,7 @@ impl CefPage {
                         runtime_style: RuntimeStyle::ALLOY,
                         ..WindowInfo::default()
                     };
-                    let mut client = super::client::devtools_client();
+                    let mut client = crate::client::devtools_client();
                     host.show_dev_tools(Some(&info), Some(&mut client), Some(&BrowserSettings::default()), None);
                 }
             }
@@ -1010,24 +956,25 @@ impl CefPage {
                     host.start_download(Some(&CefString::from(url.as_str())));
                 }
             }
-            Command::Focus => {
-                if let Some(window) = self.view.window() {
-                    window.makeFirstResponder(Some(&self.view));
-                }
-            }
-            Command::ForwardKey => {
-                let app = NSApplication::sharedApplication(self.view.mtm());
-                if let Some(event) = app.currentEvent() {
-                    self.view.forward_key(&event);
-                }
-            }
+            Command::Focus => self.view.focus(),
+            Command::ForwardKey => self.view.forward_current_key(),
         }
     }
 }
 
 impl EngineView for CefPage {
-    fn ns_view(&self) -> Retained<NSView> {
-        Retained::into_super(self.view.clone())
+    #[cfg(target_os = "macos")]
+    fn ns_view(&self) -> objc2::rc::Retained<objc2_app_kit::NSView> {
+        objc2::rc::Retained::into_super(self.view.clone())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn element(
+        &self,
+        cx: &nd_backend_gpui::custom::CustomCx<'_>,
+        window: &mut nd_gpui::gpui::Window,
+    ) -> Option<nd_gpui::gpui::AnyElement> {
+        Some(self.view.element(cx, window))
     }
 
     fn apply(&self, props: &WebViewProps, old: Option<&WebViewProps>) {
@@ -1083,8 +1030,7 @@ impl EngineView for CefPage {
             }
             st.closing = true;
         }
-        self.view.stop_link();
-        self.view.removeFromSuperview();
+        self.view.detach();
         if let Some(host) = self.host() {
             host.close_browser(1);
         }
@@ -1277,43 +1223,6 @@ impl DownloadControl for DownloadHandle {
             }
         });
     }
-}
-
-/// An alert, confirm or prompt as a sheet. `None` is dismissed.
-fn sheet(
-    window: &objc2_app_kit::NSWindow,
-    title: &str,
-    message: &str,
-    buttons: &[&str],
-    field: Option<String>,
-    done: impl FnOnce(Option<String>) + 'static,
-) {
-    let mtm = window.mtm();
-    let alert = NSAlert::new(mtm);
-    alert.setMessageText(&NSString::from_str(title));
-    alert.setInformativeText(&NSString::from_str(message));
-    for b in buttons {
-        alert.addButtonWithTitle(&NSString::from_str(b));
-    }
-    let input = field.map(|initial| {
-        let input = NSTextField::initWithFrame(
-            NSTextField::alloc(mtm),
-            NSRect::new(NSPoint::new(0., 0.), NSSize::new(260., 24.)),
-        );
-        input.setStringValue(&NSString::from_str(&initial));
-        alert.setAccessoryView(Some(&input));
-        input
-    });
-    let done = Cell::new(Some(done));
-    let handler = RcBlock::new(move |response: NSModalResponse| {
-        let Some(done) = done.take() else { return };
-        if response == NSAlertFirstButtonReturn {
-            done(Some(input.as_ref().map(|i| i.stringValue().to_string()).unwrap_or_default()));
-        } else {
-            done(None);
-        }
-    });
-    alert.beginSheetModalForWindow_completionHandler(window, Some(&handler));
 }
 
 fn base64(bytes: &[u8]) -> String {

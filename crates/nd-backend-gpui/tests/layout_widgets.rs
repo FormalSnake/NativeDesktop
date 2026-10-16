@@ -141,8 +141,9 @@ struct Opened {
 }
 
 fn registry(scheme: Scheme) -> ThemeRegistry {
+    // The GPUI look on every OS, in the OS's own fonts, as `nd` sets it up at launch.
     let mut registry = ThemeRegistry::new(Preset::Adwaita);
-    let os = OsTheme { scheme: Some(scheme), ..registry.os().clone() };
+    let os = OsTheme { scheme: Some(scheme), fonts: nd_theme::fonts::resolve(), ..registry.os().clone() };
     registry.set_os(os);
     registry
 }
@@ -330,7 +331,11 @@ mod gate_m6 {
         assert!(button.origin.y >= status.origin.y + status.size.height, "the action sits under the header");
         let paints = o.host.backend().paints(o.window).expect("paints");
         let title = paints.iter().find(|p| p.label == "No notes").expect("title painted");
-        assert!(matches!(title.kind, PaintKind::Text { size, .. } if size == 20.), "title-1: {:?}", title.kind);
+        assert!(
+            matches!(title.kind, PaintKind::Text { size, .. } if size == if cfg!(target_os = "macos") { 22. } else { 20. }),
+            "title-1: {:?}",
+            title.kind
+        );
         assert!(paints.iter().any(|p| p.label == "status page icon"), "the icon slot painted");
     }
 

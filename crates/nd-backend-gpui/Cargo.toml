@@ -31,6 +31,11 @@ nd-backend-gpui = { path = ".", features = ["capture"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 nd-virtual = { workspace = true, features = ["conformance"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+
 [[test]]
 name = "headless"
 harness = false
@@ -43,6 +48,11 @@ harness = false
 
 [[test]]
 name = "forms"
+harness = false
+
+# GPUI text beside AppKit labels, per text style (macOS).
+[[test]]
+name = "system_font"
 harness = false
 
 [[test]]

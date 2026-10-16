@@ -7,3 +7,5 @@
 0005-gpui_windows-draw-the-new-size-in-WM_SIZING-before-t.patch
 0006-gpui_windows-tick-each-window-with-the-vblank-of-the.patch
 0007-gpui_windows-render-grayscale-text-symmetric-and-wit.patch
+0008-gpui_apple-nudge-the-font-size-only-of-a-run-continu.patch
+0009-gpui_wgpu-keep-the-swapchain-through-an-interactive-.patch

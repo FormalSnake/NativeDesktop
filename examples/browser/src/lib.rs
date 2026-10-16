@@ -5,8 +5,9 @@
 //! build with the `cef` feature.
 //!
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
-//! page that counts its input), `resize` (a page filling the window) or `parity` (every event
-//! and command against a local test page, printing `ND_WEBVIEW_PARITY_OK`).
+//! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
+//! page that scrolls) or `parity` (every event and command against a local test page, printing
+//! `ND_WEBVIEW_PARITY_OK`).
 
 mod parity;
 mod scenes;
@@ -316,6 +317,7 @@ pub fn init(cx: &mut App) {
     match std::env::var("BROWSER_SCENE").as_deref() {
         Ok("overlays") => scenes::overlays(cx),
         Ok("resize") => scenes::resize(cx),
+        Ok("input") => scenes::input(cx),
         Ok("parity") => parity::open(cx),
         _ => {
             bind_keys(cx);

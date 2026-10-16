@@ -1113,6 +1113,7 @@ impl Inner {
             None => element,
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
+        let body_font = state.theme.window_theme(id).fonts.body.clone();
         let look = crate::render::Look::of(state.theme.window_theme(id));
         let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
         let paints = build.take_paints();
@@ -1137,6 +1138,7 @@ impl Inner {
         let drops = self.backend.clone();
         div()
             .size_full()
+            .font(body_font)
             // A new press starts clean: a release owed to an earlier consumed press that never
             // arrived (the compositor dropped it) must not eat this press's release.
             .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))

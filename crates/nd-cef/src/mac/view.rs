@@ -24,10 +24,19 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CADisplayLink, CALayer, CATransaction, kCAGravityTopLeft};
 
-use super::a11y;
-use super::keys::{self, Edit};
-use super::page::{self, CefPage};
+use super::keys;
 use super::paint::Pool;
+use crate::a11y;
+use crate::keys::{Edit, edit_command, flag};
+use crate::page::{self, CefPage};
+
+/// A page's view, as the shared page code holds it.
+pub(crate) type View = Retained<OsrView>;
+
+pub(crate) fn new(id: u64) -> View {
+    let mtm = MainThreadMarker::new().expect("pages are created on the main thread");
+    OsrView::new(mtm, id)
+}
 
 /// Display ticks without a paint before the link stops and a slow probe takes over.
 const IDLE_TICKS: u32 = 30;
@@ -272,7 +281,7 @@ define_class!(
             let (dx, dy) = keys::wheel_delta(precise, event.scrollingDeltaX(), event.scrollingDeltaY());
             let mut mouse = self.mouse_event(event);
             if precise {
-                mouse.modifiers |= keys::flag::PRECISION_SCROLLING_DELTA;
+                mouse.modifiers |= flag::PRECISION_SCROLLING_DELTA;
             }
             host.send_mouse_wheel_event(Some(&mouse), dx, dy);
             self.wake();
@@ -540,7 +549,7 @@ fn key_event(event: &NSEvent, kind: KeyEventType) -> KeyEvent {
     let unmodified = event.charactersIgnoringModifiers().map(|c| c.to_string()).unwrap_or_default();
     let mut modifiers = keys::modifiers(event.modifierFlags());
     if matches!(event.r#type(), NSEventType::KeyDown) && event.isARepeat() {
-        modifiers |= keys::flag::IS_REPEAT;
+        modifiers |= flag::IS_REPEAT;
     }
     KeyEvent {
         type_: kind,
@@ -593,7 +602,7 @@ impl OsrView {
             return false;
         }
         let key = event.charactersIgnoringModifiers().map(|c| c.to_string().to_lowercase()).unwrap_or_default();
-        match keys::edit_command(
+        match edit_command(
             &key,
             flags.contains(NSEventModifierFlags::Shift),
             flags.contains(NSEventModifierFlags::Option),
@@ -658,6 +667,62 @@ impl OsrView {
         let types = NSArray::from_slice(&kinds);
         this.registerForDraggedTypes(&types);
         this
+    }
+
+    /// How Chromium creates this view's browser: off-screen, frames as IOSurfaces, paced by
+    /// begin frames the display link sends.
+    pub(crate) fn window_info(&self) -> WindowInfo {
+        WindowInfo {
+            windowless_rendering_enabled: 1,
+            shared_texture_enabled: 1,
+            external_begin_frame_enabled: 1,
+            parent_view: (self as *const Self).cast_mut().cast(),
+            runtime_style: RuntimeStyle::ALLOY,
+            ..WindowInfo::default()
+        }
+    }
+
+    /// Pops the context menu up at `at` (view coordinates) and blocks until it closes.
+    pub(crate) fn show_menu(
+        &self,
+        at: (f64, f64),
+        model: &MenuModel,
+        entries: &[nd_webview::menu::Entry<'_>],
+        done: impl FnOnce(Option<crate::menu::Choice>),
+    ) {
+        let built = super::menu::build(self.mtm(), Some(model), entries);
+        built.menu.popUpMenuPositioningItem_atLocation_inView(None, NSPoint::new(at.0, at.1), Some(self));
+        let chosen = built.chosen.borrow_mut().take();
+        done(chosen);
+    }
+
+    pub(crate) fn take_focus(&self, next: bool) {
+        if let Some(window) = self.window() {
+            if next {
+                window.selectNextKeyView(None);
+            } else {
+                window.selectPreviousKeyView(None);
+            }
+        }
+    }
+
+    pub(crate) fn focus(&self) {
+        if let Some(window) = self.window() {
+            window.makeFirstResponder(Some(self));
+        }
+    }
+
+    /// Delivers the key event AppKit is dispatching to the page.
+    pub(crate) fn forward_current_key(&self) {
+        if let Some(event) = NSApplication::sharedApplication(self.mtm()).currentEvent() {
+            self.forward_key(&event);
+        }
+    }
+
+    /// The page closed: out of the window, frames stopped.
+    pub(crate) fn detach(&self) {
+        self.stop_link();
+        self.removeFromSuperview();
     }
 
     pub(crate) fn page(&self) -> Option<Rc<CefPage>> {
@@ -866,7 +931,7 @@ impl OsrView {
     }
 
     /// Delivers a key event nd is dispatching (Tab) to the page, as if it came from AppKit.
-    pub(crate) fn forward_key(&self, event: &NSEvent) {
+    fn forward_key(&self, event: &NSEvent) {
         match event.r#type() {
             NSEventType::KeyDown => self.key(event),
             NSEventType::KeyUp => {
@@ -902,7 +967,7 @@ impl OsrView {
     pub(crate) fn start_dragging(&self, data: &DragData, allowed: DragOperationsMask, x: i32, y: i32) -> bool {
         let mtm = self.mtm();
         let item = NSPasteboardItem::new();
-        let text = |s: &CefStringUserfree| super::text(s);
+        let text = |s: &CefStringUserfree| crate::text(s);
         let link = text(&data.link_url());
         if !link.is_empty() {
             item.setString_forType(&NSString::from_str(&link), unsafe { NSPasteboardTypeURL });
