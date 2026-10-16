@@ -32,6 +32,8 @@ pub struct ImageProps {
     pub alt: Option<SharedString>,
     /// Plays animated images; they show their first frame otherwise.
     pub animate: bool,
+    /// Draws every pixel in this colour, keeping its alpha: a monochrome icon in a token.
+    pub tint: Option<Hsla>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
@@ -102,6 +104,7 @@ fn image_at(source: Option<ImageSource>, site: &'static Location<'static>) -> Im
         size_hint: None,
         alt: None,
         animate: true,
+        tint: None,
         enabled: true,
         tooltip: None,
         style: StyleRefinement::default(),
@@ -117,6 +120,12 @@ impl Image {
 
     pub fn fit(mut self, fit: ImageFit) -> Self {
         self.0.props_mut().fit = fit;
+        self
+    }
+
+    /// Draws the picture in `color` (a theme token), keeping each pixel's alpha.
+    pub fn tint(mut self, color: impl Into<Hsla>) -> Self {
+        self.0.props_mut().tint = Some(color.into());
         self
     }
 

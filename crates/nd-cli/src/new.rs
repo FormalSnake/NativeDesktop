@@ -30,6 +30,7 @@ const FILES: &[(&str, &str)] = &[
     (".gitignore", include_str!("../templates/gitignore.tmpl")),
     ("justfile", include_str!("../templates/justfile.tmpl")),
     (".config/nextest.toml", include_str!("../templates/.config/nextest.toml.tmpl")),
+    (".cargo/config.toml", include_str!("../templates/.cargo/config.toml.tmpl")),
     ("src/main.rs", include_str!("../templates/src/main.rs.tmpl")),
     ("src/lib.rs", include_str!("../templates/src/lib.rs.tmpl")),
     ("src/app.rs", include_str!("../templates/src/app.rs.tmpl")),
@@ -62,6 +63,11 @@ pub fn run(args: NewArgs) -> Result<()> {
         }
         std::fs::write(&target, vars.render(template)).with_context(|| format!("writing {}", target.display()))?;
     }
+    if let Some(lock) = args.nd_path.as_deref().and_then(workspace_lock) {
+        // A fresh resolve takes the newest releases, some yanked or broken since nd pinned them;
+        // starting from nd's lockfile resolves the app to the versions nd is built and tested with.
+        std::fs::copy(&lock, root.join("Cargo.lock")).with_context(|| format!("copying {}", lock.display()))?;
+    }
     println!("created {} at {}", name, root.display());
     println!("next: cd {} && nd check && nd test", root.display());
     Ok(())
@@ -89,19 +95,28 @@ struct Vars {
     pairs: Vec<(&'static str, String)>,
 }
 
-/// The `[workspace]` table of a standalone project. Outside nd's own workspace a path
-/// dependency on nd still needs nd's GPUI patch queue, which only the root manifest can name.
-fn workspace(standalone: bool, nd_path: Option<&Path>) -> Result<String> {
-    if !standalone {
-        return Ok(String::new());
+/// The lockfile of the workspace the `nd` crate at `nd_path` belongs to.
+fn workspace_lock(nd_path: &Path) -> Option<PathBuf> {
+    let nd = std::fs::canonicalize(nd_path).ok()?;
+    nd.ancestors().skip(1).map(|dir| dir.join("Cargo.lock")).find(|lock| lock.is_file())
+}
+
+/// The root tables: `[workspace]` for a standalone project, and nd's GPUI patch queue for a path
+/// dependency on nd, which cargo only reads from the root manifest and which an app outside nd's
+/// own workspace needs, since cargo resolves the unpatched crates.io releases without it.
+fn root_tables(standalone: bool, nd_path: Option<&Path>) -> Result<String> {
+    let mut out = String::new();
+    if standalone {
+        out.push_str("\n[workspace]\n");
     }
-    let mut out = "\n[workspace]\n".to_string();
     if let Some(nd) = nd_path {
         let nd = std::fs::canonicalize(nd).with_context(|| format!("--nd-path {}", nd.display()))?;
         let vendor = nd.parent().unwrap_or(&nd).join("nd-gpui/vendor");
-        out.push_str("\n# nd's GPUI patch queue; cargo resolves the unpatched crates.io releases without it.\n[patch.crates-io]\n");
+        out.push_str("\n# nd's GPUI patch queue.\n[patch.crates-io]\n");
         for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
-            out.push_str(&format!("{krate} = {{ path = \"{}\" }}\n", vendor.join(krate).display()));
+            let path = vendor.join(krate).display().to_string();
+            let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
+            out.push_str(&format!("{krate} = {{ path = '{path}' }}\n"));
         }
     }
     Ok(out)
@@ -148,7 +163,7 @@ impl Vars {
                 ("{{nd_dep}}", nd_dep),
                 ("{{nd_dev_dep}}", nd_dev_dep),
                 ("{{nd_build_dep}}", nd_build_dep),
-                ("{{workspace}}", workspace(standalone, nd_path)?),
+                ("{{workspace}}", root_tables(standalone, nd_path)?),
             ],
         })
     }
@@ -173,11 +188,23 @@ mod tests {
     }
 
     #[test]
-    fn a_standalone_path_project_names_the_gpui_patches() {
+    fn a_path_project_names_the_gpui_patches_standalone_or_not() {
         let nd = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd");
-        let table = super::workspace(true, Some(&nd)).unwrap();
-        assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
-        assert_eq!(super::workspace(false, Some(&nd)).unwrap(), "");
+        for standalone in [true, false] {
+            let table = root_tables(standalone, Some(&nd)).unwrap();
+            assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
+            assert_eq!(table.contains("[workspace]"), standalone, "{table}");
+        }
+        assert_eq!(root_tables(false, None).unwrap(), "");
+    }
+
+    #[test]
+    fn macos_links_through_apples_clang() {
+        let (_, config) = FILES.iter().find(|(p, _)| *p == ".cargo/config.toml").expect("a cargo config is written");
+        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
+            let table = format!("[target.{target}]\nlinker = \"/usr/bin/clang\"\n");
+            assert!(config.contains(&table), "{target} in\n{config}");
+        }
     }
 
     #[test]
@@ -189,10 +216,12 @@ mod tests {
         run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), standalone: true }).unwrap();
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
+        let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("nd's lockfile is copied");
+        assert!(lock.contains("name = \"nd-ui\""), "the lockfile is nd's workspace's");
         let (_, patch) = manifest.split_once("[patch.crates-io]\n").expect("[patch.crates-io] is present");
         assert_eq!(patch.lines().filter(|l| l.contains("path = ")).count(), 6, "{patch}");
         for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
-            let line = format!("{krate} = {{ path = \"{}\" }}", vendor.join(krate).display());
+            let line = format!("{krate} = {{ path = '{}' }}", vendor.join(krate).display());
             assert!(patch.contains(&line), "{line} missing from\n{patch}");
             assert!(vendor.join(krate).join("Cargo.toml").exists(), "{krate} exists in the vendor dir");
         }

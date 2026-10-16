@@ -37,11 +37,13 @@ pub struct NativeTheme {
     /// An accent that did not come from the OS: `bezelColor`/`contentTintColor` on AppKit.
     pub accent: Option<Hsla>,
     pub radius_scale: f32,
+    /// A text family that did not come from the OS ([`ThemeRefinement::font`]).
+    pub font: Option<nd_gpui::gpui::SharedString>,
 }
 
 impl Default for NativeTheme {
     fn default() -> Self {
-        Self { appearance: None, accent: None, radius_scale: 1. }
+        Self { appearance: None, accent: None, radius_scale: 1., font: None }
     }
 }
 
@@ -59,6 +61,7 @@ impl NativeTheme {
             appearance,
             accent: refinement.palette(scheme).accent.or(self.accent),
             radius_scale: self.radius_scale * refinement.radius_scale.unwrap_or(1.),
+            font: refinement.font.clone().or_else(|| self.font.clone()),
         }
     }
 }
@@ -219,7 +222,8 @@ impl ThemeRegistry {
         }
         let palette = palette.over(*self.os.palettes.get(scheme)).complete(&Palette::baked(scheme));
         let metrics = Metrics::preset(self.preset).with_system(&self.os.metrics);
-        Theme::derive(self.preset, scheme, palette, metrics, stack.radius_scale.unwrap_or(1.))
+        let theme = Theme::derive(self.preset, scheme, palette, metrics, stack.radius_scale.unwrap_or(1.));
+        stack.with_fonts(theme)
     }
 
     /// What native controls take from `stack`.
@@ -238,6 +242,7 @@ impl ThemeRegistry {
             appearance: scheme.or(matugen_mode),
             accent: stack.palette(resolved).accent.or(from_matugen),
             radius_scale: stack.radius_scale.unwrap_or(1.),
+            font: stack.font.clone(),
         }
     }
 
@@ -315,7 +320,7 @@ mod tests {
         os.palettes.dark.accent = Some(hex("#0a84ff"));
         r.set_os(os);
         assert_eq!(r.app_theme().accent, hex("#0a84ff"));
-        assert_eq!(r.app_native(), NativeTheme { appearance: None, accent: None, radius_scale: 1. });
+        assert_eq!(r.app_native(), NativeTheme { appearance: None, accent: None, radius_scale: 1., font: None });
     }
 
     #[test]

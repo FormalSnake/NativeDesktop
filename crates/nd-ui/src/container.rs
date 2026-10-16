@@ -109,6 +109,8 @@ impl<P: AnyProps> IntoElement for ContainerElement<P> {
             children: self.children,
             handlers: self.handlers,
             dispatch: self.dispatch,
+            motion: None,
+            paint: None,
         })))
     }
 }

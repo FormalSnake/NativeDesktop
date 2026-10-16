@@ -94,6 +94,25 @@ pub(crate) fn label(b: &Build, id: NodeId, p: &LabelProps) -> gpui::AnyElement {
         LabelTone::Danger => look.danger,
     };
     let color = p.style.text.color.unwrap_or(color);
+    if let Some(rich) = &p.rich {
+        let theme = b.theme();
+        let base = crate::rich::Base {
+            theme: &theme,
+            size,
+            leading: line_height.as_f32() / size.as_f32(),
+            weight: weight.0,
+            color,
+            ink: None,
+        };
+        b.rich_runs(id, rich, &base, None);
+        let on_link = rich.has_links().then(|| b.link_handler(id, p.opens_links));
+        let mut text =
+            div().font_weight(weight).child(crate::rich::element(ElementId::Integer(id.0), rich, &base, on_link));
+        if !p.enabled {
+            text = text.opacity(look.disabled_opacity);
+        }
+        return with_style(text, &p.style).into_any_element();
+    }
     b.text_run(id, &p.text, crate::render::Run { size: size.as_f32(), weight: weight.0 }, Some(color), None);
     let mut text =
         div().text_size(size).line_height(line_height).font_weight(weight).text_color(color).child(p.text.clone());

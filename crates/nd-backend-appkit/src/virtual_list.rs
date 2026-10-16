@@ -1320,6 +1320,39 @@ impl ListNative {
         matches!(self, ListNative::Table(t) if t.is_table())
     }
 
+    /// A click on the row `node` renders, as the user's: AppKit selects it (alone) and scrolls
+    /// it into view, and the selection is reported; `activate` reports the double click's
+    /// activation too. `None` when the node is no row of this list.
+    pub fn click_row(&self, node: NodeId, activate: bool) -> Option<()> {
+        let (shared, row) = match self {
+            ListNative::Table(t) => (&t.shared, *t.node_rows.get(&node)?),
+            ListNative::Grid(g) => (&g.shared, *g.node_rows.get(&node)?),
+        };
+        match self {
+            ListNative::Table(t) => {
+                // The row's place in the table: an outline's rows move as branches open.
+                let view = shared.rows.borrow().get(&row).map(|r| r.view.clone());
+                let index = view.map_or(-1, |v| t.table.rowForView(&v));
+                let index = if index >= 0 { index } else { *shared.snap.borrow().index.get(&row)? as NSInteger };
+                let set = NSIndexSet::indexSetWithIndex(index as usize);
+                shared.programmatic(|| t.table.selectRowIndexes_byExtendingSelection(&set, false));
+                t.table.scrollRowToVisible(index);
+            }
+            ListNative::Grid(g) => {
+                let index = *shared.snap.borrow().index.get(&row)? as NSInteger;
+                let path = NSIndexPath::indexPathForItem_inSection(index, 0);
+                let set = objc2_foundation::NSSet::from_retained_slice(std::slice::from_ref(&path));
+                shared.programmatic(|| g.collection.setSelectionIndexPaths(&set));
+            }
+        }
+        shared.emit.emit(RowsSelected(vec![row]));
+        if activate {
+            shared.emit.emit(RowActivated(row));
+        }
+        shared.wake.wake();
+        Some(())
+    }
+
     /// Grids have no row actions; tables, lists and trees show them natively.
     pub fn set_row_actions(&mut self, row: RowId, actions: Option<nd_virtual::RowActionsSpec>) {
         if let ListNative::Table(t) = self {
