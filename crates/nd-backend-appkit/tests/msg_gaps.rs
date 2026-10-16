@@ -1,7 +1,8 @@
 //! Tier 2: what the messages port needed after the port gaps. A label clamps to a number of
 //! lines; `icon` shows a symbol on its own; the composer's send button takes another icon and
 //! fill; a video reports where it is and seeks; an image cuts a bubble tail out of its picture;
-//! a panel fades in and out; a reaction landing on a shown bubble fades in. Prints
+//! a panel fades in and out; a reaction landing on a shown bubble fades in; a transcript runs
+//! up under the toolbar and rests clear of it. Prints
 //! `ND_MSG_GAPS_OK`.
 
 mod harness;
@@ -30,8 +31,8 @@ mod gaps {
         video,
     };
     use nd_components::{Icon, icon};
-    use nd_ui::prelude::*;
     use nd_ui::panel;
+    use nd_ui::prelude::*;
 
     pub use rig::{Checks, Rig};
 
@@ -49,6 +50,7 @@ mod gaps {
         reaction_fade(&rig, &mut c);
         titlebar(&rig, &mut c);
         glass_shapes(&rig, &mut c);
+        under_toolbar(&rig, &mut c);
         if c.0 == 0 {
             println!("ND_MSG_GAPS_OK");
             std::process::exit(0);
@@ -132,8 +134,7 @@ mod gaps {
             let mut draft = Draft::default();
             draft.text = "hi".into();
             v_flex().p(px(12.)).w(px(400.)).child(
-                composer("c", &draft)
-                    .when(self.editing, |c| c.send_icon(Icon::Check, "Save Edit").send_fill(green)),
+                composer("c", &draft).when(self.editing, |c| c.send_icon(Icon::Check, "Save Edit").send_fill(green)),
             )
         }
     }
@@ -230,7 +231,14 @@ mod gaps {
                         .rounded_lg()
                         .on_load(cx.listener(loaded)),
                 )
-                .child(image(ImageSource::from(svg)).id("plain").w(px(120.)).h(px(90.)).rounded_lg().on_load(cx.listener(loaded)))
+                .child(
+                    image(ImageSource::from(svg))
+                        .id("plain")
+                        .w(px(120.))
+                        .h(px(90.))
+                        .rounded_lg()
+                        .on_load(cx.listener(loaded)),
+                )
         }
     }
 
@@ -361,10 +369,82 @@ mod gaps {
         let opened = rig.open("glass", |_| Glasses);
         let win = opened.id();
         rig.pump();
-        let radius = |id: &str| -> f64 { unsafe { nd_backend_appkit::objc2::msg_send![&*rig.view(win, id), cornerRadius] } };
+        let radius =
+            |id: &str| -> f64 { unsafe { nd_backend_appkit::objc2::msg_send![&*rig.view(win, id), cornerRadius] } };
         c.check(radius("pill") == 18., &format!("glass: a control-sized one is a capsule ({})", radius("pill")));
         c.check(radius("dot") == 18., &format!("glass: a square one is a circle ({})", radius("dot")));
         c.check(radius("panel") == 0., &format!("glass: a large surface stays square ({})", radius("panel")));
+        rig.close(opened);
+    }
+
+    struct Transcript {
+        rows: nd_virtual::ListState<u64>,
+    }
+
+    impl Render for Transcript {
+        fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            use nd_components::{scaffold, sidebar, toolbar};
+            scaffold()
+                .toolbar(toolbar().hide_title().navigation(icon(Icon::SquarePen, 16.)))
+                .sidebar(sidebar().child(div().size_full()))
+                .content_under_toolbar()
+                .content(
+                    div()
+                        .size_full()
+                        .child(nd_virtual::list("transcript", &self.rows, |_key: u64, _, _| div().w_full().h(px(44.)))),
+                )
+        }
+    }
+
+    /// Messages' transcript: the list runs up under the toolbar, which blurs what scrolls under
+    /// it, and its first row rests below the bar. The title stays in the toolbar, empty, and the
+    /// compose button leads the content's part of it.
+    fn under_toolbar(rig: &Rig, c: &mut Checks) {
+        use nd_backend_appkit::objc2_app_kit::{NSScrollView, NSWindowTitleVisibility};
+        let opened = rig.open("transcript", |cx| {
+            let mut rows = nd_virtual::ListState::new(cx).estimated_row_height(px(44.));
+            rows.set_items(0..60, cx);
+            Transcript { rows }
+        });
+        rig.pump();
+        rig.pump();
+        let window = &opened.window;
+        let content = window.contentView().expect("content view");
+        let mut lists = Vec::new();
+        fn walk(v: &NSView, out: &mut Vec<Retained<NSScrollView>>) {
+            if let Some(s) = v.downcast_ref::<NSScrollView>() {
+                out.push(Retained::from(s));
+            }
+            for sub in v.subviews().iter() {
+                walk(&sub, out);
+            }
+        }
+        walk(&content, &mut lists);
+        let list = lists.iter().max_by(|a, b| a.frame().size.height.total_cmp(&b.frame().size.height)).expect("a list");
+        let bars = list.safeAreaInsets().top;
+        let in_window = list.convertRect_toView(list.bounds(), None);
+        let top = in_window.origin.y + in_window.size.height;
+        let height = content.frame().size.height;
+        c.check(bars > 20., &format!("under toolbar: the list sits under the bars ({bars})"));
+        c.check(
+            (top - height).abs() < 1.,
+            &format!("under toolbar: the list reaches the window's top ({top} of {height})"),
+        );
+        let inset = list.contentInsets().top;
+        c.check((inset - bars).abs() < 1., &format!("under toolbar: the list is inset by the bars ({inset})"));
+        let rest = list.contentView().bounds().origin.y;
+        c.check((rest + bars).abs() < 1., &format!("under toolbar: the first row rests below the bar ({rest})"));
+        if nd_backend_appkit::objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some() {
+            c.check(
+                window.titleVisibility() == NSWindowTitleVisibility::Visible && window.title().to_string().is_empty(),
+                "under toolbar: a hidden title stays in the toolbar with no text",
+            );
+        }
+        let toolbar = window.toolbar().expect("toolbar");
+        c.check(
+            toolbar.items().iter().any(|i| i.isNavigational()),
+            "under toolbar: navigation() is a navigational item",
+        );
         rig.close(opened);
     }
 }

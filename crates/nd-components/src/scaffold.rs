@@ -41,6 +41,9 @@ pub struct PaneProps {
     pub max_width: Option<f32>,
     /// Width the pane opens at, where the platform lets the app choose.
     pub width: Option<f32>,
+    /// The pane runs up under the window's toolbar: lists in it scroll under the bar, which
+    /// blurs them, and rest clear of it; other content is the app's to keep clear.
+    pub under_toolbar: bool,
     pub style: StyleRefinement,
 }
 
@@ -58,6 +61,7 @@ pub struct Scaffold {
     content: Option<AnyElement>,
     inspector: Option<Pane>,
     overlay: Option<AnyElement>,
+    content_under_toolbar: bool,
 }
 
 #[track_caller]
@@ -70,6 +74,7 @@ pub fn scaffold() -> Scaffold {
         content: None,
         inspector: None,
         overlay: None,
+        content_under_toolbar: false,
     }
 }
 
@@ -91,6 +96,13 @@ impl Scaffold {
 
     pub fn content(mut self, content: impl IntoElement) -> Self {
         self.content = Some(content.into_any_element());
+        self
+    }
+
+    /// The content runs up under the toolbar, the way a transcript scrolls under a unified
+    /// toolbar on macOS: its lists keep their rows clear of the bar at rest.
+    pub fn content_under_toolbar(mut self) -> Self {
+        self.content_under_toolbar = true;
         self
     }
 
@@ -121,9 +133,12 @@ impl ScopedContainer for Scaffold {
 
 impl IntoElement for Scaffold {
     fn into_any_element(self) -> AnyElement {
-        let content = self
-            .content
-            .map(|c| pane_with(Key::Id("nd-content".into()), PaneRole::Content).flex_1().min_w_0().h_full().child(c));
+        let under = self.content_under_toolbar;
+        let content = self.content.map(|c| {
+            let mut pane = pane_with(Key::Id("nd-content".into()), PaneRole::Content);
+            pane.0.props_mut().under_toolbar = under;
+            pane.flex_1().min_w_0().h_full().child(c)
+        });
         let overlay = self.overlay.map(|o| {
             pane_with(Key::Id("nd-overlay".into()), PaneRole::Overlay).absolute().top_0().left_0().size_full().child(o)
         });

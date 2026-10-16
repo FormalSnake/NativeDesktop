@@ -8,9 +8,9 @@ use std::cell::{Cell, RefCell};
 
 use nd_components::{SystemItem, ToolbarItemProps, ToolbarProps};
 use objc2::rc::Retained;
-use objc2_app_kit::NSUserInterfaceItemIdentification;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::NSUserInterfaceItemIdentification;
 use objc2_app_kit::{
     NSResponder, NSSplitView, NSToolbar, NSToolbarDelegate, NSToolbarDisplayMode, NSToolbarFlexibleSpaceItemIdentifier,
     NSToolbarInspectorTrackingSeparatorItemIdentifier, NSToolbarItem, NSToolbarItemIdentifier,
@@ -18,7 +18,9 @@ use objc2_app_kit::{
     NSToolbarToggleInspectorItemIdentifier, NSToolbarToggleSidebarItemIdentifier, NSTrackingSeparatorToolbarItem,
     NSView, NSWindow, NSWindowToolbarStyle,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSet, NSSize, NSString};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSet, NSSize, NSString,
+};
 
 #[derive(Default)]
 pub struct ToolbarIvars {
@@ -179,10 +181,8 @@ const TOOLBAR_ROW: f64 = 38.;
 pub fn titlebar_room(window: &objc2_app_kit::NSWindow, height: f64) {
     let extra = (height - TOOLBAR_ROW).max(0.).ceil();
     let id = NSString::from_str("nd.toolbar.room");
-    let existing = window
-        .titlebarAccessoryViewControllers()
-        .iter()
-        .find(|c| c.view().identifier().is_some_and(|i| *i == *id));
+    let existing =
+        window.titlebarAccessoryViewControllers().iter().find(|c| c.view().identifier().is_some_and(|i| *i == *id));
     match existing {
         Some(controller) => {
             let view = controller.view();
@@ -249,6 +249,7 @@ impl ToolbarItemNative {
         // A centred item is the window's subject (a conversation), not a control: no bezel or
         // glass around it.
         self.item.setBordered(!props.centered);
+        self.item.setNavigational(props.navigation);
     }
 
     /// Shows the child's own view.
@@ -410,6 +411,14 @@ impl ToolbarNative {
     }
 
     fn apply_title_visibility(&self, window: &NSWindow) {
+        // On macOS 26 a hidden title also turns off the scroll edge effect of the content under
+        // the toolbar once the window has a sidebar, so the title stays in the toolbar with no
+        // text. The window menu then lists the window without a name.
+        if self.props.hide_title && crate::glass::has_liquid_glass() {
+            window.setTitle(&NSString::from_str(""));
+            window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Visible);
+            return;
+        }
         window.setTitleVisibility(if self.props.hide_title {
             objc2_app_kit::NSWindowTitleVisibility::Hidden
         } else {

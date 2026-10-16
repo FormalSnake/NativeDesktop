@@ -1701,7 +1701,8 @@ impl Backend for AppKitBackend {
             // In the family the window's theme sets now: a font override may reach the view
             // only at this frame's commit, after layout has measured.
             Native::Text(v) => {
-                let theme = state.node_window.get(&node).map(|w| state.window_native.get(w).unwrap_or(&state.default_native));
+                let theme =
+                    state.node_window.get(&node).map(|w| state.window_native.get(w).unwrap_or(&state.default_native));
                 v.measure_in(width, theme.map(|t| t.font.as_deref()))
             }
             Native::Button(b) => b.measure(),
@@ -1749,7 +1750,13 @@ impl Backend for AppKitBackend {
 
     fn boundary_insets(&self, node: NodeId) -> nd_ui::backend::BoundaryInsets {
         match self.0.try_borrow().ok().as_ref().and_then(|s| s.nodes.get(&node)) {
-            Some(Native::Pane(p)) if p.role != PaneRole::Overlay => p.insets(),
+            Some(Native::Pane(p)) if p.role != PaneRole::Overlay => {
+                let mut insets = p.insets();
+                if p.props.under_toolbar {
+                    insets.top = 0.;
+                }
+                insets
+            }
             _ => nd_ui::backend::BoundaryInsets::default(),
         }
     }

@@ -1056,6 +1056,9 @@ impl TextAreaControl {
         let mtm = cx.mtm;
         let scroll = NdAreaScroll::new(mtm);
         scroll.setHasVerticalScroller(true);
+        // Left automatic, AppKit insets a text area by the toolbar's height when its window's
+        // content runs under the bars, though the field sits nowhere near them.
+        scroll.setAutomaticallyAdjustsContentInsets(false);
         scroll.setAutohidesScrollers(true);
         let text_view = NdAreaView::new(mtm);
         text_view.setVerticallyResizable(true);

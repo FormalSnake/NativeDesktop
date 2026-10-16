@@ -65,6 +65,7 @@ define_class!(
 
         #[unsafe(method(safeAreaInsetsDidChange))]
         fn safe_area_changed(&self) {
+            let _: () = unsafe { msg_send![super(self), safeAreaInsetsDidChange] };
             let hook = self.ivars().on_resize.borrow().clone();
             if let Some(hook) = hook {
                 hook();
