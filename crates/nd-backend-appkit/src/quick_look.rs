@@ -12,8 +12,20 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::NSWindow;
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, NSURL};
 
-#[link(name = "QuickLookUI", kind = "framework")]
-unsafe extern "C" {}
+/// `QLPreviewPanel`, its framework loaded on first use: nothing links against it statically, so
+/// the linker would drop a bare `#[link]`.
+fn panel_class() -> Option<&'static objc2::runtime::AnyClass> {
+    if let Some(class) = objc2::runtime::AnyClass::get(c"QLPreviewPanel") {
+        return Some(class);
+    }
+    let path = NSString::from_str("/System/Library/Frameworks/QuickLookUI.framework");
+    let bundle = objc2_foundation::NSBundle::bundleWithPath(&path)?;
+    // SAFETY: a system framework, loaded once on the main thread.
+    if !unsafe { bundle.load() } {
+        return None;
+    }
+    objc2::runtime::AnyClass::get(c"QLPreviewPanel")
+}
 
 #[derive(Default)]
 pub struct SourceIvars {
@@ -89,7 +101,7 @@ pub fn show(items: Vec<(PathBuf, Option<NSRect>)>, index: usize) {
         .into_iter()
         .map(|(path, frame)| (NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy())), frame))
         .collect();
-    let Some(class) = objc2::runtime::AnyClass::get(c"QLPreviewPanel") else { return };
+    let Some(class) = panel_class() else { return };
     // SAFETY: QLPreviewPanel's documented class method and properties; the source outlives the
     // panel's use of it (it lives in SOURCE until the next call replaces its items).
     unsafe {
