@@ -858,6 +858,8 @@ pub struct AreaScrollIvars {
     /// The capsule's corner radius, drawn on the layer at every tile: the layer may not exist
     /// yet when the shape is set (a view not in a window).
     capsule: Cell<Option<f64>>,
+    /// Points the clip view leaves free at the trailing edge (`trailing_room`).
+    trailing: Cell<f64>,
 }
 
 define_class!(
@@ -897,6 +899,13 @@ define_class!(
             if let Some(bezel) = self.ivars().bezel.borrow().as_ref() {
                 bezel.setFrame(self.bounds());
             }
+            let trailing = self.ivars().trailing.get();
+            if trailing > 0. {
+                let clip = self.contentView();
+                let mut frame = clip.frame();
+                frame.size.width = (frame.size.width - trailing).max(0.);
+                clip.setFrame(frame);
+            }
             self.draw_capsule();
         }
     }
@@ -929,6 +938,11 @@ impl NdAreaScroll {
 
     fn bezel(&self) -> Option<Retained<NSTextField>> {
         self.ivars().bezel.borrow().clone()
+    }
+
+    /// Lays the clip view out again (the trailing room changed).
+    fn tile_now(&self) {
+        let _: () = unsafe { msg_send![self, tile] };
     }
 
     /// Sets the capsule's radius (`None` for none) and draws it.
@@ -1082,6 +1096,11 @@ impl TextAreaControl {
             set_accessibility_label(tv, new.label.as_deref());
         }
         self.core.submit_on_return.set(new.submit_on_return);
+        if old.is_none_or(|o| o.trailing_room != new.trailing_room) {
+            self.scroll.ivars().trailing.set(f64::from(new.trailing_room));
+            self.scroll.setNeedsLayout(true);
+            self.scroll.tile_now();
+        }
         tv.ivars().media.set(new.accepts_media);
         if old.is_none_or(|o| o.style.corner_radii != new.style.corner_radii) {
             self.apply_shape(new);
@@ -1195,7 +1214,9 @@ impl FormControl for TextAreaControl {
         let line = self.line_height().max(1.);
         let lines = match self.props.max_lines {
             Some(max) => {
-                let text_width = width.map_or(tv.frame().size.width, f64::from) - 2. * (inset.width + padding);
+                let text_width = width.map_or(tv.frame().size.width, f64::from)
+                    - 2. * (inset.width + padding)
+                    - if width.is_some() { f64::from(self.props.trailing_room) } else { 0. };
                 let text = self.core.current();
                 let font = tv.font();
                 let used = font.as_deref().map_or(line, |f| {

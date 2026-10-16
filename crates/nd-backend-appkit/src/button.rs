@@ -132,6 +132,18 @@ impl NativeButtonView {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Toolbar);
                 }
+                // macOS 26: the system's interactive Liquid Glass button, cut to a circle
+                // (`borderShape`, 26.0); before that the circular bezel.
+                Bezel::Circle if crate::glass::has_liquid_glass() => {
+                    b.setBordered(true);
+                    b.setBezelStyle(NSBezelStyle::Glass);
+                    // NSControlBorderShapeCircle.
+                    let _: () = unsafe { objc2::msg_send![&**b, setBorderShape: 3isize] };
+                }
+                Bezel::Circle => {
+                    b.setBordered(true);
+                    b.setBezelStyle(NSBezelStyle::Circular);
+                }
                 Bezel::Automatic | Bezel::Bordered | Bezel::Glass => {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Push);

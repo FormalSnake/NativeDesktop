@@ -116,8 +116,10 @@ pub(crate) fn label(b: &Build, id: NodeId, p: &LabelProps) -> gpui::AnyElement {
     b.text_run(id, &p.text, crate::render::Run { size: size.as_f32(), weight: weight.0 }, Some(color), None);
     let mut text =
         div().text_size(size).line_height(line_height).font_weight(weight).text_color(color).child(p.text.clone());
-    if !p.wraps {
-        text = text.truncate();
+    match (p.wraps, p.max_lines) {
+        (false, _) => text = text.truncate(),
+        (true, Some(lines)) => text = text.line_clamp(usize::from(lines)),
+        (true, None) => {}
     }
     if !p.enabled {
         text = text.opacity(look.disabled_opacity);

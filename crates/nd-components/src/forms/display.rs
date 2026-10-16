@@ -47,6 +47,8 @@ pub struct LabelProps {
     pub selectable: bool,
     /// Wraps onto more lines inside its width instead of truncating.
     pub wraps: bool,
+    /// With `wraps`, at most this many lines; the last one ends in an ellipsis when cut.
+    pub max_lines: Option<u16>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
@@ -77,6 +79,7 @@ pub fn label(text: impl Into<SharedString>) -> Label {
         tone: LabelTone::Primary,
         selectable: false,
         wraps: false,
+        max_lines: None,
         enabled: true,
         tooltip: None,
         style: StyleRefinement::default(),
@@ -114,6 +117,15 @@ impl Label {
 
     pub fn wraps(mut self) -> Self {
         self.0.props_mut().wraps = true;
+        self
+    }
+
+    /// Wraps onto at most `lines` lines, ending the last in an ellipsis when the text is cut:
+    /// a two-line message preview.
+    pub fn lines(mut self, lines: u16) -> Self {
+        let props = self.0.props_mut();
+        props.wraps = true;
+        props.max_lines = Some(lines.max(1));
         self
     }
 

@@ -287,8 +287,6 @@ impl IntoElement for Composer {
                 .accepts_media()
                 .emoji_picker(draft.emoji_requests)
                 .disabled(!enabled)
-                .flex_1()
-                .min_w_0()
                 .rounded(px(COMPOSER_ROW / 2.))
                 .on_change(move |e: &TextChanged, w, cx| edit(ComposerEvent::Edited(e.text.clone()), w, cx))
                 .on_submit(move |_: &TextSubmitted, w, cx| submit(ComposerEvent::Send, w, cx))
@@ -298,7 +296,7 @@ impl IntoElement for Composer {
         let square = |button: nd_ui::Button| button.size(px(COMPOSER_ROW)).flex_none();
         let attach_button = attach.then(|| {
             square(icon_button(child("attach"), Icon::Plus))
-                .bezel(nd_ui::Bezel::Glass)
+                .bezel(nd_ui::Bezel::Circle)
                 .tooltip("Attach Files")
                 .disabled(!enabled)
                 .on_click({
@@ -306,13 +304,14 @@ impl IntoElement for Composer {
                     move |_, w, cx| f(w, cx)
                 })
         });
-        let emoji = square(icon_button(child("emoji"), Icon::Smile)).tooltip("Emoji").disabled(!enabled).on_click({
+        let emoji = square(icon_button(child("emoji"), Icon::Smile)).bezel(nd_ui::Bezel::Circle).tooltip("Emoji").disabled(!enabled).on_click({
             let f = send(ComposerEvent::EmojiPicker);
             move |_, w, cx| f(w, cx)
         });
         // Only a message that can go shows the send button, a filled arrow in the accent (or the
         // app's fill), as in Messages; Return sends either way.
-        let send_button = (enabled && draft.can_send()).then(|| {
+        let has_send = enabled && draft.can_send();
+        let send_button = has_send.then(|| {
             square(icon_button(child("send"), send_icon))
                 .prominent()
                 .when_some(send_fill, |button, fill| button.bg(fill))
@@ -333,9 +332,17 @@ impl IntoElement for Composer {
                     .items_end()
                     .gap_2()
                     .children(attach_button)
-                    .child(field)
-                    .child(emoji)
-                    .children(send_button),
+                    // The send button sits inside the field's outline at its trailing end, on the
+                    // last line, as Messages draws it; the text wraps before it.
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .child(field.w_full().when(has_send, |f| f.trailing_room(COMPOSER_ROW)))
+                            .children(send_button.map(|b| b.absolute().right_0().bottom_0())),
+                    )
+                    .child(emoji),
             );
         nd_gpui::gpui::Refineable::refine(root.style(), &style);
         root.into_any_element()

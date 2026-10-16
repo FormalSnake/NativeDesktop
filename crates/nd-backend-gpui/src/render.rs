@@ -782,6 +782,9 @@ impl<'a> Build<'a> {
         if bezel {
             button = button.border_1().border_color(look.border).bg(fill);
         }
+        if props.bezel == Bezel::Circle {
+            button = button.rounded_full();
+        }
         if !props.enabled {
             return button.into_any_element();
         }
