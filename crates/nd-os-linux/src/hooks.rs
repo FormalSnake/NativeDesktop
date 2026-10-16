@@ -157,3 +157,24 @@ impl OsHooks for LinuxHooks {
         self.reported.borrow_mut().remove(&window);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_carry_the_hooks_app_id() {
+        let hooks = LinuxHooks::new("dev.example.app");
+        let mut options = gpui::WindowOptions::default();
+        hooks.window_options(WindowId(1), &mut options);
+        assert_eq!(options.app_id.as_deref(), Some("dev.example.app"));
+    }
+
+    #[test]
+    fn an_app_id_already_on_the_window_wins() {
+        let hooks = LinuxHooks::new("dev.example.app");
+        let mut options = gpui::WindowOptions { app_id: Some("other".into()), ..Default::default() };
+        hooks.window_options(WindowId(1), &mut options);
+        assert_eq!(options.app_id.as_deref(), Some("other"));
+    }
+}

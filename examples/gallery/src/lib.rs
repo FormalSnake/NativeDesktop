@@ -324,7 +324,12 @@ impl Gallery {
                 .child(note("Drag a divider. Split and close the focused pane; tap a pane to focus it."))
                 .child(self.split.clone())
                 .into_any_element(),
-            Page::StatusPage => column
+            // An empty state stands in for a whole view, so it takes the room left under the title.
+            Page::StatusPage => v_flex()
+                .gap_3()
+                .flex_1()
+                .min_h_0()
+                .w_full()
                 .child(note("What a view shows when it has nothing to show."))
                 .child(layout::status_demo())
                 .into_any_element(),

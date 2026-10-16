@@ -5,8 +5,8 @@ use nd_backend_appkit::objc2::rc::Retained;
 use nd_backend_appkit::objc2::runtime::AnyObject;
 use nd_backend_appkit::objc2::{msg_send, sel};
 use nd_backend_appkit::objc2_app_kit::{
-    NSAccessibility, NSButton, NSComboBox, NSScrollView, NSSearchField, NSSecureTextField, NSText, NSTextField,
-    NSTextView, NSView,
+    NSAccessibility, NSBorderType, NSButton, NSComboBox, NSFocusRingType, NSScrollView, NSSearchField,
+    NSSecureTextField, NSText, NSTextField, NSTextFieldBezelStyle, NSTextView, NSView,
 };
 use nd_backend_appkit::objc2_foundation::{NSRange, NSSize, NSString};
 use nd_components::Icon;
@@ -165,6 +165,15 @@ pub fn run(rig: &Rig, c: &mut Checks) {
         area_class.contains("NdAreaView"),
         &format!("text_area mounts as an NSTextView in NSScrollView ({area_class})"),
     );
+    // The area wears a text field's rounded bezel and the scroll view owns the focus ring, so it
+    // matches the fields beside it instead of the square scroll view bezel.
+    let bezel = scroll.subviews().iter().find_map(|v| v.downcast::<NSTextField>().ok());
+    c.check(
+        scroll.borderType() == NSBorderType::NoBorder
+            && bezel.is_some_and(|b| b.isBezeled() && b.bezelStyle() == NSTextFieldBezelStyle::RoundedBezel),
+        "text_area draws a rounded text field bezel",
+    );
+    c.check(scroll.focusRingType() == NSFocusRingType::Exterior, "text_area's focus ring goes round its bezel");
 
     // Props.
     c.check(name.placeholderString().is_some_and(|p| p.to_string() == "Name"), "placeholder reaches NSTextField");

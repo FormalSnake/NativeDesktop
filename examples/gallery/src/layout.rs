@@ -196,7 +196,8 @@ impl Render for SplitDemo {
 /// The status page an empty view shows.
 pub fn status_demo() -> AnyElement {
     div()
-        .h(px(320.))
+        .flex_1()
+        .min_h_0()
         .w_full()
         .child(
             status_page("No Notes")

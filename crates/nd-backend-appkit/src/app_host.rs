@@ -185,8 +185,8 @@ impl KeyRouter for AppRouter {
         // batch already goes to the new first responder.
         app.drain_events();
         drop(app);
-        // The frame mounts every app window, so one the key opened needs its host first. A
-        // key-down is outside AppKit's layout pass, where opening a window is safe.
+        // A key that opened a window (Cmd-T's new tab) needs that window's host before the
+        // frame draws it.
         host.sync_windows();
         if let Ok(mut app) = host.app.try_borrow_mut()
             && app.needs_frame()

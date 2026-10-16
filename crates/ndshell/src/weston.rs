@@ -6,11 +6,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-use crate::hyprland::{new_runtime_dir, wait_socket};
+use crate::hyprland::{PrivateBus, new_runtime_dir, wait_socket};
 
 #[derive(Debug)]
 pub struct Weston {
     child: Child,
+    bus: PrivateBus,
     runtime_dir: PathBuf,
     wayland_display: String,
 }
@@ -18,6 +19,8 @@ pub struct Weston {
 impl Weston {
     pub fn start(width: u32, height: u32) -> Result<Self, String> {
         let runtime_dir = new_runtime_dir()?;
+        // Its own bus, as for Hyprland (see `ndshell::hyprland`).
+        let bus = PrivateBus::start(&runtime_dir)?;
         let log = fs::File::create(runtime_dir.join("weston.log")).map_err(|e| format!("log: {e}"))?;
         let binary = std::env::var_os("ND_WESTON").unwrap_or_else(|| "weston".into());
         let mut child = Command::new(&binary)
@@ -27,6 +30,7 @@ impl Weston {
             .arg(format!("--width={width}"))
             .arg(format!("--height={height}"))
             .env("XDG_RUNTIME_DIR", &runtime_dir)
+            .env("DBUS_SESSION_BUS_ADDRESS", bus.address())
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
             .current_dir(&runtime_dir)
@@ -36,7 +40,7 @@ impl Weston {
             .spawn()
             .map_err(|e| format!("{}: {e} (the nd dev shell provides weston)", Path::new(&binary).display()))?;
         match wait_socket(&runtime_dir, &mut child, "weston") {
-            Ok(wayland_display) => Ok(Self { child, runtime_dir, wayland_display }),
+            Ok(wayland_display) => Ok(Self { child, bus, runtime_dir, wayland_display }),
             Err(why) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -63,6 +67,7 @@ impl Drop for Weston {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.bus.stop();
         let _ = fs::remove_dir_all(&self.runtime_dir);
     }
 }

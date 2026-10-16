@@ -388,6 +388,13 @@ mod gate_m2 {
         assert!(analyze(&screenshot(&hyprland).unwrap()).is_some(), "hello's window is on the output");
     }
 
+    #[test]
+    fn real_wayland_app_id_is_the_manifest_id() {
+        let hyprland = start();
+        let (_probe, client) = Probe::ready(&hyprland, &[]);
+        assert_eq!(client.class, "dev.formalsnake.hello", "hello's `[app] id` is the window's class: {client:?}");
+    }
+
     /// Weston has no xdg-decoration, so hello draws its own controls: close always, and what
     /// Weston's `wm_capabilities` offers, at GNOME's default layout's side with room reserved.
     #[test]
