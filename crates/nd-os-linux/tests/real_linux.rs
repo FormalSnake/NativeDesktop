@@ -71,6 +71,10 @@ mod gate_m2 {
             self.lines.lock().unwrap().iter().any(|l| l.contains(needle))
         }
 
+        pub fn count(&self, prefix: &str) -> usize {
+            self.lines.lock().unwrap().iter().filter(|l| l.starts_with(prefix)).count()
+        }
+
         pub fn wait_for(&self, needle: &str, timeout: Duration) -> bool {
             let end = Instant::now() + timeout;
             while Instant::now() < end {
@@ -342,6 +346,36 @@ mod gate_m2 {
         assert!(magenta > 0, "the detector sees late layout ({} frames)", frames.len());
         drop(control);
         println!("ND_M2_LINUX_RESIZE_GATE_OK");
+    }
+
+    /// How many sizes hello lays out while the borders are dragged, with `ND_DEBUG_SWAPCHAIN`
+    /// making every swapchain reconfigure cost like a weak GPU's. The compositor repaints per
+    /// pointer step whatever the client does, so the output's frames cannot show the lag; the
+    /// client's own layouts can.
+    fn weak_gpu_drag(hyprland: &Hyprland, swapchain: &str) -> usize {
+        let (probe, client) = Probe::ready(hyprland, &[("ND_DEBUG_EXPOSE", "1"), ("ND_DEBUG_SWAPCHAIN", swapchain)]);
+        let mut input = VirtualInput::connect(hyprland).unwrap();
+        let recording = Arc::new(Mutex::new(Recording::default()));
+        let before = probe.count("nd: viewport");
+        edge_drags(&mut input, &client, 240.);
+        let laid_out = probe.count("nd: viewport") - before;
+        println!("{swapchain}: hello laid out {laid_out} sizes");
+        laid_out
+    }
+
+    /// A weak GPU spends milliseconds on each swapchain reconfigure (the e1504g lag the live
+    /// resize surface fixes). The drag steps every 16 ms; a surface that follows each step drops
+    /// frames, one that keeps its headroom does not. The control run reconfigures per step and
+    /// must lose frames, which proves the gate sees the lag.
+    #[test]
+    fn real_resize_drag_weak_gpu() {
+        let hyprland = start();
+        let laid_out = weak_gpu_drag(&hyprland, "cost=25");
+        let eager = weak_gpu_drag(&hyprland, "cost=25,eager");
+        println!("ND_M2_LINUX_WEAK_GPU {laid_out} sizes, control {eager}");
+        // The drag is 120 steps; a 25 ms reconfigure per step halves what the client keeps up with.
+        assert!(laid_out >= 90, "hello kept up with the drag on a weak GPU: {laid_out} of 120 steps");
+        assert!(eager * 4 <= laid_out * 3, "the control lags, so the gate sees it: {eager} vs {laid_out}");
     }
 
     #[test]

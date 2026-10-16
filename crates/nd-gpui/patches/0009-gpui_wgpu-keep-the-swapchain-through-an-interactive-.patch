@@ -1,12 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: FormalSnake <kyaniserni@gmail.com>
 Date: Wed, 14 Oct 2026 12:00:00 +0100
-Subject: [PATCH 9/9] gpui_wgpu: keep the swapchain through an interactive resize
+Subject: [PATCH] gpui_wgpu: keep the swapchain through an interactive resize
 
 ---
+ crates/gpui_linux/src/linux/wayland/window.rs |  59 +++++++-
+ crates/gpui_wgpu/src/wgpu_renderer.rs         | 134 +++++++++++++++++-
+ 2 files changed, 188 insertions(+), 5 deletions(-)
+
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-index ed947e9c..99163c23 100644
+index ed947e9..99163c2 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
 +++ b/crates/gpui_linux/src/linux/wayland/window.rs
 @@ -46,6 +46,15 @@ use gpui::{
@@ -126,10 +129,10 @@ index ed947e9c..99163c23 100644
              self.0.frame_loop.set(FrameLoop::PresentationFailed);
          }
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index 088f73be..5c35a135 100644
+index 088f73b..37c0bdf 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
-@@ -261,9 +261,16 @@ pub struct WgpuRenderer {
+@@ -261,9 +261,55 @@ pub struct WgpuRenderer {
      device_errors: Arc<DeviceErrorState>,
      observed_error_generation: u64,
      last_surface_error: Option<String>,
@@ -143,10 +146,49 @@ index 088f73be..5c35a135 100644
 +/// pixels per axis.
 +const LIVE_RESIZE_SLACK: u32 = 512;
 +
++/// `ND_DEBUG_SWAPCHAIN=cost=<ms>[,eager]` stands in for a weak GPU in the resize gate: every
++/// surface reconfigure takes `cost` more, and `eager` reconfigures per resize step as before the
++/// oversized live surface, which is what the gate's control run needs to see the lag.
++struct DebugSwapchain {
++    cost: Option<std::time::Duration>,
++    eager: bool,
++}
++
++fn debug_swapchain() -> &'static DebugSwapchain {
++    static DEBUG: std::sync::OnceLock<DebugSwapchain> = std::sync::OnceLock::new();
++    DEBUG.get_or_init(|| {
++        let spec = std::env::var("ND_DEBUG_SWAPCHAIN").unwrap_or_default();
++        let mut debug = DebugSwapchain { cost: None, eager: false };
++        for part in spec.split(',') {
++            match part.split_once('=') {
++                Some(("cost", ms)) => debug.cost = ms.parse().ok().map(std::time::Duration::from_millis),
++                None if part == "eager" => debug.eager = true,
++                _ => {}
++            }
++        }
++        debug
++    })
++}
++
++/// The surface size a live resize to `drawable` wants, given the `surface` it has: kept while the
++/// drawable fits in it with at most [`LIVE_RESIZE_SLACK`] to spare, otherwise the drawable plus
++/// half the slack, capped at `max_texture_size`.
++fn live_surface_size(drawable: Size<DevicePixels>, surface: (u32, u32), max_texture_size: u32) -> (u32, u32) {
++    let axis = |drawable: i32, surface: u32| {
++        let drawable = drawable.max(1) as u32;
++        if drawable <= surface && surface - drawable <= LIVE_RESIZE_SLACK {
++            surface
++        } else {
++            (drawable + LIVE_RESIZE_SLACK / 2).min(max_texture_size)
++        }
++    };
++    (axis(drawable.width.0, surface.0), axis(drawable.height.0, surface.1))
++}
++
  impl WgpuRenderer {
      fn core(&self) -> Option<&WgpuRendererCore> {
          match &self.state {
-@@ -456,6 +463,10 @@ impl WgpuRenderer {
+@@ -456,6 +502,10 @@ impl WgpuRenderer {
              context: gpu_context,
              compositor_gpu,
              state: RendererState::Ready { surface, core },
@@ -157,14 +199,12 @@ index 088f73be..5c35a135 100644
              surface_config,
              atlas,
              transparent_alpha_mode,
-@@ -989,15 +1000,51 @@ impl WgpuRenderer {
+@@ -989,15 +1039,51 @@ impl WgpuRenderer {
      /// Records the new drawable size and reconfigures the surface when one is present.
      /// The size is kept even without GPU resources so that recovery restores it.
      pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
 -        let width = size.width.0 as u32;
 -        let height = size.height.0 as u32;
--
--        if width == self.surface_config.width && height == self.surface_config.height {
 +        self.drawable_size = size;
 +        self.configure_surface(size.width.0 as u32, size.height.0 as u32);
 +    }
@@ -177,18 +217,20 @@ index 088f73be..5c35a135 100644
 +    /// surface's top left `size`; the platform crops the rest with [`Self::surface_size`] and
 +    /// [`Self::drawable_size`]. Settle with `update_drawable_size` once the resize ends.
 +    pub fn update_drawable_size_live(&mut self, size: Size<DevicePixels>) {
++        if debug_swapchain().eager {
++            return self.update_drawable_size(size);
++        }
 +        self.drawable_size = size;
-+        let fits = |drawable: i32, surface: u32| {
-+            let drawable = drawable.max(1) as u32;
-+            drawable <= surface && surface - drawable <= LIVE_RESIZE_SLACK
-+        };
-+        if fits(size.width.0, self.surface_config.width) && fits(size.height.0, self.surface_config.height) {
-             return;
-         }
-+        let grow = |drawable: i32| (drawable.max(1) as u32 + LIVE_RESIZE_SLACK / 2).min(self.max_texture_size);
-+        self.configure_surface(grow(size.width.0), grow(size.height.0));
++        let (width, height) = live_surface_size(
++            size,
++            (self.surface_config.width, self.surface_config.height),
++            self.max_texture_size,
++        );
++        self.configure_surface(width, height);
 +    }
-+
+ 
+-        if width == self.surface_config.width && height == self.surface_config.height {
+-            return;
 +    /// What the window shows: the top left of the surface.
 +    pub fn drawable_size(&self) -> Size<DevicePixels> {
 +        self.drawable_size
@@ -199,7 +241,7 @@ index 088f73be..5c35a135 100644
 +        Size {
 +            width: DevicePixels(self.surface_config.width as i32),
 +            height: DevicePixels(self.surface_config.height as i32),
-+        }
+         }
 +    }
  
 +    fn configure_surface(&mut self, width: u32, height: u32) {
@@ -213,6 +255,57 @@ index 088f73be..5c35a135 100644
          if clamped_width != width || clamped_height != height {
              warn!(
                  "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
--- 
-2.51.0
-
+@@ -1007,6 +1093,9 @@ impl WgpuRenderer {
+         }
+         self.surface_config.width = clamped_width.max(1);
+         self.surface_config.height = clamped_height.max(1);
++        if let Some(cost) = debug_swapchain().cost {
++            std::thread::sleep(cost);
++        }
+ 
+         let Some(core) = self.core_mut() else {
+             return;
+@@ -2604,6 +2693,43 @@ impl RenderingParameters {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn live_resize_keeps_the_surface_while_the_drawable_fits() {
++        let size = |w, h| Size { width: DevicePixels(w), height: DevicePixels(h) };
++        let surface = (1300, 900);
++        // Shrinking and growing inside the slack never reconfigures, however many steps it takes.
++        for step in 0..=LIVE_RESIZE_SLACK as i32 {
++            assert_eq!(live_surface_size(size(1300 - step, 900 - step), surface, 8192), surface);
++        }
++        // Past the slack below, or any growth past the surface, asks for headroom around the drawable.
++        let slack = LIVE_RESIZE_SLACK as i32;
++        assert_eq!(
++            live_surface_size(size(1300 - slack - 1, 900), surface, 8192),
++            (1300 - LIVE_RESIZE_SLACK - 1 + LIVE_RESIZE_SLACK / 2, 900)
++        );
++        assert_eq!(live_surface_size(size(1301, 900), surface, 8192), (1301 + LIVE_RESIZE_SLACK / 2, 900));
++        // Growth is capped by the GPU's limit, and a zero-sized drawable still gets a surface.
++        assert_eq!(live_surface_size(size(8000, 900), surface, 8192).0, 8192);
++        assert_eq!(live_surface_size(size(0, 0), (1, 1), 8192), (1, 1));
++    }
++
++    #[test]
++    fn live_resize_steps_reconfigure_once_per_slack() {
++        let size = |w| Size { width: DevicePixels(w), height: DevicePixels(600) };
++        let mut surface = (800, 600);
++        let mut reconfigures = 0;
++        // A drag that grows the window one pixel per frame for 2000 frames.
++        for width in 800..2800 {
++            let wanted = live_surface_size(size(width), surface, 8192);
++            if wanted != surface {
++                surface = wanted;
++                reconfigures += 1;
++            }
++        }
++        assert!(reconfigures <= 2000 / (LIVE_RESIZE_SLACK as i32 / 2) + 1, "{reconfigures} reconfigures");
++    }
++
+     use gpui::{
+         BorderStyle, ColorSpace, ContentMask, Corners, Edges, Hsla, MonochromeSprite,
+         PolychromeSprite, Quad, Shadow, Size, SubpixelSprite, Underline, linear_color_stop,
