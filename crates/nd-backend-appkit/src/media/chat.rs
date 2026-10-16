@@ -43,33 +43,31 @@ pub(super) fn rounded(path: &CGMutablePath, r: NSRect, radii: [f64; 4]) {
     CGMutablePath::close_subpath(Some(path));
 }
 
-/// The tail: a lobe leaving the bubble's bottom outer corner and curving out to a point level
-/// with its bottom edge.
+/// The tail: a lobe hanging under the bubble's bottom outer corner, `BUBBLE.tail_drop` below
+/// its bottom edge and inside its width, as Messages draws it on macOS 26.
 pub(super) fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
-    let (tw, th) = (f64::from(BUBBLE.tail_width), f64::from(BUBBLE.tail_height));
+    let (reach, drop) = (f64::from(BUBBLE.tail_height), f64::from(BUBBLE.tail_drop));
     let bottom = bubble.origin.y + bubble.size.height;
     let (edge, out) = match side {
         BubbleSide::Sent => (bubble.origin.x + bubble.size.width, 1.),
         BubbleSide::Received => (bubble.origin.x, -1.),
     };
+    let x = |inset: f64| edge - out * inset;
     let m = std::ptr::null();
-    let start = (edge - out * th, bottom - th);
-    let corner = (edge, bottom - th);
-    let tip = (edge + out * tw, bottom);
-    let end = (edge - out * th, bottom - 3.);
-    // The lobe winds the same way as the rounded rect on both sides: mirrored, it would wind the
-    // other way and cut a hole where the two overlap under the non-zero fill rule.
+    // Inside the bubble, down to the tip, back along under the bubble. Sent and received wind
+    // the same way as the rounded rect, or the non-zero fill rule cuts a hole where they meet.
+    let points = [(x(reach), bottom - 6.), (x(8.), bottom - 6.)];
     unsafe {
         if side == BubbleSide::Sent {
-            CGMutablePath::move_to_point(Some(path), m, start.0, start.1);
-            CGMutablePath::add_line_to_point(Some(path), m, corner.0, corner.1);
-            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., tip.0, tip.1);
-            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge - out * tw * 0.5, bottom, end.0, end.1);
+            CGMutablePath::move_to_point(Some(path), m, points[0].0, points[0].1);
+            CGMutablePath::add_line_to_point(Some(path), m, points[1].0, points[1].1);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, x(5.), bottom - 1., x(5.5), bottom + drop);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, x(10.), bottom + 1., x(reach), bottom);
         } else {
-            CGMutablePath::move_to_point(Some(path), m, end.0, end.1);
-            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge - out * tw * 0.5, bottom, tip.0, tip.1);
-            CGMutablePath::add_quad_curve_to_point(Some(path), m, edge, bottom - 2., corner.0, corner.1);
-            CGMutablePath::add_line_to_point(Some(path), m, start.0, start.1);
+            CGMutablePath::move_to_point(Some(path), m, x(reach), bottom);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, x(10.), bottom + 1., x(5.5), bottom + drop);
+            CGMutablePath::add_quad_curve_to_point(Some(path), m, x(5.), bottom - 1., points[1].0, points[1].1);
+            CGMutablePath::add_line_to_point(Some(path), m, points[0].0, points[0].1);
         }
     }
     CGMutablePath::close_subpath(Some(path));
@@ -220,16 +218,15 @@ impl BubbleInner {
         self.layout();
     }
 
-    /// The bubble's rect inside the view: the tail's width is kept free on the outer side.
+    /// The bubble's rect inside the view: the room under it is the tail's when it has one.
     fn bubble_rect(&self) -> NSRect {
         let b = self.view.bounds();
         let props = self.props.borrow();
         if props.emoji_only {
             return b;
         }
-        let tw = f64::from(BUBBLE.tail_width);
-        let x = if props.side == BubbleSide::Received { tw } else { 0. };
-        NSRect::new(NSPoint::new(x, 0.), NSSize::new((b.size.width - tw).max(0.), b.size.height))
+        let drop = if props.has_tail() { f64::from(BUBBLE.tail_drop) } else { 0. };
+        NSRect::new(NSPoint::new(0., 0.), NSSize::new(b.size.width, (b.size.height - drop).max(0.)))
     }
 
     fn text_size(&self, max_text: CGFloat) -> NSSize {
@@ -326,7 +323,8 @@ impl CustomNative for BubbleNative {
         let max_text = f64::from(outer - tw - 2. * px);
         drop(props);
         let text = self.inner.text_size(max_text);
-        Size { width: text.width as f32 + 2. * px + tw, height: text.height as f32 + 2. * py }
+        let drop = if self.inner.props.borrow().has_tail() { BUBBLE.tail_drop } else { 0. };
+        Size { width: text.width as f32 + 2. * px + tw, height: text.height as f32 + 2. * py + drop }
     }
 
     fn paints(&self) -> Vec<CustomPaint> {

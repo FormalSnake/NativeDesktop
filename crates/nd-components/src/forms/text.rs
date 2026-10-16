@@ -132,6 +132,8 @@ pub struct TextFieldProps {
     pub leading: Option<FieldIcon>,
     pub trailing: Option<FieldIcon>,
     pub editable: bool,
+    /// The platform's largest field size, for a field that heads a pane, like a sidebar's search.
+    pub large: bool,
     /// Accessible name when no visible label names the field.
     pub label: Option<SharedString>,
     pub enabled: bool,
@@ -341,6 +343,7 @@ fn field(id: impl Into<SharedString>, style: FieldStyle) -> TextField {
         leading: None,
         trailing: None,
         editable: true,
+        large: false,
         label: None,
         enabled: true,
         tooltip: None,
@@ -494,6 +497,12 @@ impl TextField {
 
     pub fn search(mut self) -> Self {
         self.element.props_mut().field = FieldStyle::Search;
+        self
+    }
+
+    /// The platform's largest field size: extra large (36 pt) on macOS 26, large before it.
+    pub fn large(mut self) -> Self {
+        self.element.props_mut().large = true;
         self
     }
 

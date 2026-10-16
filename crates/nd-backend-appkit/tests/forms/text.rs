@@ -2,10 +2,10 @@
 //! editor, echo, reentrancy, IME composition, automation and the semantic tree.
 
 use nd_backend_appkit::objc2::rc::Retained;
-use nd_backend_appkit::objc2::runtime::AnyObject;
+use nd_backend_appkit::objc2::runtime::{AnyClass, AnyObject};
 use nd_backend_appkit::objc2::{msg_send, sel};
 use nd_backend_appkit::objc2_app_kit::{
-    NSAccessibility, NSBorderType, NSButton, NSComboBox, NSFocusRingType, NSScrollView, NSSearchField,
+    NSAccessibility, NSBorderType, NSButton, NSComboBox, NSControlSize, NSFocusRingType, NSScrollView, NSSearchField,
     NSSecureTextField, NSText, NSTextField, NSTextFieldBezelStyle, NSTextView, NSView,
 };
 use nd_backend_appkit::objc2_foundation::{NSRange, NSSize, NSString};
@@ -79,10 +79,12 @@ impl Render for Texts {
             )
             .child(text_field("off").placeholder("Off").disabled(self.off))
             .child(text_field("bound").bind(&self.bound))
-            .child(search_field("search", &self.query).on_submit(cx.listener(|this, e: &TextSubmitted, window, cx| {
-                this.searches.push(e.text.to_string());
-                this.bound.update(cx, |s, cx| s.set_text("from app", window, cx));
-            })))
+            .child(search_field("search", &self.query).large().on_submit(cx.listener(
+                |this, e: &TextSubmitted, window, cx| {
+                    this.searches.push(e.text.to_string());
+                    this.bound.update(cx, |s, cx| s.set_text("from app", window, cx));
+                },
+            )))
             .child(text_area("notes").text(self.notes.clone()).placeholder("Notes").min_lines(4).on_change(
                 cx.listener(|this, e: &TextChanged, _, cx| {
                     this.notes = e.text.clone();
@@ -314,6 +316,10 @@ pub fn run(rig: &Rig, c: &mut Checks) {
     };
     c.check(r.is_ok() && state(&bound) == ("bound text".into(), Some(TextEvent::Edited)), "edit reaches a bound state");
     let search = rig.view(id, "search").downcast::<NSSearchField>().expect("search");
+    let large =
+        if AnyClass::get(c"NSGlassEffectView").is_some() { NSControlSize::ExtraLarge } else { NSControlSize::Large };
+    c.check(search.controlSize() == large, "large() is the largest control size");
+    c.check(search.frame().size.height >= 28., &format!("large() field is tall ({})", search.frame().size.height));
     let r = rig.perform(id, "search", SemanticAction::SetValue("query".into()));
     let query = rig.read(&w, |v| v.query.clone());
     c.check(r.is_ok() && state(&query).0 == "query", "search field edit reaches its state");

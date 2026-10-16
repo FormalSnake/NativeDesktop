@@ -1005,6 +1005,9 @@ pub(crate) fn text_field(
     };
     let name = p.label.clone().or_else(|| p.tooltip.clone()).or_else(|| p.placeholder.clone()).unwrap_or_default();
     let mut field = chrome(&ctl, &editor, &f).role(role).aria_label(name);
+    if p.large {
+        field = field.h(look.control_height * 1.5).rounded_full();
+    }
     if p.field != FieldStyle::Secure {
         field = field.aria_value(p.text.clone());
     }

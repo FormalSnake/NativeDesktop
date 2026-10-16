@@ -28,9 +28,13 @@ pub struct BubbleMetrics {
     pub tight: f32,
     pub padding_x: f32,
     pub padding_y: f32,
-    /// The tail's lobe, outside the bubble's bottom corner.
+    /// Side room a tail takes beside the bubble (none: the tail hangs under it, as on macOS 26).
     pub tail_width: f32,
+    /// How far the tail's lobe reaches in from the bubble's outer edge.
     pub tail_height: f32,
+    /// How far the tail hangs below the bubble's bottom edge; a bubble with a tail is this much
+    /// taller.
+    pub tail_drop: f32,
     /// The widest a bubble grows, and its share of the row.
     pub max_width: f32,
     pub max_fraction: f32,
@@ -48,16 +52,21 @@ pub struct BubbleMetrics {
 pub const BUBBLE: BubbleMetrics = BubbleMetrics {
     radius: 18.,
     tight: 5.,
-    padding_x: 12.,
+    // Measured against Messages on macOS 26: text 13 pt in from the bubble's edge, of which
+    // AppKit's label keeps 2.
+    padding_x: 10.,
     padding_y: 7.,
-    tail_width: 6.,
-    tail_height: 14.,
+    // Measured against Messages on macOS 26: the tail hangs 5 pt under the bubble, inside its
+    // width.
+    tail_width: 0.,
+    tail_height: 18.,
+    tail_drop: 5.,
     max_width: 460.,
     max_fraction: 0.62,
     reaction: 24.,
     reaction_lift: 14.,
     run_gap: 10.,
-    in_run_gap: 2.,
+    in_run_gap: 3.,
     emoji_max: 3,
     emoji_size: 40.,
 };

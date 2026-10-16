@@ -31,7 +31,7 @@ pub const ATTACHMENT_THUMB: f32 = 32.;
 /// The field's height on one line, and the side of every button beside it: a button is as tall
 /// as the line it sits on, so icons centre on the text, and stays on the bottom line as the
 /// field grows (Messages' layout).
-pub const COMPOSER_ROW: f32 = 28.;
+pub const COMPOSER_ROW: f32 = 31.;
 
 /// A file staged to go with the next message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -332,10 +332,11 @@ impl IntoElement for Composer {
             .gap_2()
             .when(!draft.attachments.is_empty(), |col| col.child(h_flex().flex_wrap().gap_2().children(chips)))
             .child(
+                // Messages' bar: 9 pt between the plus button, the field and the emoji button.
                 h_flex()
                     .w_full()
                     .items_end()
-                    .gap_2()
+                    .gap(px(9.))
                     .children(attach_button)
                     // The send button sits inside the field's outline at its trailing end, on the
                     // last line, as Messages draws it; the text wraps before it.

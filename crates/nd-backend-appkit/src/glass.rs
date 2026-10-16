@@ -34,8 +34,22 @@ pub(crate) struct GlassNative {
     radius_scale: f32,
 }
 
-fn radius(props: &GlassProps) -> f32 {
-    props.style.corner_radii.top_left.map(length).unwrap_or(0.)
+/// Glass this short or narrower is a control, which the HIG draws as a capsule or a circle;
+/// anything bigger is a surface, square unless the app rounds it.
+const CONTROL_MAX: f64 = 64.;
+
+/// The corner radius the glass draws at `size`: the app's when it sets one; otherwise half the
+/// short side for a control-sized element (a capsule, or a circle when square), none for a large
+/// surface. Apple's HIG, Buttons ("prefer circular or capsule-shape buttons") and Toolbars
+/// (custom components keep corner radii concentric with the bar's).
+fn radius(props: &GlassProps, size: (f64, f64)) -> f64 {
+    match props.style.corner_radii.top_left {
+        Some(r) => f64::from(length(r)),
+        None => {
+            let short = size.0.min(size.1);
+            if short > 0. && short <= CONTROL_MAX { short / 2. } else { 0. }
+        }
+    }
 }
 
 impl GlassNative {
@@ -75,6 +89,16 @@ impl GlassNative {
         }
     }
 
+    /// The frame nd laid the glass out at: a capsule's radius follows it.
+    pub fn set_frame(&self, rect: objc2_foundation::NSRect) {
+        if self.view().frame() != rect {
+            self.view().setFrame(rect);
+            if self.props.style.corner_radii.top_left.is_none() {
+                self.apply();
+            }
+        }
+    }
+
     pub fn set_radius_scale(&mut self, scale: f32) {
         if self.radius_scale != scale {
             self.radius_scale = scale;
@@ -83,7 +107,10 @@ impl GlassNative {
     }
 
     fn apply(&self) {
-        let r = f64::from(radius(&self.props) * self.radius_scale);
+        let frame = self.view().frame().size;
+        let explicit = self.props.style.corner_radii.top_left.is_some();
+        let r = radius(&self.props, (frame.width, frame.height))
+            * if explicit { f64::from(self.radius_scale) } else { 1. };
         let tint = self.props.tint.map(|t| Color::from(t).ns_color());
         match &self.material {
             Material::Glass(glass) => {
@@ -106,7 +133,7 @@ impl GlassNative {
                 // The material has no tint of its own below 26: the tint lays over it.
                 let look = ViewLook {
                     background: self.props.tint.map(Color::from),
-                    corner_radius: radius(&self.props),
+                    corner_radius: r as f32 / if explicit { self.radius_scale } else { 1. },
                     ..ViewLook::default()
                 };
                 self.content.set_props(&look);
