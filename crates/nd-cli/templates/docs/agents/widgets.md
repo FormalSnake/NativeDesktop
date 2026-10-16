@@ -21,7 +21,8 @@ Every built-in maps to the platform's own control where one exists (an `NSButton
 | Media | `image`, `avatar`, `seek_bar`, `player_bar`, `lyrics_view`, `shelf`, `chat_bubble`, `composer` |
 | Surfaces | `glass`, `glass_group`, `webview` (feature `webview`), `native_surface` |
 
-Icons are the `Icon` enum (Lucide names, SF Symbols on macOS). No inline SVG (`inline-svg`).
+Icons are the `Icon` enum (Lucide names, SF Symbols on macOS); `icon(Icon::Moon, 12.)` shows one
+on its own, tinted by `text_color`. No inline SVG (`inline-svg`).
 
 Stateful elements take an id in their constructor: `text_field("title")`, `list("notes", ..)`,
 `webview("page", &page)`. The id keeps the native view, its focus, IME state and scroll position

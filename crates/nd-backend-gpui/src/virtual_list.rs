@@ -364,7 +364,16 @@ impl gpui::Element for VirtualList {
         });
         window.with_content_mask(Some(ContentMask { bounds: view }), |window| {
             for b in &prepainted.selected {
-                window.paint_quad(fill(*b, self.selection_color));
+                if self.props.inset {
+                    // A sidebar's selection: inset from the edges, rounded.
+                    let inner = Bounds::new(
+                        point(b.origin.x + px(10.), b.origin.y + px(1.)),
+                        size(b.size.width - px(20.), b.size.height - px(2.)),
+                    );
+                    window.paint_quad(fill(inner, self.selection_color).corner_radii(px(8.)));
+                } else {
+                    window.paint_quad(fill(*b, self.selection_color));
+                }
             }
             for (b, expanded) in &prepainted.disclosures {
                 paint_disclosure(window, *b, *expanded, self.disclosure_color);

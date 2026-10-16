@@ -818,6 +818,9 @@ pub enum Bezel {
     Borderless,
     /// The toolbar's own button style (`NSBezelStyle.toolbar` on macOS).
     Toolbar,
+    /// A round button, the size of the element's box (`NSBezelStyle.circular` on macOS): a
+    /// chat bar's add button.
+    Circle,
 }
 
 #[derive(Clone, Debug, PartialEq)]

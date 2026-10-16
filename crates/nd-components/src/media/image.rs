@@ -14,6 +14,7 @@ use nd_ui::prelude::*;
 use nd_ui::semantics::{Semantics, WidgetSemantics};
 use nd_ui::{Key, Role, StyleRefinement};
 
+use super::chat::BubbleSide;
 use super::pipeline::{ImageFit, ImagePipeline, ImageSource};
 use crate::forms::leaf;
 
@@ -34,6 +35,8 @@ pub struct ImageProps {
     pub animate: bool,
     /// Draws every pixel in this colour, keeping its alpha: a monochrome icon in a token.
     pub tint: Option<Hsla>,
+    /// Cut to a message bubble with its tail on this side: a picture ending a run of messages.
+    pub tail: Option<BubbleSide>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
@@ -105,6 +108,7 @@ fn image_at(source: Option<ImageSource>, site: &'static Location<'static>) -> Im
         alt: None,
         animate: true,
         tint: None,
+        tail: None,
         enabled: true,
         tooltip: None,
         style: StyleRefinement::default(),
@@ -113,6 +117,16 @@ fn image_at(source: Option<ImageSource>, site: &'static Location<'static>) -> Im
 }
 
 impl Image {
+    /// Cuts the picture into a message bubble whose tail leaves the bottom corner on `side`'s
+    /// outer edge, the picture running into the tail, as Messages draws a photo that ends a run.
+    /// The tail takes [`BUBBLE.tail_width`](super::BUBBLE) of the element's width on that edge;
+    /// the corner radius is the style's. GPUI backends draw the rounded picture without the
+    /// tail.
+    pub fn bubble_tail(mut self, side: BubbleSide) -> Self {
+        self.0.props_mut().tail = Some(side);
+        self
+    }
+
     pub fn id(mut self, id: impl Into<SharedString>) -> Self {
         *self.0.key_mut() = Key::Id(id.into());
         self

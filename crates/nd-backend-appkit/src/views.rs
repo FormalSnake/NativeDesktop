@@ -623,6 +623,15 @@ impl NdTextView {
         let Some(props) = self.ivars().props.borrow().clone() else { return Size::default() };
         measure_text(&props, self.family().as_deref(), width)
     }
+
+    /// Measures in `family` when the caller knows the theme's (`Some`), else in the view's own.
+    pub(crate) fn measure_in(&self, width: Option<f32>, family: Option<Option<&str>>) -> Size {
+        let Some(props) = self.ivars().props.borrow().clone() else { return Size::default() };
+        match family {
+            Some(family) => measure_text(&props, family, width),
+            None => measure_text(&props, self.family().as_deref(), width),
+        }
+    }
 }
 
 pub(crate) fn measure_text(props: &TextLook, family: Option<&str>, width: Option<f32>) -> Size {

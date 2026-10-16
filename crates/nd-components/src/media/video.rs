@@ -1,6 +1,7 @@
 //! `video(source)`: a playing video inside the window, from a file path or URL. The app owns
-//! play state: `playing`, `muted` and `looping` are props, and the node reports when the media
-//! is ready, when it ends and when it fails. Size it with the style; `fit` crops or letterboxes
+//! play state: `playing`, `muted`, `looping` and seeks are props, and the node reports when the
+//! media is ready, where playback is (about once a second, which a `seek_bar`'s clock
+//! extrapolates between), when it ends and when it fails. Size it with the style; `fit` crops or letterboxes
 //! the picture into that box.
 //!
 //! On AppKit the picture is an `AVPlayerLayer`. Backends without a video surface draw the
@@ -24,6 +25,9 @@ pub struct VideoProps {
     /// Starts again from the beginning at the end, without reporting [`VideoEnded`].
     pub looping: bool,
     pub fit: ImageFit,
+    /// A seek request: the position in seconds, under a number the app bumps for each new
+    /// request, so seeking to the same place twice still seeks.
+    pub seek: Option<(u64, f64)>,
     /// What the video shows, for the accessibility tree.
     pub alt: Option<SharedString>,
     pub enabled: bool,
@@ -38,6 +42,14 @@ pub struct VideoReady {
     pub height: u32,
     /// `None` for a live stream.
     pub duration: Option<f64>,
+}
+
+/// Where playback is, in seconds: sent about once a second while playing, and after a seek
+/// or a pause.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VideoProgress {
+    pub position: f64,
+    pub playing: bool,
 }
 
 /// Playback reached the end (never sent while looping).
@@ -71,6 +83,7 @@ pub fn video(source: impl Into<SharedString>) -> Video {
         muted: false,
         looping: false,
         fit: ImageFit::Contain,
+        seek: None,
         alt: None,
         enabled: true,
         tooltip: None,
@@ -100,6 +113,13 @@ impl Video {
         self
     }
 
+    /// Moves playback to `seconds`. `request` names the seek: a new number seeks, the same one
+    /// again is the seek already done.
+    pub fn seek(mut self, request: u64, seconds: f64) -> Self {
+        self.0.props_mut().seek = Some((request, seconds.max(0.)));
+        self
+    }
+
     /// Crops the picture to fill the box instead of letterboxing it.
     pub fn cover(mut self) -> Self {
         self.0.props_mut().fit = ImageFit::Cover;
@@ -112,6 +132,10 @@ impl Video {
     }
 
     pub fn on_ready(self, f: impl Fn(&VideoReady, &mut Window, &mut App) + 'static) -> Self {
+        Video(self.0.on(f))
+    }
+
+    pub fn on_progress(self, f: impl Fn(&VideoProgress, &mut Window, &mut App) + 'static) -> Self {
         Video(self.0.on(f))
     }
 

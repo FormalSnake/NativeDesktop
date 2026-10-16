@@ -1,13 +1,14 @@
 //! `video()` on AppKit: an `AVPlayer` drawn by an `AVPlayerLayer` filling the view. A 10 Hz
-//! ticker watches the item's status until it is ready or has failed; the end of playback comes
-//! from AVFoundation's notification.
+//! ticker watches the item's status until it is ready or has failed, then reports the position
+//! about once a second while it plays; the end of playback comes from AVFoundation's
+//! notification.
 
 use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
 use block2::RcBlock;
-use nd_components::media::{ImageFit, VideoEnded, VideoFailed, VideoProps, VideoReady};
+use nd_components::media::{ImageFit, VideoEnded, VideoFailed, VideoProgress, VideoProps, VideoReady};
 use nd_theme::Theme;
 use nd_ui::events::Emit;
 use objc2::rc::Retained;
@@ -17,7 +18,7 @@ use objc2_av_foundation::{
     AVLayerVideoGravityResizeAspect, AVLayerVideoGravityResizeAspectFill, AVPlayer, AVPlayerActionAtItemEnd,
     AVPlayerItem, AVPlayerItemDidPlayToEndTimeNotification, AVPlayerItemStatus, AVPlayerLayer,
 };
-use objc2_core_media::{CMTimeFlags, kCMTimeZero};
+use objc2_core_media::{CMTime, CMTimeFlags, kCMTimeZero};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL};
 use objc2_quartz_core::CATransaction;
 
@@ -41,6 +42,7 @@ impl CustomWidget for VideoWidget {
             emit: cx.emitter(),
             wake: cx.waker(),
             ticker: Rc::default(),
+            seek: Cell::new(None),
         });
         inner.view.set_input(Rc::downgrade(&inner) as Weak<dyn Input>);
         inner.apply(props(cx));
@@ -67,6 +69,10 @@ struct Playback {
     end_observer: Retained<ProtocolObject<dyn NSObjectProtocol>>,
     /// Ready or failed has been reported for this item.
     settled: Cell<bool>,
+    /// The last position and play state reported.
+    reported: Cell<Option<(f64, bool)>>,
+    /// A seek in flight: reported once the player stands there, nothing before.
+    seeking: Cell<Option<f64>>,
 }
 
 impl Drop for Playback {
@@ -87,6 +93,8 @@ struct VideoInner {
     emit: Emit,
     wake: Waker,
     ticker: Rc<Ticker>,
+    /// The seek request last carried out.
+    seek: Cell<Option<u64>>,
 }
 
 impl VideoInner {
@@ -107,6 +115,17 @@ impl VideoInner {
         if let Some(p) = self.playback.borrow().as_ref() {
             unsafe {
                 p.player.setMuted(props.muted);
+                if let Some((request, seconds)) = props.seek
+                    && self.seek.replace(Some(request)) != Some(request)
+                {
+                    // Exact, not the nearest keyframe: a scrubber lands where it was let go.
+                    p.player.seekToTime_toleranceBefore_toleranceAfter(
+                        CMTime::with_seconds(seconds, 600),
+                        kCMTimeZero,
+                        kCMTimeZero,
+                    );
+                    p.seeking.set(Some(seconds));
+                }
                 if props.playing {
                     p.player.play();
                 } else {
@@ -145,16 +164,47 @@ impl VideoInner {
             )
         };
         unsafe { self.layer.setPlayer(Some(&player)) };
-        self.playback.replace(Some(Playback { player, item, end_observer, settled: Cell::new(false) }));
+        self.playback.replace(Some(Playback {
+            player,
+            item,
+            end_observer,
+            settled: Cell::new(false),
+            reported: Cell::new(None),
+            seeking: Cell::new(None),
+        }));
+        // A seek asked for before this item existed is carried out once it is ready.
+        self.seek.set(None);
         let me = Rc::downgrade(self);
         self.ticker.start(10., move || me.upgrade().is_some_and(|me| me.poll()));
     }
 
-    /// Reports ready or failed once; `false` once there is nothing left to watch.
-    fn poll(&self) -> bool {
+    /// Reports ready or failed once, then the position while it moves; `false` once there is
+    /// nothing left to watch.
+    fn poll(self: &Rc<Self>) -> bool {
         let event = {
             let playback = self.playback.borrow();
-            let Some(p) = playback.as_ref().filter(|p| !p.settled.get()) else { return false };
+            let Some(p) = playback.as_ref() else { return false };
+            if p.settled.get() {
+                let position = unsafe { p.player.currentTime().seconds() };
+                let playing = unsafe { p.player.rate() } > 0.;
+                let moved = match (p.seeking.get(), p.reported.get()) {
+                    (Some(target), _) => {
+                        let arrived = (position - target).abs() < 0.05;
+                        if arrived {
+                            p.seeking.set(None);
+                        }
+                        arrived
+                    }
+                    (None, None) => true,
+                    (None, Some((last, was))) => was != playing || (position - last).abs() >= 1.,
+                };
+                if moved && position.is_finite() {
+                    p.reported.set(Some((position, playing)));
+                    drop(playback);
+                    self.report(VideoProgress { position, playing });
+                }
+                return true;
+            }
             match unsafe { p.item.status() } {
                 AVPlayerItemStatus::ReadyToPlay => {
                     p.settled.set(true);
@@ -176,11 +226,18 @@ impl VideoInner {
                 _ => return true,
             }
         };
+        let ready = event.is_ok();
         match event {
             Ok(ready) => self.report(ready),
             Err(failed) => self.report(failed),
         }
-        false
+        if ready {
+            let props = self.props.borrow().clone();
+            if let Some(props) = props {
+                self.apply(&props);
+            }
+        }
+        ready
     }
 
     fn ended(&self) {

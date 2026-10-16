@@ -38,7 +38,7 @@ pub use dialogs::{
 pub use form::{Form, FormProps, FormRow, FormRowProps, FormSection, FormSectionProps, form, form_row, form_section};
 pub use forms::*;
 pub use glass::{Glass, GlassGroup, GlassGroupProps, GlassProps, glass, glass_group};
-pub use icon::{Icon, register as register_icon};
+pub use icon::{Icon, IconKind, IconProps, IconView, icon, register as register_icon};
 pub use media::*;
 pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, MenuRole};
 pub use overrides::{HasScope, OnPlatform, Pattern, Patterns, ScopedContainer, SubtreeOverrides, SubtreeScope};

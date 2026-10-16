@@ -163,6 +163,11 @@ impl NdWindow {
         self.ivars().nd_focus.set(true);
         self.makeFirstResponder(view.map(|v| &**v));
         self.ivars().nd_focus.set(false);
+        // AppKit picks the first key view when a window first becomes key; nd's focus, set
+        // while the window was still being built, is the one it should pick.
+        if let Some(view) = view {
+            self.setInitialFirstResponder(Some(view));
+        }
     }
 
     /// Hands a drop's files to the router; false when the drag carried none.

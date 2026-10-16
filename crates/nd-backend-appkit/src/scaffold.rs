@@ -161,6 +161,12 @@ impl PaneNative {
         {
             item.setMaximumThickness(max.into());
         }
+        // The width the pane opens at: the split view takes the item's view's frame width as the
+        // pane's first thickness.
+        if first && let Some(width) = props.width {
+            let height = self.host.frame().size.height.max(1.);
+            self.host.setFrameSize(objc2_foundation::NSSize::new(f64::from(width), height));
+        }
         if (first || props.collapsed != self.props.collapsed) && props.collapsed != self.collapsed.get() {
             self.collapsed.set(props.collapsed);
             item.setCollapsed(props.collapsed);

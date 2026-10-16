@@ -8,6 +8,7 @@ use std::cell::{Cell, RefCell};
 
 use nd_components::{SystemItem, ToolbarItemProps, ToolbarProps};
 use objc2::rc::Retained;
+use objc2_app_kit::NSUserInterfaceItemIdentification;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
@@ -17,7 +18,7 @@ use objc2_app_kit::{
     NSToolbarToggleInspectorItemIdentifier, NSToolbarToggleSidebarItemIdentifier, NSTrackingSeparatorToolbarItem,
     NSView, NSWindow, NSWindowToolbarStyle,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSize, NSString};
+use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSet, NSSize, NSString};
 
 #[derive(Default)]
 pub struct ToolbarIvars {
@@ -106,6 +107,7 @@ impl ToolbarHost {
 #[derive(Default)]
 pub struct ItemHostIvars {
     size: Cell<NSSize>,
+    constraints: RefCell<Vec<Retained<objc2_app_kit::NSLayoutConstraint>>>,
 }
 
 define_class!(
@@ -127,6 +129,15 @@ define_class!(
         fn intrinsic_content_size(&self) -> NSSize {
             self.ivars().size.get()
         }
+
+        // The toolbar puts the item in the window after nd sized it: grow the titlebar then.
+        #[unsafe(method(viewDidMoveToWindow))]
+        fn did_move_to_window(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
+            if let Some(window) = self.window() {
+                titlebar_room(&window, self.ivars().size.get().height);
+            }
+        }
     }
 );
 
@@ -140,8 +151,73 @@ impl NdItemHostView {
         if self.ivars().size.replace(size) != size {
             self.invalidateIntrinsicContentSize();
             self.setFrameSize(size);
+            // Constraints, not only the intrinsic size: a toolbar grows to an item taller than
+            // its standard row when the item's view asks for it with Auto Layout.
+            self.setTranslatesAutoresizingMaskIntoConstraints(false);
+            for old in self.ivars().constraints.borrow_mut().drain(..) {
+                old.setActive(false);
+            }
+            let w = self.widthAnchor().constraintEqualToConstant(size.width);
+            let h = self.heightAnchor().constraintEqualToConstant(size.height);
+            w.setActive(true);
+            h.setActive(true);
+            self.ivars().constraints.borrow_mut().extend([w, h]);
+            if let Some(window) = self.window() {
+                titlebar_room(&window, size.height);
+            }
         }
     }
+}
+
+/// The tallest item the unified toolbar's row holds; an item taller than this (a conversation's
+/// avatar over its name, as Messages shows it) grows the titlebar by the rest.
+const TOOLBAR_ROW: f64 = 38.;
+
+/// Grows the titlebar so an item `height` tall fits: an empty bottom titlebar accessory as tall as
+/// the overflow, the system's own way to make the band taller. One per window, resized in place;
+/// it only ever grows, so items of different heights do not make the band jump.
+pub fn titlebar_room(window: &objc2_app_kit::NSWindow, height: f64) {
+    let extra = (height - TOOLBAR_ROW).max(0.).ceil();
+    let id = NSString::from_str("nd.toolbar.room");
+    let existing = window
+        .titlebarAccessoryViewControllers()
+        .iter()
+        .find(|c| c.view().identifier().is_some_and(|i| *i == *id));
+    match existing {
+        Some(controller) => {
+            let view = controller.view();
+            if view.frame().size.height < extra {
+                set_room_height(&view, extra);
+            }
+        }
+        None if extra > 0. => {
+            let Some(mtm) = MainThreadMarker::new() else { return };
+            let controller = objc2_app_kit::NSTitlebarAccessoryViewController::new(mtm);
+            let view = objc2_app_kit::NSView::initWithFrame(
+                objc2_app_kit::NSView::alloc(mtm),
+                NSRect::new(objc2_foundation::NSPoint::ZERO, NSSize::new(1., extra)),
+            );
+            view.setIdentifier(Some(&id));
+            set_room_height(&view, extra);
+            controller.setView(&view);
+            controller.setLayoutAttribute(objc2_app_kit::NSLayoutAttribute::Bottom);
+            // Its own height, not a standard accessory bar's.
+            controller.setAutomaticallyAdjustsSize(false);
+            window.addTitlebarAccessoryViewController(&controller);
+        }
+        None => {}
+    }
+}
+
+/// The accessory's height as a constraint: AppKit sizes titlebar accessories with Auto Layout. It
+/// still gives a bottom accessory at least a standard bar's height (36 pt).
+fn set_room_height(view: &objc2_app_kit::NSView, height: f64) {
+    for c in view.constraints().iter() {
+        c.setActive(false);
+    }
+    view.setFrameSize(NSSize::new(view.frame().size.width, height));
+    view.setTranslatesAutoresizingMaskIntoConstraints(false);
+    view.heightAnchor().constraintEqualToConstant(height).setActive(true);
 }
 
 /// One app item: the toolbar item, the view it shows, and what the backend learned about the
@@ -170,6 +246,9 @@ impl ToolbarItemNative {
             self.item.setLabel(&NSString::from_str(label));
         }
         self.item.setToolTip(props.tooltip.as_deref().map(NSString::from_str).as_deref());
+        // A centred item is the window's subject (a conversation), not a control: no bezel or
+        // glass around it.
+        self.item.setBordered(!props.centered);
     }
 
     /// Shows the child's own view.
@@ -210,7 +289,8 @@ fn tracking_separator(
 
 /// An entry of the toolbar as the backend rebuilds it.
 pub(crate) enum Entry {
-    Item(Retained<NSToolbarItem>, bool),
+    /// An app item, whether it leads, whether it is centred.
+    Item(Retained<NSToolbarItem>, bool, bool),
     System(SystemItem),
     Tab(Retained<NSToolbarItem>),
 }
@@ -324,6 +404,17 @@ impl ToolbarNative {
         {
             window.setTitle(&NSString::from_str(title));
         }
+        if let Some(window) = self.window.borrow().as_ref().and_then(|w| w.load()) {
+            self.apply_title_visibility(&window);
+        }
+    }
+
+    fn apply_title_visibility(&self, window: &NSWindow) {
+        window.setTitleVisibility(if self.props.hide_title {
+            objc2_app_kit::NSWindowTitleVisibility::Hidden
+        } else {
+            objc2_app_kit::NSWindowTitleVisibility::Visible
+        });
     }
 
     pub fn attach_to(&self, window: &NSWindow) {
@@ -332,6 +423,7 @@ impl ToolbarNative {
             window.setToolbarStyle(NSWindowToolbarStyle::Unified);
         }
         window.setToolbar(Some(&self.toolbar));
+        self.apply_title_visibility(window);
         *self.window.borrow_mut() = Some(objc2::rc::Weak::new(window));
         if let Some(title) = &self.props.title {
             window.setTitle(&NSString::from_str(title));
@@ -347,10 +439,11 @@ impl ToolbarNative {
         let mut items = Vec::new();
         let mut identifiers: Vec<Retained<NSString>> = Vec::new();
         let mut tabs: Vec<Retained<NSString>> = Vec::new();
+        let mut centered: Vec<Retained<NSString>> = Vec::new();
         // The sidebar's own section: leading items and the sidebar toggle, as in Apple's apps.
         let leading = entries
             .iter()
-            .take_while(|e| matches!(e, Entry::Item(_, true) | Entry::System(SystemItem::ToggleSidebar)))
+            .take_while(|e| matches!(e, Entry::Item(_, true, _) | Entry::System(SystemItem::ToggleSidebar)))
             .count();
         let explicit = entries.iter().any(|e| matches!(e, Entry::System(SystemItem::InspectorTrackingSeparator)));
         let inspector = inspector.filter(|_| !explicit);
@@ -377,7 +470,10 @@ impl ToolbarNative {
                 }
             }
             match entry {
-                Entry::Item(item, _) => {
+                Entry::Item(item, _, center) => {
+                    if center {
+                        centered.push(item.itemIdentifier());
+                    }
                     identifiers.push(item.itemIdentifier());
                     items.push(item);
                 }
@@ -410,6 +506,8 @@ impl ToolbarNative {
                 self.toolbar.insertItemWithItemIdentifier_atIndex(id, i as isize);
             }
         }
+        let centered = NSSet::from_retained_slice(&centered);
+        self.toolbar.setCenteredItemIdentifiers(&centered);
         self.select_tab();
     }
 
