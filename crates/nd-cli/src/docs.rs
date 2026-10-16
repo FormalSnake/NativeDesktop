@@ -5,8 +5,8 @@
 //!   every registered example (and the web ones for wasm), `--web` loads the docs app and each
 //!   web example in headless Chrome and fails on a blank canvas, `--require macos` fails on a
 //!   missing or stale macOS capture.
-//! - `build`: the docs app's web bundle with each page's markdown, `llms.txt` and
-//!   `llms-full.txt` beside it. `serve` builds and serves it.
+//! - `build`: the static site (an HTML page and the raw markdown per page, `llms.txt`,
+//!   `llms-full.txt`) with the docs app's web bundle under `app/`. `serve` builds and serves it.
 //! - `capture`: runs each example through the test harness on this OS, light and dark, and
 //!   records the captures with the example's source hash.
 
@@ -34,7 +34,7 @@ pub struct DocsArgs {
 pub enum DocsCommand {
     /// Pages, links, prose and captures; `--compile` and `--web` for the slower checks.
     Check(CheckArgs),
-    /// The docs app for the web, plus raw markdown and llms.txt.
+    /// The static site (HTML, raw markdown, llms.txt) with the docs app under app/.
     Build(BuildArgs),
     /// Build, then serve the site locally.
     Serve(ServeArgs),
@@ -129,8 +129,8 @@ fn build(repo: &Path, out: Option<PathBuf>, debug: bool) -> Result<PathBuf> {
     let site = nd_docs::load(repo)?;
     let out = out.unwrap_or_else(|| default_out(repo));
     let project = in_dir(repo, || WebProject::load(Some(APP_PACKAGE)))?;
-    web::build_web(&project, &out, debug)?;
-    nd_docs::export(&site, &out)?;
+    web::build_web(&project, &out.join("app"), debug)?;
+    nd_docs::export(&site, &Manifest::load(repo)?, &out)?;
     Ok(out)
 }
 
@@ -326,7 +326,7 @@ fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {
         for os in Os::ALL {
             if let State::Fresh(c) = manifest.state(example, os) {
                 for file in [Some(&c.light), Some(&c.dark), c.recording.as_ref()].into_iter().flatten() {
-                    let path = site_dir.join("assets/captures").join(&example.name).join(file);
+                    let path = site_dir.join("app/assets/captures").join(&example.name).join(file);
                     if !path.is_file() {
                         println!("  missing from the bundle: {}", path.display());
                         ok = false;
@@ -335,7 +335,7 @@ fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {
             }
         }
     }
-    let mut targets = vec![("docs app".to_owned(), site_dir)];
+    let mut targets = vec![("docs app".to_owned(), site_dir.join("app"))];
     for example in site.examples.iter().filter(|e| e.web) {
         let project = in_dir(repo, || WebProject::load(Some(&example.package)))?;
         let out = work.join("live").join(&example.name);
