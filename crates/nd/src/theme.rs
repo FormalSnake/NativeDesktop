@@ -49,8 +49,6 @@ pub fn update_registry(cx: &mut App, f: impl FnOnce(&mut ThemeRegistry)) {
 pub(crate) fn sync(cx: &mut App) {
     let reduce = cx.try_global::<ThemeState>().is_some_and(|s| s.0.os().metrics.reduce_motion == Some(true));
     cx.set_reduce_motion(reduce);
-    // Text measures in the theme's fonts.
-    cx.remeasure();
     #[cfg(target_os = "macos")]
     if let Some(state) = cx.try_global::<ThemeState>() {
         let registry = &state.0;
@@ -77,6 +75,9 @@ pub(crate) fn sync(cx: &mut App) {
     {
         backend.set_theme(state.0.clone());
     }
+    // Text measures in the theme's fonts: after the backends have them, or a font override
+    // measures in the old family and draws cut off in the new one.
+    cx.remeasure();
     cx.refresh_windows();
 }
 
