@@ -279,6 +279,8 @@ pub(crate) struct ToolbarNative {
     pub props: ToolbarProps,
     pub children: Vec<nd_core::NodeId>,
     pub dirty: Cell<bool>,
+    /// The window it is attached to, so a later title change reaches it.
+    window: std::cell::RefCell<Option<objc2::rc::Weak<NSWindow>>>,
 }
 
 impl ToolbarNative {
@@ -287,7 +289,14 @@ impl ToolbarNative {
         let toolbar = NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str(identifier));
         toolbar.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         toolbar.setAllowsUserCustomization(false);
-        let this = Self { toolbar, delegate, props: props.clone(), children: Vec::new(), dirty: Cell::new(true) };
+        let this = Self {
+            toolbar,
+            delegate,
+            props: props.clone(),
+            children: Vec::new(),
+            dirty: Cell::new(true),
+            window: std::cell::RefCell::new(None),
+        };
         this.apply_display();
         this
     }
@@ -306,8 +315,15 @@ impl ToolbarNative {
     }
 
     pub fn update(&mut self, props: &ToolbarProps) {
+        let retitled = self.props.title != props.title;
         self.props = props.clone();
         self.apply_display();
+        if retitled
+            && let Some(title) = &self.props.title
+            && let Some(window) = self.window.borrow().as_ref().and_then(|w| w.load())
+        {
+            window.setTitle(&NSString::from_str(title));
+        }
     }
 
     pub fn attach_to(&self, window: &NSWindow) {
@@ -316,6 +332,7 @@ impl ToolbarNative {
             window.setToolbarStyle(NSWindowToolbarStyle::Unified);
         }
         window.setToolbar(Some(&self.toolbar));
+        *self.window.borrow_mut() = Some(objc2::rc::Weak::new(window));
         if let Some(title) = &self.props.title {
             window.setTitle(&NSString::from_str(title));
         }
@@ -354,6 +371,10 @@ impl ToolbarNative {
                 && let Some((split, divider)) = inspector
             {
                 tracking_separator(inspector_id, split, divider, &mut items, &mut identifiers);
+                // The inspector toggle sits at the window's trailing edge, as in Apple's apps.
+                if matches!(entry, Entry::System(SystemItem::ToggleInspector)) {
+                    identifiers.push(system_identifier(SystemItem::FlexibleSpace).copy());
+                }
             }
             match entry {
                 Entry::Item(item, _) => {

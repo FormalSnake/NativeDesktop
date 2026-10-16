@@ -134,6 +134,18 @@ mod window {
         assert!(!ns_third.isVisible(), "the closed tab's window is gone");
         assert_eq!(host.update(|app| browser.read(app).closed.clone()), vec![3]);
 
+        // Cmd-T through the window's own key path: nd dispatch opens the tab and draws it in
+        // the same key event, so the new window's host has to exist before that frame.
+        let key = host.update(|app| app.window_ids().find(|id| *id != first)).expect("second tab");
+        let keystroke = Keystroke::parse("cmd-t").expect("keystroke");
+        host.update(|app| app.synthesize(key, &SyntheticInput::Key(keystroke))).expect("posted");
+        pump_until(&host, "Cmd-T through the window", || windows(&host).len() == 3 && tabs_of(&ns_first) == 3);
+        let ns_new = host.ns_window(windows(&host)[2]).expect("the new tab's window");
+        assert_tab_bar(&ns_new);
+        let third = windows(&host)[2];
+        host.ns_window(third).expect("third window").performClose(None);
+        pump_until(&host, "the Cmd-T tab to close", || windows(&host).len() == 2);
+
         // Cmd-W through the window's key path closes the key tab.
         let key = host.update(|app| app.window_ids().find(|id| *id != first)).expect("second tab");
         let keystroke = Keystroke::parse("cmd-w").expect("keystroke");
@@ -142,6 +154,12 @@ mod window {
         assert_eq!(browser_tabs(&host, &browser), 1);
         assert_eq!(tabs_of(&ns_first), 1);
         println!("ND_TABS_OK");
+    }
+
+    /// Several tabs show the system tab bar.
+    fn assert_tab_bar(window: &NSWindow) {
+        let group = window.tabGroup().expect("a tab group");
+        assert!(group.isTabBarVisible(), "the tab bar shows with {} tabs", group.windows().count());
     }
 
     fn browser_tabs(host: &AppHost, browser: &nd::prelude::Entity<tabs::Browser>) -> usize {

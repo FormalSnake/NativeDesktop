@@ -19,6 +19,7 @@ use tokio::sync::watch;
 
 pub use session::{Activity, now_unix};
 
+// docs:begin config
 /// `[plugins.discord]`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -32,6 +33,7 @@ pub struct DiscordConfig {
     /// Look for `discord-ipc-N` here instead of the usual runtime and temp dirs.
     pub socket_dir: Option<PathBuf>,
 }
+// docs:end config
 
 impl Default for DiscordConfig {
     fn default() -> Self {
@@ -70,6 +72,7 @@ impl DiscordPlugin {
     }
 }
 
+// docs:begin plugin
 impl Plugin for DiscordPlugin {
     type Config = DiscordConfig;
 
@@ -96,6 +99,7 @@ impl Plugin for DiscordPlugin {
         Ok(())
     }
 }
+// docs:end plugin
 
 async fn connection_loop(
     config: DiscordConfig,

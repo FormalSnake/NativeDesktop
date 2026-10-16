@@ -16,23 +16,27 @@ use super::{LatLng, MapEvent, MapProps, MapWidget, Pin, PinSelected, RegionChang
 
 pub struct MapKit;
 
+// docs:begin map-viewport
 /// What the map shows, in the props' own terms. MKMapView fits any region to its aspect ratio,
 /// so the region it reports differs from the one we set; `Synced` remembers the reported one and
 /// the app feeding it back causes no second `setRegion`.
 type Viewport = (LatLng, f64);
+// docs:end map-viewport
 
 impl AppKitWidget<MapWidget> for MapKit {
     type View = MKMapView;
     type State = Retained<MapDelegate>;
 
+    // docs:begin map-create
     fn create(&self, props: &MapProps, cx: &mut AppKitCx<MapWidget>) -> (Retained<MKMapView>, Self::State) {
-        let map = MKMapView::new(cx.mtm());
+        let map = unsafe { MKMapView::new(cx.mtm()) };
         let delegate = MapDelegate::new(cx.emitter(), cx.mtm());
         // MKMapView holds its delegate weakly; the node state keeps it alive.
         unsafe { map.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         apply(&map, &delegate, None, props, cx);
         (map, delegate)
     }
+    // docs:end map-create
 
     fn update(
         &self,
@@ -51,6 +55,7 @@ impl AppKitWidget<MapWidget> for MapKit {
     }
 }
 
+// docs:begin map-apply
 fn apply(
     map: &MKMapView,
     delegate: &MapDelegate,
@@ -63,17 +68,19 @@ fn apply(
         let region = MKCoordinateRegion { center: to_cl(center), span: span_for_zoom(zoom) };
         // Programmatic: the regionDidChange this triggers is reported, not emitted.
         cx.programmatic(|| unsafe { map.setRegion_animated(region, old.is_some()) });
+        shown(map)
     });
     if old.is_none_or(|o| o.pins != new.pins) {
-        set_pins(map, &new.pins, cx.mtm());
+        set_pins(map, &new.pins);
     }
 }
+// docs:end map-apply
 
-fn set_pins(map: &MKMapView, pins: &[Pin], mtm: MainThreadMarker) {
+fn set_pins(map: &MKMapView, pins: &[Pin]) {
     unsafe {
         map.removeAnnotations(&map.annotations());
         for pin in pins {
-            let annotation = MKPointAnnotation::new(mtm);
+            let annotation = MKPointAnnotation::new();
             annotation.setCoordinate(to_cl(pin.at));
             annotation.setTitle(Some(&NSString::from_str(&pin.title)));
             map.addAnnotation(ProtocolObject::from_ref(&*annotation));
@@ -86,6 +93,7 @@ pub struct MapIvars {
     viewport: RefCell<Synced<Viewport>>,
 }
 
+// docs:begin map-delegate
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -97,10 +105,11 @@ define_class!(
     unsafe impl MKMapViewDelegate for MapDelegate {
         #[unsafe(method(mapView:regionDidChangeAnimated:))]
         fn region_did_change(&self, map: &MKMapView, _animated: bool) {
-            let region = unsafe { map.region() };
-            let center = LatLng { lat: region.center.latitude, lng: region.center.longitude };
-            let zoom = zoom_for_span(region.span);
-            self.ivars().viewport.borrow_mut().report((center, zoom));
+            let (center, zoom) = shown(map);
+            // Busy while `apply` runs the setter, which records what the map shows itself.
+            if let Ok(mut viewport) = self.ivars().viewport.try_borrow_mut() {
+                viewport.report((center, zoom));
+            }
             // Queued, never delivered inside this callback; dropped if a programmatic set caused it.
             self.ivars().emit.emit(MapEvent::RegionChanged(RegionChanged { center, zoom }));
         }
@@ -113,12 +122,18 @@ define_class!(
         }
     }
 );
+// docs:end map-delegate
 
 impl MapDelegate {
     fn new(emit: Emit<MapEvent>, mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(MapIvars { emit, viewport: RefCell::new(Synced::default()) });
         unsafe { msg_send![super(this), init] }
     }
+}
+
+fn shown(map: &MKMapView) -> Viewport {
+    let region = unsafe { map.region() };
+    (LatLng { lat: region.center.latitude, lng: region.center.longitude }, zoom_for_span(region.span))
 }
 
 fn to_cl(at: LatLng) -> CLLocationCoordinate2D {

@@ -15,7 +15,14 @@ pub mod backdrop;
 #[cfg(windows)]
 pub mod chrome;
 #[cfg(windows)]
+pub mod colors;
+#[cfg(windows)]
 pub mod dpi;
+#[cfg(windows)]
+mod hooks;
+
+#[cfg(windows)]
+pub use hooks::WindowsHooks;
 
 #[cfg(windows)]
 pub use nd_backend_gpui;

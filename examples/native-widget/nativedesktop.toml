@@ -4,7 +4,9 @@ id = "dev.formalsnake.places"
 display_name = "Places"
 icon = "assets/icon.icon"
 
+# docs:begin swift-packages
 [macos]
 swift_packages = ["swift/Widgets"]
 minimum_system_version = "14.0"
 entitlements = ["network.client"]   # map tiles
+# docs:end swift-packages

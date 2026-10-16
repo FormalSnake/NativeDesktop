@@ -14,9 +14,10 @@ unsafe extern "C" {
 /// `RTLD_DEFAULT` from `<dlfcn.h>`: search every image loaded in the process.
 const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
 
-/// An `NDSwift` function by its `@_cdecl` name, for leaves that must work without `NDSwift`
-/// linked (an app that does not run `nd::build::app()`, the backend's own tests).
-pub(crate) fn lookup(name: &str) -> Option<*mut c_void> {
+/// A Swift function by its `@_cdecl` name, for leaves that must work without `NDSwift` linked
+/// (an app that does not run `nd::build::app()`, the backend's own tests) and for an app's own
+/// Swift widgets.
+pub fn lookup(name: &str) -> Option<*mut c_void> {
     let name = CString::new(name).ok()?;
     let ptr = unsafe { dlsym(RTLD_DEFAULT, name.as_ptr()) };
     (!ptr.is_null()).then_some(ptr)

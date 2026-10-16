@@ -34,9 +34,14 @@ impl Endpoint {
         Self::at_path(std::env::temp_dir().join(stem).with_extension("sock"))
     }
 
-    /// An explicit unix socket path (or Windows pipe path). The lock file sits beside it.
+    /// An explicit unix socket path (or Windows pipe path). The lock file sits beside it. On
+    /// Windows a filesystem path names a pipe derived from it, so a test's temp-dir socket path
+    /// works unchanged there.
     pub fn at_path(socket: impl Into<PathBuf>) -> Self {
-        let socket = socket.into();
+        let mut socket = socket.into();
+        if cfg!(windows) && !socket.to_string_lossy().starts_with(r"\\.\pipe\") {
+            socket = PathBuf::from(format!(r"\\.\pipe\nd-{:016x}", fnv1a(socket.as_os_str().as_encoded_bytes())));
+        }
         let lock = if cfg!(windows) {
             std::env::temp_dir().join(format!("nd-{:016x}.lock", fnv1a(socket.as_os_str().as_encoded_bytes())))
         } else {

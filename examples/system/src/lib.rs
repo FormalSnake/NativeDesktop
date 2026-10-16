@@ -40,12 +40,14 @@ pub fn open(cx: &mut App, sys: System) -> WindowHandle<SystemDemo> {
         })
     });
     let view = handle.root().downgrade();
+    // docs:begin subscribe
     nd::system::on_event(&events, move |event, app| {
         view.update(app, |this, cx| {
             this.event(event);
             cx.notify();
         });
     });
+    // docs:end subscribe
     handle
 }
 
@@ -85,6 +87,7 @@ impl SystemDemo {
         self.log.drain(..excess);
     }
 
+    // docs:begin events
     fn event(&mut self, event: &SystemEvent) {
         match event {
             SystemEvent::Audio { event: AudioEvent::Spectrum(bins), .. } => self.spectrum = bins.clone(),
@@ -114,7 +117,9 @@ impl SystemDemo {
             other => self.note(format!("{other:?}")),
         }
     }
+    // docs:end events
 
+    // docs:begin spawn
     /// Runs `call` and logs its outcome under `what`.
     fn run<T: std::fmt::Debug + Send + 'static>(
         &mut self,
@@ -133,6 +138,7 @@ impl SystemDemo {
             });
         });
     }
+    // docs:end spawn
 
     fn row(
         &self,
@@ -154,11 +160,13 @@ impl SystemDemo {
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         let sys = self.sys.clone();
         match action {
+            // docs:begin dialogs
             Action::Open => {
                 self.run(cx, "open", sys.dialogs().open(OpenOptions::file().multiple().title("Pick files")))
             }
             Action::Folder => self.run(cx, "folder", sys.dialogs().open(OpenOptions::folder())),
             Action::Save => self.run(cx, "save", sys.dialogs().save(SaveOptions::new().file_name("notes.ndsys"))),
+            // docs:end dialogs
             Action::Alert => {
                 let alert = MessageOptions::new("Empty the cache?")
                     .detail("The app downloads it again when it needs it.")
@@ -181,6 +189,7 @@ impl SystemDemo {
             }
             Action::CopyText => self.run(cx, "copy", sys.clipboard().write_text("Copied from the System demo")),
             Action::PasteText => self.run(cx, "paste", sys.clipboard().read_text()),
+            // docs:begin clipboard
             Action::CopyImage => {
                 let rgba = (0..64 * 64).flat_map(|i| [(i % 64 * 4) as u8, (i / 64 * 4) as u8, 200, 255]).collect();
                 self.run(cx, "copy image", sys.clipboard().write_image(ClipboardImage { width: 64, height: 64, rgba }));
@@ -189,7 +198,9 @@ impl SystemDemo {
                 let image = sys.clipboard().read_image();
                 self.run(cx, "paste image", async move { image.await.map(|i| i.map(|i| (i.width, i.height))) });
             }
+            // docs:end clipboard
             Action::PasteFiles => self.run(cx, "paste files", sys.clipboard().read_files()),
+            // docs:begin notify
             Action::Notify => {
                 let n = Notification::new("System demo")
                     .subtitle("A notification")
@@ -197,10 +208,13 @@ impl SystemDemo {
                     .action("reply", "Reply")
                     .data(serde_json::json!({ "from": "the demo" }));
                 self.run(cx, "notify", sys.notifications().show(n));
+                // docs:end notify
             }
+            // docs:begin credentials
             Action::Remember => self.run(cx, "remember", sys.credentials().set(SECRET_SERVICE, "demo", "hunter2")),
             Action::Recall => self.run(cx, "recall", sys.credentials().get(SECRET_SERVICE, "demo")),
             Action::Forget => self.run(cx, "forget", sys.credentials().delete(SECRET_SERVICE, "demo")),
+            // docs:end credentials
             Action::Recent => {
                 let file = nd::system::app_dirs().ensure_data().map(|dir| dir.join("example.ndsys"));
                 let written = file.and_then(|f| nd::files::write(&f, b"a demo document").map(|()| f));
@@ -217,6 +231,7 @@ impl SystemDemo {
                 let result = sys.shell().open_url("https://github.com/FormalSnake");
                 self.note(format!("open url: {result:?}"));
             }
+            // docs:begin tray
             Action::Tray => {
                 self.tray = !self.tray;
                 if self.tray {
@@ -236,6 +251,8 @@ impl SystemDemo {
                     self.run(cx, "tray removed", sys.tray().remove(TrayId(TRAY.into())));
                 }
             }
+            // docs:end tray
+            // docs:begin audio
             Action::Play => {
                 let path = nd::system::app_dirs().ensure_cache().map(|dir| dir.join("tone.wav"));
                 let written = path.and_then(|p| nd::files::write(&p, tone_wav()).map(|()| p));
@@ -269,6 +286,7 @@ impl SystemDemo {
                     },
                 );
             }
+            // docs:end audio
             Action::Stop => {
                 if let Some(player) = self.player.take() {
                     self.run(cx, "stop", player.stop());
@@ -314,6 +332,11 @@ impl Render for SystemDemo {
             .gap_1()
             .children(self.spectrum.iter().map(|b| div().w(px(6.)).h(px(2. + b * 46.)).bg(accent)));
         let tray_label = if self.tray { "Hide tray icon" } else { "Show tray icon" };
+        // docs:begin has
+        // A target decides the answer, so no window or context is needed to ask.
+        let tray_row = nd::platform::has(nd::platform::Feature::Tray)
+            .then(|| self.row(cx, "Tray", vec![("tray", tray_label, Action::Tray)]).into_any_element());
+        // docs:end has
         scaffold().toolbar(toolbar().title("System")).content(
             v_flex()
                 .size_full()
@@ -364,7 +387,7 @@ impl Render for SystemDemo {
                         ("website", "Open website", Action::Website),
                     ],
                 ))
-                .child(self.row(cx, "Tray", vec![("tray", tray_label, Action::Tray)]))
+                .children(tray_row)
                 .child(self.row(cx, "Audio", vec![("play", "Play tone", Action::Play), ("stop", "Stop", Action::Stop)]))
                 .child(bars)
                 .child(

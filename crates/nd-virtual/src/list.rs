@@ -559,6 +559,7 @@ impl<K: RowKey> ListState<K> {
 
     fn apply(&mut self, rows: Vec<(K, Option<u64>, Meta)>, cx: &mut App) {
         let mut stale = Vec::new();
+        let mut meta_moved = false;
         {
             let mut guard = self.inner.borrow_mut();
             let inner = &mut *guard;
@@ -582,6 +583,7 @@ impl<K: RowKey> ListState<K> {
                     .meta
                     .insert(id, meta)
                     .is_some_and(|old| old.depth != meta.depth || old.expandable != meta.expandable);
+                meta_moved |= meta_changed;
                 if (changed || meta_changed) && inner.views.contains_key(&id) {
                     stale.push(id);
                 }
@@ -614,6 +616,11 @@ impl<K: RowKey> ListState<K> {
             } else {
                 Vec::new()
             };
+            // The same rows at the same versions change nothing: an owner that hands its keys
+            // over on every render must not get a new generation, and a re-render, back.
+            if !meta_moved && stale.is_empty() && inner.core.borrow().ids() == ids.as_slice() {
+                return;
+            }
             inner.core.borrow_mut().set_rows(ids);
             let mut core = inner.core.borrow_mut();
             core.set_meta(meta);

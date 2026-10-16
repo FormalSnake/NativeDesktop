@@ -6,11 +6,21 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["server"]
+# The in-app server and handler. Without it the crate is only the wire protocol, which clients
+# such as `nd docs capture` use without linking the UI.
+server = ["dep:nd-core", "dep:nd-ui"]
+
 [dependencies]
-nd-core.workspace = true
-nd-ui.workspace = true
+nd-core = { workspace = true, optional = true }
+nd-ui = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+
+# Named pipes: Rust's std has no local sockets on Windows.
+[target.'cfg(windows)'.dependencies]
+interprocess = "2.4.5"
 
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }

@@ -312,7 +312,7 @@ impl Gallery {
                     }),
                 ))
                 .into_any_element(),
-            // The form scrolls itself, so it takes the height left under the title.
+            // The form scrolls itself, its title included, so it takes the whole page.
             Page::Forms => div().flex_1().min_h_0().w_full().child(self.forms.clone()).into_any_element(),
             Page::Tabs => column
                 .child(note("A view switcher over pages of one size, and document tabs that close and add."))
@@ -324,7 +324,12 @@ impl Gallery {
                 .child(note("Drag a divider. Split and close the focused pane; tap a pane to focus it."))
                 .child(self.split.clone())
                 .into_any_element(),
-            Page::StatusPage => column
+            // An empty state stands in for a whole view, so it takes the room left under the title.
+            Page::StatusPage => v_flex()
+                .gap_3()
+                .flex_1()
+                .min_h_0()
+                .w_full()
                 .child(note("What a view shows when it has nothing to show."))
                 .child(layout::status_demo())
                 .into_any_element(),
@@ -410,16 +415,20 @@ impl Render for Gallery {
                                 cx.notify();
                             })),
                     )
-                    .child(
+                    .child(if self.page == Page::Forms {
+                        // The form is the page: its title scrolls with its rows.
+                        v_flex().flex_1().min_h_0().child(body)
+                    } else {
                         v_flex()
                             .flex_1()
                             .p(margin)
                             .gap_3()
                             .child(text(self.page.title()).text_size(title_size))
                             .child(body)
-                            .child(text(self.last_event.clone()).text_color(secondary)),
-                    )
+                            .child(text(self.last_event.clone()).text_color(secondary))
+                    })
                     .child(
+                        // docs:begin toasts
                         toast_overlay("toasts")
                             .toasts(self.toasts.clone())
                             .on_dismiss(cx.listener(|this, e: &ToastDismissed, _, cx| {
@@ -429,7 +438,7 @@ impl Render for Gallery {
                             .on_action(cx.listener(|this, _: &ToastActionClicked, _, cx| {
                                 this.last_event = "Undo clicked".into();
                                 cx.notify();
-                            })),
+                            })), // docs:end toasts
                     ),
             )
             .overlay(

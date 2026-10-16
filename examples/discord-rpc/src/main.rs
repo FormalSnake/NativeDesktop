@@ -11,6 +11,7 @@ use tokio::sync::watch;
 async fn main() {
     let client_id = std::env::args().nth(1).or_else(|| std::env::var("DISCORD_CLIENT_ID").ok()).unwrap_or_default();
 
+    // docs:begin host
     let (activity_tx, activity_rx) = watch::channel(None);
     let services = Services::new();
     services.insert(PresenceFeed(activity_rx));
@@ -25,6 +26,7 @@ async fn main() {
     for failure in &report.failed {
         eprintln!("plugin {} not started: {}", failure.plugin, failure.error);
     }
+    // docs:end host
 
     let _ = activity_tx.send(Some(Activity {
         details: Some("Editing notes".into()),

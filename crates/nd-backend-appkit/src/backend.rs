@@ -16,8 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormRow, FormRowProps, FormSection,
-    FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
+    BannerKind, BannerProps, CommandPaletteKind, CommandPaletteProps, Form, FormProps, FormRow, FormRowProps,
+    FormSection, FormSectionProps, Glass, GlassGroup, GlassGroupProps, GlassProps, Pane, PaneProps, PaneRole, Scaffold,
     ScaffoldProps, SeparatorKind, SeparatorProps, SourceTreeKind, SourceTreeProps, SplitKind, SplitPaneKind,
     SplitPaneProps, SplitProps, StatusPageKind, StatusPageProps, SubtreeScope, SystemItemProps, Titlebar,
     TitlebarInset, TitlebarInsetProps, TitlebarProps, ToastOverlayKind, ToastOverlayProps, Toolbar, ToolbarItem,
@@ -648,6 +648,9 @@ impl State {
                         old.setToolbar(None);
                     }
                     toolbar.attach_to(&owner);
+                    if let Some(record) = self.windows.get(&to) {
+                        record.lights.sync_title(&owner);
+                    }
                     toolbar.dirty.set(true);
                 }
                 _ => {}
@@ -702,7 +705,9 @@ impl State {
             }
             // A toolbar anywhere in the tree is the window's toolbar.
             [Some(_), Some(Native::Toolbar(toolbar))] => {
-                toolbar.attach_to(&self.windows[&self.open.expect("in a transaction")].window);
+                let record = &self.windows[&self.open.expect("in a transaction")];
+                toolbar.attach_to(&record.window);
+                record.lights.sync_title(&record.window);
                 toolbar.dirty.set(true);
                 return;
             }
@@ -1194,7 +1199,11 @@ impl Backend for AppKitBackend {
                 state.wake.clone(),
                 props::<nd_virtual::ListProps>(p, "List"),
             )),
-            NodeKind::Widget(w) if is::<Form>(w) => Native::Form(FormNative::new(mtm)),
+            NodeKind::Widget(w) if is::<Form>(w) => {
+                let mut form = FormNative::new(mtm);
+                form.props = props::<FormProps>(p, "Form").clone();
+                Native::Form(form)
+            }
             NodeKind::Widget(w) if is::<Overlay>(w) => Native::Overlay(OverlayNative::new(
                 mtm,
                 node,
@@ -1361,7 +1370,10 @@ impl Backend for AppKitBackend {
                 *p = props::<FormRowProps>(&patch.new, "FormRow").clone();
                 form_changed = true;
             }
-            Native::Form(_) => {}
+            Native::Form(f) => {
+                f.props = props::<FormProps>(&patch.new, "Form").clone();
+                form_changed = true;
+            }
             Native::Overlay(o) => o.update(props(&patch.new, "Overlay")),
             Native::Surface(s) => {
                 let p: &SurfaceProps = props(&patch.new, "NativeSurface");
@@ -1632,7 +1644,7 @@ impl Backend for AppKitBackend {
                 }
             }
             Native::Inset(window, props) => match state.windows.get(window) {
-                Some(record) => crate::titlebar::measure_inset(&record.window, props),
+                Some(record) => crate::titlebar::measure_inset(&record.window, &record.lights, props),
                 None => Size::default(),
             },
             Native::WindowControls { window, props, .. } if props.embedded => state

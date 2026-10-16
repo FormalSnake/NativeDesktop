@@ -1,5 +1,6 @@
 use nd::prelude::*;
 
+// docs:begin counter
 pub struct Counter {
     count: u32,
 }
@@ -20,13 +21,17 @@ impl Render for Counter {
                     .items_center()
                     .justify_center()
                     .gap_2()
+                    // docs:begin controls
                     .child(window_controls().at(point(px(16.), px(10.))))
+                    // docs:end controls
                     .child(text(self.count.to_string()).text_size(px(48.)).tabular_nums())
                     .child(text("clicks").text_color(theme.text.secondary)),
             )
     }
 }
+// docs:end counter
 
+// docs:begin open
 pub fn app() -> Application {
     Application::new(nd::manifest!())
 }
@@ -34,3 +39,4 @@ pub fn app() -> Application {
 pub fn open(cx: &mut App) -> WindowHandle<Counter> {
     cx.open_window(WindowOptions::main("main").title("Hello"), |_window, cx| cx.new(|_cx| Counter { count: 0 }))
 }
+// docs:end open

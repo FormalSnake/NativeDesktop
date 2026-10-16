@@ -1,0 +1,58 @@
+# Sidebar order. Every page under docs/content is listed here once.
+
+[[section]]
+title = "Start"
+pages = ["index", "getting-started"]
+
+[[section]]
+title = "Concepts"
+pages = [
+  "concepts/programming-model",
+  "concepts/elements",
+  "concepts/state",
+  "concepts/actions-and-keys",
+  "concepts/theming",
+  "concepts/overrides",
+  "concepts/patterns",
+  "concepts/native-widgets",
+  "concepts/swift",
+]
+
+[[section]]
+title = "Components"
+pages = ["components/index", "components/reference"]
+
+[[section]]
+title = "Guides"
+pages = [
+  "guides/virtualization",
+  "guides/overlays",
+  "guides/gestures",
+  "guides/windows-and-tabs",
+  "guides/webview",
+  "guides/terminal",
+  "guides/system",
+  "guides/settings-and-config",
+  "guides/packaging",
+  "guides/web",
+]
+
+[[section]]
+title = "Tooling"
+pages = ["tooling/cli", "tooling/testing", "tooling/diagnostics", "tooling/performance"]
+
+[[section]]
+title = "For agents"
+pages = [
+  "agents/index",
+  "agents/patterns",
+  "agents/widgets",
+  "agents/testing",
+  "agents/styling",
+  "agents/performance",
+  "agents/donts",
+]
+
+[[section]]
+title = "Examples"
+pages = ["examples"]

@@ -3,21 +3,24 @@ use nd::prelude::*;
 use crate::model::{Library, NoteId};
 use crate::settings::NotesSettings;
 
+pub const BODY: &str = "body";
+
 pub struct Editor {
     library: Entity<Library>,
     note: Option<NoteId>,
-    text: Entity<TextEditorState>,
+    text: Entity<TextFieldState>,
     zoom: f32,
 }
 
 impl Editor {
     pub fn new(library: Entity<Library>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let text = cx.new(|cx| TextEditorState::new(window, cx).placeholder("Start writing"));
-        // Only user edits write back. `set_text` in `open` emits `Replaced`, so opening a note
+        let text = cx.new(|cx| TextFieldState::new(window, cx).placeholder("Start writing"));
+        // Only user edits write back. `set_text` in `open` records `Replaced`, so opening a note
         // never touches its timestamp or its place in the list.
-        cx.subscribe_in(&text, window, |this, text, event: &TextEvent, _window, cx| {
-            if let (TextEvent::Edited, Some(id)) = (event, this.note) {
-                let body = text.read(cx).text().to_string();
+        cx.observe(&text, |this, text, cx| {
+            let state = text.read(cx);
+            if let (Some(TextEvent::Edited), Some(id)) = (state.last_event(), this.note) {
+                let body = state.text().to_string();
                 this.library.update(cx, |library, cx| library.set_body(id, body, cx));
             }
         })
@@ -27,25 +30,28 @@ impl Editor {
 
     pub fn open(&mut self, id: NoteId, window: &mut Window, cx: &mut Context<Self>) {
         self.note = Some(id);
-        let body = self.library.read(cx).note(&id).map(|n| n.body.clone()).unwrap_or_default();
+        let body = self.library.read(cx).body(&id);
         self.text.update(cx, |text, cx| text.set_text(body, window, cx));
         cx.notify();
     }
 
-    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.text.read(cx).focus_handle()
+    /// Puts the caret in the body.
+    pub fn focus(window: &Window, cx: &mut App) {
+        window.focus_id(cx, BODY);
     }
 
+    // docs:begin pinch
     fn pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let before = self.zoom;
         self.zoom = (self.zoom * event.scale).clamp(0.5, 3.0);
-        // A detent at 100%, felt on Force Touch trackpads.
-        if (before < 1.0) != (self.zoom < 1.0) {
+        // A detent at 100%, felt on Force Touch trackpads: passing through it lands on it.
+        if (before - 1.0) * (self.zoom - 1.0) < 0.0 {
             self.zoom = 1.0;
             cx.haptic(Haptic::Alignment);
         }
         cx.notify();
     }
+    // docs:end pinch
 }
 
 impl Render for Editor {
@@ -56,17 +62,17 @@ impl Render for Editor {
 
         v_flex()
             .size_full()
-            .test_id("editor")
+            .id("editor")
             .bg(theme.surface.base)
             .on_pinch(cx.listener(Self::pinch))
             .child(
-                text_editor("body", &self.text)
+                text_area(BODY)
+                    .bind(&self.text)
+                    .min_lines(3)
                     .flex_1()
                     .px(theme.spacing.content_margin)
                     .py_4()
-                    .font_size(font_size)
-                    .line_height(relative(1.5))
-                    .spellcheck(settings.spellcheck)
+                    .text_size(font_size)
                     .max_w(theme.spacing.content_width)
                     .mx_auto(),
             )
@@ -79,7 +85,7 @@ impl Render for Editor {
                         .rounded_full()
                         .px_2()
                         .py_1()
-                        .child(text(format!("{:.0}%", self.zoom * 100.)).tabular_nums().test_id("zoom-label")),
+                        .child(text(format!("{:.0}%", self.zoom * 100.)).tabular_nums().id("zoom-label")),
                 )
             })
     }

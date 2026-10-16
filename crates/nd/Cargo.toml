@@ -14,7 +14,7 @@ default = ["runtime"]
 # optional and comes in with `runtime`. Off macOS the GPUI backend arrives through the OS crate
 # (`nd-os-linux`, `nd-os-windows`, `nd-os-web` re-export it); on macOS only `gpui` brings it, so
 # AppKit apps never link `gpui_macos`. One dependency key cannot be optional per target.
-runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-update", "dep:nd-system", "dep:futures-channel", "dep:nd-os-linux", "dep:nd-os-windows", "dep:nd-os-web"]
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-icons", "dep:nd-settings", "dep:nd-update", "dep:nd-system", "dep:futures-channel", "dep:nd-os-linux", "dep:nd-os-windows", "dep:nd-os-web", "dep:serde", "dep:serde_json"]
 build = ["dep:toml"]
 # `settings_form::<T>()` over nd-settings' schema.
 settings-ui = ["runtime", "nd-components/settings"]
@@ -41,9 +41,11 @@ nd-ui = { workspace = true, optional = true }
 nd-diag = { workspace = true, optional = true }
 nd-gpui = { workspace = true, optional = true }
 nd-macros = { workspace = true, optional = true }
-nd-automation = { workspace = true, optional = true }
+nd-automation = { workspace = true, optional = true, features = ["server"] }
 nd-theme = { workspace = true, optional = true }
 nd-components = { workspace = true, optional = true }
+nd-icons = { workspace = true, optional = true }
+nd-settings = { workspace = true, optional = true }
 nd-virtual = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 nd-update = { workspace = true, optional = true, features = ["client"] }
@@ -52,6 +54,9 @@ nd-system = { workspace = true, optional = true }
 futures-channel = { version = "0.3.34", optional = true }
 nd-webview = { workspace = true, optional = true }
 nd-cef = { workspace = true, optional = true }
+# A Swift widget's props cross to Swift as JSON (`nd::native`).
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 nd = { path = ".", features = ["audit"] }
@@ -94,4 +99,9 @@ harness = false
 
 [[test]]
 name = "appearance_catches"
+harness = false
+
+# Tier 2: an app-defined widget's objc2 view in a real window, and the drawn fallback.
+[[test]]
+name = "native_widget"
 harness = false

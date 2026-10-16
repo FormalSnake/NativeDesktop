@@ -5,7 +5,7 @@
 //! Every node is wrapped in [`Tracked`], which records the bounds GPUI gave it, so probes and
 //! semantic actions see what was painted.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -264,6 +264,8 @@ pub(crate) struct Build<'a> {
     paints: RefCell<Vec<Paint>>,
     /// A group window's tab bar, placed under the first title row (toolbar or titlebar) built.
     pub(crate) under_title: RefCell<Option<AnyElement>>,
+    /// Bottom edge of the title rows (toolbar or titlebar) as last laid out, 0 without one.
+    pub(crate) title_bottom: Cell<f32>,
 }
 
 impl<'a> Build<'a> {
@@ -297,6 +299,7 @@ impl<'a> Build<'a> {
             ink: RefCell::new(vec![ink]),
             paints: RefCell::default(),
             under_title: RefCell::default(),
+            title_bottom: Cell::default(),
         }
     }
 
@@ -432,6 +435,11 @@ impl<'a> Build<'a> {
         let element = self.scoped(node, || self.element(id, node, window, cx));
         let tracked = Tracked { node: id, inner: element, bounds: self.backend.bounds.clone() }.into_any_element();
         if crate::window_tabs::is_title_row(node)
+            && let Some(b) = self.backend.bounds.borrow().get(&id)
+        {
+            self.title_bottom.set(self.title_bottom.get().max(b.origin.y + b.size.height));
+        }
+        if crate::window_tabs::is_title_row(node)
             && let Some(bar) = self.under_title.borrow_mut().take()
         {
             return div().w_full().flex_none().flex().flex_col().child(tracked).child(bar).into_any_element();
@@ -446,12 +454,14 @@ impl<'a> Build<'a> {
         match node.kind {
             NodeKind::Root => {
                 let ink = self.top();
+                // Under an OS backdrop the root paints nothing, so the material shows through.
+                let fill = if self.hooks.backdrop(self.window_id) { gpui::transparent_black() } else { ink.background };
                 self.painted(id, Some(ink.background), Some(ink.text), "window", || {
                     div()
                         .size_full()
                         .flex()
                         .flex_col()
-                        .bg(ink.background)
+                        .bg(fill)
                         .text_color(ink.text)
                         .children(children(window, cx))
                         .children(self.dialog_layer(id, window))

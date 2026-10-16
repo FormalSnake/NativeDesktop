@@ -424,6 +424,7 @@ impl FormsPage {
 impl Render for FormsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         form()
+            .title("Forms")
             .child(self.text(cx))
             .child(self.buttons(cx))
             .child(self.toggles(cx))
