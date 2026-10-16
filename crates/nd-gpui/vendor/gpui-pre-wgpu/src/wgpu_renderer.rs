@@ -264,6 +264,8 @@ pub struct WgpuRenderer {
     /// The size the window shows. The surface can be larger during a live resize, see
     /// [`WgpuRenderer::update_drawable_size_live`].
     drawable_size: Size<DevicePixels>,
+    /// Draws the frames of a live resize, while the surface is larger than the drawable.
+    edge_extend: Option<EdgeExtend>,
     needs_redraw: bool,
 }
 
@@ -308,6 +310,229 @@ fn live_surface_size(drawable: Size<DevicePixels>, surface: (u32, u32), max_text
         }
     };
     (axis(drawable.width.0, surface.0), axis(drawable.height.0, surface.1))
+}
+
+/// Copies a frame from an offscreen texture to the surface, every pixel past the drawable
+/// repeating the drawable's last column and row. During a live resize the compositor can show a
+/// window larger than the surface size the client last committed; Hyprland then stretches the
+/// texture coordinates past the viewport's source crop, into the oversized buffer, where an
+/// exact-size buffer would clamp to its edge pixels instead.
+struct EdgeExtend {
+    /// The device the resources below belong to; a recovered device needs new ones.
+    device: std::sync::Weak<wgpu::Device>,
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    /// The drawable's last pixel, `vec2<u32>` padded to 16 bytes.
+    params: wgpu::Buffer,
+    target: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
+}
+
+const EDGE_EXTEND_SHADER: &str = r#"
+struct Params { last: vec2<u32>, pad: vec2<u32> }
+@group(0) @binding(0) var frame: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> params: Params;
+
+@vertex
+fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    let corner = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureLoad(frame, min(vec2<u32>(position.xy), params.last), 0);
+}
+"#;
+
+impl EdgeExtend {
+    fn new(device: &Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("edge_extend_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(16),
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("edge_extend_pipeline_layout"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("edge_extend_shader"),
+            source: wgpu::ShaderSource::Wgsl(EDGE_EXTEND_SHADER.into()),
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("edge_extend"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("edge_extend_params"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            device: Arc::downgrade(device),
+            pipeline,
+            layout,
+            params,
+            target: None,
+        }
+    }
+
+    fn belongs_to(&self, device: &Arc<wgpu::Device>) -> bool {
+        self.device
+            .upgrade()
+            .is_some_and(|own| Arc::ptr_eq(&own, device))
+    }
+
+    /// The offscreen texture a frame of `size` renders to.
+    fn target(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        size: Size<DevicePixels>,
+    ) -> wgpu::TextureView {
+        let (width, height) = (size.width.0 as u32, size.height.0 as u32);
+        if let Some((texture, view, _)) = &self.target
+            && texture.width() == width
+            && texture.height() == height
+        {
+            return view.clone();
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("edge_extend_frame"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("edge_extend_bind_group"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.params.as_entire_binding(),
+                },
+            ],
+        });
+        self.target = Some((texture, view.clone(), bind_group));
+        view
+    }
+
+    /// `core`'s [`WgpuRendererCore::render_frame`] for a frame larger than the `drawable` the
+    /// window shows: renders offscreen, then fills `target_view` from it.
+    fn render(
+        &mut self,
+        core: &mut WgpuRendererCore,
+        scene: &Scene,
+        target_view: &wgpu::TextureView,
+        size: Size<DevicePixels>,
+        drawable: Size<DevicePixels>,
+        premultiplied_alpha: bool,
+        clear_color: wgpu::Color,
+    ) -> Result<wgpu::SubmissionIndex> {
+        let device = Arc::clone(&core.resources.device);
+        let offscreen = self.target(&device, core.target_format, size);
+        core.render_frame(scene, &offscreen, size, premultiplied_alpha, clear_color)?;
+
+        let Some((_, _, bind_group)) = &self.target else {
+            unreachable!("created above");
+        };
+        let queue = &core.resources.queue;
+        queue.write_buffer(
+            &self.params,
+            0,
+            bytemuck::cast_slice(&edge_extend_params(drawable, size)),
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("edge_extend_encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("edge_extend_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        Ok(queue.submit(Some(encoder.finish())))
+    }
+}
+
+/// The last pixel of `drawable` inside a frame of `size`, as [`EdgeExtend`]'s params.
+fn edge_extend_params(drawable: Size<DevicePixels>, size: Size<DevicePixels>) -> [u32; 4] {
+    let last = |drawable: i32, size: i32| (drawable.clamp(1, size.max(1)) - 1) as u32;
+    [
+        last(drawable.width.0, size.width.0),
+        last(drawable.height.0, size.height.0),
+        0,
+        0,
+    ]
 }
 
 impl WgpuRenderer {
@@ -506,6 +731,7 @@ impl WgpuRenderer {
                 width: DevicePixels(surface_config.width as i32),
                 height: DevicePixels(surface_config.height as i32),
             },
+            edge_extend: None,
             surface_config,
             atlas,
             transparent_alpha_mode,
@@ -1040,6 +1266,7 @@ impl WgpuRenderer {
     /// The size is kept even without GPU resources so that recovery restores it.
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         self.drawable_size = size;
+        self.edge_extend = None;
         self.configure_surface(size.width.0 as u32, size.height.0 as u32);
     }
 
@@ -1274,13 +1501,37 @@ impl WgpuRenderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let premultiplied_alpha =
             self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied;
-        if let Err(error) = core.render_frame(
-            scene,
-            &frame_view,
-            size,
-            premultiplied_alpha,
-            wgpu::Color::TRANSPARENT,
-        ) {
+        let drawable = self.drawable_size;
+        let rendered = if drawable.width.0 < size.width.0 || drawable.height.0 < size.height.0 {
+            if self
+                .edge_extend
+                .as_ref()
+                .is_some_and(|edge| !edge.belongs_to(&core.resources.device))
+            {
+                self.edge_extend = None;
+            }
+            let edge = self.edge_extend.get_or_insert_with(|| {
+                EdgeExtend::new(&core.resources.device, core.target_format)
+            });
+            edge.render(
+                core,
+                scene,
+                &frame_view,
+                size,
+                drawable,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            )
+        } else {
+            core.render_frame(
+                scene,
+                &frame_view,
+                size,
+                premultiplied_alpha,
+                wgpu::Color::TRANSPARENT,
+            )
+        };
+        if let Err(error) = rendered {
             log::error!("{error:#}");
             return false;
         }
@@ -2728,6 +2979,15 @@ mod tests {
             }
         }
         assert!(reconfigures <= 2000 / (LIVE_RESIZE_SLACK as i32 / 2) + 1, "{reconfigures} reconfigures");
+    }
+
+    #[test]
+    fn edge_extend_clamps_to_the_drawable_inside_the_frame() {
+        let size = |w, h| Size { width: DevicePixels(w), height: DevicePixels(h) };
+        assert_eq!(edge_extend_params(size(1000, 700), size(1256, 956)), [999, 699, 0, 0]);
+        // A drawable past the frame, or an empty one, still names a pixel of the frame.
+        assert_eq!(edge_extend_params(size(1300, 700), size(1256, 956)), [1255, 699, 0, 0]);
+        assert_eq!(edge_extend_params(size(0, 0), size(1256, 956)), [0, 0, 0, 0]);
     }
 
     use gpui::{

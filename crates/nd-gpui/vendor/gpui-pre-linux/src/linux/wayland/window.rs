@@ -54,7 +54,6 @@ fn set_viewport_source(viewport: &wp_viewport::WpViewport, source: Option<Size<D
     }
 }
 
-
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
