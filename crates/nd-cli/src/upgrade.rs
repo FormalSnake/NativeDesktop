@@ -112,10 +112,8 @@ fn resolve(manifest_path: &Path) -> Result<PathBuf> {
 
 /// The newest `vX.Y.Z` tag on `url`.
 fn latest_tag(url: &str) -> Result<String> {
-    let output = Command::new("git")
-        .args(["ls-remote", "--tags", "--refs", url])
-        .output()
-        .context("running git ls-remote")?;
+    let output =
+        Command::new("git").args(["ls-remote", "--tags", "--refs", url]).output().context("running git ls-remote")?;
     if !output.status.success() {
         bail!("git ls-remote {url} failed:\n{}", String::from_utf8_lossy(&output.stderr));
     }

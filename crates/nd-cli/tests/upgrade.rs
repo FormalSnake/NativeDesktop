@@ -125,11 +125,8 @@ fn nd_new_depends_on_the_release_tag_and_nd_upgrade_moves_it() {
 fn nd_upgrade_refuses_a_project_without_a_git_nd() {
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::write(dir.path().join("Cargo.toml"), "[dependencies]\nnd = { path = '../nd' }\n").expect("write");
-    let output = Command::new(env!("CARGO_BIN_EXE_nd"))
-        .args(["upgrade", "--path"])
-        .arg(dir.path())
-        .output()
-        .expect("nd");
+    let output =
+        Command::new(env!("CARGO_BIN_EXE_nd")).args(["upgrade", "--path"]).arg(dir.path()).output().expect("nd");
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no `nd = { git"), "{output:?}");
     assert!(Path::new(&dir.path().join("Cargo.toml")).is_file());

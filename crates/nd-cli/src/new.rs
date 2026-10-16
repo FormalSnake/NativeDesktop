@@ -232,7 +232,8 @@ mod tests {
     #[test]
     fn the_patch_block_names_every_vendored_gpui_crate_standalone_or_not() {
         let crates = gpui_patch_crates();
-        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-pre-wgpu", "gpui-pre-windows", "gpui-pre-apple"] {
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-pre-wgpu", "gpui-pre-windows", "gpui-pre-apple"]
+        {
             assert!(crates.contains(&krate), "{krate} in {crates:?}");
         }
         let nd = plain_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd")).unwrap();
@@ -276,7 +277,8 @@ mod tests {
         let vendor = nd.parent().unwrap().join("nd-gpui/vendor");
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("my-app");
-        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), nd_git: REPO.into(), standalone: true }).unwrap();
+        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), nd_git: REPO.into(), standalone: true })
+            .unwrap();
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
         let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("nd's lockfile is copied");
