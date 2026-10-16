@@ -203,13 +203,17 @@ patch_tests() {
 
 # Runs each patch's tests in the vendored crates that carry them, on the OS those crates build on.
 # A published crate whose test target does not build on its own (tests that read zed's assets or
-# use zed's dev-dependencies) runs the test in the fork checkout instead, where it was written.
+# use dev-dependencies publishing drops, such as gpui_wgpu's naga) runs the test in the fork
+# checkout instead, where it was written. A patch without tests is reported and skipped.
 cmd_patch_tests() {
   local patch name pkg os dir log tested="" fork=""
   case "$(uname -s)" in Linux) os=linux ;; Darwin) os=macos ;; *) os=windows ;; esac
   log=$(mktemp "${TMPDIR:-/tmp}/nd-gpui-test.XXXXXX")
   while read -r patch; do
-    [ -n "$(patch_tests "$fork_dir/patches/$patch")" ] || die "$patch adds no #[test]"
+    if [ -z "$(patch_tests "$fork_dir/patches/$patch")" ]; then
+      say "  $patch adds no #[test], skipped"
+      continue
+    fi
     for name in $(patch_tests "$fork_dir/patches/$patch"); do
       for pkg in $(grep -rl "fn $name(" "$vendor_dir" 2>/dev/null | sed "s#^$vendor_dir/\([^/]*\)/.*#\1#" | sort -u); do
         case "$pkg:$os" in
@@ -232,8 +236,11 @@ cmd_patch_tests() {
           case " $tested " in *" $dir:$name "*) continue ;; esac
           # zed pins a newer toolchain than nd; the stable one builds it. The target dir sits next
           # to the zed checkout so weekly gates stay incremental.
-          (cd "$fork" && RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR="$zed-target" cargo test -q -p "$dir" --lib "$name") ||
-            die "$patch: $name fails in the fork's $dir"
+          (cd "$fork" && RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR="$zed-target" cargo test -q -p "$dir" --lib "$name") >"$log" 2>&1 ||
+            { cat "$log" >&2; die "$patch: $name fails in the fork's $dir"; }
+          # A filter that matches nothing passes too.
+          grep -q 'test result: ok\. [1-9]' "$log" || die "$patch: $name ran no test in the fork's $dir"
+          say "  fork $dir $name: ok"
           tested="$tested $dir:$name"
         fi
       done
