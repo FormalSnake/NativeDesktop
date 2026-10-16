@@ -54,7 +54,7 @@ impl Render for Showcase {
                         button("rename", "Rename…")
                             .dispatch(Rename)
                             .bg(theme::forest())
-                            .text_color(tokens.text.on_accent)
+                            .text_color(theme::forest_ink())
                             .font(tokens.fonts.rounded.clone()),
                     )
                     // docs:end element-style
@@ -113,8 +113,8 @@ pub fn app() -> Application {
 // docs:end app
 
 /// The colours `theme.rs` names on purpose, which the appearance audit accepts as tokens.
-pub fn theme_colors() -> [Hsla; 2] {
-    [theme::forest(), theme::warm_glass_tint()]
+pub fn theme_colors() -> [Hsla; 3] {
+    [theme::forest(), theme::forest_ink(), theme::warm_glass_tint()]
 }
 
 /// The app-level theme override, for hosts that build the app themselves (tests).

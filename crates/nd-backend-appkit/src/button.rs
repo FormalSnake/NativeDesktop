@@ -132,6 +132,18 @@ impl NativeButtonView {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Toolbar);
                 }
+                // macOS 26: the system's interactive Liquid Glass button, cut to a circle
+                // (`borderShape`, 26.0); before that the circular bezel.
+                Bezel::Circle if crate::glass::has_liquid_glass() => {
+                    b.setBordered(true);
+                    b.setBezelStyle(NSBezelStyle::Glass);
+                    // NSControlBorderShapeCircle.
+                    let _: () = unsafe { objc2::msg_send![&**b, setBorderShape: 3isize] };
+                }
+                Bezel::Circle => {
+                    b.setBordered(true);
+                    b.setBezelStyle(NSBezelStyle::Circular);
+                }
                 Bezel::Automatic | Bezel::Bordered | Bezel::Glass => {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Push);
@@ -167,7 +179,15 @@ impl NativeButtonView {
             _ => None,
         };
         self.button.setBezelColor(bezel.as_deref());
-        let tint = props.style.text.color.map(|c| Color::from(c).ns_color());
+        // A borderless button draws no bezel, so its colour goes to the icon instead: a prominent
+        // borderless icon button is the accent glyph (Messages' send arrow).
+        let borderless = props.bezel == Bezel::Borderless && props.label.is_empty();
+        let tint = props
+            .style
+            .text
+            .color
+            .map(|c| Color::from(c).ns_color())
+            .or_else(|| if borderless { bezel.clone() } else { None });
         self.button.setContentTintColor(tint.as_deref());
         // A push button's title ignores the content tint; its attributed title carries the colour.
         match &tint {

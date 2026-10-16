@@ -48,7 +48,9 @@ impl Modifier {
     }
 }
 
-fn post(event: Option<CFRetained<CGEvent>>) {
+/// Posts `event` at the HID tap, as the hardware would; a test drives a gesture step by step
+/// with it, between its own captures.
+pub fn post(event: Option<CFRetained<CGEvent>>) {
     CGEvent::post(CGEventTapLocation::HIDEventTap, event.as_deref());
 }
 

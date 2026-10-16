@@ -257,6 +257,7 @@ fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
 impl AppKitBackend {
     pub fn new(mtm: MainThreadMarker) -> Self {
         crate::media::register();
+        crate::icon_view::register();
         let state = Rc::new_cyclic(|weak| {
             RefCell::new(State {
                 mtm,
@@ -923,7 +924,7 @@ impl State {
                 .iter()
                 .filter_map(|child| match self.nodes.get(child)? {
                     Native::ToolbarItem(item) if !item.skip.get() => {
-                        Some(Entry::Item(item.item.clone(), item.props.leading))
+                        Some(Entry::Item(item.item.clone(), item.props.leading, item.props.centered))
                     }
                     Native::ToolbarItem(_) => None,
                     Native::SystemItem => self.system_items.get(child).map(|p| Entry::System(p.item)),
@@ -1693,7 +1694,12 @@ impl Backend for AppKitBackend {
         };
         let state = self.0.borrow();
         match state.native(node) {
-            Native::Text(v) => v.measure(width),
+            // In the family the window's theme sets now: a font override may reach the view
+            // only at this frame's commit, after layout has measured.
+            Native::Text(v) => {
+                let theme = state.node_window.get(&node).map(|w| state.window_native.get(w).unwrap_or(&state.default_native));
+                v.measure_in(width, theme.map(|t| t.font.as_deref()))
+            }
             Native::Button(b) => b.measure(),
             Native::Control(c) => c.control.measure(width),
             Native::Banner(b) => b.measure(),

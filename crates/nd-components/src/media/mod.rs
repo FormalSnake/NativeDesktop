@@ -23,7 +23,7 @@ pub use chat::{
     bubble_corners, chat_bubble, chat_row, group_layout, initials, is_emoji_only, monogram_size,
 };
 pub use clock::{PlaybackClock, format_clock, parse_clock};
-pub use composer::{ATTACHMENT_THUMB, Attachment, COMPOSER_LINES, Composer, ComposerEvent, Draft, Outgoing, composer};
+pub use composer::{ATTACHMENT_THUMB, Attachment, COMPOSER_LINES, COMPOSER_ROW, Composer, ComposerEvent, Draft, Outgoing, composer};
 pub use image::{Image, ImageFailed, ImageKind, ImageLoaded, ImageProps, UNKNOWN_ASPECT, image, image_placeholder};
 pub use lyrics::{
     ANCHOR_AT, DEPTH_OPACITY, Follow, Lit, LyricClicked, LyricLine, LyricWord, Lyrics, LyricsFollowChanged, LyricsKind,
@@ -40,4 +40,4 @@ pub use transport::{
     NowPlaying, PlayerBar, SEEK, SeekBar, SeekBarKind, SeekBarProps, SeekMetrics, SeekModel, SeekPhase, Seeked,
     TransportCommand, TransportLayout, player_bar, seek_bar, volume_icon,
 };
-pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProps, VideoReady, video};
+pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProgress, VideoProps, VideoReady, video};

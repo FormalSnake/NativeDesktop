@@ -224,10 +224,10 @@ impl LabelControl {
         if old.is_none_or(|o| o.selectable != new.selectable) {
             f.setSelectable(new.selectable);
         }
-        if old.is_none_or(|o| o.wraps != new.wraps) {
+        if old.is_none_or(|o| o.wraps != new.wraps || o.max_lines != new.max_lines) {
             if new.wraps {
                 f.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
-                f.setMaximumNumberOfLines(0);
+                f.setMaximumNumberOfLines(new.max_lines.map_or(0, |n| n as isize));
             } else {
                 f.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
                 f.setMaximumNumberOfLines(1);
@@ -235,6 +235,7 @@ impl LabelControl {
             if let Some(cell) = f.cell() {
                 cell.setUsesSingleLineMode(!new.wraps);
                 cell.setWraps(new.wraps);
+                cell.setTruncatesLastVisibleLine(new.max_lines.is_some());
             }
         }
         apply_common(Some(f), f, old.map(|o| (o.enabled, &o.tooltip)), new.enabled, &new.tooltip);
@@ -313,7 +314,7 @@ impl FormControl for LabelControl {
     }
 
     fn measure(&self, width: Option<f32>) -> Size {
-        if let (Some(width), true) = (width, self.field.maximumNumberOfLines() == 0)
+        if let (Some(width), true) = (width, self.field.maximumNumberOfLines() != 1)
             && let Some(cell) = self.field.cell()
         {
             let bounds = NSRect::new(objc2_foundation::NSPoint::ZERO, NSSize::new(f64::from(width), 100_000.));

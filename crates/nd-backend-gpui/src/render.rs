@@ -742,8 +742,14 @@ impl<'a> Build<'a> {
             props.label.clone()
         };
         let name = if props.label.is_empty() { label.clone() } else { props.label.clone() };
-        let accent = props.variant == ButtonVariant::Accent;
-        let (fill, ink) = if accent { (theme.accent, theme.text.on_accent) } else { (look.control, look.text) };
+        // A background the element sets is the bezel colour, as on AppKit.
+        let explicit = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let accent = props.variant == ButtonVariant::Accent || explicit.is_some();
+        let (fill, ink) = match explicit {
+            Some(fill) => (fill, props.style.text.color.unwrap_or_else(|| readable_ink(fill))),
+            None if accent => (theme.accent, theme.text.on_accent),
+            None => (look.control, look.text),
+        };
         let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
         // Borderless: no bezel until the pointer is over it.
         let bezel = props.bezel != Bezel::Borderless || accent;
@@ -776,6 +782,10 @@ impl<'a> Build<'a> {
         if bezel {
             button = button.border_1().border_color(look.border).bg(fill);
         }
+        if props.bezel == Bezel::Circle {
+            button = button.rounded_full();
+        }
+        let button = crate::forms::with_style(button, &props.style);
         if !props.enabled {
             return button.into_any_element();
         }
@@ -859,4 +869,11 @@ pub(crate) fn start_window_move(window: &mut gpui::Window) {
     if std::env::var_os("ND_DIAG_WINDOW").is_some_and(|v| v == "1") {
         eprintln!("nd: window move");
     }
+}
+
+/// White or black, whichever reads better on `fill`.
+fn readable_ink(fill: Hsla) -> Hsla {
+    use nd_gpui::gpui::{black, white};
+    use nd_theme::color::contrast;
+    if contrast(white(), fill) >= contrast(black(), fill) { white() } else { black() }
 }

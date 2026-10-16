@@ -17,3 +17,7 @@ pub fn warm_glass_tint() -> Hsla {
 pub fn forest() -> Hsla {
     rgb(0x2f6f4f).into()
 }
+
+pub fn forest_ink() -> Hsla {
+    rgb(0xffffff).into()
+}

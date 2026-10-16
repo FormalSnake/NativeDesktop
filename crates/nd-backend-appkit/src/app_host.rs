@@ -94,14 +94,24 @@ impl Host {
                 (Some(parent), _) => parent.window().beginSheet_completionHandler(&ns_window, None),
                 (None, Some(group)) if !matches!(options.kind, WindowKind::Sheet { .. }) => {
                     join_tab_group(&ns_window, group);
-                    self.platform.show(&ns_window);
+                    self.show(&ns_window, &options);
                 }
                 (None, _) => {
                     ns_window.center();
-                    self.platform.show(&ns_window);
+                    self.show(&ns_window, &options);
                 }
             }
             windows.insert(id, host);
+        }
+    }
+
+    /// Shows a new window: key and the app active, or behind what has focus when the window
+    /// opens in the background.
+    fn show(&self, window: &NdWindow, options: &nd_ui::WindowOptions) {
+        if options.activate {
+            self.platform.show(window);
+        } else {
+            window.orderFront(None);
         }
     }
 

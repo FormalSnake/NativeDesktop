@@ -345,8 +345,36 @@ impl ImageInner {
 impl Input for ImageInner {
     fn layout(&self) {
         let bounds = self.view.bounds();
-        let radius = style_radius(&self.props.borrow().style, bounds.size.width, bounds.size.height);
-        self.slot.0.layer.setCornerRadius(radius);
+        let tail = self.props.borrow().tail;
+        let Some(side) = tail else {
+            let radius = style_radius(&self.props.borrow().style, bounds.size.width, bounds.size.height);
+            self.slot.0.layer.setCornerRadius(radius);
+            // SAFETY: the layer is ours and on the main thread; clearing the mask is plain KVC.
+            unsafe { self.slot.0.layer.setMask(None) };
+            self.slot.place(bounds, scale_of(&self.view));
+            return;
+        };
+        // The picture fills the whole box, tail strip included; the mask cuts the bubble and its
+        // tail out of it, so the tail shows the picture's own corner.
+        let tw = f64::from(nd_components::media::BUBBLE.tail_width);
+        let x = if side == nd_components::media::BubbleSide::Received { tw } else { 0. };
+        let body = objc2_foundation::NSRect::new(
+            objc2_foundation::NSPoint::new(x, 0.),
+            objc2_foundation::NSSize::new((bounds.size.width - tw).max(0.), bounds.size.height),
+        );
+        let radius = style_radius(&self.props.borrow().style, body.size.width, body.size.height);
+        let path = objc2_core_graphics::CGMutablePath::new();
+        super::chat::rounded(&path, body, [radius; 4]);
+        super::chat::tail(&path, body, side);
+        objc2_quartz_core::CATransaction::begin();
+        objc2_quartz_core::CATransaction::setDisableActions(true);
+        let mask = objc2_quartz_core::CAShapeLayer::new();
+        mask.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::ZERO, bounds.size));
+        mask.setPath(Some(&path));
+        self.slot.0.layer.setCornerRadius(0.);
+        // SAFETY: the mask is a fresh layer used by no other layer.
+        unsafe { self.slot.0.layer.setMask(Some(&mask)) };
+        objc2_quartz_core::CATransaction::commit();
         self.slot.place(bounds, scale_of(&self.view));
     }
 }

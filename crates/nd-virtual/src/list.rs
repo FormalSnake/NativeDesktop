@@ -148,6 +148,9 @@ pub struct ListProps {
     /// What the list takes part in on backends that recognise gestures themselves: vertical
     /// scrolling, through the window's scroll arbiter like any scroll view.
     pub gestures: nd_gesture::GestureSet,
+    /// A sidebar's list: rows inset from the edges, the selection a rounded inset highlight
+    /// (the source list style on macOS).
+    pub inset: bool,
 }
 
 /// Widget kind of the list container.
@@ -792,7 +795,7 @@ impl<K: RowKey> ListState<K> {
         }
     }
 
-    fn props(&self, kind: ListKind, selection: Selection, style: StyleRefinement) -> ListProps {
+    fn props(&self, kind: ListKind, selection: Selection, style: StyleRefinement, inset: bool) -> ListProps {
         let inner = self.inner.borrow();
         let generation = inner.core.borrow().generation();
         let selected = inner.selected.iter().filter_map(|k| inner.ids.get(k).copied()).collect();
@@ -800,7 +803,7 @@ impl<K: RowKey> ListState<K> {
             scroll: nd_gesture::Axes { horizontal: false, vertical: true },
             ..Default::default()
         };
-        ListProps { handle: ListHandle(inner.core.clone()), kind, generation, selection, selected, style, gestures }
+        ListProps { handle: ListHandle(inner.core.clone()), kind, generation, selection, selected, style, gestures, inset }
     }
 
     fn children(&self) -> Vec<AnyElement> {
@@ -941,6 +944,7 @@ pub struct List<K: RowKey> {
     renderer: Renderer<K>,
     style: StyleRefinement,
     selection: Selection,
+    inset: bool,
     empty: Option<AnyElement>,
     on_select: Option<Handler<SelectEvent<K>>>,
     on_activate: Option<Handler<ActivateEvent<K>>>,
@@ -959,6 +963,7 @@ fn build<K: RowKey>(id: SharedString, state: &ListState<K>, kind: ListKind, rend
         renderer,
         style: StyleRefinement::default(),
         selection: Selection::None,
+        inset: false,
         empty: None,
         on_select: None,
         on_activate: None,
@@ -1059,6 +1064,13 @@ impl<K: RowKey> List<K> {
         self
     }
 
+    /// A sidebar's list: the platform's inset rows and rounded selection (`NSTableView`'s source
+    /// list style on macOS, a rounded inset highlight elsewhere).
+    pub fn inset(mut self) -> Self {
+        self.inset = true;
+        self
+    }
+
     pub fn on_select(mut self, f: impl Fn(&SelectEvent<K>, &mut Window, &mut App) + 'static) -> Self {
         self.on_select = Some(Rc::new(f));
         if self.selection == Selection::None {
@@ -1118,7 +1130,7 @@ impl<K: RowKey> IntoElement for List<K> {
             return d.flex().flex_col().items_center().justify_center().child(empty).into_any_element();
         }
         state.inner.borrow_mut().renderer = Some(self.renderer);
-        let props = state.props(self.kind, self.selection, self.style.clone());
+        let props = state.props(self.kind, self.selection, self.style.clone(), self.inset);
         let mut el = ContainerElement::new::<ListWidget>(Key::Id(self.id), props);
         *el.style() = self.style;
         let s = state.clone();

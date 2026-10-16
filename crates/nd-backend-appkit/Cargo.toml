@@ -72,6 +72,12 @@ harness = false
 name = "port_gaps"
 harness = false
 
+# Tier 2: what the messages port needed after the port gaps (line clamp, icon, send button,
+# video progress and seek, picture tails, panel and reaction fades).
+[[test]]
+name = "msg_gaps"
+harness = false
+
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`
 # and `gate` profiles run it; plain `cargo test` skips it unless ND_REAL=1.
 [[test]]

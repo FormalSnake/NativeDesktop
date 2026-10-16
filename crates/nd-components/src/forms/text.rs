@@ -155,6 +155,9 @@ pub struct TextAreaProps {
     pub accepts_media: bool,
     /// Opens the system emoji picker at the caret each time it changes.
     pub emoji_picker: u64,
+    /// Points kept clear at the trailing edge, inside the field's outline: room for a button
+    /// laid over it (a chat bar's send button).
+    pub trailing_room: f32,
     pub label: Option<SharedString>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
@@ -372,6 +375,7 @@ pub fn text_area(id: impl Into<SharedString>) -> TextArea {
         submit_on_return: false,
         accepts_media: false,
         emoji_picker: 0,
+        trailing_room: 0.,
         label: None,
         enabled: true,
         tooltip: None,
@@ -533,6 +537,13 @@ impl TextArea {
     /// Takes pasted and dropped images and files as events instead of text.
     pub fn accepts_media(mut self) -> Self {
         self.element.props_mut().accepts_media = true;
+        self
+    }
+
+    /// Keeps `points` clear at the trailing edge, inside the outline, for a button the app lays
+    /// over the field there; the text wraps before it.
+    pub fn trailing_room(mut self, points: f32) -> Self {
+        self.element.props_mut().trailing_room = points.max(0.);
         self
     }
 

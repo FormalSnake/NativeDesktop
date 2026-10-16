@@ -68,11 +68,14 @@ impl TrafficLights {
     /// come after the lights were placed. Returns whether the lights count as pinned.
     pub fn sync_title(&self, window: &NSWindow) -> bool {
         let pinned = self.at.get().is_some() && window.toolbar().is_none();
-        window.setTitleVisibility(if pinned {
-            NSWindowTitleVisibility::Hidden
-        } else {
-            NSWindowTitleVisibility::Visible
-        });
+        // With a toolbar, the toolbar decides whether the title shows (`hide_title`).
+        if window.toolbar().is_none() {
+            window.setTitleVisibility(if pinned {
+                NSWindowTitleVisibility::Hidden
+            } else {
+                NSWindowTitleVisibility::Visible
+            });
+        }
         window.setTitlebarAppearsTransparent(pinned);
         pinned
     }

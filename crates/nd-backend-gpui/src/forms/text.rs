@@ -1089,7 +1089,10 @@ pub(crate) fn text_area(
             });
         }
     }
-    let area = with_style(area.child(text_element(&ctl, &editor, &f)), &p.style);
+    let mut area = with_style(area.child(text_element(&ctl, &editor, &f)), &p.style);
+    if p.trailing_room > 0. {
+        area = area.pr(px(p.trailing_room));
+    }
     if !picker {
         return area.into_any_element();
     }
