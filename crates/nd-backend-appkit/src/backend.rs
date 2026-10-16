@@ -257,6 +257,7 @@ fn insert_before(list: &mut Vec<NodeId>, node: NodeId, before: Option<NodeId>) {
 impl AppKitBackend {
     pub fn new(mtm: MainThreadMarker) -> Self {
         crate::media::register();
+        crate::icon_view::register();
         let state = Rc::new_cyclic(|weak| {
             RefCell::new(State {
                 mtm,
@@ -923,7 +924,7 @@ impl State {
                 .iter()
                 .filter_map(|child| match self.nodes.get(child)? {
                     Native::ToolbarItem(item) if !item.skip.get() => {
-                        Some(Entry::Item(item.item.clone(), item.props.leading))
+                        Some(Entry::Item(item.item.clone(), item.props.leading, item.props.centered))
                     }
                     Native::ToolbarItem(_) => None,
                     Native::SystemItem => self.system_items.get(child).map(|p| Entry::System(p.item)),

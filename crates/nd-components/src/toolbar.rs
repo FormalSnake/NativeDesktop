@@ -22,6 +22,9 @@ pub struct ToolbarProps {
     pub display: ToolbarDisplay,
     /// The selected tab, for a toolbar of [`Toolbar::tab`]s (a settings window).
     pub selected_tab: Option<SharedString>,
+    /// The window's title is not drawn in the toolbar: a window whose centre item says what it
+    /// shows (Messages' conversation).
+    pub hide_title: bool,
 }
 
 /// A selectable toolbar tab: a settings window's panes.
@@ -49,6 +52,8 @@ pub struct ToolbarItemProps {
     /// Sits at the leading edge, before the sidebar tracking separator: over the sidebar when
     /// there is one.
     pub leading: bool,
+    /// Kept in the middle of the toolbar whatever sits beside it (`centeredItemIdentifiers`).
+    pub centered: bool,
 }
 
 /// An item the OS draws and implements itself.
@@ -123,6 +128,17 @@ impl Toolbar {
     /// Sits before the title: window controls embedded in the toolbar, a back button.
     pub fn leading(self, item: impl IntoElement) -> Self {
         self.push(item, ToolbarItemProps { leading: true, ..ToolbarItemProps::default() })
+    }
+
+    /// Kept in the middle of the window's toolbar: the conversation in a chat window.
+    pub fn centered_item(self, item: impl IntoElement) -> Self {
+        self.push(item, ToolbarItemProps { centered: true, ..ToolbarItemProps::default() })
+    }
+
+    /// Leaves the window's title out of the toolbar.
+    pub fn hide_title(mut self) -> Self {
+        self.root.props_mut().hide_title = true;
+        self
     }
 
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {

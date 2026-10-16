@@ -760,6 +760,7 @@ impl Inner {
             inactive_frame_interval: None,
             ..Default::default()
         };
+        options.focus = self.app.try_borrow().ok().and_then(|app| app.window(id).map(|w| w.options().activate)).unwrap_or(true);
         self.hooks.window_options(id, &mut options);
         let host = Rc::downgrade(self);
         let Ok(handle) = cx.open_window(options, |window, cx| {

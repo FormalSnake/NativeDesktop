@@ -17,7 +17,7 @@ use objc2_app_kit::{
     NSToolbarToggleInspectorItemIdentifier, NSToolbarToggleSidebarItemIdentifier, NSTrackingSeparatorToolbarItem,
     NSView, NSWindow, NSWindowToolbarStyle,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSize, NSString};
+use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSObject, NSObjectProtocol, NSRect, NSSet, NSSize, NSString};
 
 #[derive(Default)]
 pub struct ToolbarIvars {
@@ -210,7 +210,8 @@ fn tracking_separator(
 
 /// An entry of the toolbar as the backend rebuilds it.
 pub(crate) enum Entry {
-    Item(Retained<NSToolbarItem>, bool),
+    /// An app item, whether it leads, whether it is centred.
+    Item(Retained<NSToolbarItem>, bool, bool),
     System(SystemItem),
     Tab(Retained<NSToolbarItem>),
 }
@@ -324,6 +325,17 @@ impl ToolbarNative {
         {
             window.setTitle(&NSString::from_str(title));
         }
+        if let Some(window) = self.window.borrow().as_ref().and_then(|w| w.load()) {
+            self.apply_title_visibility(&window);
+        }
+    }
+
+    fn apply_title_visibility(&self, window: &NSWindow) {
+        window.setTitleVisibility(if self.props.hide_title {
+            objc2_app_kit::NSWindowTitleVisibility::Hidden
+        } else {
+            objc2_app_kit::NSWindowTitleVisibility::Visible
+        });
     }
 
     pub fn attach_to(&self, window: &NSWindow) {
@@ -332,6 +344,7 @@ impl ToolbarNative {
             window.setToolbarStyle(NSWindowToolbarStyle::Unified);
         }
         window.setToolbar(Some(&self.toolbar));
+        self.apply_title_visibility(window);
         *self.window.borrow_mut() = Some(objc2::rc::Weak::new(window));
         if let Some(title) = &self.props.title {
             window.setTitle(&NSString::from_str(title));
@@ -347,10 +360,11 @@ impl ToolbarNative {
         let mut items = Vec::new();
         let mut identifiers: Vec<Retained<NSString>> = Vec::new();
         let mut tabs: Vec<Retained<NSString>> = Vec::new();
+        let mut centered: Vec<Retained<NSString>> = Vec::new();
         // The sidebar's own section: leading items and the sidebar toggle, as in Apple's apps.
         let leading = entries
             .iter()
-            .take_while(|e| matches!(e, Entry::Item(_, true) | Entry::System(SystemItem::ToggleSidebar)))
+            .take_while(|e| matches!(e, Entry::Item(_, true, _) | Entry::System(SystemItem::ToggleSidebar)))
             .count();
         let explicit = entries.iter().any(|e| matches!(e, Entry::System(SystemItem::InspectorTrackingSeparator)));
         let inspector = inspector.filter(|_| !explicit);
@@ -377,7 +391,10 @@ impl ToolbarNative {
                 }
             }
             match entry {
-                Entry::Item(item, _) => {
+                Entry::Item(item, _, center) => {
+                    if center {
+                        centered.push(item.itemIdentifier());
+                    }
                     identifiers.push(item.itemIdentifier());
                     items.push(item);
                 }
@@ -410,6 +427,8 @@ impl ToolbarNative {
                 self.toolbar.insertItemWithItemIdentifier_atIndex(id, i as isize);
             }
         }
+        let centered = NSSet::from_retained_slice(&centered);
+        self.toolbar.setCenteredItemIdentifiers(&centered);
         self.select_tab();
     }
 

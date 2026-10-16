@@ -41,6 +41,9 @@ pub struct WindowOptions {
     /// window tabs on macOS, a drawn tab bar elsewhere. Read when the window opens; groups with
     /// different names never merge.
     pub tab_group: Option<SharedString>,
+    /// Opening it makes it key and activates the app. Off (`.background()`), it opens behind
+    /// whatever has focus: a launch from a script or a test that must not steal it.
+    pub activate: bool,
 }
 
 impl WindowOptions {
@@ -54,7 +57,14 @@ impl WindowOptions {
             titlebar: Titlebar::Native,
             kind: WindowKind::Normal,
             tab_group: None,
+            activate: true,
         }
+    }
+
+    /// Opens without taking focus or activating the app.
+    pub fn background(mut self) -> Self {
+        self.activate = false;
+        self
     }
 
     /// Opens the window as a tab of `group`, next to the group's key window when one is open.
