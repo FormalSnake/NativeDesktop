@@ -57,7 +57,7 @@ pub use platform::NdAppKitPlatform;
 pub use services::{AppKitChrome, menu_bar};
 pub use swift::{SwiftGauge, lookup as swift_symbol};
 pub use system_colors::{AppearanceObserver, os_theme, scheme_of};
-pub use toolbar::ToolbarHost;
+pub use toolbar::{ToolbarHost, titlebar_room};
 pub use window::{KeyRouter, NdWindow};
 
 pub use objc2;

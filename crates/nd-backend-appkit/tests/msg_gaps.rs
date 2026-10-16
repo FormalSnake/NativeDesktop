@@ -47,6 +47,7 @@ mod gaps {
         tails(&rig, &mut c);
         panel_fade(&rig, &mut c);
         reaction_fade(&rig, &mut c);
+        titlebar(&rig, &mut c);
         if c.0 == 0 {
             println!("ND_MSG_GAPS_OK");
             std::process::exit(0);
@@ -312,5 +313,27 @@ mod gaps {
             c.check(fading, "reaction: one that lands on a shown bubble fades in");
         }
         rig.close(opened);
+    }
+
+    fn titlebar(rig: &Rig, c: &mut Checks) {
+        let window = rig.platform.open_window("titlebar", 480., 320.);
+        let room = |w: &nd_backend_appkit::NdWindow| {
+            use nd_backend_appkit::objc2_app_kit::NSUserInterfaceItemIdentification;
+            w.titlebarAccessoryViewControllers()
+                .iter()
+                .filter(|a| a.view().identifier().is_some_and(|i| i.to_string() == "nd.toolbar.room"))
+                .map(|a| a.view().frame().size.height)
+                .sum::<f64>()
+        };
+        // AppKit gives a bottom accessory at least a standard bar's height (36 pt), so a small
+        // overflow grows the band by that much.
+        nd_backend_appkit::titlebar_room(&window, 46.);
+        let first = room(&window);
+        c.check(first >= 8., &format!("titlebar: a 46 pt item grows the band ({first})"));
+        nd_backend_appkit::titlebar_room(&window, 30.);
+        c.check(room(&window) == first, "titlebar: a shorter item leaves it");
+        nd_backend_appkit::titlebar_room(&window, 100.);
+        c.check(room(&window) == 62., &format!("titlebar: a taller one grows the same accessory ({})", room(&window)));
+        window.close();
     }
 }
