@@ -172,7 +172,7 @@ fn root_tables(standalone: bool, source: &Source) -> String {
     for krate in gpui_patch_crates() {
         let table = match source {
             Source::Path(nd) => {
-                let vendor = Path::new(nd).parent().unwrap_or(Path::new(nd)).join("nd-gpui/vendor").join(krate);
+                let vendor = Path::new(nd).parent().unwrap_or(Path::new(nd)).join("nd-gpui").join("vendor").join(krate);
                 Source::Path(vendor.display().to_string()).table()
             }
             Source::Git { .. } => source.table(),
@@ -240,7 +240,8 @@ mod tests {
         let git = Source::Git { url: REPO, tag: "v1.2.3".into() };
         for standalone in [true, false] {
             let table = root_tables(standalone, &Source::Path(nd.clone()));
-            assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
+            let wgpu = Path::new(&nd).parent().unwrap().join("nd-gpui").join("vendor").join("gpui-pre-wgpu");
+            assert!(table.contains("[patch.crates-io]") && table.contains(&*wgpu.display().to_string()), "{table}");
             assert_eq!(table.contains("[workspace]"), standalone, "{table}");
             let table = root_tables(standalone, &git);
             let line = format!("gpui-pre-windows = {{ git = \"{REPO}\", tag = \"v1.2.3\" }}\n");
@@ -274,7 +275,7 @@ mod tests {
     #[test]
     fn nd_path_generates_a_cargo_patch_block_pointing_at_the_vendor_dir() {
         let nd = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd")).unwrap();
-        let vendor = nd.parent().unwrap().join("nd-gpui/vendor");
+        let vendor = PathBuf::from(plain_path(&nd).unwrap()).parent().unwrap().join("nd-gpui").join("vendor");
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("my-app");
         run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), nd_git: REPO.into(), standalone: true })

@@ -41,8 +41,8 @@ The first line installs the MSVC compiler, linker and Windows SDK that the
 `PATH`, then run the two `cargo install` lines above. `nd package windows` also needs the .NET
 SDK (`winget install --id Microsoft.DotNet.SDK.8`), which it uses to fetch Velopack's `vpk`.
 
-Keep the build directory short and on a disk with room: a first build of an app takes about 5 GB.
-If `C:` is tight, set `CARGO_TARGET_DIR` to a folder on another drive.
+A debug build of an app and its tests fills several gigabytes under `target`. If `C:` is tight,
+set `CARGO_TARGET_DIR` to a folder on another drive.
 
 ## Create an app
 
