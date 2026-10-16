@@ -84,6 +84,7 @@ pub(crate) struct SlotState {
     pub layer: Retained<CALayer>,
     source: RefCell<Option<ImageSource>>,
     fit: Cell<ImageFit>,
+    tint: Cell<Option<nd_ui::prelude::Hsla>>,
     animate: Cell<bool>,
     request: RefCell<Option<DecodeRequest>>,
     decoded: RefCell<Option<Arc<Decoded>>>,
@@ -108,6 +109,7 @@ impl ImageSlot {
             layer,
             source: RefCell::new(None),
             fit: Cell::new(ImageFit::Cover),
+            tint: Cell::new(None),
             animate: Cell::new(true),
             request: RefCell::new(None),
             decoded: RefCell::new(None),
@@ -120,6 +122,13 @@ impl ImageSlot {
         });
         SLOTS.with(|s| s.borrow_mut().insert(id, Rc::downgrade(&state)));
         Self(state)
+    }
+
+    /// Draws the picture in `tint`, keeping its alpha; takes effect with the next request.
+    pub fn set_tint(&self, tint: Option<nd_ui::prelude::Hsla>) {
+        if self.0.tint.replace(tint) != tint {
+            *self.0.request.borrow_mut() = None;
+        }
     }
 
     pub fn on_load(&self, f: impl Fn(&Loaded) + 'static) {
@@ -162,7 +171,7 @@ impl ImageSlot {
         if w <= 0. || h <= 0. {
             return;
         }
-        let request = DecodeRequest::at(source, w, h, scale as f32, s.fit.get());
+        let request = DecodeRequest::at(source, w, h, scale as f32, s.fit.get()).tinted(s.tint.get());
         if s.request.borrow().as_ref() == Some(&request) {
             return;
         }
@@ -322,6 +331,7 @@ impl ImageInner {
         let props = self.props.borrow();
         self.slot.set_placeholder(self.theme.borrow().surface.raised);
         let before = self.slot.0.source.borrow().clone();
+        self.slot.set_tint(props.tint);
         self.slot.set_source(props.source.clone(), props.fit, props.animate);
         if before != props.source {
             self.reported.set(false);

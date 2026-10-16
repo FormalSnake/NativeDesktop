@@ -29,7 +29,9 @@ pub use preset::{
 };
 pub use refinement::{Appearance, ThemeOverride, ThemeRefinement};
 pub use registry::{NativeTheme, OsTheme, ThemeRegistry};
-pub use tokens::{AccentContainer, BorderTokens, FontTokens, SurfaceTokens, TerminalTokens, TextTokens, Theme};
+pub use tokens::{
+    AccentContainer, BorderTokens, FillRole, FontTokens, RoleFills, SurfaceTokens, TerminalTokens, TextTokens, Theme,
+};
 pub use watcher::ThemeFileWatcher;
 
 /// Where an app's theme files live. `ND_THEME_JSON` / `ND_THEME_TOML` override each path (an

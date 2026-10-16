@@ -37,6 +37,33 @@ pub struct TextTokens {
     pub on_accent: Hsla,
     /// Error text: `danger`, darkened or lightened until it reads at 4.5:1 on every surface.
     pub danger: Hsla,
+    /// Links and mentions: the accent, made legible on every surface the same way.
+    pub accent: Hsla,
+    pub success: Hsla,
+    pub warning: Hsla,
+}
+
+/// See [`Theme::role_fills`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoleFills {
+    pub success: Hsla,
+    pub warning: Hsla,
+    pub danger: Hsla,
+}
+
+/// What a filled surface means, which picks its fill and the ink on it from the theme. Apps
+/// name the role; the colour is always a token.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FillRole {
+    /// The raised surface with primary text: a received message.
+    Neutral,
+    /// The accent: a sent message.
+    #[default]
+    Accent,
+    /// `success`: an SMS message's green.
+    Success,
+    Warning,
+    Danger,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +97,9 @@ pub struct Theme {
     /// white text is 4.0:1.
     pub accent_fill: Hsla,
     pub accent_container: AccentContainer,
+    /// `success`, `warning` and `danger` as fills carrying `text.on_accent`, as
+    /// [`Theme::accent_fill`] is for the accent: an SMS bubble's green, a destructive badge.
+    pub role_fills: RoleFills,
     pub selection: Hsla,
     pub danger: Hsla,
     pub success: Hsla,
@@ -123,10 +153,18 @@ impl Theme {
                 tertiary: p.text_tertiary,
                 on_accent: p.on_accent,
                 danger: legible(p.danger, &surfaces, 4.5),
+                accent: legible(p.accent, &surfaces, 4.5),
+                success: legible(p.success, &surfaces, 4.5),
+                warning: legible(p.warning, &surfaces, 4.5),
             },
             accent: p.accent,
             accent_fill: fill_under(p.accent, p.on_accent, 4.5),
             accent_container: AccentContainer { bg: p.accent_container, fg: p.on_accent_container },
+            role_fills: RoleFills {
+                success: fill_under(p.success, p.on_accent, 4.5),
+                warning: fill_under(p.warning, p.on_accent, 4.5),
+                danger: fill_under(p.danger, p.on_accent, 4.5),
+            },
             selection: p.selection,
             danger: p.danger,
             success: p.success,
@@ -148,6 +186,17 @@ impl Theme {
 
     pub fn is_dark(&self) -> bool {
         self.scheme.is_dark()
+    }
+
+    /// The fill for `role` and the ink that reads on it at 4.5:1.
+    pub fn fill(&self, role: FillRole) -> (Hsla, Hsla) {
+        match role {
+            FillRole::Neutral => (self.surface.raised_hover, self.text.primary),
+            FillRole::Accent => (self.accent_fill, self.text.on_accent),
+            FillRole::Success => (self.role_fills.success, self.text.on_accent),
+            FillRole::Warning => (self.role_fills.warning, self.text.on_accent),
+            FillRole::Danger => (self.role_fills.danger, self.text.on_accent),
+        }
     }
 
     /// `color` under the pointer.
@@ -261,5 +310,34 @@ mod tests {
         assert!(contrast(white, fill) >= 4.5);
         let dark = parse_hex("#1c4fa0").unwrap();
         assert_eq!(fill_under(dark, white, 4.5), dark, "a fill that already passes is left alone");
+    }
+
+    #[test]
+    fn every_role_fill_carries_its_ink_and_role_text_reads_on_every_surface() {
+        use crate::palette::{Palette, Scheme};
+        use crate::preset::{Metrics, Preset};
+        use crate::tokens::{FillRole, Theme};
+        for scheme in [Scheme::Light, Scheme::Dark] {
+            for preset in [Preset::MacOs, Preset::Adwaita] {
+                let theme = Theme::derive(preset, scheme, Palette::baked(scheme), Metrics::preset(preset), 1.);
+                for role in
+                    [FillRole::Neutral, FillRole::Accent, FillRole::Success, FillRole::Warning, FillRole::Danger]
+                {
+                    let (fill, ink) = theme.fill(role);
+                    let fill = crate::color::over(fill, theme.surface.base);
+                    assert!(contrast(ink, fill) >= 4.5, "{scheme:?} {preset:?} {role:?}");
+                }
+                assert_ne!(
+                    theme.fill(FillRole::Success).0,
+                    theme.fill(FillRole::Accent).0,
+                    "an SMS bubble is not blue"
+                );
+                for text in [theme.text.accent, theme.text.success, theme.text.warning] {
+                    for surface in [theme.surface.base, theme.surface.raised, theme.surface.sidebar] {
+                        assert!(contrast(text, surface) >= 4.5, "{scheme:?} {preset:?}");
+                    }
+                }
+            }
+        }
     }
 }

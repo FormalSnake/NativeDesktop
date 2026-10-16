@@ -59,7 +59,9 @@ pub mod prelude {
         secure_field, segmented, settings_group, sheet_layout, spinner, stepper, switch, switch_row, text_area,
         text_field,
     };
-    pub use crate::controls::{Canvas, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas};
+    pub use crate::controls::{
+        Canvas, CanvasPath, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas,
+    };
     pub use crate::native::{ElementId, NativeStyled};
     pub use crate::theme::{
         ActiveTheme, Appearance, GlassVariant, Material, Theme, ThemeOverride, ThemeRefinement, WindowThemeExt,

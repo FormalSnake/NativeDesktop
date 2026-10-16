@@ -5,9 +5,7 @@ use nd_gpui::gpui::Visibility;
 use nd_ui::StyleRefinement;
 use nd_ui::prelude::{AbsoluteLength, FontWeight, Hsla, px};
 use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSColor, NSFontWeight, NSFontWeightBold, NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold,
-};
+use objc2_app_kit::{NSColor, NSFontWeight};
 
 /// A colour as the views resolve it: system colours are looked up at draw time, under the
 /// view's effective appearance, so light/dark changes need no update.
@@ -16,6 +14,32 @@ pub(crate) enum Color {
     Rgba(f32, f32, f32, f32),
     WindowBackground,
     Label,
+    /// A system text colour made legible: see [`legible`].
+    Legible(SystemText),
+}
+
+/// The system colours behind the text tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SystemText {
+    Secondary,
+    Tertiary,
+    Accent,
+    Danger,
+    Success,
+    Warning,
+}
+
+impl SystemText {
+    fn ns_color(self) -> Retained<NSColor> {
+        match self {
+            SystemText::Secondary => NSColor::secondaryLabelColor(),
+            SystemText::Tertiary => NSColor::tertiaryLabelColor(),
+            SystemText::Accent => NSColor::controlAccentColor(),
+            SystemText::Danger => NSColor::systemRedColor(),
+            SystemText::Success => NSColor::systemGreenColor(),
+            SystemText::Warning => NSColor::systemOrangeColor(),
+        }
+    }
 }
 
 impl Color {
@@ -26,8 +50,30 @@ impl Color {
             }
             Color::WindowBackground => NSColor::windowBackgroundColor(),
             Color::Label => NSColor::labelColor(),
+            Color::Legible(text) => legible(text),
         }
     }
+}
+
+/// `text`'s system colour, darkened or lightened until it reads at 4.5:1 on the window and
+/// control backgrounds: `secondaryLabelColor` and `systemRed` alone fall short on white (3.95:1,
+/// 3.57:1), and the theme holds its text tokens to that ratio. A dynamic colour, resolved under
+/// whatever appearance draws it, so a label made before its window keeps the window's scheme.
+fn legible(text: SystemText) -> Retained<NSColor> {
+    let provider = block2::RcBlock::new(move |appearance: std::ptr::NonNull<objc2_app_kit::NSAppearance>| {
+        let resolved = std::cell::Cell::new(None);
+        let block = block2::RcBlock::new(|| {
+            let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
+            let under: Vec<_> = under.into_iter().filter_map(crate::system_colors::hsla).collect();
+            let color = crate::system_colors::hsla(text.ns_color());
+            resolved.set(color.map(|c| nd_theme::color::legible(c, &under, 4.5)));
+        });
+        // SAFETY: AppKit hands the provider a live appearance for the duration of the call.
+        unsafe { appearance.as_ref() }.performAsCurrentDrawingAppearance(&block);
+        let color = resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color());
+        std::ptr::NonNull::new(Retained::autorelease_ptr(color)).expect("a colour")
+    });
+    unsafe { NSColor::colorWithName_dynamicProvider(None, &provider) }
 }
 
 impl From<Hsla> for Color {
@@ -53,11 +99,23 @@ pub(crate) struct ViewLook {
     /// `visibility: hidden`: the view keeps its frame but shows nothing and takes no clicks or
     /// focus, its subviews included.
     pub hidden: bool,
+    /// A move and scale about the centre that layout never sees.
+    pub transform: nd_ui::Transform,
+    /// What it paints while the pointer is over it.
+    pub hover: Option<Box<ViewLook>>,
 }
 
 impl Default for ViewLook {
     fn default() -> Self {
-        Self { background: None, corner_radius: 0., border: None, opacity: 1., hidden: false }
+        Self {
+            background: None,
+            corner_radius: 0.,
+            border: None,
+            opacity: 1.,
+            hidden: false,
+            transform: nd_ui::Transform::default(),
+            hover: None,
+        }
     }
 }
 
@@ -75,7 +133,21 @@ impl ViewLook {
             border,
             opacity: style.opacity.unwrap_or(1.),
             hidden: style.visibility == Some(Visibility::Hidden),
+            transform: nd_ui::Transform::default(),
+            hover: None,
         }
+    }
+
+    /// A `div`'s look: its style, transform and hover style.
+    pub fn of_div(div: &nd_ui::DivProps, expose: bool) -> Self {
+        let mut look = Self::from_style(&div.style, expose);
+        look.transform = div.transform;
+        look.hover = div.hover.as_ref().map(|hover| {
+            let mut style = div.style.clone();
+            nd_gpui::gpui::Refineable::refine(&mut style, hover);
+            Box::new(Self::from_style(&style, expose))
+        });
+        look
     }
 }
 
@@ -88,34 +160,40 @@ pub(crate) struct TextLook {
     pub color: Color,
     pub tabular_nums: bool,
     pub opacity: f32,
+    /// The runs of rich text, resolved under the node's theme; empty for plain text.
+    pub runs: Vec<crate::rich::RunLook>,
+    pub opens_links: bool,
 }
 
 impl TextLook {
-    pub fn from_props(props: &nd_ui::TextProps) -> Self {
+    /// `theme` is the node's, which rich text resolves its colour tokens under; plain text
+    /// needs none.
+    pub fn from_props(props: &nd_ui::TextProps, theme: Option<&nd_theme::Theme>) -> Self {
         let style = &props.style;
-        Self {
+        let mut look = Self {
             text: props.text.to_string(),
             size: style.text.font_size.map(length),
             weight: style.text.font_weight,
             color: style.text.color.map_or(Color::Label, Color::from),
             tabular_nums: props.tabular_nums,
             opacity: style.opacity.unwrap_or(1.),
+            runs: Vec::new(),
+            opens_links: props.opens_links,
+        };
+        if let (Some(rich), Some(theme)) = (&props.rich, theme) {
+            let size = look.size.unwrap_or(objc2_app_kit::NSFont::systemFontSize() as f32);
+            let weight = look.weight.map_or(400., |w| w.0);
+            look.runs = crate::rich::resolve(rich, theme, size, weight, None);
         }
+        look
+    }
+
+    pub fn has_links(&self) -> bool {
+        self.runs.iter().any(|r| r.link.is_some())
     }
 
     pub fn ns_weight(&self) -> NSFontWeight {
-        let w = self.weight.map_or(400., |w| w.0);
-        unsafe {
-            if w >= 700. {
-                NSFontWeightBold
-            } else if w >= 600. {
-                NSFontWeightSemibold
-            } else if w >= 500. {
-                NSFontWeightMedium
-            } else {
-                NSFontWeightRegular
-            }
-        }
+        crate::rich::ns_weight(self.weight.map_or(400., |w| w.0))
     }
 }
 
@@ -130,15 +208,7 @@ pub(crate) fn ns_font(style: &StyleRefinement, default_size: f64) -> Option<Reta
         return None;
     }
     let size = text.font_size.map_or(default_size, |s| f64::from(length(s)));
-    let weight = TextLook {
-        text: String::new(),
-        size: None,
-        weight: text.font_weight,
-        color: Color::Label,
-        tabular_nums: false,
-        opacity: 1.,
-    }
-    .ns_weight();
+    let weight = crate::rich::ns_weight(text.font_weight.map_or(400., |w| w.0));
     let system = NSFont::systemFontOfSize_weight(size, weight);
     let design = match text.font_family.as_deref() {
         None | Some(nd_theme::preset::SYSTEM_FONT) => return Some(system),

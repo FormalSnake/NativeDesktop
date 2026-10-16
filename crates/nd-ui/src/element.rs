@@ -18,9 +18,11 @@ use nd_gesture::{
 use nd_gpui::gpui::prelude::FluentBuilder;
 use nd_gpui::gpui::{Action, KeyContext, Overflow, SharedString, StyleRefinement, Styled};
 
+use crate::animation::{Animation, AnimationEnded, MotionSpec, Pose, Transform};
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AnyProps, NodeKind, Props, WidgetKind};
 use crate::dispatch::{DispatchTree, FocusScope, Focusable, KeyRoles};
+use crate::rich_text::{LinkClicked, RichText, Span};
 use crate::window::Window;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -145,6 +147,10 @@ pub(crate) struct NodeElement {
     pub children: Vec<AnyElement>,
     pub handlers: Vec<(TypeId, Handler)>,
     pub dispatch: DispatchProps,
+    /// How the node animates between renders (`.animate`); only `div`s set it.
+    pub motion: Option<MotionSpec>,
+    /// A canvas's paint closure, which the tree runs for its laid-out size.
+    pub paint: Option<crate::canvas::PaintFn>,
 }
 
 pub(crate) type Deferred = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
@@ -177,7 +183,7 @@ impl AnyElement {
 pub struct AnyElement(pub(crate) Element);
 
 impl AnyElement {
-    fn node(node: NodeElement) -> Self {
+    pub(crate) fn node(node: NodeElement) -> Self {
         AnyElement(Element::Node(Box::new(node)))
     }
 
@@ -252,6 +258,19 @@ pub struct DivProps {
     /// What the container is to the semantic tree when it is more than a group (a tab page, a
     /// split pane), with its accessible name.
     pub role: Option<(Role, SharedString)>,
+    /// A visual move and scale that layout never sees.
+    pub transform: Transform,
+    /// Refines the visual style (background, border, opacity, text colour) while the pointer
+    /// is over the node. Backends apply it themselves, without a render.
+    pub hover: Option<StyleRefinement>,
+    /// Pointer enter and exit are reported as [`HoverChanged`].
+    pub tracks_hover: bool,
+}
+
+/// The pointer entered (`hovered`) or left a node that listens with `.on_hover`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HoverChanged {
+    pub hovered: bool,
 }
 
 /// Type-erased props a layer above `nd-ui` hangs on a `div`, compared by value.
@@ -289,6 +308,10 @@ pub struct Div {
     titlebar_insets: bool,
     gestures: GestureSet,
     role: Option<(Role, SharedString)>,
+    transform: Transform,
+    hover: Option<StyleRefinement>,
+    tracks_hover: bool,
+    motion: Option<MotionSpec>,
 }
 
 #[track_caller]
@@ -331,6 +354,10 @@ impl Div {
             titlebar_insets: false,
             gestures: GestureSet::default(),
             role: None,
+            transform: Transform::default(),
+            hover: None,
+            tracks_hover: false,
+            motion: None,
         }
     }
 
@@ -376,6 +403,57 @@ impl Div {
         self.handlers.retain(|(t, _)| *t != TypeId::of::<E>());
         self.handlers.push((TypeId::of::<E>(), handler));
         self
+    }
+}
+
+/// Hover and animation.
+impl Div {
+    /// Refines the style while the pointer is over the element: GPUI's `.hover(|s| s.bg(..))`.
+    /// Only what paints changes (background, border, opacity, text colour); layout does not.
+    pub fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        self.hover = Some(f(StyleRefinement::default()));
+        self
+    }
+
+    /// Called with `true` when the pointer enters the element and `false` when it leaves.
+    pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.tracks_hover = true;
+        self.on(move |e: &HoverChanged, window, cx| handler(&e.hovered, window, cx))
+    }
+
+    /// Moves the element by `x`, `y` without moving anything else.
+    pub fn offset(mut self, x: nd_gpui::gpui::Pixels, y: nd_gpui::gpui::Pixels) -> Self {
+        self.transform.offset = (x.as_f32(), y.as_f32());
+        self
+    }
+
+    /// Scales the element about its centre without changing its layout box. Drawn unscaled on
+    /// GPUI backends, which have no element transforms.
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.transform.scale = scale;
+        self
+    }
+
+    /// Animates changes to the element's opacity, offset, scale and size (when given in
+    /// points) with `animation`, on the window's frame clock: each render sets where it goes,
+    /// and a new target mid-flight continues from where it is.
+    pub fn animate(mut self, animation: Animation) -> Self {
+        let enter = self.motion.and_then(|m| m.enter);
+        self.motion = Some(MotionSpec { animation, enter });
+        self
+    }
+
+    /// When the element mounts, it starts at the pose `f` returns and animates to its own
+    /// values (with `.animate`'s animation, a short ease-out without one).
+    pub fn enter_from(mut self, f: impl FnOnce(Pose) -> Pose) -> Self {
+        let animation = self.motion.map_or(Animation::ease_out(std::time::Duration::from_millis(250)), |m| m.animation);
+        self.motion = Some(MotionSpec { animation, enter: Some(f(Pose::default())) });
+        self
+    }
+
+    /// Called when every value the element animates has come to rest.
+    pub fn on_animation_end(self, handler: impl Fn(&AnimationEnded, &mut Window, &mut App) + 'static) -> Self {
+        self.on(handler)
     }
 }
 
@@ -507,12 +585,17 @@ impl IntoElement for Div {
                 titlebar_insets: self.titlebar_insets,
                 gestures,
                 role: self.role,
+                transform: self.transform,
+                hover: self.hover,
+                tracks_hover: self.tracks_hover,
             }),
             layout: self.style,
             measured: false,
             children: self.children,
             handlers: self.handlers,
             dispatch: self.dispatch,
+            motion: self.motion,
+            paint: None,
         })
     }
 }
@@ -520,22 +603,51 @@ impl IntoElement for Div {
 /// Props of a text run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextProps {
+    /// The plain text; with `rich`, its runs concatenated.
     pub text: SharedString,
     pub style: StyleRefinement,
     pub tabular_nums: bool,
+    /// Runs with their own style; `None` draws `text` in `style` alone.
+    pub rich: Option<RichText>,
+    /// A link click opens the link with the system, besides reporting [`LinkClicked`]. Off
+    /// once the app handles the click itself ([`Text::on_link`]).
+    pub opens_links: bool,
 }
 
 pub struct Text {
     key: Key,
     props: TextProps,
+    handlers: Vec<(TypeId, Handler)>,
 }
 
 #[track_caller]
 pub fn text(text: impl Into<SharedString>) -> Text {
     Text {
         key: Key::Site(Location::caller()),
-        props: TextProps { text: text.into(), style: StyleRefinement::default(), tabular_nums: false },
+        props: TextProps {
+            text: text.into(),
+            style: StyleRefinement::default(),
+            tabular_nums: false,
+            rich: None,
+            opens_links: true,
+        },
+        handlers: Vec::new(),
     }
+}
+
+/// Text in runs of their own style: bold, italic, monospaced, underlined, struck through,
+/// links, mentions, token colours and sizes (see [`Span`]).
+///
+/// ```ignore
+/// rich_text([span("Shipped "), span("v2").bold(), span(" see "), span("notes").link(url)])
+/// ```
+#[track_caller]
+pub fn rich_text(spans: impl IntoIterator<Item = impl Into<Span>>) -> Text {
+    let rich = RichText::new(spans);
+    let mut el = text(rich.text().clone());
+    el.key = Key::Site(Location::caller());
+    el.props.rich = (!rich.is_plain()).then_some(rich);
+    el
 }
 
 impl Text {
@@ -547,6 +659,19 @@ impl Text {
     /// Tabular figures, so changing digits keep their width.
     pub fn tabular_nums(mut self) -> Self {
         self.props.tabular_nums = true;
+        self
+    }
+
+    /// Handles a click on a link run. The system no longer opens the link itself.
+    pub fn on_link(mut self, handler: impl Fn(&LinkClicked, &mut Window, &mut App) + 'static) -> Self {
+        self.props.opens_links = false;
+        let handler: Handler = Rc::new(move |event, window, cx| {
+            if let Some(event) = event.downcast_ref::<LinkClicked>() {
+                handler(event, window, cx);
+            }
+        });
+        self.handlers.retain(|(t, _)| *t != TypeId::of::<LinkClicked>());
+        self.handlers.push((TypeId::of::<LinkClicked>(), handler));
         self
     }
 }
@@ -568,8 +693,10 @@ impl IntoElement for Text {
             props: Rc::new(self.props),
             measured: true,
             children: Vec::new(),
-            handlers: Vec::new(),
+            handlers: self.handlers,
             dispatch: DispatchProps::default(),
+            motion: None,
+            paint: None,
         })
     }
 }
@@ -656,6 +783,8 @@ impl<P: AnyProps> IntoElement for NativeElement<P> {
             children: Vec::new(),
             handlers: self.handlers,
             dispatch: self.dispatch,
+            motion: None,
+            paint: None,
         })
     }
 }

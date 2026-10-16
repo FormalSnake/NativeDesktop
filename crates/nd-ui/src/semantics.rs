@@ -32,6 +32,10 @@ pub struct Probe {
     pub selected: Option<bool>,
     pub expanded: Option<bool>,
     pub placeholder: Option<String>,
+    /// The backend's own verdict on whether any of the node shows: false when an ancestor clips
+    /// it out (a row scrolled out of its list) or hides it (a collapsed pane). `None` leaves it
+    /// to the bounds.
+    pub visible: Option<bool>,
 }
 
 /// A window as the OS has it.

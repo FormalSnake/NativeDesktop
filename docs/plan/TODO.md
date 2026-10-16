@@ -107,3 +107,26 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 - [ ] M14 youtubemusic (after M7; daemon on `nd-ipc`)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
+
+## Port gaps (branch port-gaps)
+
+Compiles on macOS and Linux; tier 1 green, AppKit tier 2 in `nd-backend-appkit/tests/port_gaps.rs`
+(rich label runs, bubble fill roles, canvas layers, SVG data URL, hover, `focus_id`, video), gallery
+green, `clippy --workspace` clean on g815.
+- Rich text: `rich_text`/`span`, `label().rich`, `chat_bubble().rich`, link clicks.
+- Animation and hover: `.animate`, `.enter_from`, `.offset`, `.scale`, `.hover`, `.on_hover`,
+  reduce motion, `on_animation_end`. Scale is drawn unscaled on GPUI.
+- `FillRole` and `theme.fill(role)`, `text.accent/success/warning`; bubble `.role`.
+- `canvas`: GPUI quads and paths, AppKit shape and image layers.
+- SVG, `data:` URLs and tints in the image pipeline; image `.tint`.
+- Font override: `ThemeRefinement::font/mono_font`, `theme.toml` keys.
+- `window.focus(id)` and `App::focus_id`, both falling through to the first focusable descendant.
+- Automation: `Probe.visible`, semantic click on AppKit list rows.
+- `video()`: AVPlayerLayer on AppKit; GPUI draws the placeholder and reports `VideoFailed` (no
+  GStreamer or Media Foundation surface yet).
+- `nd new --nd-path` builds outside nd's tree: patch table without `--standalone`, nd's
+  `Cargo.lock`, `/usr/bin/clang` for Apple targets (gate_m1 generates into the temp dir).
+
+Open: a GPUI video surface; tier 2 for the font override and automation rows on AppKit; GPUI
+goldens (forms, media, nav) fail on g815; their re-record is
+also open on main (HANDOFF, `m2-windows-2`), so it was not done here.

@@ -1,6 +1,6 @@
 //! Media and content (M6): the image pipeline and `image()`, media transport (`seek_bar`,
 //! `player_bar`), synced lyrics, the sideways `shelf`, the chat `composer`, `chat_bubble`
-//! rows and `avatar`s.
+//! rows, `avatar`s and `video`.
 //!
 //! Every rule lives here, backend-neutral and tested on `TestBackend`; backends draw the kinds
 //! and turn input into the models' calls. Where the platform has the control (a text view, a
@@ -15,6 +15,7 @@ mod lyrics;
 pub mod pipeline;
 mod shelf;
 mod transport;
+mod video;
 
 pub use chat::{
     AVATAR_COLUMN, AVATAR_GROUP_SCALE, Avatar, AvatarKind, AvatarProps, BUBBLE, BubbleMetrics, BubbleSide, ChatBubble,
@@ -39,3 +40,4 @@ pub use transport::{
     NowPlaying, PlayerBar, SEEK, SeekBar, SeekBarKind, SeekBarProps, SeekMetrics, SeekModel, SeekPhase, Seeked,
     TransportCommand, TransportLayout, player_bar, seek_bar, volume_icon,
 };
+pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProps, VideoReady, video};

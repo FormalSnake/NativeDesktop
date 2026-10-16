@@ -8,6 +8,7 @@
 mod app_host;
 mod backend;
 mod button;
+mod canvas;
 mod controls;
 pub mod custom;
 mod diag;
@@ -26,6 +27,7 @@ mod media;
 mod overlay;
 mod palette;
 mod platform;
+mod rich;
 mod scaffold;
 mod scroll_view;
 mod services;

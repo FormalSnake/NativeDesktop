@@ -15,7 +15,7 @@
 
 mod choice;
 mod date;
-mod display;
+pub(crate) mod display;
 mod text;
 mod toggle;
 mod value;
@@ -58,6 +58,8 @@ pub(crate) trait FormControl {
     }
     /// The accent a theme override sets at this control.
     fn set_accent(&self, _accent: Option<Hsla>) {}
+    /// The family a theme override sets text in at this control; `None` is the system's.
+    fn set_font_family(&self, _family: Option<&str>) {}
     /// The view's appearance may have changed (a scheme flip, a forced appearance): colours the
     /// control resolved itself are resolved again.
     fn appearance_changed(&self) {}

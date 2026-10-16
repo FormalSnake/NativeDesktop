@@ -26,6 +26,8 @@ objc2-app-kit = "0.3.2"
 objc2-quartz-core = "0.3.2"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = "0.3.2"
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-quartz-core", "AVAnimation", "AVPlayer", "AVPlayerItem", "AVPlayerLayer"] }
+objc2-core-media = "0.3.2"
 objc2-web-kit = "0.3.2"
 block2 = "0.6.2"
 dispatch2 = "0.3.1"
@@ -64,6 +66,10 @@ harness = false
 # Tier 2: the media family (images, seek bar, lyrics, shelf, chat, the composer's field).
 [[test]]
 name = "media"
+harness = false
+
+[[test]]
+name = "port_gaps"
 harness = false
 
 # Tier 3: moves the real cursor. Its test is `gate_m0::real_resize_drag`, so only nextest's `real`

@@ -18,6 +18,9 @@
 //!   for the same key share one decode. A failure is remembered for [`RETRY_AFTER`].
 //! - Downloads land in `<cache dir>/images/<FNV-1a of the URL>` through a temp file and a
 //!   rename, so a crash never leaves half a file under the final name.
+//! - SVG renders with resvg at the box size (a vector scales up too); `data:` URLs (base64 or
+//!   percent-encoded) are bytes. A request with a tint fills every pixel with the tint's colour
+//!   and keeps the pixel's alpha, for monochrome icons in a token colour.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -108,9 +111,40 @@ impl fmt::Debug for ImageSource {
     }
 }
 
+/// The bytes a `data:` URL carries: base64 when it says so, else percent-encoded text.
+pub fn data_url_bytes(url: &str) -> Option<Vec<u8>> {
+    let (head, body) = url.strip_prefix("data:")?.split_once(',')?;
+    if head.ends_with(";base64") {
+        use base64::Engine;
+        let body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+        return base64::engine::general_purpose::STANDARD.decode(body).ok();
+    }
+    let bytes = body.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (bytes[i], bytes.get(i + 1).copied().and_then(hex), bytes.get(i + 2).copied().and_then(hex)) {
+            (b'%', Some(a), Some(b)) => {
+                out.push((a * 16 + b) as u8);
+                i += 3;
+            }
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
 impl From<&str> for ImageSource {
-    /// A string with a scheme is a URL, anything else a path.
+    /// A string with a scheme is a URL, a `data:` URL its bytes, anything else a path.
     fn from(s: &str) -> Self {
+        if s.starts_with("data:") {
+            let bytes = data_url_bytes(s).unwrap_or_default();
+            return ImageSource::bytes(format!("data:{:016x}", fnv1a(s)), bytes);
+        }
         if s.starts_with("https:") || s.starts_with("http:") {
             ImageSource::url(SharedString::from(s.to_owned()))
         } else {
@@ -149,6 +183,8 @@ pub struct DecodeRequest {
     pub width: u32,
     pub height: u32,
     pub fit: ImageFit,
+    /// Straight sRGB RGBA every pixel takes, keeping its own alpha times the tint's.
+    pub tint: Option<[u8; 4]>,
 }
 
 impl DecodeRequest {
@@ -158,7 +194,16 @@ impl DecodeRequest {
             let px = (v.max(0.) * scale.max(1.)).ceil() as u32;
             if px == 0 { 0 } else { px.div_ceil(EDGE_STEP) * EDGE_STEP }
         };
-        Self { source, width: step(width), height: step(height), fit }
+        Self { source, width: step(width), height: step(height), fit, tint: None }
+    }
+
+    /// The same request drawn in `tint` (a theme token).
+    pub fn tinted(mut self, tint: Option<nd_ui::prelude::Hsla>) -> Self {
+        self.tint = tint.map(|c| {
+            let c = c.to_rgb();
+            [c.r, c.g, c.b, c.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
+        });
+        self
     }
 }
 
@@ -590,11 +635,18 @@ fn disk_name(url: &str) -> String {
 }
 
 fn header_size_file(path: &Path) -> Option<(u32, u32)> {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+        return header_size_bytes(&std::fs::read(path).ok()?);
+    }
     let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
     oriented(reader.into_dimensions().ok()?, orientation_of_file(path))
 }
 
 fn header_size_bytes(bytes: &[u8]) -> Option<(u32, u32)> {
+    if is_svg(bytes) {
+        let size = svg_tree(bytes).ok()?.size();
+        return Some((size.width().ceil() as u32, size.height().ceil() as u32));
+    }
     let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
     oriented(reader.into_dimensions().ok()?, orientation_of_bytes(bytes))
 }
@@ -673,9 +725,81 @@ fn resize(image: RgbaImage, scale: f32) -> RgbaImage {
     image::imageops::resize(&image, nw, nh, filter)
 }
 
-/// Decodes `bytes` for `request`: animated GIF and WebP frame by frame, anything else as a
-/// still with its EXIF orientation applied.
+/// SVG text, possibly after a BOM, an XML declaration or comments.
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(1024)];
+    let text = String::from_utf8_lossy(head);
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    (text.starts_with("<svg") || text.starts_with("<?xml") || text.starts_with("<!--")) && text.contains("<svg")
+        || text.starts_with("<svg")
+}
+
+fn svg_tree(bytes: &[u8]) -> Result<resvg::usvg::Tree, String> {
+    resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default()).map_err(|e| e.to_string())
+}
+
+/// Renders an SVG to fill the request's box by its fit, at its own size for an open box.
+fn decode_svg(bytes: &[u8], request: &DecodeRequest) -> Result<Decoded, String> {
+    let tree = svg_tree(bytes)?;
+    let size = tree.size();
+    let (sw, sh) = (size.width(), size.height());
+    let scale = if request.width == 0 || request.height == 0 {
+        1.
+    } else {
+        let (sx, sy) = (request.width as f32 / sw, request.height as f32 / sh);
+        match request.fit {
+            ImageFit::Cover => sx.max(sy),
+            ImageFit::Contain => sx.min(sy),
+        }
+    };
+    let (w, h) = (((sw * scale).round() as u32).max(1), ((sh * scale).round() as u32).max(1));
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h).ok_or("svg too large to render")?;
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    // tiny-skia keeps premultiplied alpha; frames are straight.
+    let rgba: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    Ok(Decoded {
+        width: w,
+        height: h,
+        source_width: sw.ceil() as u32,
+        source_height: sh.ceil() as u32,
+        frames: vec![Frame { rgba: Arc::from(rgba), delay: Duration::ZERO }],
+    })
+}
+
+/// Every pixel in `tint`'s colour, its alpha scaled by the tint's.
+fn apply_tint(decoded: &mut Decoded, [r, g, b, a]: [u8; 4]) {
+    for frame in &mut decoded.frames {
+        let mut rgba = frame.rgba.to_vec();
+        for px in rgba.chunks_exact_mut(4) {
+            px[3] = ((u16::from(px[3]) * u16::from(a) + 127) / 255) as u8;
+            px[..3].copy_from_slice(&[r, g, b]);
+        }
+        frame.rgba = Arc::from(rgba);
+    }
+}
+
+/// Decodes `bytes` for `request`, in its tint when it has one.
 pub fn decode(bytes: &[u8], request: &DecodeRequest, animation_budget: usize) -> Result<Decoded, String> {
+    let mut decoded = decode_untinted(bytes, request, animation_budget)?;
+    if let Some(tint) = request.tint {
+        apply_tint(&mut decoded, tint);
+    }
+    Ok(decoded)
+}
+
+/// Animated GIF and WebP frame by frame, SVG rendered at the box size, anything else as a
+/// still with its EXIF orientation applied.
+fn decode_untinted(bytes: &[u8], request: &DecodeRequest, animation_budget: usize) -> Result<Decoded, String> {
+    if is_svg(bytes) {
+        return decode_svg(bytes, request);
+    }
     let format = image::guess_format(bytes).map_err(|e| e.to_string())?;
     let frames = match format {
         ImageFormat::Gif => {

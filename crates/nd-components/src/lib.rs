@@ -20,6 +20,7 @@ pub mod menu;
 pub mod overrides;
 pub mod palette;
 pub mod panes;
+pub mod rich;
 pub mod scaffold;
 pub mod services;
 pub mod source_list;
