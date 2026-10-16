@@ -63,6 +63,20 @@ impl TrafficLights {
         Some((2. * (f64::from(at.y) + height / 2.)).round() as f32)
     }
 
+    /// Hides the stock title and title bar material for a window whose lights are pinned and
+    /// that has no toolbar, shows them otherwise. Run again once a toolbar attaches, which can
+    /// come after the lights were placed. Returns whether the lights count as pinned.
+    pub fn sync_title(&self, window: &NSWindow) -> bool {
+        let pinned = self.at.get().is_some() && window.toolbar().is_none();
+        window.setTitleVisibility(if pinned {
+            NSWindowTitleVisibility::Hidden
+        } else {
+            NSWindowTitleVisibility::Visible
+        });
+        window.setTitlebarAppearsTransparent(pinned);
+        pinned
+    }
+
     /// From the window's `window_controls()` node. Pinned lights in a window without a toolbar
     /// mean the app draws its own title row, so the stock title and title bar material would
     /// sit beside the moved buttons. A toolbar keeps both: its title is the toolbar's.
@@ -70,13 +84,7 @@ impl TrafficLights {
         if self.at.replace(at) == at {
             return;
         }
-        let pinned = at.is_some() && window.toolbar().is_none();
-        window.setTitleVisibility(if pinned {
-            NSWindowTitleVisibility::Hidden
-        } else {
-            NSWindowTitleVisibility::Visible
-        });
-        window.setTitlebarAppearsTransparent(pinned);
+        let pinned = self.sync_title(window);
         if !pinned && let (Some(stock), Some(buttons)) = (self.stock.borrow().as_ref(), buttons(window)) {
             if let Some(container) = unsafe { buttons[0].superview().and_then(|s| s.superview()) } {
                 let mut frame = container.frame();

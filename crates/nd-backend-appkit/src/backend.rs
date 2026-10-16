@@ -648,6 +648,9 @@ impl State {
                         old.setToolbar(None);
                     }
                     toolbar.attach_to(&owner);
+                    if let Some(record) = self.windows.get(&to) {
+                        record.lights.sync_title(&owner);
+                    }
                     toolbar.dirty.set(true);
                 }
                 _ => {}
@@ -702,7 +705,9 @@ impl State {
             }
             // A toolbar anywhere in the tree is the window's toolbar.
             [Some(_), Some(Native::Toolbar(toolbar))] => {
-                toolbar.attach_to(&self.windows[&self.open.expect("in a transaction")].window);
+                let record = &self.windows[&self.open.expect("in a transaction")];
+                toolbar.attach_to(&record.window);
+                record.lights.sync_title(&record.window);
                 toolbar.dirty.set(true);
                 return;
             }
