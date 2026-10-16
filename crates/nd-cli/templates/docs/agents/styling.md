@@ -110,6 +110,12 @@ compositor offers it.
 glass().variant(GlassVariant::Clear).rounded_lg().p_3().child(text("Drafts sync when you are online."))
 ```
 
+Shape follows Apple's HIG: glass the size of a control (64 pt or less on its short side) is a
+capsule, or a circle when it is square, unless the app gives it a radius (HIG, Buttons: "In
+general, prefer circular or capsule-shape buttons"); larger glass is a surface and stays square
+unless rounded; a custom component in a bar keeps its corner radius concentric with the bar's
+(HIG, Toolbars). Round buttons are `Bezel::Circle`, the system's own glass circle on 26.
+
 `.tint(color)` takes a colour from the theme file, `glass_group()` merges nearby glass where the
 OS does that. Never fake glass with a translucent fill and a blur of your own: it does not pick
 up the wallpaper, the window's activity or the user's reduced-transparency setting.

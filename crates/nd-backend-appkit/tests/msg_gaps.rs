@@ -48,6 +48,7 @@ mod gaps {
         panel_fade(&rig, &mut c);
         reaction_fade(&rig, &mut c);
         titlebar(&rig, &mut c);
+        glass_shapes(&rig, &mut c);
         if c.0 == 0 {
             println!("ND_MSG_GAPS_OK");
             std::process::exit(0);
@@ -335,5 +336,35 @@ mod gaps {
         nd_backend_appkit::titlebar_room(&window, 100.);
         c.check(room(&window) == 62., &format!("titlebar: a taller one grows the same accessory ({})", room(&window)));
         window.close();
+    }
+
+    struct Glasses;
+
+    impl Render for Glasses {
+        fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .p(px(12.))
+                .gap(px(8.))
+                .child(nd_components::glass().id("pill").w(px(120.)).h(px(36.)))
+                .child(nd_components::glass().id("dot").w(px(36.)).h(px(36.)))
+                .child(nd_components::glass().id("panel").w(px(200.)).h(px(200.)))
+        }
+    }
+
+    /// The HIG's shapes for Liquid Glass: a control-sized element is a capsule or a circle, a
+    /// large surface square unless the app rounds it.
+    fn glass_shapes(rig: &Rig, c: &mut Checks) {
+        let glass = nd_backend_appkit::objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some();
+        if !glass {
+            return;
+        }
+        let opened = rig.open("glass", |_| Glasses);
+        let win = opened.id();
+        rig.pump();
+        let radius = |id: &str| -> f64 { unsafe { nd_backend_appkit::objc2::msg_send![&*rig.view(win, id), cornerRadius] } };
+        c.check(radius("pill") == 18., &format!("glass: a control-sized one is a capsule ({})", radius("pill")));
+        c.check(radius("dot") == 18., &format!("glass: a square one is a circle ({})", radius("dot")));
+        c.check(radius("panel") == 0., &format!("glass: a large surface stays square ({})", radius("panel")));
+        rig.close(opened);
     }
 }

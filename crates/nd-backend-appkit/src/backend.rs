@@ -1594,6 +1594,10 @@ impl Backend for AppKitBackend {
                 overlay.set_size(frame);
                 return;
             }
+            Some(Native::Glass(glass)) => {
+                glass.set_frame(ns_rect(frame));
+                return;
+            }
             _ => {}
         }
         let Some(view) = state.view(node) else { return };
