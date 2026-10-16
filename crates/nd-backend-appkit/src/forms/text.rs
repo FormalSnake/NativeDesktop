@@ -30,11 +30,12 @@ use objc2_app_kit::{
     NSAccessibility, NSActionCell, NSAppearanceCustomization, NSApplication, NSAttributedStringNSExtendedStringDrawing,
     NSAttributedStringNSStringDrawing, NSBitmapImageFileType, NSBitmapImageRep, NSBorderType, NSButton, NSCell,
     NSCellImagePosition, NSColor, NSComboBox, NSComboBoxDelegate, NSControl, NSControlSize,
-    NSControlTextEditingDelegate, NSEventModifierFlags, NSFocusRingType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSPasteboard, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeTIFF, NSResponder,
-    NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell, NSSearchFieldDelegate, NSSecureTextField,
-    NSSecureTextFieldCell, NSStandardKeyBindingResponding, NSText, NSTextDelegate, NSTextField, NSTextFieldBezelStyle,
-    NSTextFieldCell, NSTextFieldDelegate, NSTextView, NSTextViewDelegate, NSView,
+    NSControlTextEditingDelegate, NSEventModifierFlags, NSFocusRingType, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSPasteboard, NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
+    NSPasteboardTypeTIFF, NSResponder, NSScrollView, NSScroller, NSSearchField, NSSearchFieldCell,
+    NSSearchFieldDelegate, NSSecureTextField, NSSecureTextFieldCell, NSStandardKeyBindingResponding, NSText,
+    NSTextDelegate, NSTextField, NSTextFieldBezelStyle, NSTextFieldCell, NSTextFieldDelegate, NSTextView,
+    NSTextViewDelegate, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSAttributedString, NSDictionary, NSNotification, NSObject, NSObjectProtocol, NSPoint,
