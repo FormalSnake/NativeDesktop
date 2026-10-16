@@ -12,9 +12,12 @@ pub struct NewArgs {
     /// Reverse-DNS app id. Defaults to `com.example.<name>`.
     #[arg(long)]
     pub id: Option<String>,
-    /// Depend on a local checkout of the `nd` crate instead of crates.io.
+    /// Depend on a local checkout of the `nd` crate instead of this CLI's release tag.
     #[arg(long, env = "ND_PATH")]
     pub nd_path: Option<PathBuf>,
+    /// The git repository nd and its GPUI fork come from, for a mirror or a fork.
+    #[arg(long, env = "ND_GIT", default_value = REPO)]
+    pub nd_git: String,
     /// Add an empty `[workspace]` so the app builds on its own even inside another workspace.
     #[arg(long)]
     pub standalone: bool,
@@ -47,6 +50,47 @@ const FILES: &[(&str, &str)] = &[
     ("docs/agents/donts.md", include_str!("../templates/docs/agents/donts.md")),
 ];
 
+/// Where releases are tagged. nd depends on a patched GPUI, so it is not on crates.io.
+pub const REPO: &str = "https://github.com/FormalSnake/NativeDesktop";
+
+/// nd's workspace manifest and lockfile at the commit this CLI was built from.
+const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
+const WORKSPACE_LOCK: &str = include_str!("../../../Cargo.lock");
+
+/// The release tag of this CLI, which `nd new` depends on.
+pub fn release_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The packages nd's workspace patches with its vendored GPUI fork, read off the block
+/// `scripts/gpui-fork vendor` writes.
+pub fn gpui_patch_crates() -> Vec<&'static str> {
+    let block = WORKSPACE_MANIFEST.split("# gpui-fork: begin").nth(1).unwrap_or_default();
+    let block = block.split("# gpui-fork: end").next().unwrap_or_default();
+    block
+        .lines()
+        .filter(|line| line.contains("path = \"crates/nd-gpui/vendor/"))
+        .filter_map(|line| line.split_once(" = ").map(|(name, _)| name.trim()))
+        .collect()
+}
+
+/// Where the app gets nd from.
+enum Source<'a> {
+    Path(String),
+    Git { url: &'a str, tag: String },
+}
+
+impl Source<'_> {
+    /// The inside of a dependency table naming this source.
+    fn table(&self) -> String {
+        match self {
+            // A TOML literal string, so Windows backslashes stay as written.
+            Source::Path(path) => format!("path = '{path}'"),
+            Source::Git { url, tag } => format!("git = \"{url}\", tag = \"{tag}\""),
+        }
+    }
+}
+
 const RESERVED: &[&str] = &["nd", "test", "std", "core", "alloc", "proc_macro", "self", "crate", "super"];
 
 pub fn run(args: NewArgs) -> Result<()> {
@@ -55,7 +99,11 @@ pub fn run(args: NewArgs) -> Result<()> {
     if root.exists() && root.read_dir().with_context(|| format!("reading {}", root.display()))?.next().is_some() {
         bail!("{} exists and is not empty", root.display());
     }
-    let vars = Vars::new(&name, args.id.as_deref(), args.nd_path.as_deref(), args.standalone)?;
+    let source = match args.nd_path.as_deref() {
+        Some(path) => Source::Path(plain_path(path)?),
+        None => Source::Git { url: &args.nd_git, tag: release_tag() },
+    };
+    let vars = Vars::new(&name, args.id.as_deref(), &source, args.standalone);
     for (path, template) in FILES {
         let target = root.join(path);
         if let Some(parent) = target.parent() {
@@ -63,11 +111,14 @@ pub fn run(args: NewArgs) -> Result<()> {
         }
         std::fs::write(&target, vars.render(template)).with_context(|| format!("writing {}", target.display()))?;
     }
-    if let Some(lock) = args.nd_path.as_deref().and_then(workspace_lock) {
-        // A fresh resolve takes the newest releases, some yanked or broken since nd pinned them;
-        // starting from nd's lockfile resolves the app to the versions nd is built and tested with.
-        std::fs::copy(&lock, root.join("Cargo.lock")).with_context(|| format!("copying {}", lock.display()))?;
+    // A fresh resolve takes the newest releases, some yanked or broken since nd pinned them;
+    // starting from nd's lockfile resolves the app to the versions nd is built and tested with.
+    let lock_path = root.join("Cargo.lock");
+    match args.nd_path.as_deref().and_then(workspace_lock) {
+        Some(lock) => std::fs::copy(&lock, &lock_path).map(drop),
+        None => std::fs::write(&lock_path, WORKSPACE_LOCK),
     }
+    .with_context(|| format!("writing {}", lock_path.display()))?;
     println!("created {} at {}", name, root.display());
     println!("next: cd {} && nd check && nd test", root.display());
     Ok(())
@@ -101,29 +152,38 @@ fn workspace_lock(nd_path: &Path) -> Option<PathBuf> {
     nd.ancestors().skip(1).map(|dir| dir.join("Cargo.lock")).find(|lock| lock.is_file())
 }
 
-/// The root tables: `[workspace]` for a standalone project, and nd's GPUI patch queue for a path
-/// dependency on nd, which cargo only reads from the root manifest and which an app outside nd's
-/// own workspace needs, since cargo resolves the unpatched crates.io releases without it.
-fn root_tables(standalone: bool, nd_path: Option<&Path>) -> Result<String> {
+/// `path` canonicalized, without the verbatim `\\?\` prefix canonicalize gives on Windows, which
+/// build scripts mishandle.
+fn plain_path(path: &Path) -> Result<String> {
+    let path = std::fs::canonicalize(path).with_context(|| format!("--nd-path {}", path.display()))?;
+    let path = path.display().to_string();
+    Ok(path.strip_prefix(r"\\?\").unwrap_or(&path).to_string())
+}
+
+/// The root tables: `[workspace]` for a standalone project, and nd's GPUI patch queue, which
+/// cargo only reads from the root manifest and which an app outside nd's own workspace needs,
+/// since cargo resolves the unpatched crates.io releases without it.
+fn root_tables(standalone: bool, source: &Source) -> String {
     let mut out = String::new();
     if standalone {
         out.push_str("\n[workspace]\n");
     }
-    if let Some(nd) = nd_path {
-        let nd = std::fs::canonicalize(nd).with_context(|| format!("--nd-path {}", nd.display()))?;
-        let vendor = nd.parent().unwrap_or(&nd).join("nd-gpui/vendor");
-        out.push_str("\n# nd's GPUI patch queue.\n[patch.crates-io]\n");
-        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
-            let path = vendor.join(krate).display().to_string();
-            let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
-            out.push_str(&format!("{krate} = {{ path = '{path}' }}\n"));
-        }
+    out.push_str("\n# nd's GPUI patch queue.\n[patch.crates-io]\n");
+    for krate in gpui_patch_crates() {
+        let table = match source {
+            Source::Path(nd) => {
+                let vendor = Path::new(nd).parent().unwrap_or(Path::new(nd)).join("nd-gpui/vendor").join(krate);
+                Source::Path(vendor.display().to_string()).table()
+            }
+            Source::Git { .. } => source.table(),
+        };
+        out.push_str(&format!("{krate} = {{ {table} }}\n"));
     }
-    Ok(out)
+    out
 }
 
 impl Vars {
-    fn new(name: &str, id: Option<&str>, nd_path: Option<&Path>, standalone: bool) -> Result<Self> {
+    fn new(name: &str, id: Option<&str>, source: &Source, standalone: bool) -> Self {
         let krate = name.replace('-', "_");
         let title = name
             .split(['-', '_'])
@@ -134,38 +194,20 @@ impl Vars {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        let (nd_dep, nd_dev_dep, nd_build_dep) = match nd_path {
-            Some(path) => {
-                let path = std::fs::canonicalize(path).with_context(|| format!("--nd-path {}", path.display()))?;
-                // A TOML literal string, so Windows backslashes stay as written; canonicalize's
-                // verbatim `\\?\` prefix goes, since build scripts mishandle it.
-                let path = path.display().to_string();
-                let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
-                (
-                    format!("{{ path = '{path}' }}"),
-                    format!("{{ path = '{path}', features = [\"test\", \"audit\"] }}"),
-                    format!("{{ path = '{path}', default-features = false, features = [\"build\"] }}"),
-                )
-            }
-            None => (
-                "\"0.1\"".to_string(),
-                "{ version = \"0.1\", features = [\"test\", \"audit\"] }".to_string(),
-                "{ version = \"0.1\", default-features = false, features = [\"build\"] }".to_string(),
-            ),
-        };
-        Ok(Self {
+        let nd = source.table();
+        Self {
             pairs: vec![
                 ("{{name}}", name.to_string()),
                 ("{{crate}}", krate.clone()),
                 ("{{title}}", title),
                 ("{{id}}", id.map_or_else(|| format!("com.example.{krate}"), str::to_string)),
                 ("{{env}}", krate.to_ascii_uppercase()),
-                ("{{nd_dep}}", nd_dep),
-                ("{{nd_dev_dep}}", nd_dev_dep),
-                ("{{nd_build_dep}}", nd_build_dep),
-                ("{{workspace}}", root_tables(standalone, nd_path)?),
+                ("{{nd_dep}}", format!("{{ {nd} }}")),
+                ("{{nd_dev_dep}}", format!("{{ {nd}, features = [\"test\", \"audit\"] }}")),
+                ("{{nd_build_dep}}", format!("{{ {nd}, default-features = false, features = [\"build\"] }}")),
+                ("{{workspace}}", root_tables(standalone, source)),
             ],
-        })
+        }
     }
 
     fn render(&self, template: &str) -> String {
@@ -188,14 +230,35 @@ mod tests {
     }
 
     #[test]
-    fn a_path_project_names_the_gpui_patches_standalone_or_not() {
-        let nd = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd");
+    fn the_patch_block_names_every_vendored_gpui_crate_standalone_or_not() {
+        let crates = gpui_patch_crates();
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-pre-wgpu", "gpui-pre-windows", "gpui-pre-apple"] {
+            assert!(crates.contains(&krate), "{krate} in {crates:?}");
+        }
+        let nd = plain_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd")).unwrap();
+        let git = Source::Git { url: REPO, tag: "v1.2.3".into() };
         for standalone in [true, false] {
-            let table = root_tables(standalone, Some(&nd)).unwrap();
+            let table = root_tables(standalone, &Source::Path(nd.clone()));
             assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
             assert_eq!(table.contains("[workspace]"), standalone, "{table}");
+            let table = root_tables(standalone, &git);
+            let line = format!("gpui-pre-windows = {{ git = \"{REPO}\", tag = \"v1.2.3\" }}\n");
+            assert!(table.contains(&line), "{table}");
+            assert_eq!(table.matches("git = ").count(), crates.len(), "{table}");
         }
-        assert_eq!(root_tables(false, None).unwrap(), "");
+    }
+
+    #[test]
+    fn a_release_project_depends_on_this_clis_tag_and_carries_nds_lockfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("my-app");
+        run(NewArgs { name: root.clone(), id: None, nd_path: None, nd_git: REPO.into(), standalone: false }).unwrap();
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+        assert!(manifest.contains(&format!("nd = {{ git = \"{REPO}\", tag = \"{tag}\" }}\n")), "{manifest}");
+        assert!(!manifest.contains("path = "), "{manifest}");
+        let lock = std::fs::read_to_string(root.join("Cargo.lock")).unwrap();
+        assert!(lock.contains("name = \"nd-ui\""), "the lockfile is nd's workspace's");
     }
 
     #[test]
@@ -213,14 +276,14 @@ mod tests {
         let vendor = nd.parent().unwrap().join("nd-gpui/vendor");
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("my-app");
-        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), standalone: true }).unwrap();
+        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), nd_git: REPO.into(), standalone: true }).unwrap();
         let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
         let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("nd's lockfile is copied");
         assert!(lock.contains("name = \"nd-ui\""), "the lockfile is nd's workspace's");
         let (_, patch) = manifest.split_once("[patch.crates-io]\n").expect("[patch.crates-io] is present");
-        assert_eq!(patch.lines().filter(|l| l.contains("path = ")).count(), 6, "{patch}");
-        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
+        assert_eq!(patch.lines().filter(|l| l.contains("path = ")).count(), gpui_patch_crates().len(), "{patch}");
+        for krate in gpui_patch_crates() {
             let line = format!("{krate} = {{ path = '{}' }}", vendor.join(krate).display());
             assert!(patch.contains(&line), "{line} missing from\n{patch}");
             assert!(vendor.join(krate).join("Cargo.toml").exists(), "{krate} exists in the vendor dir");
@@ -229,7 +292,7 @@ mod tests {
 
     #[test]
     fn every_placeholder_is_filled() {
-        let vars = Vars::new("my-app", None, None, true).unwrap();
+        let vars = Vars::new("my-app", None, &Source::Git { url: REPO, tag: release_tag() }, true);
         for (path, template) in FILES {
             let out = vars.render(template);
             assert!(!out.contains("{{"), "{path} has an unfilled placeholder");
@@ -240,7 +303,7 @@ mod tests {
 
     #[test]
     fn agent_docs_are_written() {
-        let vars = Vars::new("my-app", None, None, true).unwrap();
+        let vars = Vars::new("my-app", None, &Source::Git { url: REPO, tag: release_tag() }, true);
         let wanted = ["CLAUDE.md", "patterns", "widgets", "testing", "styling", "performance", "donts"];
         for name in wanted {
             let path = if name == "CLAUDE.md" { name.to_string() } else { format!("docs/agents/{name}.md") };

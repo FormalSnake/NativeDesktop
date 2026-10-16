@@ -3,47 +3,60 @@ title = "Getting started"
 description = "Install the nd CLI, create an app, run it on the desktop and in a browser, and run its tests."
 +++
 
-This page takes you from a clone of the repository to a running, tested app.
+This page takes you from installing the `nd` CLI to a running, tested app.
 
 <!-- docs:example hello -->
 
 ## Install
 
-You need a Rust toolchain, `cargo-nextest` (`nd test` runs through it) and, because the terminal
-widget builds `libghostty-vt`, Zig 0.16. The repository's dev shell has all of it:
-
-```sh
-nix develop
-```
-
-With direnv, the checked-in `.envrc` (`use flake`) does that on `cd`. Without Nix, install
-[rustup](https://rustup.rs); `rust-toolchain.toml` pins 1.95.0 with the `wasm32-unknown-unknown`
-target and rustup fetches both on the first `cargo` call. Then:
+Releases are git tags on [github.com/FormalSnake/NativeDesktop](https://github.com/FormalSnake/NativeDesktop),
+not crates.io: nd builds on a patched GPUI, and crates.io takes no git or patched dependencies.
+You need [rustup](https://rustup.rs), git, and `cargo-nextest` (`nd test` runs through it). The
+terminal widget (`nd::terminal`) also needs Zig 0.16 on `PATH`. Then install the CLI from the
+release tag. It installs a binary named `nd`:
 
 ```sh
 cargo install cargo-nextest --locked
+cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.0 --locked nd-cli
 ```
 
-Build the CLI from the repository. It installs a binary named `nd`:
+`--locked` builds with the versions nd was tested with; without it cargo takes the newest
+releases, some of which have been yanked since. On macOS, install Xcode or the Command Line Tools
+first (`xcode-select --install`): the AppKit backend links Swift. In a clone of the repository,
+`nix develop` gives you all of it, and `cargo install --path crates/nd-cli` installs the CLI from
+the checkout.
 
-```sh
-cargo install --path crates/nd-cli
+### Windows
+
+In PowerShell:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install --id Rustlang.Rustup
+winget install --id Git.Git
 ```
 
-To skip the install, run it in place with `cargo run -p nd-cli -- <args>`; every `nd` command on
-this page works that way.
+The first line installs the MSVC compiler, linker and Windows SDK that the
+`x86_64-pc-windows-msvc` toolchain links with. Open a new terminal so `cargo` and `git` are on
+`PATH`, then run the two `cargo install` lines above. `nd package windows` also needs the .NET
+SDK (`winget install --id Microsoft.DotNet.SDK.8`), which it uses to fetch Velopack's `vpk`.
+
+Keep the build directory short and on a disk with room: a first build of an app takes about 5 GB.
+If `C:` is tight, set `CARGO_TARGET_DIR` to a folder on another drive.
 
 ## Create an app
 
 ```sh
-nd new demo --nd-path /path/to/nativedesktop
+nd new demo
 ```
 
-The crates are not on crates.io yet (`publish = false`), so the project has to point at your
-checkout. `--nd-path` does that, and so does the `ND_PATH` environment variable. Add
-`--standalone` when the new directory sits inside another Cargo workspace. The name must start
+The project depends on nd by the CLI's own release tag (`tag = "v0.6.0"` for CLI 0.6.0), and its
+`[patch.crates-io]` block points the GPUI crates at the fork vendored in the same tag. `nd new`
+also writes nd's `Cargo.lock`, so the first build resolves to the versions nd was released with.
+Add `--standalone` when the new directory sits inside another Cargo workspace. The name must start
 with a lowercase letter and may contain lowercase letters, digits, `-` and `_`. `--id` sets the
-reverse-DNS app id; it defaults to `com.example.demo`.
+reverse-DNS app id; it defaults to `com.example.demo`. To work against a local checkout of nd
+instead, pass `--nd-path /path/to/nativedesktop/crates/nd` (or set `ND_PATH`).
 
 `nd new` writes these files and refuses a directory that is not empty:
 
@@ -67,9 +80,9 @@ cd demo
 just dev
 ```
 
-`just dev` is `cargo run`. On macOS the window is AppKit. On Linux it is the GPUI backend. Windows
-code exists but has not been run, so treat a Windows build as untested. On a target with no
-backend, `run` returns `no platform backend is linked for this target`.
+`just dev` is `cargo run`. On macOS the window is AppKit. On Linux and Windows it is the GPUI
+backend. On a target with no backend, `run` returns `no platform backend is linked for this
+target`.
 
 ## Check and test
 
@@ -83,6 +96,17 @@ nd test
 `--no-audit` skips the audit and `--target web` adds the web lints. `nd test` runs tiers 1 and 2
 through nextest with no window server. `nd test --tier real` runs tier 3, which opens real windows
 one at a time. The [testing page](tooling/testing.md) covers the tiers.
+
+## Keep nd up to date
+
+```sh
+nd upgrade
+```
+
+moves the `nd` dependencies and the GPUI patch block to the newest release tag, updates
+`Cargo.lock` and prints the [changelog](https://github.com/FormalSnake/NativeDesktop/blob/main/CHANGELOG.md)
+entries between the two versions. `--to v0.6.1` picks a tag. Install the matching CLI with the
+same `cargo install --git ... --tag <tag> --locked nd-cli` line.
 
 ## Run it in a browser
 
