@@ -193,6 +193,8 @@ const GESTURE_SUBTYPE: u32 = 110;
 const GESTURE_SUBTYPE_MAGNIFY: i64 = 8;
 const GESTURE_MAGNIFICATION: u32 = 113;
 const GESTURE_PHASE: u32 = 132;
+/// The scroll event field behind `isDirectionInvertedFromDevice`; undocumented like the above.
+const SCROLL_DIRECTION_INVERTED: u32 = 137;
 
 /// One trackpad pinch event at `at`: `amount` is the magnification delta (0.1 zooms in 10%).
 pub fn magnify_event(at: (f64, f64), amount: f64, phase: GesturePhase) -> Option<CFRetained<CGEvent>> {
@@ -205,14 +207,19 @@ pub fn magnify_event(at: (f64, f64), amount: f64, phase: GesturePhase) -> Option
     Some(event)
 }
 
-/// One continuous (trackpad) scroll event at `at`, in pixels, with its finger phase. Positive
-/// `dx` is the fingers moving right under natural scrolling.
+/// One continuous (trackpad) scroll event at `at`, in pixels, with its finger phase, as a trackpad
+/// with natural scrolling (the macOS default) sends it: positive `dx` is the fingers moving right,
+/// so a table row slides right and shows its leading actions. AppKit offers no row actions on the
+/// first gesture after launch; a later one gets them.
 pub fn scroll_event(at: (f64, f64), dx: i32, dy: i32, phase: GesturePhase) -> Option<CFRetained<CGEvent>> {
     let event = CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 2, dy, dx, 0)?;
     CGEvent::set_location(Some(&event), CGPoint { x: at.0, y: at.1 });
     CGEvent::set_flags(Some(&event), CGEventFlags::empty());
     CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventIsContinuous, 1);
     CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventScrollPhase, phase.value());
+    // `NSEvent.isDirectionInvertedFromDevice`, which AppKit reads to tell which way the fingers
+    // went; a posted event leaves it off, and a row then swipes the wrong way.
+    CGEvent::set_integer_value_field(Some(&event), CGEventField(SCROLL_DIRECTION_INVERTED), 1);
     Some(event)
 }
 
@@ -232,7 +239,7 @@ pub fn pinch(at: (f64, f64), amount: f64, steps: u32) {
 }
 
 /// A two-finger horizontal swipe at `at` through the HID tap: `steps` scroll events of `dx`
-/// pixels each between a began and an ended phase.
+/// pixels each between a began and an ended phase. Signs as in [`scroll_event`].
 pub fn two_finger_swipe(at: (f64, f64), dx: i32, steps: u32) {
     move_to(at);
     std::thread::sleep(Duration::from_millis(100));
