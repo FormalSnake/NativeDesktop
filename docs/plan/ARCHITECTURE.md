@@ -1042,7 +1042,8 @@ unchanged; app code has no `cfg`.
   it comes from. Examples live in the repo's `examples/` directory and are compiled for every target in CI, so docs code cannot rot; page
   snippets are extracted from those files by anchor comments, never pasted.
 - `nd-docs` generates static HTML from Markdown, styled from `nd-theme` tokens. Built in CI and
-  hosted on Cloudflare Pages. Every page also ships as raw Markdown and in `llms.txt`.
+  hosted as Cloudflare Workers static assets at https://nativedesktop.formalsnake.dev, with the
+  docs app under `/app/`. Every page also ships as raw Markdown and in `llms.txt`.
 - Each example embed has four tabs next to its source. Web: the live canvas (section 12, plain
   GPUI look). macOS, Linux, Windows: screenshots, plus short frame recordings where motion matters,
   captured by the test harness on the real OS (macbook, g815 Hyprland, Windows PC) and labelled

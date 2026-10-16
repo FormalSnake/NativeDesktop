@@ -45,6 +45,11 @@ line above.
 - Don't use `unwrap`, `expect`, `dbg!`, `todo!` or `println!` outside tests. Return errors, or
   report them with `nd::report_issue(..)`. (clippy, denied by `nd check`)
 
+## Dependencies
+
+- Don't edit the `nd` git tag or the `[patch.crates-io]` GPUI block in `Cargo.toml` by hand.
+  `nd upgrade` moves both together; a mismatch builds two GPUIs or fails to resolve.
+
 ## Testing and debugging
 
 - Don't reproduce a bug before reading `nd diagnose --last`.

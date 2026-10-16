@@ -19,6 +19,12 @@ nd check --release        # also fails on README placeholders; run before a rele
 nd package mac            # .app, .pkg and .dmg (linux: AppImage, windows: Setup.exe)
 ```
 
+Upgrading nd: `nd upgrade` (or `nd upgrade --to vX.Y.Z`) moves the `nd` tag and the GPUI patch
+block together and prints the changelog entries in between. Never edit them by hand. Then
+reinstall the CLI from the same tag (`cargo install --git
+https://github.com/FormalSnake/NativeDesktop --tag vX.Y.Z --locked nd-cli`) and run `nd check` and
+`nd test`.
+
 ## Framework rules
 
 `nd check` enforces most of these; the finding names the rule. Details and examples live in
