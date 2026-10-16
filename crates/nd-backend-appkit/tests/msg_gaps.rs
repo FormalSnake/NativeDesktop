@@ -439,6 +439,12 @@ mod gaps {
                 window.titleVisibility() == NSWindowTitleVisibility::Visible && window.title().to_string().is_empty(),
                 "under toolbar: a hidden title stays in the toolbar with no text",
             );
+            use nd_backend_appkit::objc2_app_kit::NSAccessibility;
+            let name = window.accessibilityTitle().map(|t| t.to_string());
+            c.check(
+                name.as_deref() == Some("transcript"),
+                &format!("under toolbar: the window keeps its name ({name:?})"),
+            );
         }
         let toolbar = window.toolbar().expect("toolbar");
         c.check(

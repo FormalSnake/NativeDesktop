@@ -362,6 +362,8 @@ pub(crate) struct ToolbarNative {
     pub dirty: Cell<bool>,
     /// The window it is attached to, so a later title change reaches it.
     window: std::cell::RefCell<Option<objc2::rc::Weak<NSWindow>>>,
+    /// The window's own title while the toolbar shows it blank (`hide_title` on macOS 26).
+    name: std::cell::RefCell<String>,
 }
 
 impl ToolbarNative {
@@ -377,6 +379,7 @@ impl ToolbarNative {
             children: Vec::new(),
             dirty: Cell::new(true),
             window: std::cell::RefCell::new(None),
+            name: std::cell::RefCell::new(String::new()),
         };
         this.apply_display();
         this
@@ -403,6 +406,7 @@ impl ToolbarNative {
             && let Some(title) = &self.props.title
             && let Some(window) = self.window.borrow().as_ref().and_then(|w| w.load())
         {
+            *self.name.borrow_mut() = title.to_string();
             window.setTitle(&NSString::from_str(title));
         }
         if let Some(window) = self.window.borrow().as_ref().and_then(|w| w.load()) {
@@ -413,11 +417,24 @@ impl ToolbarNative {
     fn apply_title_visibility(&self, window: &NSWindow) {
         // On macOS 26 a hidden title also turns off the scroll edge effect of the content under
         // the toolbar once the window has a sidebar, so the title stays in the toolbar with no
-        // text. The window menu then lists the window without a name.
+        // text. The Window menu and accessibility still get the window's name.
         if self.props.hide_title && crate::glass::has_liquid_glass() {
+            let current = window.title().to_string();
+            if !current.is_empty() {
+                *self.name.borrow_mut() = current;
+            }
+            let name = NSString::from_str(&self.name.borrow());
             window.setTitle(&NSString::from_str(""));
             window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Visible);
+            if let Some(mtm) = MainThreadMarker::new() {
+                objc2_app_kit::NSApplication::sharedApplication(mtm)
+                    .changeWindowsItem_title_filename(window, &name, false);
+            }
+            objc2_app_kit::NSAccessibility::setAccessibilityTitle(window, Some(&name));
             return;
+        }
+        if window.title().is_empty() && !self.name.borrow().is_empty() {
+            window.setTitle(&NSString::from_str(&self.name.borrow()));
         }
         window.setTitleVisibility(if self.props.hide_title {
             objc2_app_kit::NSWindowTitleVisibility::Hidden
@@ -432,11 +449,11 @@ impl ToolbarNative {
             window.setToolbarStyle(NSWindowToolbarStyle::Unified);
         }
         window.setToolbar(Some(&self.toolbar));
-        self.apply_title_visibility(window);
         *self.window.borrow_mut() = Some(objc2::rc::Weak::new(window));
         if let Some(title) = &self.props.title {
             window.setTitle(&NSString::from_str(title));
         }
+        self.apply_title_visibility(window);
     }
 
     /// Re-lists the toolbar's items: `entries` in order, the sidebar tracking separator after
