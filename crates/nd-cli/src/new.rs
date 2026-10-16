@@ -181,6 +181,24 @@ mod tests {
     }
 
     #[test]
+    fn nd_path_generates_a_cargo_patch_block_pointing_at_the_vendor_dir() {
+        let nd = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd")).unwrap();
+        let vendor = nd.parent().unwrap().join("nd-gpui/vendor");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("my-app");
+        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), standalone: true }).unwrap();
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
+        let (_, patch) = manifest.split_once("[patch.crates-io]\n").expect("[patch.crates-io] is present");
+        assert_eq!(patch.lines().filter(|l| l.contains("path = ")).count(), 6, "{patch}");
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
+            let line = format!("{krate} = {{ path = \"{}\" }}", vendor.join(krate).display());
+            assert!(patch.contains(&line), "{line} missing from\n{patch}");
+            assert!(vendor.join(krate).join("Cargo.toml").exists(), "{krate} exists in the vendor dir");
+        }
+    }
+
+    #[test]
     fn every_placeholder_is_filled() {
         let vars = Vars::new("my-app", None, None, true).unwrap();
         for (path, template) in FILES {
