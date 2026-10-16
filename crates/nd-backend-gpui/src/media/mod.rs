@@ -15,7 +15,8 @@ mod video;
 use std::any::TypeId;
 
 use nd_components::{
-    AvatarKind, ChatBubbleKind, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind, VideoKind,
+    AvatarKind, ChatBubbleKind, IconKind, IconProps, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind,
+    VideoKind,
 };
 use nd_core::NodeId;
 use nd_core::time::Instant;
@@ -66,6 +67,13 @@ impl Build<'_> {
             chat::avatar(self, id, props.downcast_ref()?, &marks, window, cx)
         } else if is::<VideoKind>(kind) {
             video::video(self, id, props.downcast_ref()?, &marks, window, cx)
+        } else if is::<IconKind>(kind) {
+            let props: &IconProps = props.downcast_ref()?;
+            let color = props.style.text.color.unwrap_or(self.theme().text.secondary);
+            let size = gpui::px(props.size);
+            let stroke = gpui::px((props.size / 24. * nd_icons::STROKE).max(1.));
+            use gpui::IntoElement as _;
+            crate::forms::glyph::glyph(crate::forms::glyph::Glyph::of(props.icon), size, color, stroke).into_any_element()
         } else {
             return None;
         };

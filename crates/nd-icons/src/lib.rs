@@ -88,6 +88,7 @@ macro_rules! icons {
 icons! {
     Archive "archive" ["archivebox"] '\u{E7B8}';
     ArrowUp "arrow-up" ["arrow.up"] '\u{E74A}';
+    BellOff "bell-off" ["bell.slash"] '\u{E7ED}';
     Calendar "calendar" ["calendar"] '\u{E787}';
     Check "check" ["checkmark"] '\u{E73E}';
     ChevronDown "chevron-down" ["chevron.down"] '\u{E70D}';
@@ -103,6 +104,7 @@ icons! {
     Download "download" ["arrow.down.circle"] '\u{E896}';
     Eye "eye" ["eye"] '\u{E890}';
     EyeOff "eye-off" ["eye.slash"] '\u{ED1A}';
+    File "file" ["doc"] '\u{E7C3}';
     FileText "file-text" ["doc.text"] '\u{E8A5}';
     Folder "folder" ["folder"] '\u{E8B7}';
     Globe "globe" ["globe"] '\u{E774}';
@@ -114,6 +116,7 @@ icons! {
     Mail "mail" ["envelope"] '\u{E715}';
     MapPin "map-pin" ["mappin"] '\u{E81D}';
     Minus "minus" ["minus"] '\u{E738}';
+    Moon "moon" ["moon.fill"] '\u{E708}';
     Music "music" ["music.note"] '\u{E8D6}';
     Notebook "notebook" ["book.closed"] '\u{E70B}';
     PanelLeft "panel-left" ["sidebar.left"] '\u{E90C}';
@@ -123,6 +126,7 @@ icons! {
     Pin "pin" ["pin"] '\u{E718}';
     Play "play" ["play.fill"] '\u{E768}';
     Plus "plus" ["plus"] '\u{E710}';
+    Reply "reply" ["arrowshape.turn.up.left"] '\u{E97A}';
     RotateCw "rotate-cw" ["arrow.clockwise"] '\u{E72C}';
     Search "search" ["magnifyingglass"] '\u{E721}';
     Settings "settings" ["gearshape"] '\u{E713}';
@@ -135,6 +139,7 @@ icons! {
     Trash "trash" ["trash"] '\u{E74D}';
     TriangleAlert "triangle-alert" ["exclamationmark.triangle"] '\u{E7BA}';
     User "user" ["person"] '\u{E77B}';
+    Video "video" ["video.fill"] '\u{E714}';
     Volume "volume" ["speaker.fill"] '\u{E767}';
     Volume1 "volume-1" ["speaker.wave.1.fill"] '\u{E993}';
     Volume2 "volume-2" ["speaker.wave.3.fill"] '\u{E995}';

@@ -1,6 +1,7 @@
 # Lucide names vendored by scripts/vendor-lucide. Every Icon variant needs one.
 archive
 arrow-up
+bell-off
 calendar
 check
 chevron-down
@@ -16,6 +17,7 @@ code
 download
 eye
 eye-off
+file
 file-text
 folder
 globe
@@ -27,6 +29,7 @@ lock
 mail
 map-pin
 minus
+moon
 music
 notebook
 panel-left
@@ -36,6 +39,7 @@ pause
 pin
 play
 plus
+reply
 rotate-cw
 search
 settings
@@ -48,6 +52,7 @@ star
 trash
 triangle-alert
 user
+video
 volume
 volume-1
 volume-2
