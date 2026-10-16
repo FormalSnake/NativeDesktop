@@ -17,11 +17,12 @@ use crate::{Cookie, FindOptions, JsError, JsValue, UserScript};
 /// Which engine renders a page.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Engine {
-    /// The OS engine: WKWebView on macOS, WebView2 on Windows, WPE WebKit on Linux.
+    /// The OS engine: WKWebView on macOS, WebView2 on Windows. Linux has no OS engine that
+    /// embeds in a GPUI window on Wayland, so there it is Chromium ([`Engine::Cef`]).
     #[default]
     System,
-    /// Chromium through CEF, off-screen and composited into the window (`nd-cef`, opt in with
-    /// `[webview] engine = "cef"` and nd's `cef` feature).
+    /// Chromium through CEF, off-screen and drawn in the window (`nd-cef`). On macOS an opt in
+    /// (`[webview] engine = "cef"` and nd's `cef` feature); on Linux the only engine.
     Cef,
 }
 
@@ -32,6 +33,12 @@ impl Engine {
             "cef" | "chromium" => Some(Self::Cef),
             _ => None,
         }
+    }
+
+    /// The engine that renders a page asked to use this one: [`Engine::System`] is Chromium on
+    /// Linux.
+    pub fn resolved(self) -> Self {
+        if cfg!(target_os = "linux") { Self::Cef } else { self }
     }
 
     pub fn name(self) -> &'static str {
@@ -81,6 +88,17 @@ pub trait EngineView {
     /// The view the backend frames and places; macOS.
     #[cfg(target_os = "macos")]
     fn ns_view(&self) -> objc2::rc::Retained<objc2_app_kit::NSView>;
+
+    /// The element that shows the page in a GPUI window, for engines that draw off-screen.
+    /// `None`: this engine cannot draw there, and the node says so instead.
+    #[cfg(any(not(target_os = "macos"), feature = "gpui"))]
+    fn element(
+        &self,
+        _cx: &nd_backend_gpui::custom::CustomCx<'_>,
+        _window: &mut nd_gpui::gpui::Window,
+    ) -> Option<nd_gpui::gpui::AnyElement> {
+        None
+    }
 
     /// Props changed (`old` is `None` on mount).
     fn apply(&self, props: &WebViewProps, old: Option<&WebViewProps>);

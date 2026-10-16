@@ -24,7 +24,7 @@ use nd_components::{AboutPanel, Alert, ContextMenu, Menu, MenuItem, OpenDialog, 
 use nd_core::{NodeId, Point, WindowId};
 use nd_gpui::gpui::{
     self, Anchor, AnyElement, Bounds, DispatchPhase, ElementId, HitboxBehavior, InteractiveElement, IntoElement,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement, Styled, anchored, canvas, deferred, div, fill, hsla, point, px,
 };
 use nd_ui::{DismissCause, Dismissed, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
@@ -49,8 +49,26 @@ pub(crate) struct MenuOverlay {
     /// The node that asked for it, which its paints are recorded under.
     pub node: NodeId,
     pub at: Point,
-    pub items: Vec<MenuItem>,
+    pub content: MenuContent,
 }
+
+pub(crate) enum MenuContent {
+    /// The app's menu: a chosen item dispatches its action from the focused node.
+    Actions(Vec<MenuItem>),
+    /// A presenter's menu ([`GpuiBackend::show_menu`]): the choice goes to its callback.
+    Rows(Vec<MenuRow>, Option<MenuResponse>),
+}
+
+/// One row of a menu a presenter shows with [`GpuiBackend::show_menu`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuRow {
+    Item { label: SharedString, enabled: bool, checked: bool },
+    Separator,
+}
+
+/// Told the index of the row picked in a menu shown with [`GpuiBackend::show_menu`], or `None`
+/// when it closed without a pick.
+pub type MenuResponse = Box<dyn FnOnce(Option<usize>)>;
 
 impl Build<'_> {
     pub(crate) fn overlay_depth(&self, id: NodeId) -> usize {
@@ -231,36 +249,67 @@ impl Build<'_> {
             .shadow_md()
             .occlude()
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation());
-        for (i, item) in menu.items.iter().enumerate() {
-            list = list.child(match item {
-                MenuItem::Separator => {
-                    marks.fill("menu separator", theme.separator, &[surface]);
-                    div().h(px(1.)).my(px(4.)).bg(theme.separator).into_any_element()
+        // A column for check marks, only in menus that have a checked row.
+        let marked = match &menu.content {
+            MenuContent::Actions(items) => items.iter().any(|i| matches!(i, MenuItem::Action { checked: true, .. })),
+            MenuContent::Rows(rows, _) => rows.iter().any(|r| matches!(r, MenuRow::Item { checked: true, .. })),
+        };
+        let row = |i: usize, label: &SharedString, enabled: bool, checked: bool, choose: Rc<dyn Fn(&mut gpui::App)>| {
+            let mut row = div().id(ElementId::Integer(i as u64)).px(px(12.)).py(px(4.));
+            if marked {
+                row = row.flex().child(div().w(px(16.)).child(if checked { "\u{2713}" } else { "" }));
+            }
+            let mut row = row.child(label.clone());
+            if enabled {
+                marks.text(label, theme.text.primary, &[surface], body, regular);
+                let hover = theme.hover(surface);
+                row = row.hover(move |s| s.bg(hover)).on_click(move |_, _, cx| choose(cx));
+            } else {
+                marks.text(label, theme.text.tertiary, &[surface], body, regular);
+                row = row.text_color(theme.text.tertiary);
+            }
+            row.into_any_element()
+        };
+        let separator = || {
+            marks.fill("menu separator", theme.separator, &[surface]);
+            div().h(px(1.)).my(px(4.)).bg(theme.separator).into_any_element()
+        };
+        match &menu.content {
+            MenuContent::Actions(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    list = list.child(match item {
+                        MenuItem::Separator => separator(),
+                        MenuItem::Action { label, action, enabled, checked, .. } => {
+                            let (backend, wake, action) = (self.backend.clone(), self.wake.clone(), action.boxed_clone());
+                            let choose = Rc::new(move |cx: &mut gpui::App| {
+                                backend.choose(window_id, action.boxed_clone());
+                                wake(cx);
+                            });
+                            row(i, label, *enabled, *checked, choose)
+                        }
+                        MenuItem::Submenu(sub) => {
+                            marks.text(&sub.title, theme.text.primary, &[surface], body, regular);
+                            div().px(px(12.)).py(px(4.)).child(format!("{} \u{203a}", sub.title)).into_any_element()
+                        }
+                        MenuItem::Role(_) => div().into_any_element(),
+                    });
                 }
-                MenuItem::Action { label, action, enabled, .. } => {
-                    let backend = self.backend.clone();
-                    let wake = self.wake.clone();
-                    let action = action.boxed_clone();
-                    let mut row = div().id(ElementId::Integer(i as u64)).px(px(12.)).py(px(4.)).child(label.clone());
-                    if *enabled {
-                        marks.text(label, theme.text.primary, &[surface], body, regular);
-                        let hover = theme.hover(surface);
-                        row = row.hover(move |s| s.bg(hover)).on_click(move |_, _, cx| {
-                            backend.choose(window_id, action.boxed_clone());
-                            wake(cx);
-                        });
-                    } else {
-                        marks.text(label, theme.text.tertiary, &[surface], body, regular);
-                        row = row.text_color(theme.text.tertiary);
-                    }
-                    row.into_any_element()
+            }
+            MenuContent::Rows(rows, _) => {
+                for (i, item) in rows.iter().enumerate() {
+                    list = list.child(match item {
+                        MenuRow::Separator => separator(),
+                        MenuRow::Item { label, enabled, checked } => {
+                            let (backend, wake) = (self.backend.clone(), self.wake.clone());
+                            let choose = Rc::new(move |cx: &mut gpui::App| {
+                                backend.respond(window_id, Some(i));
+                                wake(cx);
+                            });
+                            row(i, label, *enabled, *checked, choose)
+                        }
+                    });
                 }
-                MenuItem::Submenu(sub) => {
-                    marks.text(&sub.title, theme.text.primary, &[surface], body, regular);
-                    div().px(px(12.)).py(px(4.)).child(format!("{} \u{203a}", sub.title)).into_any_element()
-                }
-                MenuItem::Role(_) => div().into_any_element(),
-            });
+            }
         }
         self.record_marks(menu.node, marks.take());
         let backend = self.backend.clone();
@@ -288,6 +337,15 @@ impl Build<'_> {
     }
 }
 
+impl MenuOverlay {
+    /// The menu closed without a pick: a presenter's callback hears `None`.
+    fn dismissed(self) {
+        if let MenuContent::Rows(_, Some(respond)) = self.content {
+            respond(None);
+        }
+    }
+}
+
 impl GpuiBackend {
     /// Closes the window's context menu and queues `action` for its focused node.
     pub(crate) fn choose(&self, window: WindowId, action: Box<dyn gpui::Action>) {
@@ -298,12 +356,51 @@ impl GpuiBackend {
     }
 
     pub(crate) fn close_menu(&self, window: WindowId) -> bool {
-        let mut state = self.state.borrow_mut();
-        let closed = state.menus.remove(&window).is_some();
-        if closed {
-            state.dirty.insert(window);
+        let closed = {
+            let mut state = self.state.borrow_mut();
+            let closed = state.menus.remove(&window);
+            if closed.is_some() {
+                state.dirty.insert(window);
+            }
+            closed
+        };
+        match closed {
+            Some(menu) => {
+                menu.dismissed();
+                true
+            }
+            None => false,
         }
-        closed
+    }
+
+    /// Closes the window's presenter menu and tells its callback what was picked.
+    fn respond(&self, window: WindowId, row: Option<usize>) {
+        let menu = {
+            let mut state = self.state.borrow_mut();
+            state.dirty.insert(window);
+            state.menus.remove(&window)
+        };
+        if let Some(MenuOverlay { content: MenuContent::Rows(_, Some(respond)), .. }) = menu {
+            respond(row);
+        }
+    }
+
+    /// Pops a menu of `rows` up over `node` at `at` (the node's coordinates) in `window`, drawn
+    /// like the app's context menus, and hands `respond` the picked row, or `None` once it closes
+    /// without a pick (Esc, a press outside, another menu). For presenters with menus of their
+    /// own: a web engine's context menu.
+    pub fn show_menu(&self, window: WindowId, node: NodeId, at: Point, rows: Vec<MenuRow>, respond: MenuResponse) {
+        let origin = self.bounds(node).map_or(Point::default(), |b| b.origin);
+        let content = MenuContent::Rows(rows, Some(respond));
+        let replaced = {
+            let mut state = self.state.borrow_mut();
+            state.dirty.insert(window);
+            state.menus.insert(window, MenuOverlay { node, at: Point { x: origin.x + at.x, y: origin.y + at.y }, content })
+        };
+        if let Some(old) = replaced {
+            old.dismissed();
+        }
+        self.wake();
     }
 
     /// Whether the window shows a context menu, for tests and Esc.
@@ -354,11 +451,15 @@ impl ChromeServices for GpuiChrome {
         menu: ContextMenu,
     ) {
         let origin = self.0.bounds(node).map_or(Point::default(), |b| b.origin);
-        let mut state = self.0.state.borrow_mut();
-        state
-            .menus
-            .insert(window, MenuOverlay { node, at: Point { x: origin.x + x, y: origin.y + y }, items: menu.items });
-        state.dirty.insert(window);
+        let at = Point { x: origin.x + x, y: origin.y + y };
+        let replaced = {
+            let mut state = self.0.state.borrow_mut();
+            state.dirty.insert(window);
+            state.menus.insert(window, MenuOverlay { node, at, content: MenuContent::Actions(menu.items) })
+        };
+        if let Some(old) = replaced {
+            old.dismissed();
+        }
     }
 
     fn alert(&self, _cx: &mut nd_ui::App, window: WindowId, alert: Alert, done: AlertCallback) {

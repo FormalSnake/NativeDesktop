@@ -29,11 +29,7 @@ wrap_app! {
         fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
             let browser = process_type.is_none_or(|t| t.to_string().is_empty());
             if let (true, Some(line)) = (browser, command_line) {
-                // An unsigned dev build would otherwise ask for the login keychain on every
-                // launch (Chromium's cookie encryption key).
-                if super::bundle_contents().is_none() || std::env::var_os("ND_CEF_MOCK_KEYCHAIN").is_some() {
-                    line.append_switch(Some(&CefString::from("use-mock-keychain")));
-                }
+                crate::platform::command_line(line);
             }
         }
 
@@ -244,6 +240,7 @@ wrap_render_handler! {
             }
         }
 
+        #[cfg(target_os = "macos")]
         fn on_accelerated_paint(
             &self,
             _browser: Option<&mut Browser>,
@@ -254,8 +251,28 @@ wrap_render_handler! {
             if let Some(info) = info {
                 let popup = type_ == PaintElementType::POPUP;
                 let surface = info.shared_texture_io_surface;
-                with(self.id, |p| p.paint(popup, surface));
+                with(self.id, |p| p.view.present(popup, surface));
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        fn on_paint(
+            &self,
+            _browser: Option<&mut Browser>,
+            type_: PaintElementType,
+            _dirty_rects: Option<&[Rect]>,
+            buffer: *const u8,
+            width: c_int,
+            height: c_int,
+        ) {
+            let (Ok(width), Ok(height)) = (usize::try_from(width), usize::try_from(height)) else { return };
+            if buffer.is_null() || width == 0 || height == 0 {
+                return;
+            }
+            // SAFETY: CEF hands a BGRA buffer of `width * height` pixels, valid for the call.
+            let pixels = unsafe { std::slice::from_raw_parts(buffer, width * height * 4) };
+            let popup = type_ == PaintElementType::POPUP;
+            with(self.id, |p| p.view.present(popup, pixels, width, height));
         }
 
         fn start_dragging(
@@ -437,6 +454,7 @@ wrap_display_handler! {
             with(self.id, |p| p.page.report_progress(progress));
         }
 
+        #[cfg(target_os = "macos")]
         fn on_cursor_change(
             &self,
             _browser: Option<&mut Browser>,
@@ -445,6 +463,18 @@ wrap_display_handler! {
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> c_int {
             with(self.id, |p| p.view.set_cursor(cursor.cast()));
+            1
+        }
+
+        #[cfg(target_os = "linux")]
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cursor: std::os::raw::c_ulong,
+            type_: CursorType,
+            _custom_cursor_info: Option<&CursorInfo>,
+        ) -> c_int {
+            with(self.id, |p| p.view.set_cursor(type_));
             1
         }
     }
@@ -717,7 +747,9 @@ wrap_keyboard_handler! {
 
     impl KeyboardHandler {
         /// Keys the page did not handle go back to AppKit, so the main menu's key equivalents
-        /// (an app's accelerators) still run when a page has the keyboard.
+        /// (an app's accelerators) still run when a page has the keyboard. On Linux the app's
+        /// bindings see every key before the page does.
+        #[cfg(target_os = "macos")]
         fn on_key_event(&self, _browser: Option<&mut Browser>, event: Option<&KeyEvent>, os_event: *mut u8) -> c_int {
             let Some(event) = event else { return 0 };
             let down = event.type_ == KeyEventType::RAWKEYDOWN || event.type_ == KeyEventType::KEYDOWN;

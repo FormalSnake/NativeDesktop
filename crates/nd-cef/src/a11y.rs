@@ -1,8 +1,10 @@
 //! The page's accessibility tree, mirrored from Chromium's serialized updates
-//! (`on_accessibility_tree_change`) so the view can expose it to VoiceOver and automation as
-//! `NSAccessibilityElement` children. Covered: roles, names, values and frames of the nodes,
-//! and their nesting; actions and live-region notifications are not.
+//! (`on_accessibility_tree_change`) so the view can expose it to the platform (on macOS,
+//! VoiceOver and automation through `NSAccessibilityElement` children). Covered: roles, names,
+//! values and frames of the nodes, and their nesting; actions and live-region notifications are
+//! not.
 
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 
 use cef::*;
@@ -37,6 +39,7 @@ fn dict_json(d: &DictionaryValue) -> Json {
     Json::Object(map)
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Node {
     pub role: String,
@@ -48,17 +51,20 @@ pub(crate) struct Node {
     pub children: Vec<i64>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Debug, Default)]
 pub(crate) struct Tree {
     pub nodes: HashMap<i64, Node>,
     pub root: Option<i64>,
 }
 
+#[cfg(target_os = "macos")]
 fn bounds(b: &Json) -> (f64, f64, f64, f64) {
     let n = |k: &str| b[k].as_f64().unwrap_or(0.);
     (n("x"), n("y"), n("width"), n("height"))
 }
 
+#[cfg(target_os = "macos")]
 impl Tree {
     pub(crate) fn apply(&mut self, change: &Json) {
         for update in change["updates"].as_array().into_iter().flatten() {
@@ -122,6 +128,7 @@ impl Tree {
 
 /// The AppKit role for a Chromium role; `None` for nodes that only carry text runs of their
 /// parent and are left out.
+#[cfg(target_os = "macos")]
 pub(crate) fn ns_role(role: &str) -> Option<&'static str> {
     Some(match role {
         "inlineTextBox" | "none" | "ignored" => return None,
@@ -144,7 +151,7 @@ pub(crate) fn ns_role(role: &str) -> Option<&'static str> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -166,6 +173,7 @@ mod tests {
         assert!(!tree.nodes.contains_key(&2));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn roles_map_to_appkit() {
         assert_eq!(ns_role("link"), Some("AXLink"));

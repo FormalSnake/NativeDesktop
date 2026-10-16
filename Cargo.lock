@@ -4652,8 +4652,13 @@ dependencies = [
  "cef",
  "cef-dll-sys",
  "dispatch2",
+ "futures",
+ "image",
  "nd-backend-appkit",
+ "nd-backend-gpui",
+ "nd-components",
  "nd-core",
+ "nd-gpui",
  "nd-ui",
  "nd-webview",
  "objc2 0.6.5",
@@ -4866,6 +4871,7 @@ name = "nd-os-linux"
 version = "0.1.0"
 dependencies = [
  "nd-backend-gpui",
+ "nd-cef",
  "nd-core",
  "nd-gpui",
  "nd-test",

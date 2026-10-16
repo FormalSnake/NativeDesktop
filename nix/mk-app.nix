@@ -11,10 +11,16 @@
 # checks (clippy, nextest, fmt) exist on Linux; macOS apps are packaged by `nd package mac`, which
 # needs Xcode and cannot run in the Nix sandbox. The home-manager module and its evaluation check
 # exist everywhere.
+#
+# An app whose `nd` dependency has the `webview` feature carries Chromium (nd-cef) on Linux: the
+# build gets the CEF distribution from the store (`nix/cef.nix`) instead of downloading it, and
+# the package keeps `libcef.so` and its resources beside the real executable in
+# `libexec/<pname>`, where the executable's `$ORIGIN` run path finds them.
 {
   crane,
   mkDevShell,
   runtimeLibs,
+  cefLibs,
 }:
 {
   nixpkgs,
@@ -33,6 +39,11 @@
   buildInputs ? (_: [ ]),
   # Settings the module check must render, and the lines it must contain.
   moduleCheck ? null,
+  # Whether the app shows web views, so its Linux package carries Chromium. Read from the `nd`
+  # dependency's features in the app's Cargo.toml.
+  webview ? builtins.elem "webview" (
+    ((builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"))).dependencies.nd or { }).features or [ ]
+  ),
 }:
 let
   lib = nixpkgs.lib;
@@ -54,12 +65,26 @@ let
         root = src;
         inherit fileset;
       };
+      cef = import ./cef.nix { inherit pkgs; };
+      web = webview && pkgs.stdenv.hostPlatform.isLinux;
       common = {
         inherit pname;
         src = cleanSrc;
         strictDeps = true;
-        nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ] ++ nativeBuildInputs pkgs;
-        buildInputs = runtimeLibs pkgs ++ buildInputs pkgs;
+        nativeBuildInputs =
+          [
+            pkgs.pkg-config
+            pkgs.makeWrapper
+          ]
+          ++ lib.optionals web [
+            pkgs.cmake
+            pkgs.ninja
+          ]
+          ++ nativeBuildInputs pkgs;
+        buildInputs = runtimeLibs pkgs ++ lib.optionals web (cefLibs pkgs) ++ buildInputs pkgs;
+      }
+      // lib.optionalAttrs web {
+        CEF_PATH = cef;
       };
       cargoArtifacts = craneLib.buildDepsOnly common;
       args = common // {
@@ -70,10 +95,20 @@ let
         // {
           doCheck = false;
           meta.mainProgram = pname;
-          # GPUI loads these with dlopen; the binary does not link them.
-          postInstall = ''
-            wrapProgram $out/bin/${pname} --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs)}
-          '';
+          # GPUI loads these with dlopen; the binary does not link them. Chromium's runtime is
+          # copied rather than linked: nd-cef finds its resources beside the libcef.so it loaded.
+          postInstall =
+            lib.optionalString web ''
+              mkdir -p $out/libexec/${pname}
+              mv $out/bin/${pname} $out/libexec/${pname}/
+              cp -rL ${cef}/. $out/libexec/${pname}/
+              rm -rf $out/libexec/${pname}/{include,libcef_dll,cmake,CMakeLists.txt,archive.json}
+              makeWrapper $out/libexec/${pname}/${pname} $out/bin/${pname} \
+                --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs)}
+            ''
+            + lib.optionalString (!web) ''
+              wrapProgram $out/bin/${pname} --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs)}
+            '';
         }
       );
     in

@@ -16,8 +16,7 @@ pub(crate) const SYSTEM_ENGINE_MISSING: &str = "WKWebView failed to load";
 pub(crate) const SYSTEM_ENGINE_MISSING: &str =
     "web views on Windows need the WebView2 engine, which nd does not implement yet (M8 Windows lane)";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) const SYSTEM_ENGINE_MISSING: &str =
-    "web views on Linux need the WPE WebKit engine, which nd does not implement yet (M8 Linux lane)";
+pub(crate) const SYSTEM_ENGINE_MISSING: &str = "Linux has no system web engine; pages render with Chromium (nd-cef)";
 
 /// Registers the presenters with the backends this build links. `webview()` calls it.
 pub(crate) fn register_presenters() {
@@ -50,8 +49,8 @@ pub(crate) fn defer(f: Box<dyn FnOnce(&mut App)>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn defer(_f: Box<dyn FnOnce(&mut App)>) {
-    // No engine runs here yet, so no command ever completes.
+pub(crate) fn defer(f: Box<dyn FnOnce(&mut App)>) {
+    gpui::defer(f);
 }
 
 #[cfg(target_os = "macos")]
@@ -60,4 +59,6 @@ pub(crate) fn after(delay: Duration, f: impl FnOnce() + 'static) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn after(_delay: Duration, _f: impl FnOnce() + 'static) {}
+pub(crate) fn after(delay: Duration, f: impl FnOnce() + 'static) {
+    gpui::after(delay, f);
+}

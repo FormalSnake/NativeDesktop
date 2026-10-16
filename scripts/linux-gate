@@ -35,7 +35,8 @@ remote() {
 
 # Wraps a command in the dev shell with the lane's target and the quiet settings. Every lane shares
 # g815's small root disk: one run at a time (the flock queues the rest), and no incremental cache,
-# which was a third of the target. The lock fd is closed for the command (`flock -o`) so a leaked
+# which was a third of the target. The CEF distribution nd-cef builds against stays outside the
+# targets, so an eviction does not download it again. The lock fd is closed for the command (`flock -o`) so a leaked
 # child, such as a nested compositor, cannot hold the lock after the run.
 in_shell() {
   local evict body
@@ -48,7 +49,7 @@ while gb=\$(du -s --block-size=1G \"$targets\" | cut -f1); [ \"\$gb\" -gt $cap ]
 done
 echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / | tail -1"
   body="$evict
-nice -n 19 ionice -c3 nix develop \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 nice -n 19 ionice -c3 bash -c $(printf %q "$1")"
+nice -n 19 ionice -c3 nix develop \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"\$HOME/.cache/nd-build/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")"
   printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && flock -o ~/.cache/nd-build/build.lock bash -c %q' "$dir" "$body"
 }
 

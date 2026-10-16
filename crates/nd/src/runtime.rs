@@ -134,6 +134,8 @@ fn install_webview(manifest: &Manifest) {
     }
     #[cfg(feature = "cef")]
     nd_cef::register(manifest.name);
+    #[cfg(all(target_os = "linux", feature = "webview", not(feature = "cef")))]
+    nd_os_linux::cef::register(manifest.name);
 }
 
 /// Release notes of the update this launch is the result of, until [`mark_whats_new_seen`].
