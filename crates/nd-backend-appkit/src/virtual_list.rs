@@ -507,7 +507,7 @@ impl TableNative {
         };
         table.setUsesAutomaticRowHeights(false);
         table.setIntercellSpacing(objc2_foundation::NSSize::new(0., 0.));
-        table.setStyle(NSTableViewStyle::FullWidth);
+        table.setStyle(if props.inset { NSTableViewStyle::SourceList } else { NSTableViewStyle::FullWidth });
         table.setAllowsEmptySelection(true);
         table.setColumnAutoresizingStyle(match props.kind {
             ListKind::Table(_) => NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle,
