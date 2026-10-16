@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use nd_components::rich::text_color;
 use nd_gpui::gpui::{
-    self, AnyElement, App, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, IntoElement,
-    ParentElement, Pixels, SharedString, StrikethroughStyle, Styled, StyledText, UnderlineStyle, div, px,
+    self, AnyElement, App, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement, InteractiveText,
+    IntoElement, ParentElement, Pixels, SharedString, StrikethroughStyle, Styled, StyledText, UnderlineStyle, div, px,
 };
 use nd_theme::Theme;
 use nd_ui::{RichText, SpanStyle};

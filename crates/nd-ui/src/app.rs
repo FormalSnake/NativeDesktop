@@ -577,14 +577,15 @@ impl App {
         self.with_dispatch(window, false, |tree, _| tree.focus(node))
     }
 
-    /// Moves the window's focus to the element given `.id(id)`. False when none is mounted or it
-    /// is not focusable. Inside an action listener the tree is out, so the request waits for it.
+    /// Moves the window's focus to the element given `.id(id)`, or to its first focusable
+    /// descendant when it is not focusable itself. False when none is mounted or nothing there
+    /// takes focus. Inside an action listener the tree is out, so the request waits for it.
     pub fn focus_id(&mut self, window: WindowId, id: &str) -> bool {
         if self.windows.get(&window).is_some_and(|w| w.tree.is_none()) {
             self.deferred_focus.push((window, id.to_owned()));
             return true;
         }
-        let node = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.node_with_id(id));
+        let node = self.windows.get(&window).and_then(|w| w.tree.as_ref()).and_then(|t| t.focus_target(id));
         node.is_some_and(|node| self.focus(window, node))
     }
 

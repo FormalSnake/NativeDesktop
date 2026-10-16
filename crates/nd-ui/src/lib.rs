@@ -41,7 +41,7 @@ pub use nd_gesture::{
 };
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
-pub use canvas::{Canvas, CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, Painter, canvas};
+pub use canvas::{Canvas, CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, Painter, PathStep, canvas};
 pub use animation::{Animation, AnimationEnded, Curve, Pose, Transform};
 pub use rich_text::{LinkClicked, RichText, Span, SpanStyle, TextColor, span};
 pub use overlay::{

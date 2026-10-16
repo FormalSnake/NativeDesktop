@@ -9,8 +9,8 @@ use std::rc::Rc;
 use nd_components::{DecodeRequest, ImageFit, ImageSource};
 use nd_core::NodeId;
 use nd_gpui::gpui::{
-    self, AnyElement, App, Bounds, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point, StyleRefinement,
-    Styled, Window, div, fill, point, px, quad, size, transparent_black,
+    self, AnyElement, App, Bounds, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point, Refineable,
+    StyleRefinement, Styled, Window, div, fill, point, px, quad, size, transparent_black,
 };
 use nd_ui::{CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, PathStep};
 

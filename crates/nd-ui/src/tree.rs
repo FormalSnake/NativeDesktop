@@ -243,11 +243,6 @@ fn root_style(size: Size) -> taffy::Style {
 }
 
 impl Tree {
-    /// The node mounted for the element given `.id(id)`.
-    pub(crate) fn node_with_id(&self, id: &str) -> Option<NodeId> {
-        self.nodes.iter().find(|(_, n)| matches!(&n.ident.key, Key::Id(k) if k.as_ref() == id)).map(|(n, _)| *n)
-    }
-
     pub(crate) fn new(
         window: WindowId,
         root: NodeId,
@@ -325,7 +320,7 @@ impl Tree {
 
     /// The node `window.focus(id)` lands on: the first node keyed `id` in tree order that is
     /// focusable or has a focusable descendant, which is then the one focused.
-    fn focus_target(&self, id: &str) -> Option<NodeId> {
+    pub(crate) fn focus_target(&self, id: &str) -> Option<NodeId> {
         fn first_focusable(tree: &Tree, node: NodeId) -> Option<NodeId> {
             if tree.dispatch.is_focusable(node) {
                 return Some(node);
