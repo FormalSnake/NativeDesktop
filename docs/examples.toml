@@ -13,7 +13,6 @@ web = true
 name = "notes"
 title = "Notes"
 summary = "A multi-file app: source list sidebar, toolbar, a virtual list of notes, an editor, the command palette, gestures and settings."
-features = ["m6"]
 web_reason = "Notes keeps its notes on disk and opens a single-instance socket."
 env = { NOTES_DEMO = "1" }
 

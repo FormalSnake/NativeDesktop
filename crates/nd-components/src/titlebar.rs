@@ -53,6 +53,7 @@ pub fn titlebar() -> Titlebar {
 }
 
 impl Titlebar {
+    /// Replaces the window's title, which the row shows when nothing else sits leading.
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = Some(title.into());
         self
@@ -84,6 +85,10 @@ impl Styled for Titlebar {
 
 impl FluentBuilder for Titlebar {}
 
+fn title_text(title: SharedString) -> AnyElement {
+    text(title).font_weight(FontWeight::SEMIBOLD).into_any_element()
+}
+
 fn inset(edge: InsetEdge, controls_in_row: bool) -> AnyElement {
     let key = Key::Id(if edge == InsetEdge::Leading { "nd-inset-leading" } else { "nd-inset-trailing" }.into());
     NativeElement::new::<TitlebarInset>(key, TitlebarInsetProps { edge, controls_in_row })
@@ -96,11 +101,17 @@ impl IntoElement for Titlebar {
         let embedded = self.controls.as_ref().is_some_and(|c| c.props().embedded);
         let style = self.root.style().clone();
         self.root.props_mut().style = style;
+        // A row with nothing leading shows the window's title there, as the OS title bar would.
+        let title = match self.title {
+            Some(title) => Some(title_text(title)),
+            None if self.leading.is_empty() => Some(deferred(|window, _| title_text(window.title().clone()))),
+            None => None,
+        };
         self.root
             .child(inset(InsetEdge::Leading, embedded))
             .children(self.controls)
             .children(self.leading)
-            .children(self.title.map(|t| text(t).font_weight(FontWeight::SEMIBOLD)))
+            .children(title)
             .child(div().flex_1())
             .children(self.trailing)
             .child(inset(InsetEdge::Trailing, embedded))

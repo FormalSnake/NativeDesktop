@@ -1,5 +1,7 @@
 //! The socket server end to end, with a `TestApp` on its own thread standing in for the main
-//! thread: framing, the executor hop, host-side `waitFor` and error codes.
+//! thread: framing, the executor hop, host-side `waitFor` and error codes. Unix sockets; the
+//! Windows named pipe is driven by the tier 3 tests through `nd-test`.
+#![cfg(unix)]
 
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;

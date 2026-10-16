@@ -14,7 +14,7 @@ default = ["runtime"]
 # optional and comes in with `runtime`. Off macOS the GPUI backend arrives through the OS crate
 # (`nd-os-linux`, `nd-os-windows`, `nd-os-web` re-export it); on macOS only `gpui` brings it, so
 # AppKit apps never link `gpui_macos`. One dependency key cannot be optional per target.
-runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-update", "dep:nd-system", "dep:futures-channel", "dep:nd-os-linux", "dep:nd-os-windows", "dep:nd-os-web", "dep:serde", "dep:serde_json"]
+runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-icons", "dep:nd-settings", "dep:nd-update", "dep:nd-system", "dep:futures-channel", "dep:nd-os-linux", "dep:nd-os-windows", "dep:nd-os-web", "dep:serde", "dep:serde_json"]
 build = ["dep:toml"]
 # `settings_form::<T>()` over nd-settings' schema.
 settings-ui = ["runtime", "nd-components/settings"]
@@ -45,6 +45,8 @@ nd-macros = { workspace = true, optional = true }
 nd-automation = { workspace = true, optional = true, features = ["server"] }
 nd-theme = { workspace = true, optional = true }
 nd-components = { workspace = true, optional = true }
+nd-icons = { workspace = true, optional = true }
+nd-settings = { workspace = true, optional = true }
 nd-virtual = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
 nd-update = { workspace = true, optional = true, features = ["client"] }

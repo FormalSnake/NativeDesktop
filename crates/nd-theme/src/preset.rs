@@ -95,6 +95,8 @@ pub struct ControlHeights {
     pub small: Pixels,
     pub regular: Pixels,
     pub large: Pixels,
+    /// Shortest row of a grouped list or settings form, a regular control plus its padding.
+    pub row: Pixels,
 }
 
 /// Point sizes of the text styles.
@@ -188,8 +190,12 @@ impl Metrics {
             content_width: px(width),
         };
         let radii = |sm, md, lg, xl| Radii { sm: px(sm), md: px(md), lg: px(lg), xl: px(xl) };
-        let controls =
-            |small, regular, large| ControlHeights { small: px(small), regular: px(regular), large: px(large) };
+        let controls = |small, regular, large, row| ControlHeights {
+            small: px(small),
+            regular: px(regular),
+            large: px(large),
+            row: px(row),
+        };
         let scale = |caption, footnote, body, headline, title, large_title| TypeScale {
             caption: px(caption),
             footnote: px(footnote),
@@ -203,7 +209,7 @@ impl Metrics {
             Preset::MacOs => Metrics {
                 spacing: spacing(4., 8., 12., 20., 32., 20., 680.),
                 radius: radii(4., 6., 10., 16.),
-                control: controls(22., 28., 34.),
+                control: controls(22., 28., 34., 40.),
                 type_scale: scale(10., 10., 13., 13., 22., 26.),
                 fonts: Fonts {
                     body: font(SYSTEM_FONT),
@@ -226,7 +232,7 @@ impl Metrics {
             Preset::Fluent => Metrics {
                 spacing: spacing(4., 8., 12., 16., 24., 24., 720.),
                 radius: radii(2., 4., 8., 12.),
-                control: controls(24., 32., 40.),
+                control: controls(24., 32., 40., 48.),
                 type_scale: scale(12., 12., 14., 14., 20., 28.),
                 fonts: Fonts {
                     body: font("Segoe UI Variable Text"),
@@ -249,7 +255,7 @@ impl Metrics {
             Preset::Adwaita => Metrics {
                 spacing: spacing(3., 6., 12., 18., 24., 12., 600.),
                 radius: radii(4., 6., 12., 16.),
-                control: controls(24., 34., 42.),
+                control: controls(24., 34., 42., 50.),
                 type_scale: scale(11., 12., 14., 14., 20., 26.),
                 fonts: Fonts { body: font("Noto Sans"), rounded: font("Noto Sans"), mono: font("Noto Sans Mono") },
                 motion: Motion {
@@ -268,7 +274,7 @@ impl Metrics {
             Preset::Plain => Metrics {
                 spacing: spacing(4., 8., 12., 16., 24., 16., 680.),
                 radius: radii(4., 6., 8., 12.),
-                control: controls(24., 32., 40.),
+                control: controls(24., 32., 40., 48.),
                 type_scale: scale(12., 12., 14., 14., 20., 28.),
                 fonts: Fonts { body: font("Noto Sans"), rounded: font("Noto Sans"), mono: font("Noto Sans Mono") },
                 motion: Motion {

@@ -14,10 +14,12 @@ pub mod prelude {
     // GPUI's `actions!` and `#[derive(Action)]` expand to `gpui::` paths.
     #[doc(hidden)]
     pub use nd_gpui::gpui;
-    pub use nd_gpui::gpui::{Action, Bounds, Font, KeyBinding, Point, Size, actions};
+    pub use nd_gpui::gpui::{Action, Bounds, EventEmitter, FocusHandle, Font, KeyBinding, Point, Size, actions};
 
     pub use nd_ui::{Bezel, ButtonVariant, Titlebar, WindowKind};
 
+    #[cfg(feature = "settings-ui")]
+    pub use crate::AppSettings;
     pub use crate::chrome::fuzzy;
     pub use crate::chrome::panes::{self, PaneResized, dock_view, pane_tree, tiles_view};
     pub use crate::chrome::{
@@ -65,9 +67,12 @@ pub mod prelude {
     pub use crate::{Application, Scaffold, Toolbar, scaffold, toolbar};
     #[cfg(feature = "settings-ui")]
     pub use nd_components::forms::settings::settings_form;
+    pub use nd_settings::Settings;
+    pub use nd_settings::schemars::JsonSchema;
     pub use nd_virtual::{
-        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, SelectEvent, Selection,
-        SortChanged, SortDirection, TreeNode, column, grid, list, table, tree,
+        ActivateEvent, Align, Alignment, Column, ColumnResized, ExpandEvent, Follow, ListState, RowAction, RowActions,
+        RowEdge, SelectEvent, Selection, SortChanged, SortDirection, TreeNode, column, grid, list, row_action, table,
+        tree,
     };
 }
 
@@ -179,15 +184,19 @@ pub fn report_issue(message: &str) -> Option<std::path::PathBuf> {
     nd_diag::global()?.report_issue(message).ok()
 }
 
+type Setup = Box<dyn FnOnce(&mut nd_ui::App)>;
+
 pub struct Application {
     manifest: Manifest,
     pub(crate) theme: Option<crate::theme::ThemeOverride>,
     pub(crate) patterns: crate::chrome::Patterns,
+    /// Runs before `init`: services the app asked for with builder calls such as `settings`.
+    setup: Vec<Setup>,
 }
 
 impl Application {
     pub fn new(manifest: Manifest) -> Self {
-        Self { manifest, theme: None, patterns: crate::chrome::Patterns::default() }
+        Self { manifest, theme: None, patterns: crate::chrome::Patterns::default(), setup: Vec::new() }
     }
 
     /// The app-level theme override, on top of the platform preset and the palette sources.
@@ -199,6 +208,25 @@ impl Application {
     /// App-level pattern choices, over `nativedesktop.toml` `[patterns]`. Readable as a global.
     pub fn patterns(mut self, patterns: crate::chrome::Patterns) -> Self {
         self.patterns = patterns;
+        self
+    }
+
+    /// Loads `T` from the app's config files (`config.toml` in the config directory, Nix-managed
+    /// and drop-in layers, `<APP>_*` environment variables) when the app starts. `settings_form`
+    /// edits it and `cx.settings::<T>()` reads it; a file that does not parse falls back to the
+    /// defaults, with the error on stderr.
+    #[cfg(feature = "settings-ui")]
+    pub fn settings<T: nd_settings::Settings>(mut self) -> Self {
+        let app = self.manifest.name;
+        self.setup.push(Box::new(move |cx| {
+            let options = nd_settings::Options::new(app);
+            let handle = nd_settings::SettingsHandle::<T>::load(options.clone()).unwrap_or_else(|e| {
+                eprintln!("nd: settings: {e}");
+                nd_settings::SettingsHandle::load(options.paths(empty_paths()))
+                    .expect("defaults load from a missing file")
+            });
+            nd_components::forms::settings::provide(cx, handle);
+        }));
         self
     }
 
@@ -215,6 +243,9 @@ impl Application {
         let watched = files.clone();
         let host = nd_backend_appkit::AppHost::new(move |cx| {
             mac::install(cx, &files, self.theme.unwrap_or_default(), self.patterns);
+            for setup in self.setup {
+                setup(cx);
+            }
             init(cx);
             crate::theme::sync(cx);
         });
@@ -244,6 +275,9 @@ impl Application {
                 move |cx| {
                     mac::install(cx, &files, self.theme.unwrap_or_default(), self.patterns);
                     nd_backend_appkit::on_file_drop(crate::system::file_dropped);
+                    for setup in self.setup {
+                        setup(cx);
+                    }
                     init(cx);
                     crate::theme::sync(cx);
                 },
@@ -277,7 +311,9 @@ impl Application {
         let hooks = nd_os_linux::LinuxHooks::new(self.manifest.id.unwrap_or(self.manifest.name));
         #[cfg(target_arch = "wasm32")]
         let hooks = nd_os_web::WebHooks;
-        #[cfg(not(any(target_os = "linux", target_arch = "wasm32")))]
+        #[cfg(windows)]
+        let hooks = nd_os_windows::WindowsHooks::new();
+        #[cfg(not(any(target_os = "linux", target_arch = "wasm32", windows)))]
         let hooks = crate::gpui_backend::NoOsHooks;
         crate::gpui_backend::run_with(
             hooks,
@@ -297,6 +333,9 @@ impl Application {
                             crate::system::system().emit(event);
                         });
                     }
+                }
+                for setup in self.setup {
+                    setup(cx);
                 }
                 init(cx);
                 crate::theme::sync(cx);
@@ -335,9 +374,13 @@ pub(crate) mod gpui_host {
         let preset = if cfg!(target_os = "macos") { Preset::Adwaita } else { Preset::current() };
         let mut registry = ThemeRegistry::new(preset);
         if let Some(backend) = cx.backend_as::<GpuiBackend>() {
-            registry.set_os(OsTheme { scheme: backend.platform_scheme(), ..OsTheme::default() });
-            backend.on_platform_scheme(|app, scheme| {
-                update_registry(app, |r| r.set_os(OsTheme { scheme: Some(scheme), ..r.os().clone() }));
+            let palettes = backend.platform_palettes();
+            registry.set_os(OsTheme { scheme: backend.platform_scheme(), palettes, ..OsTheme::default() });
+            // Called on a light or dark switch and when the system colours change (the accent).
+            let os = backend.clone();
+            backend.on_platform_scheme(move |app, scheme| {
+                let palettes = os.platform_palettes();
+                update_registry(app, |r| r.set_os(OsTheme { scheme: Some(scheme), palettes, ..r.os().clone() }));
             });
         }
         registry.set_app_override(app_theme);
@@ -444,5 +487,28 @@ mod mac {
             nd_backend_appkit::defer_with_app(move |app| update_registry(app, |r| r.set_os(os_theme(mtm))));
         });
         cx.set_global(ThemeSources { _observer: observer });
+    }
+}
+
+/// Paths that exist nowhere, so a settings load yields only the defaults.
+#[cfg(feature = "settings-ui")]
+fn empty_paths() -> nd_settings::Paths {
+    nd_settings::Paths::in_dir(&std::env::temp_dir().join("nd-no-settings"))
+}
+
+/// `cx.settings::<T>()`: the settings [`Application::settings`] loaded, or `T::default()` where
+/// none were provided (a test that did not call `forms::settings::provide`).
+#[cfg(feature = "settings-ui")]
+pub trait AppSettings {
+    fn settings<T: nd_settings::Settings>(&self) -> std::sync::Arc<T>;
+}
+
+#[cfg(feature = "settings-ui")]
+impl AppSettings for nd_ui::App {
+    fn settings<T: nd_settings::Settings>(&self) -> std::sync::Arc<T> {
+        match self.try_global::<nd_components::forms::settings::SettingsSource<T>>() {
+            Some(source) => source.0.get(),
+            None => std::sync::Arc::new(T::default()),
+        }
     }
 }

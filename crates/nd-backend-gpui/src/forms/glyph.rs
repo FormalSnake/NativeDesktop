@@ -1,175 +1,39 @@
-//! The few glyphs the controls draw themselves (check marks, arrows, the search magnifier, the
-//! media transport) and the arcs of spinners and circular progress, as GPUI paths: stroked
-//! lines, and filled shapes where a stroke reads wrong at icon size (play, pause, the speaker).
-//! Field edge icons fall back to a ring for any icon without a glyph here, until `nd-icons`
-//! reaches the GPUI backend.
+//! Every icon the controls draw, as GPUI paths from `nd-icons`' Lucide shapes, plus the arcs of
+//! spinners and circular progress.
 
 use std::f32::consts::PI;
 
 use nd_components::Icon;
 use nd_gpui::gpui::{self, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, canvas, point};
+use nd_icons::Seg;
 
+/// An icon drawn as GPUI paths: Lucide's strokes (round caps and joins), tinted by the caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Glyph {
-    Check,
-    Dash,
-    ChevronDown,
-    ChevronUp,
-    ChevronLeft,
-    ChevronRight,
-    Plus,
-    Minus,
-    Search,
-    Clear,
-    Ring,
-    Play,
-    Pause,
-    SkipBack,
-    SkipForward,
-    Volume,
-    Volume1,
-    Volume2,
-    VolumeX,
-    Paperclip,
-    Smile,
-    ArrowUp,
-    Music,
-    LocateFixed,
-    Image,
-    Person,
-}
+pub(crate) struct Glyph(Icon);
 
+#[allow(non_upper_case_globals)]
 impl Glyph {
+    pub const Check: Glyph = Glyph(Icon::Check);
+    pub const Dash: Glyph = Glyph(Icon::Minus);
+    pub const Minus: Glyph = Glyph(Icon::Minus);
+    pub const Plus: Glyph = Glyph(Icon::Plus);
+    pub const ChevronDown: Glyph = Glyph(Icon::ChevronDown);
+    pub const ChevronUp: Glyph = Glyph(Icon::ChevronUp);
+    pub const ChevronLeft: Glyph = Glyph(Icon::ChevronLeft);
+    pub const ChevronRight: Glyph = Glyph(Icon::ChevronRight);
+    pub const Search: Glyph = Glyph(Icon::Search);
+    pub const Clear: Glyph = Glyph(Icon::X);
+    pub const LocateFixed: Glyph = Glyph(Icon::LocateFixed);
+    pub const Person: Glyph = Glyph(Icon::User);
+
     pub fn of(icon: Icon) -> Self {
-        match icon {
-            Icon::Check | Icon::CircleCheck => Glyph::Check,
-            Icon::Minus => Glyph::Minus,
-            Icon::Plus => Glyph::Plus,
-            Icon::ChevronLeft => Glyph::ChevronLeft,
-            Icon::ChevronRight => Glyph::ChevronRight,
-            Icon::Search => Glyph::Search,
-            Icon::X | Icon::CircleX => Glyph::Clear,
-            Icon::Play => Glyph::Play,
-            Icon::Pause => Glyph::Pause,
-            Icon::SkipBack => Glyph::SkipBack,
-            Icon::SkipForward => Glyph::SkipForward,
-            Icon::Volume => Glyph::Volume,
-            Icon::Volume1 => Glyph::Volume1,
-            Icon::Volume2 => Glyph::Volume2,
-            Icon::VolumeX => Glyph::VolumeX,
-            Icon::Paperclip => Glyph::Paperclip,
-            Icon::Smile => Glyph::Smile,
-            Icon::ArrowUp => Glyph::ArrowUp,
-            Icon::Music => Glyph::Music,
-            Icon::LocateFixed => Glyph::LocateFixed,
-            Icon::Image => Glyph::Image,
-            Icon::User => Glyph::Person,
-            _ => Glyph::Ring,
-        }
+        Glyph(icon)
     }
 
-    /// The glyph for a Lucide icon name (what a button's `icon` carries), when there is one.
+    /// The glyph for a Lucide icon name (what a button's `icon` carries), when nd or the app
+    /// has an icon by that name.
     pub fn named(name: &str) -> Option<Self> {
-        Some(match name {
-            "check" | "circle-check" => Glyph::Check,
-            "minus" => Glyph::Minus,
-            "plus" => Glyph::Plus,
-            "chevron-down" => Glyph::ChevronDown,
-            "chevron-up" => Glyph::ChevronUp,
-            "chevron-left" => Glyph::ChevronLeft,
-            "chevron-right" => Glyph::ChevronRight,
-            "search" => Glyph::Search,
-            "x" | "circle-x" => Glyph::Clear,
-            "play" => Glyph::Play,
-            "pause" => Glyph::Pause,
-            "skip-back" => Glyph::SkipBack,
-            "skip-forward" => Glyph::SkipForward,
-            "volume" => Glyph::Volume,
-            "volume-1" => Glyph::Volume1,
-            "volume-2" => Glyph::Volume2,
-            "volume-x" => Glyph::VolumeX,
-            "paperclip" => Glyph::Paperclip,
-            "smile" => Glyph::Smile,
-            "arrow-up" => Glyph::ArrowUp,
-            "music" => Glyph::Music,
-            "locate-fixed" => Glyph::LocateFixed,
-            "image" => Glyph::Image,
-            "user" => Glyph::Person,
-            _ => return None,
-        })
-    }
-
-    /// Stroked polylines in a unit square.
-    fn strokes(self) -> Vec<Vec<(f32, f32)>> {
-        match self {
-            Glyph::Check => vec![vec![(0.2, 0.52), (0.42, 0.74), (0.8, 0.28)]],
-            Glyph::Dash | Glyph::Minus => vec![vec![(0.24, 0.5), (0.76, 0.5)]],
-            Glyph::Plus => vec![vec![(0.24, 0.5), (0.76, 0.5)], vec![(0.5, 0.24), (0.5, 0.76)]],
-            Glyph::ChevronDown => vec![vec![(0.25, 0.38), (0.5, 0.63), (0.75, 0.38)]],
-            Glyph::ChevronUp => vec![vec![(0.25, 0.62), (0.5, 0.37), (0.75, 0.62)]],
-            Glyph::ChevronLeft => vec![vec![(0.62, 0.25), (0.37, 0.5), (0.62, 0.75)]],
-            Glyph::ChevronRight => vec![vec![(0.38, 0.25), (0.63, 0.5), (0.38, 0.75)]],
-            Glyph::Clear => vec![vec![(0.28, 0.28), (0.72, 0.72)], vec![(0.72, 0.28), (0.28, 0.72)]],
-            Glyph::Search => vec![arc_points((0.43, 0.43), 0.27, 0., 2. * PI, 24), vec![(0.63, 0.63), (0.86, 0.86)]],
-            Glyph::Ring => vec![arc_points((0.5, 0.5), 0.32, 0., 2. * PI, 24)],
-            Glyph::Play | Glyph::Pause | Glyph::SkipBack | Glyph::SkipForward | Glyph::Volume | Glyph::Person => {
-                Vec::new()
-            }
-            Glyph::Volume1 => vec![arc_points((0.48, 0.5), 0.16, -0.9, 1.8, 12)],
-            Glyph::Volume2 => {
-                vec![arc_points((0.48, 0.5), 0.16, -0.9, 1.8, 12), arc_points((0.48, 0.5), 0.32, -0.9, 1.8, 16)]
-            }
-            Glyph::VolumeX => vec![vec![(0.62, 0.38), (0.86, 0.62)], vec![(0.86, 0.38), (0.62, 0.62)]],
-            Glyph::Paperclip => {
-                let mut clip = vec![(0.64, 0.3), (0.64, 0.66)];
-                clip.extend(arc_points((0.5, 0.66), 0.14, 0., PI, 12));
-                clip.extend([(0.36, 0.66), (0.36, 0.28)]);
-                clip.extend(arc_points((0.46, 0.28), 0.1, PI, PI, 10));
-                clip.extend([(0.56, 0.28), (0.56, 0.62)]);
-                vec![clip]
-            }
-            Glyph::Smile => {
-                vec![arc_points((0.5, 0.5), 0.36, 0., 2. * PI, 32), arc_points((0.5, 0.5), 0.19, 0.5, PI - 1., 12)]
-            }
-            Glyph::ArrowUp => vec![vec![(0.5, 0.8), (0.5, 0.22)], vec![(0.26, 0.45), (0.5, 0.21), (0.74, 0.45)]],
-            Glyph::Music => vec![vec![(0.62, 0.7), (0.62, 0.2), (0.82, 0.28)]],
-            Glyph::LocateFixed => vec![
-                arc_points((0.5, 0.5), 0.28, 0., 2. * PI, 28),
-                vec![(0.5, 0.06), (0.5, 0.22)],
-                vec![(0.5, 0.78), (0.5, 0.94)],
-                vec![(0.06, 0.5), (0.22, 0.5)],
-                vec![(0.78, 0.5), (0.94, 0.5)],
-            ],
-            Glyph::Image => vec![
-                vec![(0.15, 0.2), (0.85, 0.2), (0.85, 0.8), (0.15, 0.8), (0.15, 0.2)],
-                vec![(0.15, 0.72), (0.4, 0.48), (0.6, 0.66), (0.7, 0.57), (0.85, 0.7)],
-            ],
-        }
-    }
-
-    /// Filled polygons in a unit square.
-    fn fills(self) -> Vec<Vec<(f32, f32)>> {
-        let speaker = vec![(0.12, 0.38), (0.28, 0.38), (0.48, 0.2), (0.48, 0.8), (0.28, 0.62), (0.12, 0.62)];
-        let rect = |x0: f32, y0: f32, x1: f32, y1: f32| vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
-        match self {
-            Glyph::Play => vec![vec![(0.3, 0.2), (0.8, 0.5), (0.3, 0.8)]],
-            Glyph::Pause => vec![rect(0.27, 0.2, 0.42, 0.8), rect(0.58, 0.2, 0.73, 0.8)],
-            Glyph::SkipForward => vec![vec![(0.22, 0.22), (0.64, 0.5), (0.22, 0.78)], rect(0.68, 0.22, 0.78, 0.78)],
-            Glyph::SkipBack => vec![vec![(0.78, 0.22), (0.36, 0.5), (0.78, 0.78)], rect(0.22, 0.22, 0.32, 0.78)],
-            Glyph::Volume | Glyph::Volume1 | Glyph::Volume2 | Glyph::VolumeX => vec![speaker],
-            Glyph::Smile => {
-                vec![arc_points((0.38, 0.4), 0.05, 0., 2. * PI, 10), arc_points((0.62, 0.4), 0.05, 0., 2. * PI, 10)]
-            }
-            Glyph::Music => vec![arc_points((0.5, 0.7), 0.12, 0., 2. * PI, 16)],
-            Glyph::LocateFixed => vec![arc_points((0.5, 0.5), 0.08, 0., 2. * PI, 12)],
-            Glyph::Image => vec![arc_points((0.66, 0.36), 0.06, 0., 2. * PI, 10)],
-            Glyph::Person => {
-                let mut shoulders = arc_points((0.5, 0.86), 0.28, PI, PI, 16);
-                shoulders.retain(|p| p.1 <= 0.86);
-                vec![arc_points((0.5, 0.38), 0.15, 0., 2. * PI, 20), shoulders]
-            }
-            _ => Vec::new(),
-        }
+        Icon::from_name(name).map(Glyph)
     }
 }
 
@@ -200,29 +64,38 @@ fn stroke(bounds: Bounds<Pixels>, lines: &[Vec<(f32, f32)>], width: Pixels, colo
     }
 }
 
-fn fill(bounds: Bounds<Pixels>, shapes: &[Vec<(f32, f32)>], color: Hsla, window: &mut gpui::Window) {
-    let at = |(x, y): (f32, f32)| -> Point<Pixels> {
-        point(bounds.origin.x + bounds.size.width * x, bounds.origin.y + bounds.size.height * y)
+/// The tessellated paths of `glyph` in `bounds`, its strokes `width` thick however big the box is.
+fn paths(glyph: Glyph, bounds: Bounds<Pixels>, width: Pixels) -> Vec<gpui::Path<Pixels>> {
+    let Some(shape) = glyph.0.shape() else { return Vec::new() };
+    let at = |x: f32, y: f32| -> Point<Pixels> {
+        point(
+            bounds.origin.x + bounds.size.width * (x / shape.size),
+            bounds.origin.y + bounds.size.height * (y / shape.size),
+        )
     };
-    for shape in shapes {
-        let mut path = PathBuilder::fill();
-        let mut points = shape.iter();
-        let Some(first) = points.next() else { continue };
-        path.move_to(at(*first));
-        for p in points {
-            path.line_to(at(*p));
-        }
-        path.close();
-        if let Ok(path) = path.build() {
-            window.paint_path(path, color);
-        }
-    }
+    shape
+        .paths
+        .iter()
+        .filter_map(|piece| {
+            let mut path = if piece.filled { PathBuilder::fill() } else { PathBuilder::stroke(width) };
+            for seg in piece.segs {
+                match *seg {
+                    Seg::Move(x, y) => path.move_to(at(x, y)),
+                    Seg::Line(x, y) => path.line_to(at(x, y)),
+                    Seg::Cubic(a, b, c, d, x, y) => path.cubic_bezier_to(at(x, y), at(a, b), at(c, d)),
+                    Seg::Close => path.close(),
+                }
+            }
+            path.build().ok()
+        })
+        .collect()
 }
 
 /// `glyph` drawn in `bounds`.
 pub(crate) fn paint_glyph(glyph: Glyph, bounds: Bounds<Pixels>, color: Hsla, width: Pixels, window: &mut gpui::Window) {
-    stroke(bounds, &glyph.strokes(), width, color, window);
-    fill(bounds, &glyph.fills(), color, window);
+    for path in paths(glyph, bounds, width) {
+        window.paint_path(path, color);
+    }
 }
 
 /// `glyph` in a `size` square.
@@ -249,4 +122,28 @@ pub(crate) fn arc(size: Pixels, start: f32, sweep: f32, color: Hsla, width: Pixe
     )
     .size(size)
     .flex_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use nd_components::Icon;
+    use nd_gpui::gpui::{Bounds, point, px, size};
+
+    use super::{Glyph, paths};
+
+    #[test]
+    fn every_icon_tessellates() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(16.), px(16.)));
+        for icon in Icon::ALL {
+            let shape = icon.shape().unwrap_or_else(|| panic!("{} has no shape", icon.lucide()));
+            let drawn = paths(Glyph::of(*icon), bounds, px(1.5));
+            assert_eq!(drawn.len(), shape.paths.len(), "{} lost a path", icon.lucide());
+        }
+    }
+
+    #[test]
+    fn a_name_resolves_to_a_glyph() {
+        assert!(Glyph::named("trash").is_some());
+        assert!(Glyph::named("no-such-icon").is_none());
+    }
 }

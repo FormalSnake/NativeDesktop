@@ -26,8 +26,13 @@ window and names no AppKit class.
 | settings window | toolbar-tab window with grouped rows, `cmd-,` | separate window |
 | `glass()` | `NSGlassEffectView` on macOS 26 and later, `NSVisualEffectView` before | the preset's material: Acrylic on Windows, a transparent surface the compositor may blur on Linux |
 
-The Windows column is written but has not run on a Windows machine yet. Linux is checked on
-Hyprland.
+On Windows the drawn chrome follows WinUI, checked against Windows 11's own apps (Settings,
+Task Manager): the sidebar and toolbar are one Mica surface with no divider, the content sits on
+an opaque layer whose leading corner takes the window's radius, the sidebar draws like
+NavigationView (Segoe Fluent icons, a subtle fill with an accent pill on the selected row) and its
+toggle folds it to a 48 px icon rail, the caption buttons are as tall as the toolbar, the window
+title is set in the 12 pt caption style, and `banner` is an inset card like InfoBar. Form
+controls, dialogs and menus still use the Adwaita look there. Linux is checked on Hyprland.
 
 ## Scaffold, toolbar, sidebar and inspector
 

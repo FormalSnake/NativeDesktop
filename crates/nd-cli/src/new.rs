@@ -89,6 +89,24 @@ struct Vars {
     pairs: Vec<(&'static str, String)>,
 }
 
+/// The `[workspace]` table of a standalone project. Outside nd's own workspace a path
+/// dependency on nd still needs nd's GPUI patch queue, which only the root manifest can name.
+fn workspace(standalone: bool, nd_path: Option<&Path>) -> Result<String> {
+    if !standalone {
+        return Ok(String::new());
+    }
+    let mut out = "\n[workspace]\n".to_string();
+    if let Some(nd) = nd_path {
+        let nd = std::fs::canonicalize(nd).with_context(|| format!("--nd-path {}", nd.display()))?;
+        let vendor = nd.parent().unwrap_or(&nd).join("nd-gpui/vendor");
+        out.push_str("\n# nd's GPUI patch queue; cargo resolves the unpatched crates.io releases without it.\n[patch.crates-io]\n");
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
+            out.push_str(&format!("{krate} = {{ path = \"{}\" }}\n", vendor.join(krate).display()));
+        }
+    }
+    Ok(out)
+}
+
 impl Vars {
     fn new(name: &str, id: Option<&str>, nd_path: Option<&Path>, standalone: bool) -> Result<Self> {
         let krate = name.replace('-', "_");
@@ -104,11 +122,14 @@ impl Vars {
         let (nd_dep, nd_dev_dep, nd_build_dep) = match nd_path {
             Some(path) => {
                 let path = std::fs::canonicalize(path).with_context(|| format!("--nd-path {}", path.display()))?;
-                let path = path.display();
+                // A TOML literal string, so Windows backslashes stay as written; canonicalize's
+                // verbatim `\\?\` prefix goes, since build scripts mishandle it.
+                let path = path.display().to_string();
+                let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
                 (
-                    format!("{{ path = \"{path}\" }}"),
-                    format!("{{ path = \"{path}\", features = [\"test\", \"audit\"] }}"),
-                    format!("{{ path = \"{path}\", default-features = false, features = [\"build\"] }}"),
+                    format!("{{ path = '{path}' }}"),
+                    format!("{{ path = '{path}', features = [\"test\", \"audit\"] }}"),
+                    format!("{{ path = '{path}', default-features = false, features = [\"build\"] }}"),
                 )
             }
             None => (
@@ -127,7 +148,7 @@ impl Vars {
                 ("{{nd_dep}}", nd_dep),
                 ("{{nd_dev_dep}}", nd_dev_dep),
                 ("{{nd_build_dep}}", nd_build_dep),
-                ("{{workspace}}", if standalone { "\n[workspace]".to_string() } else { String::new() }),
+                ("{{workspace}}", workspace(standalone, nd_path)?),
             ],
         })
     }
@@ -149,6 +170,32 @@ mod tests {
         assert!(package_name(Path::new("2fast")).is_err());
         assert!(package_name(Path::new("nd")).is_err());
         assert!(package_name(Path::new("my app")).is_err());
+    }
+
+    #[test]
+    fn a_standalone_path_project_names_the_gpui_patches() {
+        let nd = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd");
+        let table = super::workspace(true, Some(&nd)).unwrap();
+        assert!(table.contains("[patch.crates-io]") && table.contains("nd-gpui/vendor/gpui-pre-wgpu"), "{table}");
+        assert_eq!(super::workspace(false, Some(&nd)).unwrap(), "");
+    }
+
+    #[test]
+    fn nd_path_generates_a_cargo_patch_block_pointing_at_the_vendor_dir() {
+        let nd = std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../nd")).unwrap();
+        let vendor = nd.parent().unwrap().join("nd-gpui/vendor");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("my-app");
+        run(NewArgs { name: root.clone(), id: None, nd_path: Some(nd), standalone: true }).unwrap();
+        let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains("\n[workspace]\n"), "{manifest}");
+        let (_, patch) = manifest.split_once("[patch.crates-io]\n").expect("[patch.crates-io] is present");
+        assert_eq!(patch.lines().filter(|l| l.contains("path = ")).count(), 6, "{patch}");
+        for krate in ["gpui-pre", "gpui-fast", "gpui-pre-linux", "gpui-fast-linux", "gpui-pre-wgpu", "gpui-fast-wgpu"] {
+            let line = format!("{krate} = {{ path = \"{}\" }}", vendor.join(krate).display());
+            assert!(patch.contains(&line), "{line} missing from\n{patch}");
+            assert!(vendor.join(krate).join("Cargo.toml").exists(), "{krate} exists in the vendor dir");
+        }
     }
 
     #[test]

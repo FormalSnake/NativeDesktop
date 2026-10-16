@@ -6,8 +6,9 @@
 //! `OUT_DIR`, builds it into one static library and emits the link arguments for the app's
 //! binaries. Every package must export a library product named like its package. Packages that
 //! depend on the framework package take its path from the `ND_SWIFT_PATH` environment variable.
-//! On Linux it gives the app's binaries an `$ORIGIN` run path, so the Chromium runtime web views
-//! link (`libcef.so`) loads from beside the executable, where builds and packages put it.
+//! On Windows it raises the main thread's stack to 8 MB. On Linux it gives the app's binaries an
+//! `$ORIGIN` run path, so the Chromium runtime web views link (`libcef.so`) loads from beside the
+//! executable, where builds and packages put it. On the web it does nothing.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -25,6 +26,7 @@ pub fn app() {
     }
     match env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => {}
+        Ok("windows") => return windows_stack(),
         Ok("linux") => return println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN"),
         _ => return,
     }
@@ -32,6 +34,18 @@ pub fn app() {
         println!("cargo::error=nd::build::app: {message}");
         std::process::exit(1);
     }
+}
+
+/// Windows gives the main thread 1 MB of stack, where macOS and Linux give 8; a deep element tree
+/// lays out and paints recursively on that thread, so the app's binaries, tests and examples ask
+/// for 8 MB too.
+fn windows_stack() {
+    let flag = if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        "/STACK:8388608"
+    } else {
+        "-Wl,--stack,8388608"
+    };
+    println!("cargo::rustc-link-arg={flag}");
 }
 
 fn build() -> Result<(), String> {

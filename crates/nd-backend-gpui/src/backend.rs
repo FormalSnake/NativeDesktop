@@ -29,6 +29,8 @@ pub(crate) struct WindowRecord {
     pub handle: Option<AnyWindowHandle>,
     /// The window as of its last frame, for reads that arrive while GPUI is drawing.
     pub state: WindowState,
+    /// What a toolbar with no title of its own shows.
+    pub title: nd_gpui::gpui::SharedString,
 }
 
 /// Drawn controls the user focused, by window, waiting for the host's next pump.
@@ -105,6 +107,9 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
+    /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
+    /// it without the app's state changing.
+    pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -163,6 +168,7 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
+            hidden_sidebars: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
@@ -268,6 +274,24 @@ impl GpuiBackend {
     /// platform's active window, or none is.
     pub fn on_activation(&self, f: impl Fn(bool) + 'static) {
         self.state.borrow_mut().activation_listener = Some(Rc::new(f));
+    }
+
+    /// The OS's own colours (the system accent), as the OS hooks last read them.
+    pub fn platform_palettes(&self) -> nd_theme::SchemePalettes {
+        self.state.borrow().theme.os().palettes
+    }
+
+    /// Records the OS's own colours; true when they changed.
+    pub(crate) fn set_os_palettes(&self, palettes: nd_theme::SchemePalettes) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.theme.os().palettes == palettes {
+            return false;
+        }
+        let os = OsTheme { palettes, ..state.theme.os().clone() };
+        state.theme.set_os(os);
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        true
     }
 
     /// Records the platform's scheme; true when it changed.
@@ -593,6 +617,12 @@ impl Backend for GpuiBackend {
         }
         let state = self.state.try_borrow().ok()?.windows.get(&window)?.state.clone();
         Some(self.tab_state(window, state))
+    }
+
+    fn set_window_title(&mut self, window: WindowId, title: &str) {
+        let mut state = self.state.borrow_mut();
+        state.windows.entry(window).or_default().title = title.to_owned().into();
+        state.dirty.insert(window);
     }
 
     /// Recorded for the host, which carries it out on its next pump with the app free.

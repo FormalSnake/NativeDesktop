@@ -17,6 +17,7 @@ nd-gesture.workspace = true
 nd-ui.workspace = true
 nd-diag.workspace = true
 nd-components.workspace = true
+nd-icons.workspace = true
 nd-theme.workspace = true
 nd-virtual.workspace = true
 nd-gpui = { workspace = true, features = ["platform"] }

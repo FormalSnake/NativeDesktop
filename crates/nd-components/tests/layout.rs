@@ -291,3 +291,39 @@ fn alerts_wait_their_turn_per_window_and_each_answer_reaches_its_own_callback() 
     services::about(&mut cx, Some(a), AboutPanel::new().name("Notes").version("1.0"));
     assert_eq!(chrome.abouts.borrow()[0].name.as_deref(), Some("Notes"));
 }
+
+struct TitleRow {
+    title: Option<&'static str>,
+    leading: bool,
+}
+
+impl Render for TitleRow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let row = titlebar().trailing(button("share", "Share"));
+        let row = match self.title {
+            Some(title) => row.title(title),
+            None => row,
+        };
+        let row = if self.leading { row.leading(button("back", "Back")) } else { row };
+        v_flex().size_full().child(row)
+    }
+}
+
+fn texts(cx: &mut TestApp, window: WindowId) -> Vec<String> {
+    tree(cx, window).iter().filter(|n| n.kind == "text").map(|n| n.name.clone()).collect()
+}
+
+fn title_row(title: Option<&'static str>, leading: bool) -> Vec<String> {
+    let mut cx = TestApp::new();
+    let options = WindowOptions::main("mail").title("Mail").titlebar(nd_ui::Titlebar::Custom);
+    let handle = cx.open_window_with(options, |_, cx| cx.new(|_| TitleRow { title, leading }));
+    texts(&mut cx, handle.id())
+}
+
+#[test]
+fn a_title_row_with_nothing_leading_shows_the_window_title() {
+    assert_eq!(title_row(None, false), ["Mail"]);
+    // The app's own title replaces it, and a leading item takes the space instead.
+    assert_eq!(title_row(Some("Inbox"), false), ["Inbox"]);
+    assert!(title_row(None, true).is_empty());
+}

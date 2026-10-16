@@ -96,6 +96,17 @@ fn is_real_crash(cx: &crash_handler::CrashContext) -> bool {
     cx.siginfo.ssi_code != 0
 }
 
+/// Simulated exceptions carry crash-handler's own `User` code.
+#[cfg(windows)]
+fn is_real_crash(cx: &crash_handler::CrashContext) -> bool {
+    cx.exception_code != crash_handler::ExceptionCode::User as i32
+}
+
+#[cfg(windows)]
+fn simulate(handler: &CrashHandler) -> bool {
+    matches!(handler.simulate_exception(None), CrashEventResult::Handled(true))
+}
+
 #[cfg(target_os = "macos")]
 fn simulate(handler: &CrashHandler) -> bool {
     handler.simulate_exception(None)
@@ -160,6 +171,18 @@ impl ServerHandler for Handler {
     }
 }
 
+#[cfg(unix)]
+fn parent_pid() -> i32 {
+    // SAFETY: getppid has no preconditions.
+    unsafe { libc::getppid() }
+}
+
+/// Windows never reparents a process, so a lost connection is the only exit signal there.
+#[cfg(windows)]
+fn parent_pid() -> i32 {
+    0
+}
+
 /// The server side, run by the re-launched executable. Returns when the app disconnects, has
 /// crashed, or never connected.
 pub fn run_server(socket: &Path, diagnostics: &Path) {
@@ -168,14 +191,13 @@ pub fn run_server(socket: &Path, diagnostics: &Path) {
     let connected = Arc::new(AtomicBool::new(false));
     {
         let (shutdown, connected) = (shutdown.clone(), connected.clone());
-        // SAFETY: getppid has no preconditions.
-        let parent = unsafe { libc::getppid() };
+        let parent = parent_pid();
         std::thread::spawn(move || {
             let start = Instant::now();
             // The app exiting does not always surface as a disconnect, so also stop once the
             // process is reparented.
             while !shutdown.load(Ordering::SeqCst) {
-                let orphaned = unsafe { libc::getppid() } != parent;
+                let orphaned = parent_pid() != parent;
                 let never_connected = start.elapsed() > CONNECT_TIMEOUT && !connected.load(Ordering::SeqCst);
                 if orphaned || never_connected {
                     shutdown.store(true, Ordering::SeqCst);

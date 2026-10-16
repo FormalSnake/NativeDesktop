@@ -3,3 +3,7 @@
 id = "dev.formalsnake.hello"
 display_name = "Hello"
 icon = "assets/icon.icon"
+
+[windows]
+publisher = "FormalSnake"
+installer = { shortcuts = ["start"] }
