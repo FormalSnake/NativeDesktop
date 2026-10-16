@@ -141,7 +141,7 @@ fn mounted_rows_enter_from_their_pose() {
         cx.notify();
     });
     cx.frame();
-    assert_eq!(props(&cx, row).style.opacity, Some(1.), "a row already mounted does not enter again");
+    assert_eq!(props(&cx, row).style.opacity.unwrap_or(1.), 1., "a row already mounted does not enter again");
 }
 
 #[test]

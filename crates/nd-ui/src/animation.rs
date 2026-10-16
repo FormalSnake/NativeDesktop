@@ -219,7 +219,14 @@ impl Motion {
                 if duration <= 0. {
                     return (to, 0.);
                 }
-                let at = |t: f64| from + (to - from) * f64::from(curve.at(((t - start) / duration) as f32));
+                let at = |t: f64| {
+                    let p = (t - start) / duration;
+                    match p {
+                        ..=0. => from,
+                        1.0.. => to,
+                        p => from + (to - from) * f64::from(curve.at(p as f32)),
+                    }
+                };
                 let dt = 1. / 240.;
                 (at(now), (at(now + dt) - at(now)) / dt)
             }

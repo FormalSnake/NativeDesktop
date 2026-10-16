@@ -7,6 +7,7 @@ use nd_ui::prelude::Hsla;
 use nd_ui::{RichText, SpanStyle, TextColor};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
+use objc2::{AnyThread, Message};
 use objc2_app_kit::{
     NSColor, NSFont, NSFontManager, NSFontTraitMask, NSFontAttributeName, NSFontDescriptorSymbolicTraits, NSFontWeight, NSFontWeightBold,
     NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSForegroundColorAttributeName, NSLayoutManager,
@@ -163,11 +164,11 @@ pub(crate) fn attributed(
         let one = NSNumber::new_isize(1);
         if run.underline {
             keys.push(unsafe { NSUnderlineStyleAttributeName });
-            values.push(Retained::into_super(Retained::into_super(one.clone())));
+            values.push(Retained::into_super(Retained::into_super(Retained::into_super(one.clone()))));
         }
         if run.strikethrough {
             keys.push(unsafe { NSStrikethroughStyleAttributeName });
-            values.push(Retained::into_super(Retained::into_super(one.clone())));
+            values.push(Retained::into_super(Retained::into_super(Retained::into_super(one.clone()))));
         }
         let key = link_key();
         if let Some(link) = &run.link {
@@ -190,11 +191,10 @@ struct Laid {
 }
 
 fn lay_out(text: &NSAttributedString, width: f64) -> Option<Laid> {
-    let mtm = objc2_foundation::MainThreadMarker::new()?;
     let storage = NSTextStorage::new();
     storage.appendAttributedString(text);
     let layout = NSLayoutManager::new();
-    let container = NSTextContainer::initWithSize(NSTextContainer::alloc(mtm), NSSize::new(width.max(1.), 1e7));
+    let container = NSTextContainer::initWithSize(NSTextContainer::alloc(), NSSize::new(width.max(1.), 1e7));
     container.setLineFragmentPadding(0.);
     layout.addTextContainer(&container);
     storage.addLayoutManager(&layout);

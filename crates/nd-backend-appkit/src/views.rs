@@ -297,6 +297,7 @@ define_class!(
                 self.removeTrackingArea(&old);
             }
             if self.tracks_hover() {
+                use objc2::AnyThread;
                 use objc2_app_kit::{NSTrackingArea, NSTrackingAreaOptions};
                 let options = NSTrackingAreaOptions::MouseEnteredAndExited
                     | NSTrackingAreaOptions::ActiveInKeyWindow

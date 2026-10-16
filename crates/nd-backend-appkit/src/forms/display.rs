@@ -14,7 +14,7 @@ use nd_ui::backend::Props;
 use nd_ui::semantics::{ActionError, Probe, SemanticAction};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAccessibility, NSAccessibilityLinkRole, NSButton, NSColor, NSCursor, NSFont, NSFontAttributeName,
     NSFontTextStyle, NSFontTextStyleBody, NSFontTextStyleCallout, NSFontTextStyleCaption1, NSFontTextStyleCaption2,
