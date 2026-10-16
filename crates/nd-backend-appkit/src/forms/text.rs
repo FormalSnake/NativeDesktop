@@ -583,6 +583,10 @@ impl TextFieldControl {
         if old.is_none_or(|o| o.placeholder != new.placeholder) {
             field.setPlaceholderString(new.placeholder.as_deref().map(NSString::from_str).as_deref());
         }
+        if old.is_none_or(|o| o.large != new.large) {
+            let large = if crate::glass::has_liquid_glass() { NSControlSize::ExtraLarge } else { NSControlSize::Large };
+            field.setControlSize(if new.large { large } else { NSControlSize::Regular });
+        }
         if old.is_none_or(|o| o.editable != new.editable) {
             field.setEditable(new.editable);
             field.setSelectable(true);
