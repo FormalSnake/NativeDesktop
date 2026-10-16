@@ -125,3 +125,15 @@ fn focus_on_a_focusable_element_moves_nd_focus_and_the_tree_reports_it() {
     assert_eq!(cx.backend().focused(), Some(field), "the focus op reached the backend");
     assert!(cx.backend().performed().is_empty(), "nd focus needs no backend action");
 }
+
+#[test]
+fn a_node_the_backend_clips_out_is_not_visible_whatever_its_frame() {
+    let mut cx = counter();
+    let add = cx.semantic_tree().nodes().find(|(_, n)| n.role == Role::Button).unwrap().1.id;
+    assert!(cx.semantic_tree().find(add).unwrap().1.visible);
+    cx.backend_mut().set_probe(add, Probe { visible: Some(false), ..Probe::default() });
+    let tree = cx.semantic_tree();
+    let node = tree.find(add).unwrap().1;
+    assert!(node.bounds.is_some_and(|b| b.size.width > 0.), "it keeps its frame");
+    assert!(!node.visible, "a row scrolled out of its list or a collapsed pane");
+}

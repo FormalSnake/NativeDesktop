@@ -48,6 +48,7 @@ impl Tree {
         let probe = backend.probe(id);
         let bounds = probe.bounds.or(laid_out);
         let visible = window_visible
+            && probe.visible != Some(false)
             && bounds.is_some_and(|b| b.size.width > 0. && b.size.height > 0. && intersects(b, viewport));
         let test_id = match &node.ident.key {
             Key::Id(id) => Some(id.to_string()),

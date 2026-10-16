@@ -47,6 +47,10 @@ pub fn update_registry(cx: &mut App, f: impl FnOnce(&mut ThemeRegistry)) {
 
 /// Pushes what native controls need to the backend and marks every view for re-render.
 pub(crate) fn sync(cx: &mut App) {
+    let reduce = cx.try_global::<ThemeState>().is_some_and(|s| s.0.os().metrics.reduce_motion == Some(true));
+    cx.set_reduce_motion(reduce);
+    // Text measures in the theme's fonts.
+    cx.remeasure();
     #[cfg(target_os = "macos")]
     if let Some(state) = cx.try_global::<ThemeState>() {
         let registry = &state.0;

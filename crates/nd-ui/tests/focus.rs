@@ -234,4 +234,64 @@ mod gate_m4 {
         assert_eq!(log.take(), ["compose"], "the window was lent to the click handler, so the action waits for it");
         let _ = handle;
     }
+
+    /// A reply banner: clicking Reply mounts a field and focuses it by id in the same handler.
+    struct Reply {
+        open: bool,
+    }
+
+    impl Render for Reply {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let this = cx.weak_entity();
+            v_flex()
+                .child(button("reply", "Reply").on_click(move |_: &ClickEvent, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.open = true;
+                        cx.notify();
+                    });
+                    window.focus("composer");
+                }))
+                .when(self.open, |d| d.child(div().id("composer").child(div().id("field").focusable())))
+                .child(div().id("plain"))
+                .child(button("nowhere", "Nowhere").on_click(|_: &ClickEvent, window, _| window.focus("plain")))
+        }
+    }
+
+    #[test]
+    fn focus_by_id_reaches_an_element_mounted_in_the_same_handler() {
+        let mut cx = TestApp::new();
+        let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Reply { open: false }));
+        cx.emit(node(&cx, "reply"), ClickEvent);
+        cx.run_until_idle();
+        let field = node(&cx, "field");
+        assert_eq!(cx.focused(handle.id()), Some(field), "the container's first focusable descendant takes focus");
+        assert_eq!(cx.backend().focused(), Some(field), "the backend follows");
+    }
+
+    #[test]
+    fn an_id_nothing_focusable_carries_leaves_focus_alone() {
+        let mut cx = TestApp::new();
+        let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Reply { open: true }));
+        let field = node(&cx, "field");
+        assert!(cx.focus(handle.id(), field));
+        cx.run_until_idle();
+        cx.emit(node(&cx, "nowhere"), ClickEvent);
+        cx.run_until_idle();
+        assert_eq!(cx.focused(handle.id()), Some(field));
+    }
+
+    struct Counter(u32);
+
+    #[test]
+    fn globals_update_in_place() {
+        let mut cx = TestApp::new();
+        cx.set_global(Counter(1));
+        cx.global_mut::<Counter>().0 += 1;
+        let seen = cx.update_global(|c: &mut Counter, cx| {
+            c.0 += 1;
+            cx.try_global::<Counter>().is_none()
+        });
+        assert!(seen, "the global is out of the app while update_global runs");
+        assert_eq!(cx.global::<Counter>().0, 3);
+    }
 }

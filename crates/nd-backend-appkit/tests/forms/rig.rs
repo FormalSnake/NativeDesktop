@@ -106,6 +106,14 @@ impl Rig {
         self.backend.view(id).unwrap_or_else(|| panic!("{test_id} has no view"))
     }
 
+    /// Focuses the element keyed `id`, as `Window::focus` does, and renders.
+    pub fn focus_id(&self, window: WindowId, id: &str) -> bool {
+        let mut app = self.app.borrow_mut();
+        let focused = app.focus_id(window, id);
+        app.frame();
+        focused
+    }
+
     pub fn perform(&self, window: WindowId, test_id: &str, action: SemanticAction) -> Result<(), String> {
         let id = self.node_id(window, test_id);
         let result = self.app.borrow_mut().perform(id, &action).map_err(|e| e.to_string());

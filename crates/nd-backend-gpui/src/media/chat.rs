@@ -65,8 +65,7 @@ pub(super) fn bubble(
     let theme = b.theme();
     let look = ctl.look;
     let sent = p.side == BubbleSide::Sent;
-    let (fill, ink) =
-        if sent { (theme.accent_fill, theme.text.on_accent) } else { (theme.surface.raised_hover, theme.text.primary) };
+    let (fill, ink) = theme.fill(p.fill_role());
     let mut root = div().id(ElementId::Integer(id.0)).role(gpui::Role::Label).aria_label(p.text.clone()).relative();
     if p.emoji_only {
         let size = px(BUBBLE.emoji_size);
@@ -75,7 +74,34 @@ pub(super) fn bubble(
     } else {
         let (size, weight, line) = look.type_of(TextStyle::Body);
         marks.fill("bubble", fill, &[]);
-        marks.text(&p.text, ink, &[fill], size, weight);
+        let body = match &p.rich {
+            Some(rich) => {
+                let base = crate::rich::Base {
+                    theme: &theme,
+                    size,
+                    leading: line.as_f32() / size.as_f32(),
+                    weight: weight.0,
+                    color: ink,
+                    ink: (p.fill_role() != nd_theme::FillRole::Neutral).then_some(ink),
+                };
+                for span in rich.spans().iter().filter(|s| !s.text.trim().is_empty()) {
+                    let at = size * span.style.scale();
+                    marks.text(
+                        &span.text,
+                        base.color(&span.style),
+                        &[fill],
+                        at,
+                        FontWeight(span.style.weight(weight.0)),
+                    );
+                }
+                let on_link = rich.has_links().then(|| b.link_handler(id, p.opens_links));
+                crate::rich::element(ElementId::NamedInteger("text".into(), id.0), rich, &base, on_link)
+            }
+            None => {
+                marks.text(&p.text, ink, &[fill], size, weight);
+                p.text.clone().into_any_element()
+            }
+        };
         let [tl, tr, br, bl] = p.corners();
         root = root.child(
             div()
@@ -90,7 +116,7 @@ pub(super) fn bubble(
                 .text_size(size)
                 .line_height(line)
                 .text_color(ink)
-                .child(p.text.clone()),
+                .child(body),
         );
         if p.has_tail() {
             root = root.child(tail(fill, sent));

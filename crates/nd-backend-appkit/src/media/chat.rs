@@ -10,7 +10,9 @@ use nd_components::media::{
 use nd_core::Size;
 use nd_theme::Theme;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSFont, NSFontWeightRegular, NSFontWeightSemibold, NSTextField, NSView};
+use objc2_app_kit::{NSFont, NSFontWeightRegular, NSFontWeightSemibold, NSView};
+
+use crate::forms::display::NdLabelField;
 use objc2_core_foundation::CGFloat;
 use objc2_core_graphics::CGMutablePath;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
@@ -65,16 +67,30 @@ fn tail(path: &CGMutablePath, bubble: NSRect, side: BubbleSide) {
     CGMutablePath::close_subpath(Some(path));
 }
 
-fn bubble_font(theme: &Theme, emoji: bool) -> Retained<NSFont> {
-    let size = if emoji { BUBBLE.emoji_size } else { theme.type_scale.body.as_f32() };
-    NSFont::systemFontOfSize_weight(f64::from(size), unsafe { NSFontWeightRegular })
+/// The family the theme sets text in when it is not the system's (whose names start with a
+/// dot: `.AppleSystemUIFont`).
+fn theme_family(theme: &Theme) -> Option<&str> {
+    Some(theme.fonts.body.family.as_ref()).filter(|f| !f.starts_with('.') && !f.is_empty())
 }
 
-fn colors(theme: &Theme, side: BubbleSide) -> (nd_ui::prelude::Hsla, nd_ui::prelude::Hsla) {
-    match side {
-        BubbleSide::Sent => (theme.accent_fill, theme.text.on_accent),
-        BubbleSide::Received => (theme.surface.raised_hover, theme.text.primary),
-    }
+fn bubble_font(theme: &Theme, emoji: bool) -> Retained<NSFont> {
+    let size = f64::from(if emoji { BUBBLE.emoji_size } else { theme.type_scale.body.as_f32() });
+    let family = theme_family(theme).filter(|_| !emoji);
+    family
+        .and_then(|f| crate::rich::family_font(f, size, 400., false))
+        .unwrap_or_else(|| NSFont::systemFontOfSize_weight(size, unsafe { NSFontWeightRegular }))
+}
+
+fn colors(theme: &Theme, props: &ChatBubbleProps) -> (nd_ui::prelude::Hsla, nd_ui::prelude::Hsla) {
+    theme.fill(props.fill_role())
+}
+
+/// The bubble's rich text runs under `theme`, in the bubble's ink on its fill.
+fn runs(theme: &Theme, props: &ChatBubbleProps) -> Vec<crate::rich::RunLook> {
+    let Some(rich) = props.rich.as_ref().filter(|_| !props.emoji_only) else { return Vec::new() };
+    let (_, ink) = colors(theme, props);
+    let filled = props.fill_role() != nd_theme::FillRole::Neutral;
+    crate::rich::resolve(rich, theme, theme.type_scale.body.as_f32(), 400., filled.then_some(ink))
 }
 
 pub(crate) struct BubbleWidget;
@@ -85,9 +101,11 @@ impl CustomWidget for BubbleWidget {
         let view = NdMediaView::new(cx.mtm());
         let shape = CAShapeLayer::new();
         view.layer().expect("layer-backed").addSublayer(&shape);
-        let label = NSTextField::wrappingLabelWithString(&NSString::from_str(&props.text), cx.mtm());
+        let label = NdLabelField::new_wrapping(cx.mtm(), &props.text);
         label.setSelectable(props.selectable);
         label.setDrawsBackground(false);
+        let link_cx = crate::forms::Ctx { mtm: cx.mtm(), emit: cx.emit.clone(), wake: cx.wake.0.clone() };
+        label.set_link_target(Some((link_cx, props.opens_links)));
         view.addSubview(&label);
         let inner = Rc::new(BubbleInner {
             view,
@@ -110,7 +128,7 @@ fn bubble_props<'a>(cx: &'a CustomCx<'_>) -> &'a ChatBubbleProps {
 struct BubbleInner {
     view: Retained<NdMediaView>,
     shape: Retained<CAShapeLayer>,
-    label: Retained<NSTextField>,
+    label: Retained<NdLabelField>,
     pills: RefCell<Vec<(Retained<CALayer>, Retained<CATextLayer>)>>,
     props: RefCell<ChatBubbleProps>,
     theme: RefCell<Theme>,
@@ -120,10 +138,12 @@ impl BubbleInner {
     fn restyle(&self) {
         let props = self.props.borrow();
         let theme = self.theme.borrow();
-        let (fill, ink) = colors(&theme, props.side);
+        let (fill, ink) = colors(&theme, &props);
         self.label.setStringValue(&NSString::from_str(&props.text));
         self.label.setFont(Some(&bubble_font(&theme, props.emoji_only)));
-        self.label.setTextColor(Some(&ns(if props.emoji_only { theme.text.primary } else { ink })));
+        let ink = ns(if props.emoji_only { theme.text.primary } else { ink });
+        self.label.setTextColor(Some(&ink));
+        self.label.set_runs(runs(&theme, &props), &ink, theme_family(&theme));
         self.label.setSelectable(props.selectable);
         self.shape.setFillColor(Some(&cg(fill)));
         self.shape.setHidden(props.emoji_only);
@@ -256,7 +276,10 @@ impl CustomNative for BubbleNative {
     }
 
     fn update(&mut self, cx: &CustomCx<'_>) {
-        *self.inner.props.borrow_mut() = bubble_props(cx).clone();
+        let props = bubble_props(cx).clone();
+        let link_cx = crate::forms::Ctx { mtm: cx.mtm(), emit: cx.emit.clone(), wake: cx.wake.0.clone() };
+        self.inner.label.set_link_target(Some((link_cx, props.opens_links)));
+        *self.inner.props.borrow_mut() = props;
         self.inner.restyle();
     }
 
@@ -279,10 +302,25 @@ impl CustomNative for BubbleNative {
     fn paints(&self) -> Vec<CustomPaint> {
         let props = self.inner.props.borrow();
         let theme = self.inner.theme.borrow();
-        let (fill, ink) = colors(&theme, props.side);
+        let (fill, ink) = colors(&theme, &props);
         let size = if props.emoji_only { BUBBLE.emoji_size } else { theme.type_scale.body.as_f32() };
         let mut out = Vec::new();
-        if props.emoji_only {
+        let runs = runs(&theme, &props);
+        if !runs.is_empty() {
+            out.push(CustomPaint { label: "bubble".into(), color: fill, under: Vec::new(), text: None });
+            for run in runs.iter().filter(|r| !r.text.trim().is_empty()) {
+                let color = match run.color {
+                    Some(crate::look::Color::Rgba(r, g, b, a)) => nd_ui::prelude::Rgba { r, g, b, a }.into(),
+                    _ => ink,
+                };
+                out.push(CustomPaint {
+                    label: run.text.clone(),
+                    color,
+                    under: vec![fill],
+                    text: Some((run.size, run.weight)),
+                });
+            }
+        } else if props.emoji_only {
             out.push(CustomPaint {
                 label: props.text.to_string(),
                 color: theme.text.primary,

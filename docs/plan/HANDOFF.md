@@ -1,4 +1,4 @@
-# Handoff, 2026-10-14
+# Handoff, 2026-10-16
 
 Work paused on the user's request to save Claude Code usage (weekly limit resets Tuesday
 2026-10-20). Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request plus every
@@ -13,12 +13,11 @@ visibility, not merged unless noted):
 
 | Branch | State | Next step |
 | --- | --- | --- |
-| `gpui-polish` (ae5e4de1) | done: e1504g resize lag fixed (fork patch 0006, 30-40 to 58-60 fps), FormalShell theme.json read for matugen, chrome settings panic, field fill, libadwaita spacing, title in empty titlebar, OS fonts (SF exact on macOS) | re-record GPUI goldens on g815 (`ND_UPDATE_GOLDENS=1` on nd-backend-gpui forms, nav, media) and macOS, check by eye, test for patch 0006, make the resize gate catch slow-GPU lag, merge |
-| `mac-polish` (21f5a387) | done: titlebar centre line, rounded multi-line field, centred status page, cmd-T crash fixed with tab bar at 2+ tabs, Mail inspector toggle trailing, title in empty titlebar; overrides goldens re-recorded | re-record gallery status-page and forms goldens, dark recaptures, check hello's title, clippy/fmt, merge |
-| `port-gaps` (f968d503, one wip commit) | rich text, animation/hover, role fills, GPUI canvas, SVG, font override, focus by id, automation rows written, mostly never compiled | `cargo test --no-run -p nd-components -p nd-backend-appkit`, fix; then video, AppKit canvas, out-of-tree `nd new` |
-| `linux-webview` (6349761d, wip) | Linux engine = CEF off-screen via nd-cef (no WPE in nixpkgs; WebKitGTK cannot embed in GPUI on Wayland), never compiled | `scripts/linux-gate run 'cargo check -p nd-cef -p nd-webview -p nd-os-linux --tests'`, fix, gates, e1504g screenshot (TODO.md M8) |
-| `m2-windows-2` (merged into main 2026-10-14) | Windows hardware run, per-monitor vblank pacing, window menu, packaging and signed updates, and the start of the WinUI look (Mica layout, NavigationView sidebar, Segoe Fluent icons via `nd-icons`, system accent, `form().title()`) are on main, with `45b5236f` and `1f90a7b3` from `gpui-polish` | rest of the WinUI skin (TODO.md M2 Windows), a Windows build and clippy of main after the merge, Linux goldens for nd-backend-gpui forms, media and nav re-recorded on g815 (the gpui-polish fills changed them; macOS ones are re-recorded). Patches 0005 to 0007 on main collide with `gpui-polish`'s queue: renumber its patches when it merges |
-| `port-ytm-fixes` (402a0efa) | Wayland app id from `[app] id`, `nd new --nd-path` writes the GPUI patch block; untested | test, merge |
+| `gpui-polish` | goldens re-recorded (Linux and macOS), patches renumbered after main's (Windows 0005 to 0007, apple 0008, swapchain 0009), weak-GPU resize gate added; patch 0009 leaves a 4 to 8 px background strip at the right edge in 115 of 127 drag frames on g815 (passes with `ND_DEBUG_SWAPCHAIN=eager`) | an agent is root-causing the strip (wp_viewport crop vs committed buffer in gpui_linux window.rs); merge when `real_resize_drag` passes |
+| `linux-webview` | being compiled and gated on g815 | CEF off-screen gates in headless Hyprland, e1504g screenshot, merge |
+| `messages` `nd-port` | 63 of 89 parity items; port-gaps landed | an agent is closing parity items on macOS; framework gaps go to nd branch `msg-gaps` |
+
+Merged into main on 2026-10-16: `mac-polish` (plus the window title after a late toolbar attach), `ndshell-dbus` (nested compositors get a private D-Bus and their process group is killed, so the user manager env and the build lock are safe), `port-ytm-fixes` (with tests), `port-gaps` (rich text, hover/animation, fill roles, canvas, SVG, focus by id, AppKit video, out-of-tree `nd new`). `scripts/linux-gate` now gives each lane its own target dir under `~/.cache/nd-build/targets/` with LRU eviction under the lock; the old shared `~/.cache/nd-build/target` (7.6 GB) is unused once running lanes have merged main.
 
 Merged into main this session: icons on every backend (`nd-icons`, Lucide + SF Symbols), the notes
 example, docs app (35 pages, macOS captures), the messages-port fixes, the e1504g scroll budget.
@@ -33,17 +32,6 @@ is fully checked; then the nd branch becomes the app's main and the nix config s
   edits wait on branch `formalmusic-nd` (worktree `~/.config/nix-wt-formalmusic`); framework gaps in
   its `docs/port-parity.md` (dispatch buttons, media icons, drag reorder, container hover, menu button).
 - nativebrowser: not started; needs the Linux engine and Chrome-style extensions (M15).
-
-## First thing to fix
-
-The headless Hyprland/labwc test runner on g815 (ndshell, from the m2-linux lane) very likely
-imports its nested session into the user's systemd/D-Bus environment (WAYLAND_DISPLAY=wayland-2,
-XDG_CURRENT_DESKTOP unset), which broke formalshell.service and beeper.service restarts on
-2026-10-14 (reported by the formalshell session, which reset it with `systemctl --user
-set-environment`). The runner must never touch the user manager or D-Bus activation environment:
-run nested compositors with their own private D-Bus and without `dbus-update-activation-environment`
-/ `systemctl --user import-environment`, and add a test that the user manager's environment is
-unchanged after a gate run.
 
 ## Machines
 

@@ -1,63 +1,11 @@
-//! Stand-ins for what later milestones ship: canvases and painting (M6), gestures (M4). They
-//! keep call sites compiling.
+//! Small app-facing helpers: the image cache handle, drag-move events and `cx.processor`.
+//! `canvas` and its `Painter` are `nd-ui`'s.
 
-use std::rc::Rc;
-
-use nd_gpui::gpui::{Bounds, Point};
-use nd_ui::StyleRefinement;
+use nd_gpui::gpui::Point;
 use nd_ui::prelude::*;
 
-/// Painting primitives for `canvas` (`Painter`, 3.1).
-pub struct Painter {
-    _private: (),
-}
-
 pub use nd_components::media::ImageSource;
-
-impl Painter {
-    /// A stroked arc around `center`, from `start` to `end` as fractions of a turn from 12 o'clock.
-    pub fn stroke_arc(
-        &mut self,
-        _center: Point<Pixels>,
-        _radius: Pixels,
-        _start: f32,
-        _end: f32,
-        _width: Pixels,
-        _color: Hsla,
-    ) {
-    }
-
-    pub fn fill_circle(&mut self, _center: Point<Pixels>, _radius: Pixels, _color: Hsla) {}
-
-    pub fn image(&mut self, _image: ImageSource, _bounds: Bounds<Pixels>) {}
-}
-
-type Paint = Rc<dyn Fn(Bounds<Pixels>, &mut Painter, &mut App)>;
-
-/// Custom drawing, called with the element's bounds on every paint.
-pub struct Canvas {
-    style: StyleRefinement,
-    _paint: Paint,
-}
-
-pub fn canvas(paint: impl Fn(Bounds<Pixels>, &mut Painter, &mut App) + 'static) -> Canvas {
-    Canvas { style: StyleRefinement::default(), _paint: Rc::new(paint) }
-}
-
-impl Styled for Canvas {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
-
-impl IntoElement for Canvas {
-    #[track_caller]
-    fn into_any_element(self) -> AnyElement {
-        let mut el = div();
-        *el.style() = self.style;
-        el.into_any_element()
-    }
-}
+pub use nd_ui::{Canvas, CanvasPath, Painter, canvas};
 
 /// Images the app loads by URL or path, cached per app (`nd-system`, M7).
 pub trait ImageCache {

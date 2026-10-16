@@ -288,7 +288,8 @@ pub(super) fn image(
             (None, None) => (natural.width, natural.height),
         },
     };
-    let request = p.source.clone().map(|s| DecodeRequest::at(s, size.0, size.1, window.scale_factor(), p.fit));
+    let request =
+        p.source.clone().map(|s| DecodeRequest::at(s, size.0, size.1, window.scale_factor(), p.fit).tinted(p.tint));
     picture_state.borrow_mut().attach(Some(ctl.sink.clone()), b.backend.state.borrow().app.clone());
     Picture::want(&picture_state, request, window, cx);
     let crop = (p.fit == ImageFit::Cover).then(|| size.0 / size.1.max(1.));

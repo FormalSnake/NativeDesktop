@@ -1,7 +1,7 @@
 //! Overrides at app, window, subtree and element level (ARCHITECTURE.md 3.6). Each layer is a
 //! [`ThemeRefinement`]; a deeper layer's set fields win over a shallower one's.
 
-use nd_gpui::gpui::Hsla;
+use nd_gpui::gpui::{Hsla, SharedString};
 
 use crate::palette::{PaletteRefinement, Scheme};
 
@@ -35,6 +35,11 @@ pub struct ThemeRefinement {
     /// Token colours for light schemes; [`ThemeRefinement::token`] sets both.
     pub light: PaletteRefinement,
     pub dark: PaletteRefinement,
+    /// The family text is set in, in place of the one the platform resolved (an app setting
+    /// such as a user's chosen font).
+    pub font: Option<SharedString>,
+    /// The family monospaced text is set in.
+    pub mono_font: Option<SharedString>,
 }
 
 impl ThemeRefinement {
@@ -55,6 +60,31 @@ impl ThemeRefinement {
     pub fn appearance(mut self, appearance: Appearance) -> Self {
         self.appearance = Some(appearance);
         self
+    }
+
+    /// Sets text in `family` instead of the platform's font. An empty name keeps the
+    /// platform's, so an unset app setting can be passed straight through.
+    pub fn font(mut self, family: impl Into<SharedString>) -> Self {
+        self.font = Some(family.into()).filter(|f| !f.trim().is_empty());
+        self
+    }
+
+    /// Sets monospaced text in `family`.
+    pub fn mono_font(mut self, family: impl Into<SharedString>) -> Self {
+        self.mono_font = Some(family.into()).filter(|f| !f.trim().is_empty());
+        self
+    }
+
+    /// `theme` with this layer's font families in place of its own.
+    pub fn with_fonts(&self, mut theme: crate::Theme) -> crate::Theme {
+        if let Some(family) = &self.font {
+            theme.fonts.body.family = family.clone();
+            theme.fonts.rounded.family = family.clone();
+        }
+        if let Some(family) = &self.mono_font {
+            theme.fonts.mono.family = family.clone();
+        }
+        theme
     }
 
     /// Sets one base token (`"surface.base"`, `"danger"`, see [`crate::palette::KEYS`]) for
@@ -93,6 +123,8 @@ impl ThemeRefinement {
             },
             light: self.light.over(below.light),
             dark: self.dark.over(below.dark),
+            font: self.font.clone().or_else(|| below.font.clone()),
+            mono_font: self.mono_font.clone().or_else(|| below.mono_font.clone()),
         }
     }
 
@@ -132,6 +164,30 @@ mod tests {
         let subtree = ThemeRefinement::new().appearance(Appearance::System);
         assert_eq!(subtree.over(&window).appearance, Some(Appearance::Dark));
         assert_eq!(Appearance::System.resolve(Scheme::Dark), Scheme::Dark);
+    }
+
+    #[test]
+    fn a_font_override_replaces_the_platform_family_and_deeper_layers_win() {
+        use crate::palette::Palette;
+        use crate::preset::{Metrics, Preset};
+        let app = ThemeRefinement::new().font("Inter").mono_font("Berkeley Mono");
+        let window = ThemeRefinement::new().font("Iosevka Aile");
+        let merged = window.over(&app);
+        assert_eq!(merged.font.as_deref(), Some("Iosevka Aile"));
+        assert_eq!(merged.mono_font.as_deref(), Some("Berkeley Mono"));
+        assert_eq!(ThemeRefinement::new().font("  ").font, None, "an unset setting keeps the platform's");
+        let base = crate::Theme::derive(
+            Preset::Adwaita,
+            Scheme::Light,
+            Palette::baked(Scheme::Light),
+            Metrics::preset(Preset::Adwaita),
+            1.,
+        );
+        let themed = merged.with_fonts(base.clone());
+        assert_eq!(themed.fonts.body.family.as_ref(), "Iosevka Aile");
+        assert_eq!(themed.fonts.mono.family.as_ref(), "Berkeley Mono");
+        assert_eq!(themed.fonts.body.weight, base.fonts.body.weight, "only the family changes");
+        assert_eq!(ThemeRefinement::new().with_fonts(base.clone()), base);
     }
 
     #[test]
