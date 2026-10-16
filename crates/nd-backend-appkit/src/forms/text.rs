@@ -1147,7 +1147,9 @@ impl TextAreaControl {
         self.text_view.setDrawsBackground(false);
         self.scroll.set_capsule(Some(f64::from(radius)));
         let inset = (f64::from(radius) * 0.4).round();
-        self.text_view.setTextContainerInset(NSSize::new(inset, 6.));
+        // One line fills the capsule's height (twice its radius), the text centred in it.
+        let vertical = (f64::from(radius) - self.line_height() / 2.).max(6.);
+        self.text_view.setTextContainerInset(NSSize::new(inset, vertical));
     }
 
     /// NSTextView draws `placeholderAttributedString` while empty; it is not in the public
