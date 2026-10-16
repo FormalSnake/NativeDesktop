@@ -305,12 +305,12 @@ impl MotionState {
     /// it from where they are now.
     pub fn retarget(&mut self, animation: Animation, targets: Values, now: f64, reduce: bool) {
         self.animation = animation;
-        for c in 0..CHANNELS {
-            if targets[c] == self.targets[c] {
+        for (c, &target) in targets.iter().enumerate() {
+            if target == self.targets[c] {
                 continue;
             }
             let current = self.motions[c].map(|m| m.sample(now)).or(self.targets[c].map(|v| (v, 0.)));
-            self.motions[c] = match (current, targets[c]) {
+            self.motions[c] = match (current, target) {
                 (Some((from, velocity)), Some(to)) if !(reduce && moves(c)) && from != to => {
                     Some(Motion::start(animation, from, to, velocity, now))
                 }
@@ -366,7 +366,8 @@ mod tests {
 
     #[test]
     fn curves_start_and_end_in_place() {
-        for curve in [Curve::Linear, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut, Curve::Bezier(0.2, 0.9, 0.3, 1.)] {
+        for curve in [Curve::Linear, Curve::EaseIn, Curve::EaseOut, Curve::EaseInOut, Curve::Bezier(0.2, 0.9, 0.3, 1.)]
+        {
             assert!(curve.at(0.).abs() < 1e-3, "{curve:?}");
             assert!((curve.at(1.) - 1.).abs() < 1e-3, "{curve:?}");
         }

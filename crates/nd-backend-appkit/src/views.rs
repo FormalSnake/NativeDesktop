@@ -576,9 +576,7 @@ impl NdTextView {
         self.setAlphaValue(props.opacity.into());
         let links = props.has_links();
         *self.ivars().props.borrow_mut() = Some(props.clone());
-        if links
-            && let Some(window) = self.window()
-        {
+        if links && let Some(window) = self.window() {
             window.invalidateCursorRectsForView(self);
         }
         self.setNeedsDisplay(true);

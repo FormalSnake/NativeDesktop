@@ -31,10 +31,10 @@ mod gaps {
         BubbleSide, ImageLoaded, ImageSource, VideoEnded, VideoFailed, VideoReady, chat_bubble, image, video,
     };
     use nd_theme::FillRole;
-    use objc2_core_graphics::CGColor;
-    use objc2_quartz_core::CAShapeLayer;
     use nd_ui::prelude::*;
     use nd_ui::{RichText, canvas, span};
+    use objc2_core_graphics::CGColor;
+    use objc2_quartz_core::CAShapeLayer;
 
     pub use rig::{Checks, Rig};
 
@@ -88,11 +88,11 @@ mod gaps {
             v_flex()
                 .p(px(12.))
                 .gap(px(8.))
-                .child(
-                    label("plain")
-                        .id("rich")
-                        .rich(RichText::new([span("Hello "), span("bold").bold(), span(" site").link("https://example.com")])),
-                )
+                .child(label("plain").id("rich").rich(RichText::new([
+                    span("Hello "),
+                    span("bold").bold(),
+                    span(" site").link("https://example.com"),
+                ])))
                 .child(chat_bubble("Sent", BubbleSide::Sent).id("sent"))
                 .child(chat_bubble("SMS", BubbleSide::Received).role(FillRole::Success).id("sms"))
                 .child(chat_bubble("Received", BubbleSide::Received).role(FillRole::Neutral).id("received"))
@@ -117,7 +117,10 @@ mod gaps {
         rig.pump();
         let field = find::<NSTextField>(&rig.view(win, "rich")).expect("label field");
         let text = field.attributedStringValue();
-        c.check(text.string().to_string() == "Hello bold site", &format!("rich: the runs make the text ({})", text.string()));
+        c.check(
+            text.string().to_string() == "Hello bold site",
+            &format!("rich: the runs make the text ({})", text.string()),
+        );
         let at = |i: usize, key: &NSString| unsafe {
             let mut range = NSRange::new(0, 0);
             text.attribute_atIndex_effectiveRange(key, i, &mut range)
@@ -130,7 +133,9 @@ mod gaps {
         let plain = font_name(0);
         let bold = font_name(7);
         c.check(
-            bold.is_some_and(|t| t.contains(nd_backend_appkit::objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold)),
+            bold.is_some_and(|t| {
+                t.contains(nd_backend_appkit::objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold)
+            }),
             "rich: the bold run is bold",
         );
         c.check(plain != bold, "rich: the plain run is not");
@@ -156,9 +161,20 @@ mod gaps {
                 canvas(move |bounds, p, _| {
                     p.fill_rounded_rect(bounds, px(6.), nd_ui::prelude::hsla(0.6, 0.5, 0.5, 1.));
                     for i in 0..dots {
-                        p.fill_circle(point(px(10. + 20. * i as f32), px(10.)), px(4.), nd_ui::prelude::hsla(0., 1., 0.5, 1.));
+                        p.fill_circle(
+                            point(px(10. + 20. * i as f32), px(10.)),
+                            px(4.),
+                            nd_ui::prelude::hsla(0., 1., 0.5, 1.),
+                        );
                     }
-                    p.stroke_arc(point(px(50.), px(50.)), px(20.), 0., 0.75, px(3.), nd_ui::prelude::hsla(0.3, 1., 0.4, 1.));
+                    p.stroke_arc(
+                        point(px(50.), px(50.)),
+                        px(20.),
+                        0.,
+                        0.75,
+                        px(3.),
+                        nd_ui::prelude::hsla(0.3, 1., 0.4, 1.),
+                    );
                 })
                 .id("cv")
                 .w(px(120.))
@@ -179,7 +195,10 @@ mod gaps {
             cx.notify();
         });
         rig.pump();
-        c.check(sublayer_count(&view) == 5, &format!("canvas: redrawn when the list changes ({})", sublayer_count(&view)));
+        c.check(
+            sublayer_count(&view) == 5,
+            &format!("canvas: redrawn when the list changes ({})", sublayer_count(&view)),
+        );
         rig.close(opened);
     }
 
@@ -190,14 +209,12 @@ mod gaps {
     impl Render for Svg {
         fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let svg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='20'><rect width='10' height='20' fill='red'/></svg>";
-            v_flex().p(px(12.)).child(
-                image(ImageSource::from(svg)).id("svg").size(px(40.)).on_load(cx.listener(
-                    |this, e: &ImageLoaded, _, cx| {
-                        this.loaded = Some((e.width, e.height));
-                        cx.notify();
-                    },
-                )),
-            )
+            v_flex().p(px(12.)).child(image(ImageSource::from(svg)).id("svg").size(px(40.)).on_load(cx.listener(
+                |this, e: &ImageLoaded, _, cx| {
+                    this.loaded = Some((e.width, e.height));
+                    cx.notify();
+                },
+            )))
         }
     }
 

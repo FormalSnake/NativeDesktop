@@ -86,7 +86,13 @@ pub(super) fn bubble(
                 };
                 for span in rich.spans().iter().filter(|s| !s.text.trim().is_empty()) {
                     let at = size * span.style.scale();
-                    marks.text(&span.text, base.color(&span.style), &[fill], at, FontWeight(span.style.weight(weight.0)));
+                    marks.text(
+                        &span.text,
+                        base.color(&span.style),
+                        &[fill],
+                        at,
+                        FontWeight(span.style.weight(weight.0)),
+                    );
                 }
                 let on_link = rich.has_links().then(|| b.link_handler(id, p.opens_links));
                 crate::rich::element(ElementId::NamedInteger("text".into(), id.0), rich, &base, on_link)

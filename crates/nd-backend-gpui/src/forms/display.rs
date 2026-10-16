@@ -106,9 +106,8 @@ pub(crate) fn label(b: &Build, id: NodeId, p: &LabelProps) -> gpui::AnyElement {
         };
         b.rich_runs(id, rich, &base, None);
         let on_link = rich.has_links().then(|| b.link_handler(id, p.opens_links));
-        let mut text = div()
-            .font_weight(weight)
-            .child(crate::rich::element(ElementId::Integer(id.0), rich, &base, on_link));
+        let mut text =
+            div().font_weight(weight).child(crate::rich::element(ElementId::Integer(id.0), rich, &base, on_link));
         if !p.enabled {
             text = text.opacity(look.disabled_opacity);
         }

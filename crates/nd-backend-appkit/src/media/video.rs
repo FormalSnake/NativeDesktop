@@ -208,11 +208,9 @@ impl Input for VideoInner {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         self.layer.setFrame(self.view.bounds());
-        let radius = self
-            .props
-            .borrow()
-            .as_ref()
-            .map_or(0., |p| super::style_radius(&p.style, self.view.bounds().size.width, self.view.bounds().size.height));
+        let radius = self.props.borrow().as_ref().map_or(0., |p| {
+            super::style_radius(&p.style, self.view.bounds().size.width, self.view.bounds().size.height)
+        });
         self.view.layer().expect("layer-backed").setCornerRadius(radius);
         self.view.layer().expect("layer-backed").setMasksToBounds(radius > 0.);
         CATransaction::commit();

@@ -19,8 +19,15 @@ pub enum PathStep {
     MoveTo(f32, f32),
     LineTo(f32, f32),
     /// A quadratic curve through the control point to the end point.
-    QuadTo { ctrl: (f32, f32), to: (f32, f32) },
-    CubicTo { ctrl1: (f32, f32), ctrl2: (f32, f32), to: (f32, f32) },
+    QuadTo {
+        ctrl: (f32, f32),
+        to: (f32, f32),
+    },
+    CubicTo {
+        ctrl1: (f32, f32),
+        ctrl2: (f32, f32),
+        to: (f32, f32),
+    },
     Close,
 }
 
@@ -71,23 +78,63 @@ pub struct CanvasRect {
 
 impl From<Bounds<Pixels>> for CanvasRect {
     fn from(b: Bounds<Pixels>) -> Self {
-        Self { x: b.origin.x.as_f32(), y: b.origin.y.as_f32(), width: b.size.width.as_f32(), height: b.size.height.as_f32() }
+        Self {
+            x: b.origin.x.as_f32(),
+            y: b.origin.y.as_f32(),
+            width: b.size.width.as_f32(),
+            height: b.size.height.as_f32(),
+        }
     }
 }
 
 /// What a canvas draws, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaintOp {
-    FillRect { rect: CanvasRect, color: Hsla, radius: f32 },
-    StrokeRect { rect: CanvasRect, color: Hsla, width: f32, radius: f32 },
-    FillCircle { center: (f32, f32), radius: f32, color: Hsla },
+    FillRect {
+        rect: CanvasRect,
+        color: Hsla,
+        radius: f32,
+    },
+    StrokeRect {
+        rect: CanvasRect,
+        color: Hsla,
+        width: f32,
+        radius: f32,
+    },
+    FillCircle {
+        center: (f32, f32),
+        radius: f32,
+        color: Hsla,
+    },
     /// From `start` to `end`, fractions of a turn clockwise from 12 o'clock.
-    StrokeArc { center: (f32, f32), radius: f32, start: f32, end: f32, width: f32, color: Hsla },
-    Line { from: (f32, f32), to: (f32, f32), width: f32, color: Hsla },
-    FillPath { path: CanvasPath, color: Hsla },
-    StrokePath { path: CanvasPath, width: f32, color: Hsla },
+    StrokeArc {
+        center: (f32, f32),
+        radius: f32,
+        start: f32,
+        end: f32,
+        width: f32,
+        color: Hsla,
+    },
+    Line {
+        from: (f32, f32),
+        to: (f32, f32),
+        width: f32,
+        color: Hsla,
+    },
+    FillPath {
+        path: CanvasPath,
+        color: Hsla,
+    },
+    StrokePath {
+        path: CanvasPath,
+        width: f32,
+        color: Hsla,
+    },
     /// An image (the backend's image source type, `nd::ImageSource`) drawn into `rect`.
-    Image { source: crate::Scope, rect: CanvasRect },
+    Image {
+        source: crate::Scope,
+        rect: CanvasRect,
+    },
 }
 
 /// Records what a canvas draws. Colours come from the theme like any other element's.

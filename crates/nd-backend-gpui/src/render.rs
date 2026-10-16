@@ -555,7 +555,13 @@ impl<'a> Build<'a> {
     }
 
     /// Records each run of rich text as its own text paint.
-    pub(crate) fn rich_runs(&self, node: NodeId, rich: &nd_ui::RichText, base: &crate::rich::Base<'_>, fill: Option<Hsla>) {
+    pub(crate) fn rich_runs(
+        &self,
+        node: NodeId,
+        rich: &nd_ui::RichText,
+        base: &crate::rich::Base<'_>,
+        fill: Option<Hsla>,
+    ) {
         for span in rich.spans().iter().filter(|s| !s.text.trim().is_empty()) {
             let run = Run { size: base.size.as_f32() * span.style.scale(), weight: span.style.weight(base.weight) };
             self.text_run(node, &span.text, run, Some(base.color(&span.style)), fill);

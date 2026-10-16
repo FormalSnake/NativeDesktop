@@ -17,8 +17,8 @@ use nd_gpui::taffy::{self, TaffyTree, prelude::TaffyMaxContent};
 
 use crate::animation::{self, MotionSpec, MotionState, Transform, Values};
 use crate::app::{AnyView, App, EntityId};
-use crate::canvas::{self, CanvasProps, PaintFn};
 use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKind, Props, PropsPatch};
+use crate::canvas::{self, CanvasProps, PaintFn};
 use crate::dispatch::DispatchTree;
 use crate::element::{AnyElement, DispatchProps, DivProps, Element, Handler, Key, NodeElement, RootProps};
 use crate::layout::{to_taffy, with_titlebar_insets};
@@ -346,7 +346,14 @@ impl Tree {
 
     /// `el` as presented at `now`: a div that animates gets its motions started or retargeted
     /// and the sampled values in place of its own. `node` is its retained node, if it has one.
-    fn animate(&mut self, node: Option<NodeId>, id: NodeId, mut el: NodeElement, now: f64, reduce: bool) -> NodeElement {
+    fn animate(
+        &mut self,
+        node: Option<NodeId>,
+        id: NodeId,
+        mut el: NodeElement,
+        now: f64,
+        reduce: bool,
+    ) -> NodeElement {
         let previous = node.and_then(|n| self.nodes.get_mut(&n)).and_then(|n| n.motion.take());
         let (Some(spec), Some(div)) = (el.motion, el.props.downcast_ref::<DivProps>()) else {
             self.animating.remove(&id);

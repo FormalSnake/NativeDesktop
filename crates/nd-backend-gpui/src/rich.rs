@@ -42,7 +42,11 @@ impl Base<'_> {
             color: Some(color),
             font_weight: (weight != self.weight).then_some(FontWeight(weight)),
             font_style: style.italic.then_some(FontStyle::Italic),
-            underline: style.underlined().then_some(UnderlineStyle { thickness: px(1.), color: Some(color), wavy: false }),
+            underline: style.underlined().then_some(UnderlineStyle {
+                thickness: px(1.),
+                color: Some(color),
+                wavy: false,
+            }),
             strikethrough: style.strikethrough.then_some(StrikethroughStyle { thickness: px(1.), color: Some(color) }),
             ..HighlightStyle::default()
         }
@@ -120,17 +124,13 @@ pub(crate) fn element(id: ElementId, rich: &RichText, base: &Base<'_>, on_link: 
             for range in words(segment) {
                 let text: SharedString = segment[range.clone()].to_owned().into();
                 let runs = [(0..text.len(), &span.style)];
-                let piece = styled(
-                    ElementId::NamedInteger("word".into(), word as u64),
-                    text,
-                    &runs,
-                    base,
-                    on_link.as_ref(),
-                );
+                let piece =
+                    styled(ElementId::NamedInteger("word".into(), word as u64), text, &runs, base, on_link.as_ref());
                 word += 1;
-                lines.last_mut().expect("a line").push(
-                    div().text_size(size).line_height(size * base.leading).child(piece).into_any_element(),
-                );
+                lines
+                    .last_mut()
+                    .expect("a line")
+                    .push(div().text_size(size).line_height(size * base.leading).child(piece).into_any_element());
             }
         }
     }

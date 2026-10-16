@@ -279,7 +279,8 @@ impl App {
 
     /// A backend laid canvas `node` out at `width` x `height`: it paints again for that size.
     fn repaint_canvas(&mut self, node: NodeId, width: f32, height: f32) {
-        let Some(id) = self.windows.iter().find(|(_, w)| w.tree.as_ref().is_some_and(|t| t.contains(node))).map(|(id, _)| *id)
+        let Some(id) =
+            self.windows.iter().find(|(_, w)| w.tree.as_ref().is_some_and(|t| t.contains(node))).map(|(id, _)| *id)
         else {
             return;
         };
@@ -370,10 +371,8 @@ impl App {
     /// Runs `f` with the global of type `G` and the app, GPUI's `update_global`. Panics when
     /// none is set. The global is out of the app while `f` runs, so `f` cannot read it again.
     pub fn update_global<G: 'static, R>(&mut self, f: impl FnOnce(&mut G, &mut App) -> R) -> R {
-        let mut global = self
-            .globals
-            .remove(&TypeId::of::<G>())
-            .unwrap_or_else(|| panic!("no global {}", type_name::<G>()));
+        let mut global =
+            self.globals.remove(&TypeId::of::<G>()).unwrap_or_else(|| panic!("no global {}", type_name::<G>()));
         let result = f(global.downcast_mut().expect("global type"), self);
         self.globals.insert(TypeId::of::<G>(), global);
         result

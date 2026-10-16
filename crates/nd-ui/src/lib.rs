@@ -4,8 +4,8 @@
 pub mod actions;
 mod animation;
 mod app;
-pub mod canvas;
 pub mod backend;
+pub mod canvas;
 mod container;
 pub mod dispatch;
 mod element;
@@ -23,11 +23,13 @@ pub mod transaction;
 mod tree;
 mod window;
 
+pub use animation::{Animation, AnimationEnded, Curve, Pose, Transform};
 pub use app::{AnyView, App, Context, Entity, EntityId, Render, Subscription, WeakEntity};
+pub use canvas::{Canvas, CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, Painter, PathStep, canvas};
 pub use container::ContainerElement;
 pub use element::{
-    AnyElement, Bezel, Button, ButtonProps, ButtonVariant, ClickEvent, DispatchProps, Div, DivProps,
-    HoverChanged, InteractiveElement, IntoElement, Key, NativeElement, ParentElement, RootProps, Scope, Text, TextProps,
+    AnyElement, Bezel, Button, ButtonProps, ButtonVariant, ClickEvent, DispatchProps, Div, DivProps, HoverChanged,
+    InteractiveElement, IntoElement, Key, NativeElement, ParentElement, RootProps, Scope, Text, TextProps,
     WindowControls, WindowControlsProps, button, deferred, div, drag_region, h_flex, rich_text, text, v_flex,
     window_controls,
 };
@@ -41,12 +43,10 @@ pub use nd_gesture::{
 };
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
-pub use canvas::{Canvas, CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, Painter, PathStep, canvas};
-pub use animation::{Animation, AnimationEnded, Curve, Pose, Transform};
-pub use rich_text::{LinkClicked, RichText, Span, SpanStyle, TextColor, span};
 pub use overlay::{
     DismissCause, Dismissed, Modality, OverlayElement, OverlayKind, OverlayProps, Placement, panel, popover, tooltip,
 };
+pub use rich_text::{LinkClicked, RichText, Span, SpanStyle, TextColor, span};
 pub use surface::{InputCounts, SurfaceProps, SurfaceSource, native_surface};
 pub use window::{Titlebar, TitlebarInsets, Window, WindowHandle, WindowKind, WindowOptions};
 
@@ -55,11 +55,14 @@ pub mod prelude {
     pub use crate::overlay::{DismissCause, Dismissed, Modality, OverlayKind, Placement, panel, popover, tooltip};
     pub use crate::surface::{SurfaceSource, native_surface};
     pub use crate::{
+        Animation, Canvas, CanvasPath, Curve, LinkClicked, Painter, Pose, RichText, Span, TextColor, canvas, rich_text,
+        span,
+    };
+    pub use crate::{
         AnyElement, AnyView, App, Button, ClickEvent, Context, Div, Entity, EntityId, FluentBuilder,
         InteractiveElement, IntoElement, NativeElement, ParentElement, Render, Styled, Subscription, Text, WeakEntity,
         Window, WindowHandle, WindowOptions, button, deferred, div, drag_region, h_flex, text, v_flex, window_controls,
     };
-    pub use crate::{Animation, Canvas, CanvasPath, Curve, Painter, canvas, LinkClicked, Pose, RichText, Span, TextColor, rich_text, span};
     pub use nd_gesture::{
         DoubleTapEvent, DragEvent, ForceClickEvent, GesturePhase, Haptic, LongPressEvent, PinchEvent, RotateEvent,
         SmartMagnifyEvent, SwipeDirection, SwipePageEvent, TapEvent,

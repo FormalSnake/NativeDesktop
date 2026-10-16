@@ -71,7 +71,8 @@ fn paint_ops(ops: &[PaintOp], origin: Point<Pixels>, window: &mut Window) {
                 ));
             }
             PaintOp::FillCircle { center, radius, color } => {
-                let r = CanvasRect { x: center.0 - radius, y: center.1 - radius, width: 2. * radius, height: 2. * radius };
+                let r =
+                    CanvasRect { x: center.0 - radius, y: center.1 - radius, width: 2. * radius, height: 2. * radius };
                 window.paint_quad(fill(rect(origin, r), *color).corner_radii(px(*radius)));
             }
             PaintOp::StrokeArc { center, radius, start, end, width, color } => {

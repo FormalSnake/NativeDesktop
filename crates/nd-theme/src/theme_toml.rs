@@ -125,8 +125,11 @@ mod tests {
 
     #[test]
     fn fonts_are_families() {
-        let r = parse(r##"font = "Inter"
-mono_font = "Iosevka""##).unwrap();
+        let r = parse(
+            r##"font = "Inter"
+mono_font = "Iosevka""##,
+        )
+        .unwrap();
         assert_eq!(r.font.as_deref(), Some("Inter"));
         assert_eq!(r.mono_font.as_deref(), Some("Iosevka"));
         assert!(parse("font = 12").is_err());

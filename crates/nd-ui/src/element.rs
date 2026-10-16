@@ -18,10 +18,10 @@ use nd_gesture::{
 use nd_gpui::gpui::prelude::FluentBuilder;
 use nd_gpui::gpui::{Action, KeyContext, Overflow, SharedString, StyleRefinement, Styled};
 
+use crate::animation::{Animation, AnimationEnded, MotionSpec, Pose, Transform};
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AnyProps, NodeKind, Props, WidgetKind};
 use crate::dispatch::{DispatchTree, FocusScope, Focusable, KeyRoles};
-use crate::animation::{Animation, AnimationEnded, MotionSpec, Pose, Transform};
 use crate::rich_text::{LinkClicked, RichText, Span};
 use crate::window::Window;
 

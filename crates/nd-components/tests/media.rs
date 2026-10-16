@@ -87,7 +87,8 @@ fn decode_scales_down_to_the_box_and_never_up() {
     .unwrap();
     assert_eq!((contain.width, contain.height), (128, 64), "contain fits the longer side");
     let big =
-        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover, tint: None }, 1 << 30).unwrap();
+        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover, tint: None }, 1 << 30)
+            .unwrap();
     assert_eq!((big.width, big.height), (800, 400), "never scaled up");
     assert_eq!((big.source_width, big.source_height), (800, 400));
     assert_eq!(big.frames.len(), 1);
@@ -97,8 +98,13 @@ fn decode_scales_down_to_the_box_and_never_up() {
 #[test]
 fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
     let bytes = gif(16, 16, 4, 10);
-    let request =
-        DecodeRequest { source: ImageSource::bytes("gif", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
+    let request = DecodeRequest {
+        source: ImageSource::bytes("gif", bytes.clone()),
+        width: 0,
+        height: 0,
+        fit: ImageFit::Cover,
+        tint: None,
+    };
     let d = decode(&bytes, &request, 1 << 30).unwrap();
     assert!(d.is_animated());
     assert_eq!(d.frames.len(), 4);
@@ -111,8 +117,13 @@ fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
 #[test]
 fn an_animation_over_budget_drops_frames_and_keeps_its_length() {
     let bytes = gif(16, 16, 8, 50);
-    let request =
-        DecodeRequest { source: ImageSource::bytes("gif8", bytes.clone()), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
+    let request = DecodeRequest {
+        source: ImageSource::bytes("gif8", bytes.clone()),
+        width: 0,
+        height: 0,
+        fit: ImageFit::Cover,
+        tint: None,
+    };
     let one_frame = 16 * 16 * 4;
     let d = decode(&bytes, &request, one_frame * 3).unwrap();
     assert_eq!(d.frames.len(), 2, "8 frames thinned by 4 to fit 3 frames' budget");

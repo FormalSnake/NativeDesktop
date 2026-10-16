@@ -9,9 +9,9 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, Message};
 use objc2_app_kit::{
-    NSColor, NSFont, NSFontManager, NSFontTraitMask, NSFontAttributeName, NSFontDescriptorSymbolicTraits, NSFontWeight, NSFontWeightBold,
-    NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSForegroundColorAttributeName, NSLayoutManager,
-    NSStrikethroughStyleAttributeName, NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName,
+    NSColor, NSFont, NSFontAttributeName, NSFontDescriptorSymbolicTraits, NSFontManager, NSFontTraitMask, NSFontWeight,
+    NSFontWeightBold, NSFontWeightMedium, NSFontWeightRegular, NSFontWeightSemibold, NSForegroundColorAttributeName,
+    NSLayoutManager, NSStrikethroughStyleAttributeName, NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName,
     NSWorkspace,
 };
 use objc2_foundation::{
@@ -158,7 +158,8 @@ pub(crate) fn attributed(
     for run in runs {
         let font = run_font(run, tabular, family);
         let color = run.color.map_or_else(|| base.retain(), Color::ns_color);
-        let mut keys: Vec<&NSAttributedStringKey> = unsafe { vec![NSFontAttributeName, NSForegroundColorAttributeName] };
+        let mut keys: Vec<&NSAttributedStringKey> =
+            unsafe { vec![NSFontAttributeName, NSForegroundColorAttributeName] };
         let mut values: Vec<Retained<AnyObject>> =
             vec![Retained::into_super(Retained::into_super(font)), Retained::into_super(Retained::into_super(color))];
         let one = NSNumber::new_isize(1);

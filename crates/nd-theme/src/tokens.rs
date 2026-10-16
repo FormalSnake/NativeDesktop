@@ -320,13 +320,18 @@ mod tests {
         for scheme in [Scheme::Light, Scheme::Dark] {
             for preset in [Preset::MacOs, Preset::Adwaita] {
                 let theme = Theme::derive(preset, scheme, Palette::baked(scheme), Metrics::preset(preset), 1.);
-                for role in [FillRole::Neutral, FillRole::Accent, FillRole::Success, FillRole::Warning, FillRole::Danger]
+                for role in
+                    [FillRole::Neutral, FillRole::Accent, FillRole::Success, FillRole::Warning, FillRole::Danger]
                 {
                     let (fill, ink) = theme.fill(role);
                     let fill = crate::color::over(fill, theme.surface.base);
                     assert!(contrast(ink, fill) >= 4.5, "{scheme:?} {preset:?} {role:?}");
                 }
-                assert_ne!(theme.fill(FillRole::Success).0, theme.fill(FillRole::Accent).0, "an SMS bubble is not blue");
+                assert_ne!(
+                    theme.fill(FillRole::Success).0,
+                    theme.fill(FillRole::Accent).0,
+                    "an SMS bubble is not blue"
+                );
                 for text in [theme.text.accent, theme.text.success, theme.text.warning] {
                     for surface in [theme.surface.base, theme.surface.raised, theme.surface.sidebar] {
                         assert!(contrast(text, surface) >= 4.5, "{scheme:?} {preset:?}");
