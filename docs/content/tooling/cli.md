@@ -178,8 +178,10 @@ repository.
   report per OS. `--require macos` fails on a missing or stale macOS capture, `--compile` checks
   every example natively and the web ones for wasm32, `--web` builds the site and each web
   example and loads them in headless Chrome.
-- `nd docs build`: the docs app's web bundle with each page's markdown, `llms.txt` and
-  `llms-full.txt` beside it, in `target/nd/docs-site/`. `nd docs serve` builds and serves it.
+- `nd docs build`: the static site in `target/nd/docs-site/`: an HTML page and the raw markdown
+  for every page, `llms.txt`, `llms-full.txt`, and the docs app's web bundle under `app/`.
+  `nd docs serve` builds and serves it. CI deploys it to https://nativedesktop.formalsnake.dev on
+  every push to main.
 - `nd docs capture [example..]`: runs each example through the test harness on this OS, light
   and dark, and records its source hash in the capture manifest. `--stale` takes only examples
   whose capture is missing or out of date. A changed example shows "not captured yet" until it

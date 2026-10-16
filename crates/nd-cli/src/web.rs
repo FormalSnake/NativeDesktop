@@ -349,6 +349,9 @@ pub fn serve_dir(dir: &Path, port: u16) -> Result<ExitCode> {
         let mut path = root.join(if relative.is_empty() { "index.html" } else { relative });
         if path.is_dir() {
             path = path.join("index.html");
+        } else if !path.exists() && path.extension().is_none() {
+            // `/concepts/theming` is `concepts/theming.html`, as Cloudflare serves it.
+            path.set_extension("html");
         }
         // Reject `..` escapes out of the bundle.
         let inside = path.canonicalize().is_ok_and(|p| p.starts_with(&root));

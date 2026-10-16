@@ -6,7 +6,9 @@
 //!   (`default` is accepted for either scheme);
 //! - flat: `{"mode": "dark", "colors": {"primary": "#rrggbb", ...}}`, one scheme, or both when
 //!   `mode` is absent;
-//! - per scheme, as `matugen --json hex` dumps it: `{"colors": {"light": {"primary": "#.."}}}`.
+//! - per scheme, as `matugen --json hex` dumps it: `{"colors": {"light": {"primary": "#.."}}}`;
+//! - FormalShell's `~/.local/state/formalshell/theme.json`: shadcn keys at the top level next to
+//!   `mode` (`{"mode": "dark", "background": "#..", "primary": "#.."}`), mapped by [`SHADCN_MAP`].
 //!
 //! Unknown roles and values that are not hex colours are ignored; a file that is not JSON is
 //! an error, so the caller keeps the last good palette.
@@ -35,6 +37,21 @@ pub const ROLE_MAP: &[(&str, &str)] = &[
     ("secondary_container", "selection"),
     ("green", "success"),
     ("yellow", "warning"),
+];
+
+/// FormalShell's shadcn key to nd token. Only keys that carry the same Material role are
+/// mapped: its `warning` is the tertiary colour and `accent` a hover fill, so neither is read.
+pub const SHADCN_MAP: &[(&str, &str)] = &[
+    ("background", "surface.base"),
+    ("card", "surface.sidebar"),
+    ("popover", "surface.raised"),
+    ("secondary", "surface.overlay"),
+    ("border", "separator"),
+    ("foreground", "text.primary"),
+    ("mutedForeground", "text.secondary"),
+    ("primary", "accent"),
+    ("primaryForeground", "text.on_accent"),
+    ("destructive", "danger"),
 ];
 
 fn token_for(role: &str) -> Option<&'static str> {
@@ -93,8 +110,10 @@ fn set(palette: &mut PaletteRefinement, role: &str, value: &Value) {
 impl MatugenTheme {
     pub fn parse(text: &str) -> Result<MatugenTheme, ParseError> {
         let root: Value = serde_json::from_str(text).map_err(ParseError::Json)?;
-        let colors = root.get("colors").and_then(Value::as_object).ok_or(ParseError::NoColors)?;
         let mode = root.get("mode").and_then(Value::as_str).and_then(scheme_named);
+        let Some(colors) = root.get("colors").and_then(Value::as_object) else {
+            return Self::parse_shadcn(&root, mode);
+        };
         let mut theme = MatugenTheme { mode, palettes: SchemePalettes::default() };
 
         let per_scheme = colors.keys().any(|k| scheme_named(k).is_some())
@@ -138,6 +157,27 @@ impl MatugenTheme {
         }
         Ok(theme)
     }
+
+    fn parse_shadcn(root: &Value, mode: Option<Scheme>) -> Result<MatugenTheme, ParseError> {
+        let keys = root.as_object().ok_or(ParseError::NoColors)?;
+        if !keys.get("background").is_some_and(Value::is_string) {
+            return Err(ParseError::NoColors);
+        }
+        let mut theme = MatugenTheme { mode, palettes: SchemePalettes::default() };
+        for (key, token) in SHADCN_MAP {
+            let Some(color) = keys.get(*key).and_then(color) else { continue };
+            match mode {
+                Some(scheme) => {
+                    theme.palettes.get_mut(scheme).set(token, color);
+                }
+                None => {
+                    theme.palettes.light.set(token, color);
+                    theme.palettes.dark.set(token, color);
+                }
+            }
+        }
+        Ok(theme)
+    }
 }
 
 /// nd's matugen template, for apps and the home-manager module to install.
@@ -176,6 +216,22 @@ mod tests {
         .unwrap();
         assert_eq!(t.palettes.light.accent, parse_hex("#111111"));
         assert_eq!(t.palettes.dark.accent, parse_hex("#eeeeee"));
+    }
+
+    #[test]
+    fn formalshell_shape() {
+        let t = MatugenTheme::parse(
+            r##"{"mode":"dark","background":"#111318","foreground":"#e2e2e9","card":"#1a1b20","popover":"#1e1f25",
+            "primary":"#adc6ff","primaryForeground":"#102f60","secondary":"#282a2f","mutedForeground":"#c4c6d0",
+            "accent":"#33353a","destructive":"#ffb4ab","warning":"#debcdf","border":"#44474f","chart1":"#adc6ff"}"##,
+        )
+        .unwrap();
+        assert_eq!(t.mode, Some(Scheme::Dark));
+        assert_eq!(t.palettes.dark.surface, parse_hex("#111318"));
+        assert_eq!(t.palettes.dark.accent, parse_hex("#adc6ff"));
+        assert_eq!(t.palettes.dark.danger, parse_hex("#ffb4ab"));
+        assert!(t.palettes.dark.warning.is_none());
+        assert!(t.palettes.light.is_empty());
     }
 
     #[test]

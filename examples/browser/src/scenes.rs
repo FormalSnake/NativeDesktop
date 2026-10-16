@@ -10,6 +10,18 @@ const PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;bac
 font:15px -apple-system;color:white;display:flex;align-items:center;justify-content:center\">\
 page</body></html>";
 
+/// A text field and a page tall enough to scroll; the title says what reached it: the field's
+/// text, the scroll offset, whether the field has focus and the last press the page saw. It reads
+/// `loading` until its script runs.
+const INPUT_PAGE: &str = "<!doctype html><html><head><title>loading</title></head>\
+<body style=\"margin:0;height:3000px;background:#2f8f5b\">\
+<input id=\"field\" style=\"margin:24px;width:240px;font:18px sans-serif\">\
+<script>var f=document.getElementById('field'),at='none';\
+function t(){document.title='typed='+f.value+' y='+Math.round(scrollY)+' f='+(document.activeElement===f?1:0)+' at='+at;}\
+f.addEventListener('input',t);f.addEventListener('focus',t);f.addEventListener('blur',t);addEventListener('scroll',t);\
+addEventListener('mousedown',function(e){at=e.clientX+','+e.clientY;t();},true);t();</script>\
+</body></html>";
+
 const EDGE_PAGE: &str = "<!doctype html><html><body style=\"margin:0;height:100vh;background:#2f8f5b\"></body></html>";
 
 struct Overlays {
@@ -141,5 +153,14 @@ pub fn resize(cx: &mut App) {
     let page = WebView::new();
     page.load_html(EDGE_PAGE, None);
     let options = WindowOptions::main("main").title("Resize").size(size(px(720.), px(520.)));
+    cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
+}
+
+/// A page with a text field filling the window, for the input gate: clicks focus the field,
+/// typed keys reach it and the wheel scrolls the page.
+pub fn input(cx: &mut App) {
+    let page = WebView::new();
+    page.load_html(INPUT_PAGE, None);
+    let options = WindowOptions::main("main").title("Input").size(size(px(720.), px(520.)));
     cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
 }

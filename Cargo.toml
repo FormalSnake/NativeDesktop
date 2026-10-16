@@ -73,6 +73,8 @@ libghostty-vt-sys = { path = "crates/nd-terminal/vendor/libghostty-vt-sys" }
 [patch.crates-io]
 gpui-pre = { path = "crates/nd-gpui/vendor/gpui-pre" }
 gpui-fast = { path = "crates/nd-gpui/vendor/gpui-fast" }
+gpui-pre-apple = { path = "crates/nd-gpui/vendor/gpui-pre-apple" }
+gpui-fast-apple = { path = "crates/nd-gpui/vendor/gpui-fast-apple" }
 gpui-pre-linux = { path = "crates/nd-gpui/vendor/gpui-pre-linux" }
 gpui-fast-linux = { path = "crates/nd-gpui/vendor/gpui-fast-linux" }
 gpui-pre-wgpu = { path = "crates/nd-gpui/vendor/gpui-pre-wgpu" }

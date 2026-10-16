@@ -35,12 +35,12 @@ pub mod prelude {
         source_section, source_tree, toast, toast_overlay,
     };
     pub use crate::chrome::{
-        Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, IconView, Mapping, Menu, MenuItem,
-        MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select, SelectChanged,
-        Separator, Slider, SliderChanged, SourceItem, SourceSelected, SubtreeOverrides, SystemItem, TabSelected,
-        Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group, icon, icon_button,
-        inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list, system_item,
-        titlebar, toolbar_sidebar_toggle,
+        Alert, AlertResponse, AlertStyle, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, IconView, Mapping, Menu,
+        MenuItem, MenuRole, OnPlatform, OpenDialog, Pane, PaneCollapsed, Pattern, Patterns, SaveDialog, Select,
+        SelectChanged, Separator, Slider, SliderChanged, SourceItem, SourceSelected, SubtreeOverrides, SystemItem,
+        TabSelected, Titlebar as TitlebarElement, WindowChromeExt, form, form_row, form_section, glass, glass_group,
+        icon, icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item,
+        source_list, system_item, titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::chrome::{
         Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
@@ -134,6 +134,8 @@ fn install_webview(manifest: &Manifest) {
     }
     #[cfg(feature = "cef")]
     nd_cef::register(manifest.name);
+    #[cfg(all(target_os = "linux", feature = "webview", not(feature = "cef")))]
+    nd_os_linux::cef::register(manifest.name);
 }
 
 /// Release notes of the update this launch is the result of, until [`mark_whats_new_seen`].
@@ -375,7 +377,12 @@ pub(crate) mod gpui_host {
         let mut registry = ThemeRegistry::new(preset);
         if let Some(backend) = cx.backend_as::<GpuiBackend>() {
             let palettes = backend.platform_palettes();
-            registry.set_os(OsTheme { scheme: backend.platform_scheme(), palettes, ..OsTheme::default() });
+            registry.set_os(OsTheme {
+                scheme: backend.platform_scheme(),
+                palettes,
+                fonts: nd_theme::fonts::resolve(),
+                ..OsTheme::default()
+            });
             // Called on a light or dark switch and when the system colours change (the accent).
             let os = backend.clone();
             backend.on_platform_scheme(move |app, scheme| {

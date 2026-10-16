@@ -241,13 +241,8 @@ struct Fonts {
 
 impl Fonts {
     fn new(family: &str, size: f32) -> Self {
-        let family: SharedString = match family {
-            // nd's alias for the platform's monospace design, which GPUI has no name for.
-            nd_theme::preset::SYSTEM_FONT_MONO | "" => default_mono().into(),
-            other => other.to_owned().into(),
-        };
         let base = Font {
-            family,
+            family: SharedString::from(family.to_owned()),
             fallbacks: Some(FontFallbacks::from_fonts(vec![SYMBOLS_FAMILY.to_owned()])),
             ..gpui::font("")
         };
@@ -267,16 +262,6 @@ impl Fonts {
             (false, true) => &self.italic,
             (true, true) => &self.bold_italic,
         }
-    }
-}
-
-fn default_mono() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Menlo"
-    } else if cfg!(target_os = "windows") {
-        "Cascadia Mono"
-    } else {
-        "Noto Sans Mono"
     }
 }
 
@@ -313,8 +298,10 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Prepainted {
-        let family =
-            self.props.font_family.clone().map_or_else(|| self.tokens.fonts.mono.family.to_string(), |f| f.to_string());
+        let family = match &self.props.font_family {
+            Some(f) if !f.is_empty() => f.to_string(),
+            _ => self.tokens.fonts.mono.family.to_string(),
+        };
         let fonts = Fonts::new(&family, self.props.font_size.unwrap_or(DEFAULT_FONT_SIZE));
         let layout = grid_layout(&fonts, bounds, px(self.props.padding), window);
         self.state.layout.set(Some(layout));

@@ -5,7 +5,11 @@
 
 use std::time::Duration;
 
-use nd_gpui::gpui::{Font, Pixels, font, px};
+use std::ops::{Index, IndexMut};
+
+use nd_gpui::gpui::{Font, FontWeight, Pixels, font, px};
+
+use crate::fonts::SystemFonts;
 
 /// A platform look. Each backend picks one at launch; apps override tokens, not the preset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -110,10 +114,83 @@ pub struct TypeScale {
     pub large_title: Pixels,
 }
 
+/// The platform's text styles. On macOS each is `NSFont.preferredFont(forTextStyle:)`, so
+/// labels follow the system's sizes; GPUI skins draw them at the theme's [`TextStyles`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    LargeTitle,
+    Title1,
+    Title2,
+    Title3,
+    Headline,
+    Subheadline,
+    #[default]
+    Body,
+    Callout,
+    Footnote,
+    Caption1,
+    Caption2,
+}
+
+impl TextStyle {
+    pub const ALL: [TextStyle; 11] = [
+        TextStyle::LargeTitle,
+        TextStyle::Title1,
+        TextStyle::Title2,
+        TextStyle::Title3,
+        TextStyle::Headline,
+        TextStyle::Subheadline,
+        TextStyle::Body,
+        TextStyle::Callout,
+        TextStyle::Footnote,
+        TextStyle::Caption1,
+        TextStyle::Caption2,
+    ];
+}
+
+/// One text style: what text set in it is drawn at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TypeStyle {
+    pub size: Pixels,
+    pub weight: FontWeight,
+    pub line_height: Pixels,
+}
+
+/// Size, weight and line height of every [`TextStyle`], indexed by the style.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextStyles([TypeStyle; 11]);
+
+impl TextStyles {
+    /// From `(size, weight, line height)` rows in [`TextStyle::ALL`] order.
+    pub fn from_rows(rows: [(f32, f32, f32); 11]) -> TextStyles {
+        TextStyles(rows.map(|(size, weight, line)| TypeStyle {
+            size: px(size),
+            weight: FontWeight(weight),
+            line_height: px(line),
+        }))
+    }
+}
+
+impl Index<TextStyle> for TextStyles {
+    type Output = TypeStyle;
+
+    fn index(&self, style: TextStyle) -> &TypeStyle {
+        &self.0[style as usize]
+    }
+}
+
+impl IndexMut<TextStyle> for TextStyles {
+    fn index_mut(&mut self, style: TextStyle) -> &mut TypeStyle {
+        &mut self.0[style as usize]
+    }
+}
+
+/// Fonts by role, named by the family the OS reports ([`crate::fonts::resolve`]); a preset's
+/// own are what stands when the OS names none.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fonts {
     pub body: Font,
-    /// SF Pro Rounded on macOS; the body font elsewhere.
+    /// The system font's rounded design on macOS; the body font elsewhere.
     pub rounded: Font,
     pub mono: Font,
 }
@@ -143,13 +220,6 @@ pub struct Materials {
     pub glass: Material,
 }
 
-/// The font family nd resolves to the platform's UI font with a design: `""` is the default
-/// design, `"rounded"` and `"monospaced"` the others. Backends map these names; elsewhere they
-/// fall back to the body font.
-pub const SYSTEM_FONT: &str = ".SystemUIFont";
-pub const SYSTEM_FONT_ROUNDED: &str = ".SystemUIFont.rounded";
-pub const SYSTEM_FONT_MONO: &str = ".SystemUIFont.monospaced";
-
 /// Values the OS publishes, read by the backend. Unset fields keep the preset's.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SystemMetrics {
@@ -173,6 +243,7 @@ pub struct Metrics {
     pub radius: Radii,
     pub control: ControlHeights,
     pub type_scale: TypeScale,
+    pub text_styles: TextStyles,
     pub fonts: Fonts,
     pub motion: Motion,
     pub materials: Materials,
@@ -211,10 +282,24 @@ impl Metrics {
                 radius: radii(4., 6., 10., 16.),
                 control: controls(22., 28., 34., 40.),
                 type_scale: scale(10., 10., 13., 13., 22., 26.),
+                // NSFont's text styles: line heights are NSLayoutManager's default for each.
+                text_styles: TextStyles::from_rows([
+                    (26., 400., 32.),
+                    (22., 400., 26.),
+                    (17., 400., 22.),
+                    (15., 400., 20.),
+                    (13., 700., 16.),
+                    (11., 400., 14.),
+                    (13., 400., 16.),
+                    (12., 400., 15.),
+                    (10., 400., 13.),
+                    (10., 400., 13.),
+                    (10., 510., 13.),
+                ]),
                 fonts: Fonts {
-                    body: font(SYSTEM_FONT),
-                    rounded: font(SYSTEM_FONT_ROUNDED),
-                    mono: font(SYSTEM_FONT_MONO),
+                    body: font(".AppleSystemUIFont"),
+                    rounded: font(".AppleSystemUIFontRounded"),
+                    mono: font(".AppleSystemUIFontMonospaced"),
                 },
                 motion: Motion {
                     fast: ms(150),
@@ -234,6 +319,21 @@ impl Metrics {
                 radius: radii(2., 4., 8., 12.),
                 control: controls(24., 32., 40., 48.),
                 type_scale: scale(12., 12., 14., 14., 20., 28.),
+                // WinUI's type ramp: Title Large, Title, Subtitle, Body Large, Body Strong for
+                // the headline, Caption for the small styles.
+                text_styles: TextStyles::from_rows([
+                    (40., 600., 52.),
+                    (28., 600., 36.),
+                    (20., 600., 28.),
+                    (18., 400., 24.),
+                    (14., 600., 20.),
+                    (12., 400., 16.),
+                    (14., 400., 20.),
+                    (14., 400., 20.),
+                    (12., 400., 16.),
+                    (12., 400., 16.),
+                    (12., 400., 16.),
+                ]),
                 fonts: Fonts {
                     body: font("Segoe UI Variable Text"),
                     rounded: font("Segoe UI Variable Text"),
@@ -257,7 +357,8 @@ impl Metrics {
                 radius: radii(4., 6., 12., 16.),
                 control: controls(24., 34., 42., 50.),
                 type_scale: scale(11., 12., 14., 14., 20., 26.),
-                fonts: Fonts { body: font("Noto Sans"), rounded: font("Noto Sans"), mono: font("Noto Sans Mono") },
+                text_styles: adwaita_text_styles(),
+                fonts: Fonts { body: font("Adwaita Sans"), rounded: font("Adwaita Sans"), mono: font("Adwaita Mono") },
                 motion: Motion {
                     fast: ms(150),
                     normal: ms(250),
@@ -276,6 +377,7 @@ impl Metrics {
                 radius: radii(4., 6., 8., 12.),
                 control: controls(24., 32., 40., 48.),
                 type_scale: scale(12., 12., 14., 14., 20., 28.),
+                text_styles: adwaita_text_styles(),
                 fonts: Fonts { body: font("Noto Sans"), rounded: font("Noto Sans"), mono: font("Noto Sans Mono") },
                 motion: Motion {
                     fast: ms(150),
@@ -318,4 +420,43 @@ impl Metrics {
         }
         self
     }
+
+    /// The preset with the families and text styles the OS named replacing its own.
+    pub fn with_fonts(mut self, system: &SystemFonts) -> Metrics {
+        let set = |slot: &mut Font, family: Option<&nd_gpui::gpui::SharedString>| {
+            if let Some(family) = family.filter(|f| !f.is_empty()) {
+                slot.family = family.clone();
+            }
+        };
+        set(&mut self.fonts.body, system.body.as_ref());
+        set(&mut self.fonts.rounded, system.rounded.as_ref().or(system.body.as_ref()));
+        set(&mut self.fonts.mono, system.mono.as_ref());
+        if let Some(styles) = system.text_styles {
+            self.text_styles = styles;
+            let t = &mut self.type_scale;
+            t.caption = styles[TextStyle::Caption1].size;
+            t.footnote = styles[TextStyle::Footnote].size;
+            t.body = styles[TextStyle::Body].size;
+            t.headline = styles[TextStyle::Headline].size;
+            t.title = styles[TextStyle::Title1].size;
+            t.large_title = styles[TextStyle::LargeTitle].size;
+        }
+        self
+    }
+}
+
+fn adwaita_text_styles() -> TextStyles {
+    TextStyles::from_rows([
+        (26., 800., 32.),
+        (20., 800., 26.),
+        (20., 700., 26.),
+        (17., 700., 22.),
+        (14., 700., 20.),
+        (13., 400., 18.),
+        (14., 400., 20.),
+        (13., 400., 18.),
+        (12., 400., 16.),
+        (12., 400., 16.),
+        (11., 400., 14.),
+    ])
 }

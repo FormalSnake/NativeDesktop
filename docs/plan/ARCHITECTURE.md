@@ -586,7 +586,13 @@ How tokens reach controls:
   so composed content follows the OS too.
 - Windows: the Fluent skin reads Fluent 2 token values, with accent, Mica and high contrast from
   the OS (`UISettings`, DWM).
-- Linux: the GPUI preset with libadwaita metrics, Noto Sans bundled, palette from matugen.
+- Linux: the GPUI preset with libadwaita metrics, palette from matugen.
+
+Font tokens (`theme.fonts.body`, `.mono`, `.rounded`) name the family the OS uses
+(`nd_theme::fonts::resolve`): the system font and its designs on macOS, with every text style's
+size, weight and line height; on Linux the desktop's interface fonts (dconf, GTK `settings.ini`,
+GSettings), else fontconfig's `sans-serif` and `monospace`; Segoe UI Variable on Windows. Only
+the web falls back to the bundled Noto Sans.
 
 `glass()` is a first-class container element (`glass().rounded_lg().p_3().child(..)`) with
 `.variant(GlassVariant::Regular | Clear)`, `.tint(color)`, `.interactive()` and `glass_group()`
@@ -597,8 +603,9 @@ Linux compositor blur where the compositor offers it (KDE blur protocol; on Hypr
 surface the compositor blurs by rule) else a translucent matugen surface; web plain GPUI
 translucency. It takes every override like any other element.
 
-Palette sources, first hit wins: app or user `theme.toml`; on Linux the matugen `theme.json` at
-`~/.config/<app>/theme.json` (watched with `notify` on the parent directory, 50 ms debounce, 1 s
+Palette sources, first hit wins: app or user `theme.toml`; on Linux the matugen `theme.json`, first existing of `ND_THEME_JSON`,
+`~/.config/<app>/theme.json`, FormalShell's `$XDG_STATE_HOME/formalshell/theme.json` (shadcn keys
+plus `mode`, so a FormalShell desktop needs no template; watched with `notify` on the parent directory, 50 ms debounce, 1 s
 mtime fallback, half-written files keep the last palette; the app never spawns matugen; token map
 in `docs/research/linux-nix-config.md` section 1, with `success`/`warning` from matugen
 `custom_colors`); OS appearance and accent (`NSAppearance`, `UISettings`, portal `color-scheme` and
@@ -1035,7 +1042,8 @@ unchanged; app code has no `cfg`.
   it comes from. Examples live in the repo's `examples/` directory and are compiled for every target in CI, so docs code cannot rot; page
   snippets are extracted from those files by anchor comments, never pasted.
 - `nd-docs` generates static HTML from Markdown, styled from `nd-theme` tokens. Built in CI and
-  hosted on Cloudflare Pages. Every page also ships as raw Markdown and in `llms.txt`.
+  hosted as Cloudflare Workers static assets at https://nativedesktop.formalsnake.dev, with the
+  docs app under `/app/`. Every page also ships as raw Markdown and in `llms.txt`.
 - Each example embed has four tabs next to its source. Web: the live canvas (section 12, plain
   GPUI look). macOS, Linux, Windows: screenshots, plus short frame recordings where motion matters,
   captured by the test harness on the real OS (macbook, g815 Hyprland, Windows PC) and labelled
@@ -1134,7 +1142,7 @@ outside tests and `main`, `dbg_macro`, `todo`, `print_stdout` denied), and frame
 by a `syn`-based checker inside `nd check` (stable toolchain, no dylint, file and line output);
 rules that need types run as tier 1 audits instead. Syntactic rules: `gpui`
 or objc2 named outside allowed places; `cfg(target_os)` outside native widget modules without a
-reason comment; colour literals outside theme files; `Instant::now`, `thread::sleep`,
+reason comment; colour literals and font family names outside theme files; `Instant::now`, `thread::sleep`,
 `smol::Timer` in UI code; inline SVG; hand-rolled scroll lists; floating elements not created
 through overlays; web-unavailable APIs without a `supports` check and direct `std::time`,
 `std::thread` or `std::fs` (`--target web`); px margins or paddings placed beside

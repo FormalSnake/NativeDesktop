@@ -5,6 +5,10 @@
 //! `Contents/Frameworks/Chromium Embedded Framework.framework` and five helper apps,
 //! `Contents/Frameworks/<App> Helper[ (GPU| Renderer| Plugin| Alerts)].app`, each running a
 //! copy of `nd-cef-helper`.
+//!
+//! Linux, where Chromium is the only web engine and the executable links `libcef.so`: the
+//! runtime ([`LINUX_RUNTIME`]) sits beside the executable, which finds it through its `$ORIGIN`
+//! run path; the app is its own helper.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -147,6 +151,52 @@ pub fn bundle_mac(project: &Project, app: &Path, dist: &Path, helper: &Path) -> 
             helper_plist(&name, &format!("{}.{id_suffix}", project.id()), &project.version),
         )?;
         write(&contents.join("PkgInfo"), "APPL????")?;
+    }
+    Ok(())
+}
+
+/// What Chromium needs beside the executable on Linux, as the CEF distribution lays it out.
+pub const LINUX_RUNTIME: [&str; 10] = [
+    "libcef.so",
+    "icudtl.dat",
+    "v8_context_snapshot.bin",
+    "resources.pak",
+    "chrome_100_percent.pak",
+    "chrome_200_percent.pak",
+    "libvk_swiftshader.so",
+    "vk_swiftshader_icd.json",
+    "libvulkan.so.1",
+    "locales",
+];
+
+/// Whether a Linux executable links `libcef.so`: an app with web views does.
+pub fn links_cef(exe: &Path) -> Result<bool> {
+    let bytes = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
+    Ok(bytes.windows(10).any(|w| w == b"libcef.so\0"))
+}
+
+/// The parts of the Linux runtime missing from `dir`.
+pub fn linux_runtime_missing(dir: &Path) -> Vec<&'static str> {
+    LINUX_RUNTIME.iter().copied().filter(|name| !dir.join(name).exists()).collect()
+}
+
+/// Copies the Linux runtime from `from` (where the build put it, beside the executable) into
+/// `to`, the packaged executable's directory.
+pub fn stage_linux(from: &Path, to: &Path) -> Result<()> {
+    let missing = linux_runtime_missing(from);
+    if !missing.is_empty() {
+        bail!("the Chromium runtime beside {} is incomplete: {} missing", from.display(), missing.join(", "));
+    }
+    for name in LINUX_RUNTIME {
+        let source = from.join(name);
+        if source.is_dir() {
+            std::fs::create_dir_all(to.join(name))?;
+            for entry in std::fs::read_dir(&source)?.flatten() {
+                std::fs::copy(entry.path(), to.join(name).join(entry.file_name()))?;
+            }
+        } else {
+            std::fs::copy(&source, to.join(name)).with_context(|| format!("copying {}", source.display()))?;
+        }
     }
     Ok(())
 }

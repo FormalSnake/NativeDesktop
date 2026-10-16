@@ -60,7 +60,7 @@ pub(crate) fn run() {
 
 pub(crate) fn start() {
     let block = RcBlock::new(|_timer: NonNull<NSTimer>| {
-        if super::page::live_count() > 0 {
+        if crate::page::live_count() > 0 {
             run();
         }
     });
@@ -82,9 +82,9 @@ pub(crate) fn start() {
 
 /// Closes every browser, lets Chromium finish closing them, then shuts it down.
 fn shutdown() {
-    super::page::close_all();
+    crate::page::close_all();
     let deadline = Instant::now() + Duration::from_secs(3);
-    while super::page::browser_count() > 0 && Instant::now() < deadline {
+    while crate::page::browser_count() > 0 && Instant::now() < deadline {
         do_message_loop_work();
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -120,7 +120,7 @@ define_class!(
 
 /// Chromium requires `NSApp` to implement `CefAppProtocol` (`isHandlingSendEvent`). nd's app
 /// object is a plain `NSApplication`, so it is retyped to a subclass that adds the methods.
-pub(crate) fn install_app_protocol() {
+pub(crate) fn prepare() {
     let mtm = MainThreadMarker::new().expect("Chromium starts on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     let object: &AnyObject = &app;

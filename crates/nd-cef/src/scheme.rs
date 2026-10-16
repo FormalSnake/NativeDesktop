@@ -6,7 +6,6 @@ use std::os::raw::c_int;
 use std::sync::{Arc, Mutex};
 
 use cef::*;
-use dispatch2::DispatchQueue;
 use nd_webview::{Once, SchemeRequest, SchemeResponder, SchemeResponse};
 
 use super::page;
@@ -93,7 +92,7 @@ wrap_scheme_handler_factory! {
             let scheme = scheme_name.map(|s| s.to_string()).unwrap_or_default();
             let shared = Shared::default();
             let sent = shared.clone();
-            DispatchQueue::main().exec_async(move || deliver(browser, url, scheme, method, sent));
+            crate::platform::on_main(move || deliver(browser, url, scheme, method, sent));
             Some(NdResource::new(shared))
         }
     }

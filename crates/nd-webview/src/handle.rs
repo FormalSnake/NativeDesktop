@@ -124,7 +124,7 @@ impl WebView {
     }
 
     pub fn with_options(options: WebViewOptions) -> Self {
-        let engine = options.engine.unwrap_or_else(default_engine);
+        let engine = options.engine.unwrap_or_else(default_engine).resolved();
         let shared = Rc::new(PageShared {
             options,
             state: RefCell::new(PageState { zoom: 1., ..PageState::default() }),
@@ -428,6 +428,9 @@ impl WebView {
 
 fn missing_engine(engine: Engine) -> String {
     match engine {
+        Engine::Cef if cfg!(target_os = "linux") => {
+            "the Chromium engine is not in this build: nd's `webview` feature links it (nd-cef)".into()
+        }
         Engine::Cef => "the Chromium engine is not in this build: enable nd's `cef` feature and set \
                         `[webview] engine = \"cef\"` in nativedesktop.toml"
             .into(),

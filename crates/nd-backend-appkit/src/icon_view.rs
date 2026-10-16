@@ -99,6 +99,11 @@ impl CustomNative for IconNative {
     }
 
     fn paints(&self) -> Vec<CustomPaint> {
-        vec![CustomPaint { label: format!("icon {}", self.props.icon.lucide()), color: self.tint(), under: Vec::new(), text: None }]
+        vec![CustomPaint {
+            label: format!("icon {}", self.props.icon.lucide()),
+            color: self.tint(),
+            under: Vec::new(),
+            text: None,
+        }]
     }
 }

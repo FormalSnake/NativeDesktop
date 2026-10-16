@@ -12,10 +12,10 @@
 //! page.execute_javascript("document.title", |title, _cx| println!("{title:?}"));
 //! ```
 //!
-//! Engines: WKWebView on macOS (this crate), Chromium off-screen through `nd-cef` when the app
-//! opts in (`[webview] engine = "cef"`, nd's `cef` feature). WebView2 (Windows) and WPE WebKit
-//! (Linux) are not written yet: on those platforms a web view shows a notice and every command
-//! reports that the engine is missing.
+//! Engines: WKWebView on macOS (this crate), Chromium off-screen through `nd-cef`: on macOS when
+//! the app opts in (`[webview] engine = "cef"`, nd's `cef` feature), on Linux always, since no OS
+//! engine embeds in a GPUI window on Wayland. WebView2 (Windows) is not written yet: there a web
+//! view shows a notice and every command reports that the engine is missing.
 
 pub mod element;
 pub mod engine;

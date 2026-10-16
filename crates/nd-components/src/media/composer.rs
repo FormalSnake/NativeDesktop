@@ -304,15 +304,20 @@ impl IntoElement for Composer {
                     move |_, w, cx| f(w, cx)
                 })
         });
-        let emoji = square(icon_button(child("emoji"), Icon::Smile)).bezel(nd_ui::Bezel::Circle).tooltip("Emoji").disabled(!enabled).on_click({
-            let f = send(ComposerEvent::EmojiPicker);
-            move |_, w, cx| f(w, cx)
-        });
+        let emoji = square(icon_button(child("emoji"), Icon::Smile))
+            .bezel(nd_ui::Bezel::Circle)
+            .tooltip("Emoji")
+            .disabled(!enabled)
+            .on_click({
+                let f = send(ComposerEvent::EmojiPicker);
+                move |_, w, cx| f(w, cx)
+            });
         // Only a message that can go shows the send button, a filled arrow in the accent (or the
         // app's fill), as in Messages; Return sends either way.
         let has_send = enabled && draft.can_send();
         let send_button = has_send.then(|| {
             square(icon_button(child("send"), send_icon))
+                .bezel(nd_ui::Bezel::Circle)
                 .prominent()
                 .when_some(send_fill, |button, fill| button.bg(fill))
                 .tooltip(send_tooltip)

@@ -26,10 +26,11 @@ audit = ["test", "gpui", "nd-gpui/platform", "nd-gpui/test-support", "dep:ndshel
 gpui = ["dep:nd-backend-gpui", "nd-terminal?/gpui", "nd-webview?/gpui"]
 # `nd::terminal`: the libghostty-vt terminal widget (nd-terminal).
 terminal = ["runtime", "dep:nd-terminal"]
-# `nd::webview`: web pages in a window (nd-webview), WKWebView on macOS.
-webview = ["runtime", "dep:nd-webview"]
-# Chromium through CEF as a web engine (nd-cef), picked with `[webview] engine = "cef"`. Off by
-# default: an app without it carries no Chromium bytes.
+# `nd::webview`: web pages in a window (nd-webview): WKWebView on macOS, Chromium on Linux, where
+# no OS engine embeds in a GPUI window (nd-os-linux brings nd-cef).
+webview = ["runtime", "dep:nd-webview", "nd-os-linux?/cef"]
+# Chromium through CEF as a web engine on macOS too (nd-cef), picked with `[webview] engine =
+# "cef"`. Off by default: a macOS app without it carries no Chromium bytes.
 cef = ["webview", "dep:nd-cef"]
 # gpui-fast in place of gpui-pre for the GPUI backend (`nd-gpui/fast`), measured against it on
 # e1504g (docs/plan/baselines.md).

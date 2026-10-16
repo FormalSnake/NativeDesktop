@@ -44,6 +44,7 @@ pub mod keys {
 }
 
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Modifier {
@@ -54,8 +55,11 @@ pub enum Modifier {
 }
 
 fn connect(hyprland: &Hyprland) -> Result<Connection, String> {
-    let socket = hyprland.wayland_socket();
-    let stream = UnixStream::connect(&socket).map_err(|e| format!("{}: {e}", socket.display()))?;
+    connect_socket(&hyprland.wayland_socket())
+}
+
+fn connect_socket(socket: &std::path::Path) -> Result<Connection, String> {
+    let stream = UnixStream::connect(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     Connection::from_socket(stream).map_err(|e| format!("wayland connect: {e}"))
 }
 
@@ -108,7 +112,16 @@ pub struct VirtualInput {
 
 impl VirtualInput {
     pub fn connect(hyprland: &Hyprland) -> Result<Self, String> {
-        let conn = connect(hyprland)?;
+        Self::connect_to(connect(hyprland)?, (hyprland.options.width, hyprland.options.height))
+    }
+
+    /// On the compositor behind `socket`, whose first output is `extent` logical pixels: the
+    /// user's own session, for measurements that need its configuration and display.
+    pub fn connect_socket(socket: &std::path::Path, extent: (u32, u32)) -> Result<Self, String> {
+        Self::connect_to(connect_socket(socket)?, extent)
+    }
+
+    fn connect_to(conn: Connection, extent: (u32, u32)) -> Result<Self, String> {
         let (globals, queue) = registry_queue_init::<InputState>(&conn).map_err(|e| e.to_string())?;
         let qh = queue.handle();
         let seat: wl_seat::WlSeat = bind(&globals, &qh, 1..=1)?;
@@ -145,17 +158,8 @@ impl VirtualInput {
         file.write_all(text.as_bytes()).and_then(|()| file.write_all(&[0])).map_err(|e| e.to_string())?;
         keyboard.keymap(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1, file.as_fd(), text.len() as u32 + 1);
 
-        let (w, h) = (hyprland.options.width, hyprland.options.height);
-        let mut this = Self {
-            conn,
-            queue,
-            pointer,
-            keyboard,
-            extent: (w, h),
-            position: (0., 0.),
-            mod_masks,
-            started: Instant::now(),
-        };
+        let mut this =
+            Self { conn, queue, pointer, keyboard, extent, position: (0., 0.), mod_masks, started: Instant::now() };
         this.sync()?;
         Ok(this)
     }
@@ -187,10 +191,40 @@ impl VirtualInput {
     }
 
     pub fn button(&mut self, pressed: bool) {
+        self.press(BTN_LEFT, pressed);
+    }
+
+    fn press(&mut self, button: u32, pressed: bool) {
         let state = if pressed { wl_pointer::ButtonState::Pressed } else { wl_pointer::ButtonState::Released };
-        self.pointer.button(self.time(), BTN_LEFT, state);
+        self.pointer.button(self.time(), button, state);
         self.pointer.frame();
         self.flush();
+    }
+
+    /// Presses and releases the secondary button at `(x, y)`.
+    pub fn right_click(&mut self, x: f64, y: f64) -> Result<(), String> {
+        self.move_to(x, y);
+        self.sync()?;
+        self.press(BTN_RIGHT, true);
+        self.press(BTN_RIGHT, false);
+        self.sync()
+    }
+
+    /// Turns the wheel `notches` steps at `(x, y)`: positive scrolls down, as a wheel turned
+    /// towards the user does.
+    pub fn scroll(&mut self, x: f64, y: f64, notches: i32) -> Result<(), String> {
+        self.move_to(x, y);
+        self.sync()?;
+        for _ in 0..notches.unsigned_abs() {
+            let step = notches.signum();
+            let time = self.time();
+            self.pointer.axis_source(wl_pointer::AxisSource::Wheel);
+            self.pointer.axis_discrete(time, wl_pointer::Axis::VerticalScroll, f64::from(15 * step), step);
+            self.pointer.frame();
+            self.flush();
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        self.sync()
     }
 
     pub fn click(&mut self, x: f64, y: f64) -> Result<(), String> {

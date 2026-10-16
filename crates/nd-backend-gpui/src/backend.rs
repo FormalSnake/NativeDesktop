@@ -218,6 +218,24 @@ impl GpuiBackend {
         .detach();
     }
 
+    /// Schedules the host's pump, which delivers the events nodes queued, from outside a GPUI
+    /// update (a browser engine's callback).
+    pub fn wake(&self) {
+        let (app, wake) = {
+            let state = self.state.borrow();
+            (state.app.clone(), state.wake.clone())
+        };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
+    }
+
+    /// GPUI's app, for presenters that run tasks of their own (a browser engine's message
+    /// loop). `None` until the host has started.
+    pub fn async_app(&self) -> Option<AsyncApp> {
+        self.state.borrow().app.clone()
+    }
+
     pub(crate) fn take_deferred(&self) -> Vec<Deferred> {
         std::mem::take(&mut *self.deferred.borrow_mut())
     }

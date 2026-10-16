@@ -746,7 +746,7 @@ impl<'a> Build<'a> {
         let explicit = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
         let accent = props.variant == ButtonVariant::Accent || explicit.is_some();
         let (fill, ink) = match explicit {
-            Some(fill) => (fill, theme.text.on_accent),
+            Some(fill) => (fill, props.style.text.color.unwrap_or_else(|| readable_ink(fill))),
             None if accent => (theme.accent, theme.text.on_accent),
             None => (look.control, look.text),
         };
@@ -785,6 +785,7 @@ impl<'a> Build<'a> {
         if props.bezel == Bezel::Circle {
             button = button.rounded_full();
         }
+        let button = crate::forms::with_style(button, &props.style);
         if !props.enabled {
             return button.into_any_element();
         }
@@ -868,4 +869,11 @@ pub(crate) fn start_window_move(window: &mut gpui::Window) {
     if std::env::var_os("ND_DIAG_WINDOW").is_some_and(|v| v == "1") {
         eprintln!("nd: window move");
     }
+}
+
+/// White or black, whichever reads better on `fill`.
+fn readable_ink(fill: Hsla) -> Hsla {
+    use nd_gpui::gpui::{black, white};
+    use nd_theme::color::contrast;
+    if contrast(white(), fill) >= contrast(black(), fill) { white() } else { black() }
 }

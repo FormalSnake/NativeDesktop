@@ -28,6 +28,10 @@ impl Rig {
         }
     }
 
+    fn has(&self, id: &str) -> bool {
+        self.cx.semantic_tree().nodes().any(|(_, n)| n.test_id.as_deref() == Some(id))
+    }
+
     fn act(&mut self, id: &str, action: SemanticAction) {
         let node = self.sem(id).id;
         self.cx.perform(node, &action).unwrap_or_else(|e| panic!("{id}: {e}"));
@@ -73,12 +77,13 @@ fn seeking_the_player_moves_the_lyrics() {
 #[test]
 fn the_composer_sends_into_the_thread() {
     let mut rig = open();
-    assert!(!rig.sem("composer.send").enabled);
+    assert!(!rig.has("composer.send"), "send only shows with something to send");
     rig.act("composer.field", SemanticAction::Type("See you there".into()));
     assert!(rig.sem("composer.send").enabled);
     rig.act("composer.send", SemanticAction::Click);
     assert_eq!(rig.sem("msg-5").name, "See you there");
     assert_eq!(rig.sem("composer.field").value.as_deref(), Some(""));
+    assert!(!rig.has("composer.send"));
     rig.act("composer.attach", SemanticAction::Click);
     assert!(rig.sem("composer.send").enabled, "an attachment alone can send");
 }

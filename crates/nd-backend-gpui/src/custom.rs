@@ -36,6 +36,23 @@ pub(crate) fn lookup(kind: TypeId) -> Option<Rc<dyn CustomWidget>> {
     WIDGETS.with(|w| w.borrow().get(&kind).cloned())
 }
 
+/// Reports GPUI focus a custom widget took to nd; see [`CustomCx::focus_reporter`].
+#[derive(Clone)]
+pub struct FocusReporter {
+    platform_focus: crate::backend::PlatformFocus,
+    window: WindowId,
+    node: NodeId,
+    wake: Rc<dyn Fn(&mut gpui::App)>,
+}
+
+impl FocusReporter {
+    /// The node took GPUI focus: nd focus moves to it on the host's next pump.
+    pub fn focused(&self, cx: &mut gpui::App) {
+        self.platform_focus.borrow_mut().push((self.window, Some(self.node)));
+        (self.wake)(cx);
+    }
+}
+
 /// What a custom widget builds its node with.
 pub struct CustomCx<'a> {
     build: &'a Build<'a>,
@@ -46,6 +63,11 @@ pub struct CustomCx<'a> {
 impl<'a> CustomCx<'a> {
     pub(crate) fn new(build: &'a Build<'a>, node: NodeId, props: &'a Props) -> Self {
         Self { build, node, props }
+    }
+
+    /// The backend the node lives in.
+    pub fn backend(&self) -> &crate::GpuiBackend {
+        self.build.backend
     }
 
     pub fn node(&self) -> NodeId {
@@ -74,6 +96,30 @@ impl<'a> CustomCx<'a> {
     /// element's prepaint or paint or a task.
     pub fn waker(&self) -> Rc<dyn Fn(&mut gpui::App)> {
         self.build.wake.clone()
+    }
+
+    /// Whether nd moved focus to this node (a focus traversal, an app's focus call) since the
+    /// last build. Consumes the request: the widget gives its own GPUI focus handle focus when
+    /// it next prepaints; unconsumed, the window drops GPUI focus.
+    pub fn take_focus_request(&self) -> bool {
+        let window = self.build.window_id;
+        let mut requests = self.build.backend.focus_requests.borrow_mut();
+        let ours = requests.get(&window) == Some(&Some(self.node));
+        if ours {
+            requests.remove(&window);
+        }
+        ours
+    }
+
+    /// Tells nd when the user focuses the node itself (a click into it), so nd focus and the
+    /// key bindings of its focus path follow GPUI focus.
+    pub fn focus_reporter(&self) -> FocusReporter {
+        FocusReporter {
+            platform_focus: self.build.backend.platform_focus.clone(),
+            window: self.build.window_id,
+            node: self.node,
+            wake: self.build.wake.clone(),
+        }
     }
 
     /// Where the node was painted last frame, in window coordinates.
