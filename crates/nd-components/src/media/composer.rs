@@ -28,6 +28,10 @@ use crate::icon::Icon;
 pub const COMPOSER_LINES: u16 = 8;
 /// A staged attachment's thumbnail.
 pub const ATTACHMENT_THUMB: f32 = 32.;
+/// The field's height on one line, and the side of every button beside it: a button is as tall
+/// as the line it sits on, so icons centre on the text, and stays on the bottom line as the
+/// field grows (Messages' layout).
+pub const COMPOSER_ROW: f32 = 28.;
 
 /// A file staged to go with the next message.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +166,9 @@ pub struct Composer {
     placeholder: SharedString,
     enabled: bool,
     attach: bool,
+    send_icon: Icon,
+    send_tooltip: SharedString,
+    send_fill: Option<Hsla>,
     on_event: Option<OnEvent>,
     style: StyleRefinement,
 }
@@ -174,6 +181,9 @@ pub fn composer(id: impl Into<SharedString>, draft: &Draft) -> Composer {
         placeholder: "Message".into(),
         enabled: true,
         attach: true,
+        send_icon: Icon::CircleArrowUp,
+        send_tooltip: "Send".into(),
+        send_fill: None,
         on_event: None,
         style: StyleRefinement::default(),
     }
@@ -196,11 +206,28 @@ impl Composer {
         self
     }
 
+    /// The send button's icon and tooltip, for a send that is not a new message: a check while
+    /// editing one.
+    pub fn send_icon(mut self, icon: Icon, tooltip: impl Into<SharedString>) -> Self {
+        self.send_icon = icon;
+        self.send_tooltip = tooltip.into();
+        self
+    }
+
+    /// Fills the send button with `color` instead of the accent: an SMS conversation's green,
+    /// read from the app's theme (`theme.fill(FillRole::Success)`).
+    pub fn send_fill(mut self, color: Hsla) -> Self {
+        self.send_fill = Some(color);
+        self
+    }
+
     pub fn on_event(mut self, f: impl Fn(&ComposerEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_event = Some(Rc::new(f));
         self
     }
 }
+
+impl FluentBuilder for Composer {}
 
 impl Styled for Composer {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -210,7 +237,8 @@ impl Styled for Composer {
 
 impl IntoElement for Composer {
     fn into_any_element(self) -> AnyElement {
-        let Composer { id, draft, placeholder, enabled, attach, on_event, style } = self;
+        let Composer { id, draft, placeholder, enabled, attach, send_icon, send_tooltip, send_fill, on_event, style } =
+            self;
         let child = |suffix: &str| SharedString::from(format!("{id}.{suffix}"));
         let send = move |event: ComposerEvent| {
             let on = on_event.clone();
@@ -261,30 +289,39 @@ impl IntoElement for Composer {
                 .disabled(!enabled)
                 .flex_1()
                 .min_w_0()
-                .rounded_xl()
+                .rounded(px(COMPOSER_ROW / 2.))
                 .on_change(move |e: &TextChanged, w, cx| edit(ComposerEvent::Edited(e.text.clone()), w, cx))
                 .on_submit(move |_: &TextSubmitted, w, cx| submit(ComposerEvent::Send, w, cx))
                 .on_images(move |e: &ImagesPasted, w, cx| images(ComposerEvent::Images(e.images.clone()), w, cx))
                 .on_files(move |e: &FilesDropped, w, cx| files(ComposerEvent::Files(e.paths.clone()), w, cx))
         };
+        let square = |button: nd_ui::Button| button.size(px(COMPOSER_ROW)).flex_none();
         let attach_button = attach.then(|| {
-            icon_button(child("attach"), Icon::Paperclip).tooltip("Attach a file").disabled(!enabled).on_click({
-                let f = send(ComposerEvent::Attach);
-                move |_, w, cx| f(w, cx)
-            })
+            square(icon_button(child("attach"), Icon::Plus))
+                .bezel(nd_ui::Bezel::Glass)
+                .tooltip("Attach Files")
+                .disabled(!enabled)
+                .on_click({
+                    let f = send(ComposerEvent::Attach);
+                    move |_, w, cx| f(w, cx)
+                })
         });
-        let emoji = icon_button(child("emoji"), Icon::Smile).tooltip("Emoji").disabled(!enabled).on_click({
+        let emoji = square(icon_button(child("emoji"), Icon::Smile)).tooltip("Emoji").disabled(!enabled).on_click({
             let f = send(ComposerEvent::EmojiPicker);
             move |_, w, cx| f(w, cx)
         });
-        let send_button = icon_button(child("send"), Icon::ArrowUp)
-            .prominent()
-            .tooltip("Send")
-            .disabled(!enabled || !draft.can_send())
-            .on_click({
-                let f = send(ComposerEvent::Send);
-                move |_, w, cx| f(w, cx)
-            });
+        // Only a message that can go shows the send button, a filled arrow in the accent (or the
+        // app's fill), as in Messages; Return sends either way.
+        let send_button = (enabled && draft.can_send()).then(|| {
+            square(icon_button(child("send"), send_icon))
+                .prominent()
+                .when_some(send_fill, |button, fill| button.bg(fill))
+                .tooltip(send_tooltip)
+                .on_click({
+                    let f = send(ComposerEvent::Send);
+                    move |_, w, cx| f(w, cx)
+                })
+        });
         let mut root = v_flex()
             .id(id.clone())
             .w_full()
@@ -298,7 +335,7 @@ impl IntoElement for Composer {
                     .children(attach_button)
                     .child(field)
                     .child(emoji)
-                    .child(send_button),
+                    .children(send_button),
             );
         nd_gpui::gpui::Refineable::refine(root.style(), &style);
         root.into_any_element()

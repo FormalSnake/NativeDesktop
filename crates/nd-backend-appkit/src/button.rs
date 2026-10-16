@@ -167,7 +167,15 @@ impl NativeButtonView {
             _ => None,
         };
         self.button.setBezelColor(bezel.as_deref());
-        let tint = props.style.text.color.map(|c| Color::from(c).ns_color());
+        // A borderless button draws no bezel, so its colour goes to the icon instead: a prominent
+        // borderless icon button is the accent glyph (Messages' send arrow).
+        let borderless = props.bezel == Bezel::Borderless && props.label.is_empty();
+        let tint = props
+            .style
+            .text
+            .color
+            .map(|c| Color::from(c).ns_color())
+            .or_else(|| if borderless { bezel.clone() } else { None });
         self.button.setContentTintColor(tint.as_deref());
         // A push button's title ignores the content tint; its attributed title carries the colour.
         match &tint {

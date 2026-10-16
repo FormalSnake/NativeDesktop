@@ -95,6 +95,7 @@ icons! {
     ChevronRight "chevron-right" ["chevron.right"] '\u{E76C}';
     ChevronUp "chevron-up" ["chevron.up"] '\u{E70E}';
     Circle "circle" ["circle"] '\u{EA3A}';
+    CircleArrowUp "circle-arrow-up" ["arrow.up.circle.fill"] '\u{E74A}';
     CircleCheck "circle-check" ["checkmark.circle"] '\u{E930}';
     CircleX "circle-x" ["xmark.circle.fill"] '\u{EA39}';
     Clock "clock" ["clock"] '\u{E823}';

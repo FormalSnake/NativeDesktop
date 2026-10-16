@@ -855,6 +855,9 @@ define_class!(
 #[derive(Default)]
 pub struct AreaScrollIvars {
     bezel: RefCell<Option<Retained<NSTextField>>>,
+    /// The capsule's corner radius, drawn on the layer at every tile: the layer may not exist
+    /// yet when the shape is set (a view not in a window).
+    capsule: Cell<Option<f64>>,
 }
 
 define_class!(
@@ -894,6 +897,7 @@ define_class!(
             if let Some(bezel) = self.ivars().bezel.borrow().as_ref() {
                 bezel.setFrame(self.bounds());
             }
+            self.draw_capsule();
         }
     }
 );
@@ -925,6 +929,25 @@ impl NdAreaScroll {
 
     fn bezel(&self) -> Option<Retained<NSTextField>> {
         self.ivars().bezel.borrow().clone()
+    }
+
+    /// Sets the capsule's radius (`None` for none) and draws it.
+    fn set_capsule(&self, radius: Option<f64>) {
+        self.ivars().capsule.set(radius);
+        self.setWantsLayer(radius.is_some());
+        self.draw_capsule();
+    }
+
+    /// The capsule: rounded corners and a hairline in the separator colour, over no fill, so the
+    /// field sits on the bar like Messages'.
+    fn draw_capsule(&self) {
+        let Some(radius) = self.ivars().capsule.get() else { return };
+        let Some(layer) = self.layer() else { return };
+        layer.setCornerRadius(radius.min(self.bounds().size.height / 2.));
+        layer.setMasksToBounds(true);
+        layer.setBorderWidth(1. / self.window().map_or(2., |w| w.backingScaleFactor()));
+        let resolve = block2::RcBlock::new(|| layer.setBorderColor(Some(&NSColor::separatorColor().CGColor())));
+        self.effectiveAppearance().performAsCurrentDrawingAppearance(&resolve);
     }
 }
 
@@ -1082,7 +1105,8 @@ impl TextAreaControl {
     fn apply_shape(&self, props: &TextAreaProps) {
         let radius = props.style.corner_radii.top_left.map(crate::look::length);
         let mtm = self.core.cx.mtm;
-        self.scroll.setWantsLayer(false);
+        self.scroll.set_capsule(None);
+        self.scroll.setDrawsBackground(true);
         let Some(radius) = radius else {
             self.scroll.setBorderType(NSBorderType::NoBorder);
             let bezel = inert_bezel(mtm);
@@ -1099,14 +1123,10 @@ impl TextAreaControl {
             return;
         }
         self.scroll.setBorderType(NSBorderType::NoBorder);
-        self.scroll.setWantsLayer(true);
-        if let Some(layer) = self.scroll.layer() {
-            layer.setCornerRadius(f64::from(radius));
-            layer.setMasksToBounds(true);
-            // A hairline is one device pixel.
-            layer.setBorderWidth(1. / self.scroll.window().map_or(1., |w| w.backingScaleFactor()));
-        }
-        self.appearance_changed();
+        self.scroll.setDrawsBackground(false);
+        self.scroll.contentView().setDrawsBackground(false);
+        self.text_view.setDrawsBackground(false);
+        self.scroll.set_capsule(Some(f64::from(radius)));
         let inset = (f64::from(radius) * 0.4).round();
         self.text_view.setTextContainerInset(NSSize::new(inset, 6.));
     }
@@ -1157,12 +1177,7 @@ impl FormControl for TextAreaControl {
     }
 
     fn appearance_changed(&self) {
-        if self.scroll.borderType() != NSBorderType::NoBorder {
-            return;
-        }
-        let Some(layer) = self.scroll.layer() else { return };
-        let resolve = block2::RcBlock::new(|| layer.setBorderColor(Some(&NSColor::separatorColor().CGColor())));
-        self.scroll.effectiveAppearance().performAsCurrentDrawingAppearance(&resolve);
+        self.scroll.draw_capsule();
     }
 
     fn update(&mut self, old: &Props, new: &Props) -> bool {

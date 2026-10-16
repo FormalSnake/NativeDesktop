@@ -682,10 +682,16 @@ fn composer_field_grows_submits_on_return_and_takes_media() {
     assert!(field.submit_on_return && field.accepts_media);
     assert_eq!((field.min_lines, field.max_lines), (1, Some(COMPOSER_LINES)));
     assert_eq!(field.placeholder.as_deref(), Some("Message"));
-    assert!(!rig.sem("composer.send").enabled, "nothing to send");
+    let has = |rig: &Rig<Chat>, id: &str| rig.cx.semantic_tree().nodes().any(|(_, n)| n.test_id.as_deref() == Some(id));
+    assert!(!has(&rig, "composer.send"), "nothing to send: no send button, as in Messages");
     rig.perform("composer.field", SemanticAction::Type("hello ".into())).unwrap();
     assert_eq!(rig.state().draft.text, "hello ");
     assert!(rig.sem("composer.send").enabled);
+    for id in ["composer.attach", "composer.emoji", "composer.send"] {
+        let b = rig.sem(id).bounds.expect("laid out");
+        assert_eq!((b.size.width, b.size.height), (COMPOSER_ROW, COMPOSER_ROW), "{id} is one line of the field square");
+    }
+    assert!(field.style.corner_radii.top_left.is_some(), "the field is a capsule");
     rig.emit("composer.field", TextSubmitted { text: "hello ".into() });
     assert_eq!(rig.state().sent.len(), 1);
     assert_eq!(rig.state().sent[0].text.as_deref(), Some("hello"));

@@ -742,8 +742,14 @@ impl<'a> Build<'a> {
             props.label.clone()
         };
         let name = if props.label.is_empty() { label.clone() } else { props.label.clone() };
-        let accent = props.variant == ButtonVariant::Accent;
-        let (fill, ink) = if accent { (theme.accent, theme.text.on_accent) } else { (look.control, look.text) };
+        // A background the element sets is the bezel colour, as on AppKit.
+        let explicit = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let accent = props.variant == ButtonVariant::Accent || explicit.is_some();
+        let (fill, ink) = match explicit {
+            Some(fill) => (fill, theme.text.on_accent),
+            None if accent => (theme.accent, theme.text.on_accent),
+            None => (look.control, look.text),
+        };
         let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
         // Borderless: no bezel until the pointer is over it.
         let bezel = props.bezel != Bezel::Borderless || accent;
