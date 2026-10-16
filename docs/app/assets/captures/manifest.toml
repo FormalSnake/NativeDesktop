@@ -15,14 +15,14 @@ light = "macos-light.png"
 dark = "macos-dark.png"
 
 [gallery.macos]
-hash = "515d7ab88daefc98"
+hash = "494709d72bb7dfef"
 captured_on = "macOS 27.0"
 date = "2026-10-14"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [hello.macos]
-hash = "3480ff5148fb4bd3"
+hash = "2813406f56f751eb"
 captured_on = "macOS 27.0"
 date = "2026-10-14"
 light = "macos-light.png"
@@ -36,7 +36,7 @@ light = "macos-light.png"
 dark = "macos-dark.png"
 
 [notes.macos]
-hash = "3177cd47d87a8125"
+hash = "ca4ef1ba8fa6e53d"
 captured_on = "macOS 27.0"
 date = "2026-10-14"
 light = "macos-light.png"

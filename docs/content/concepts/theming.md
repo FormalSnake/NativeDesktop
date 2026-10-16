@@ -17,7 +17,7 @@ rendered, with that window's override applied. The fields:
 
 | Group | Tokens |
 | --- | --- |
-| Surfaces | `surface.base`, `surface.sidebar`, `surface.raised`, `surface.raised_hover`, `surface.overlay` |
+| Surfaces | `surface.base`, `surface.sidebar`, `surface.raised`, `surface.raised_hover`, `surface.overlay`, `surface.layer` (the opaque content layer beside a Mica sidebar) |
 | Lines | `border.subtle`, `border.strong`, `separator` |
 | Text | `text.primary`, `text.secondary`, `text.tertiary`, `text.on_accent`, `text.danger` |
 | Accent and state | `accent`, `accent_container.{bg, fg}`, `selection`, `danger`, `success`, `warning`, `focus_ring`, `scrim` |
@@ -49,8 +49,10 @@ override tokens, never the preset.
 
 Where the OS publishes a value (text style sizes, control heights), the backend reads it and it
 replaces the preset's own. The macOS look is read from AppKit at launch and on every appearance
-change, not copied into constants. The Windows preset is a Fluent skin; its code is written but
-has not run on a Windows machine yet.
+change, not copied into constants. On Windows the accent comes from `UISettings` with the shade
+WinUI uses for each scheme (AccentDark1 in light, AccentLight2 in dark) and follows a change in
+Settings while the app runs; grayscale text is rendered without grid fitting, as Windows' own apps
+draw it on Mica.
 
 ## Where the colours come from
 

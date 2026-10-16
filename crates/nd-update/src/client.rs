@@ -1,6 +1,7 @@
 //! The in-app updater: Velopack's `UpdateManager` over [`VerifiedSource`].
 
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -182,19 +183,32 @@ pub fn mark_whats_new_seen(state_dir: &Path, current_version: &str) {
     let _ = std::fs::write(seen_path(state_dir), current_version);
 }
 
+#[cfg(not(windows))]
 static ON_QUIT: OnceLock<Mutex<Option<(UpdateManager, VelopackAsset)>>> = OnceLock::new();
 
+/// Unix: an `atexit` hook starts the updater as the process exits. Windows: the process ends
+/// through `ExitProcess`, which runs no C `atexit` handlers, so Velopack's updater starts now and
+/// waits for this pid to exit, however it exits, before it swaps the install.
 fn arm_quit_hook(manager: UpdateManager, asset: VelopackAsset) {
-    let slot = ON_QUIT.get_or_init(|| {
-        #[cfg(unix)]
-        // SAFETY: `apply_at_exit` is a plain `extern "C" fn()` that never unwinds.
-        unsafe {
-            libc::atexit(apply_at_exit);
+    #[cfg(windows)]
+    {
+        if let Err(e) = manager.wait_exit_then_apply_updates(&asset, true, false, Vec::<String>::new()) {
+            log::warn!("arming the update for quit: {e}");
         }
-        Mutex::new(None)
-    });
-    if let Ok(mut slot) = slot.lock() {
-        *slot = Some((manager, asset));
+    }
+    #[cfg(not(windows))]
+    {
+        let slot = ON_QUIT.get_or_init(|| {
+            #[cfg(unix)]
+            // SAFETY: `apply_at_exit` is a plain `extern "C" fn()` that never unwinds.
+            unsafe {
+                libc::atexit(apply_at_exit);
+            }
+            Mutex::new(None)
+        });
+        if let Ok(mut slot) = slot.lock() {
+            *slot = Some((manager, asset));
+        }
     }
 }
 

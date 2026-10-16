@@ -83,6 +83,7 @@ fn spawn(command: &Command) -> TerminalSession {
     TerminalSession::spawn(command, SessionOptions::default()).expect("spawn")
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 mod gate_m9_terminal {
     use super::*;
 
@@ -134,8 +135,12 @@ mod gate_m9_terminal {
 }
 
 fn main() {
+    // Both drive POSIX tools (`printf`, `cat`); the ConPTY path is covered by `pty.rs` on Windows.
+    #[cfg(unix)]
     support::run(&[
         ("gate_m9_terminal::gpui_printf_golden", gate_m9_terminal::gpui_printf_golden),
         ("gate_m9_terminal::gpui_keys_round_trip_through_cat", gate_m9_terminal::gpui_keys_round_trip_through_cat),
     ]);
+    #[cfg(not(unix))]
+    support::run(&[]);
 }

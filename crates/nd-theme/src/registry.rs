@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use nd_core::WindowId;
 use nd_gpui::gpui::Hsla;
 
+use crate::color::contrast;
 use crate::fonts::SystemFonts;
 use crate::matugen::MatugenTheme;
 use crate::palette::{Palette, Scheme, SchemePalettes};
@@ -209,6 +210,12 @@ impl ThemeRegistry {
     pub fn resolve(&self, stack: &ThemeRefinement) -> Theme {
         let scheme = stack.appearance.unwrap_or(Appearance::System).resolve(self.system_scheme());
         let mut palette = stack.palette(scheme);
+        // An app's own accent brings no text colour for it; the platform's would be tuned to the
+        // platform's accent. White or black, whichever reads better on it.
+        if let (Some(accent), None) = (palette.accent, palette.on_accent) {
+            let (white, black) = (nd_gpui::gpui::white(), nd_gpui::gpui::black());
+            palette.on_accent = Some(if contrast(white, accent) >= contrast(black, accent) { white } else { black });
+        }
         if let Some(matugen) = &self.matugen {
             palette = palette.over(*matugen.palettes.get(scheme));
         }

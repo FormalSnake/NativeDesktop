@@ -38,3 +38,7 @@ syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 [dev-dependencies]
 nd-test.workspace = true
 tempfile = "3"
+
+# The Windows leg drives Setup.exe and the app through the agent in the desktop session.
+[target.'cfg(windows)'.dev-dependencies]
+ndshell.workspace = true

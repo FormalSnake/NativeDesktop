@@ -312,7 +312,7 @@ impl Gallery {
                     }),
                 ))
                 .into_any_element(),
-            // The form scrolls itself, so it takes the height left under the title.
+            // The form scrolls itself, its title included, so it takes the whole page.
             Page::Forms => div().flex_1().min_h_0().w_full().child(self.forms.clone()).into_any_element(),
             Page::Tabs => column
                 .child(note("A view switcher over pages of one size, and document tabs that close and add."))
@@ -410,15 +410,18 @@ impl Render for Gallery {
                                 cx.notify();
                             })),
                     )
-                    .child(
+                    .child(if self.page == Page::Forms {
+                        // The form is the page: its title scrolls with its rows.
+                        v_flex().flex_1().min_h_0().child(body)
+                    } else {
                         v_flex()
                             .flex_1()
                             .p(margin)
                             .gap_3()
                             .child(text(self.page.title()).text_size(title_size))
                             .child(body)
-                            .child(text(self.last_event.clone()).text_color(secondary)),
-                    )
+                            .child(text(self.last_event.clone()).text_color(secondary))
+                    })
                     .child(
                         // docs:begin toasts
                         toast_overlay("toasts")

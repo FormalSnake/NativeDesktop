@@ -2849,8 +2849,6 @@ dependencies = [
 [[package]]
 name = "gpui-fast-windows"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ab29a2b4bc4aac7f18c470f7a055e7853dc3f4c2820d11fd54952a1c6923f52"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3253,8 +3251,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-windows"
 version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "513d4f0fc7d596d3bdef2a73a524ffb83dabc95bf484f2855a698e7f431290a9"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -4564,10 +4560,12 @@ dependencies = [
  "nd-core",
  "nd-diag",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-os-linux",
  "nd-os-web",
  "nd-os-windows",
+ "nd-settings",
  "nd-system",
  "nd-terminal",
  "nd-theme",
@@ -4586,6 +4584,7 @@ dependencies = [
 name = "nd-automation"
 version = "0.1.0"
 dependencies = [
+ "interprocess",
  "nd-core",
  "nd-ui",
  "serde",
@@ -4604,6 +4603,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4633,6 +4633,7 @@ dependencies = [
  "nd-diag",
  "nd-gesture",
  "nd-gpui",
+ "nd-icons",
  "nd-theme",
  "nd-ui",
  "nd-virtual",
@@ -4699,6 +4700,7 @@ dependencies = [
  "js-sys",
  "nd-core",
  "nd-gpui",
+ "nd-icons",
  "nd-macros",
  "nd-settings",
  "nd-theme",
@@ -4821,6 +4823,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nd-icons"
+version = "0.1.0"
+
+[[package]]
 name = "nd-ipc"
 version = "0.1.0"
 dependencies = [
@@ -4885,7 +4891,10 @@ name = "nd-os-windows"
 version = "0.1.0"
 dependencies = [
  "nd-backend-gpui",
+ "nd-core",
  "nd-gpui",
+ "nd-theme",
+ "nd-ui",
  "ndshell",
  "raw-window-handle",
  "serde_json",
@@ -4927,6 +4936,7 @@ dependencies = [
 name = "nd-settings-derive"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -4997,12 +5007,14 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "portable-pty",
  "swash",
+ "windows 0.62.2",
 ]
 
 [[package]]
 name = "nd-test"
 version = "0.1.0"
 dependencies = [
+ "interprocess",
  "nd-automation",
  "nd-core",
  "nd-gpui",
@@ -5174,8 +5186,7 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "nd",
- "nd-settings",
- "schemars",
+ "nd-test",
  "serde",
  "tempfile",
 ]

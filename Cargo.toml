@@ -25,6 +25,8 @@ nd-automation = { path = "crates/nd-automation", default-features = false }
 nd-test = { path = "crates/nd-test" }
 nd-theme = { path = "crates/nd-theme" }
 nd-components = { path = "crates/nd-components" }
+nd-icons = { path = "crates/nd-icons" }
+nd-settings = { path = "crates/nd-settings" }
 nd-virtual = { path = "crates/nd-virtual" }
 nd-os-linux = { path = "crates/nd-os-linux" }
 nd-os-windows = { path = "crates/nd-os-windows" }
@@ -77,4 +79,6 @@ gpui-pre-linux = { path = "crates/nd-gpui/vendor/gpui-pre-linux" }
 gpui-fast-linux = { path = "crates/nd-gpui/vendor/gpui-fast-linux" }
 gpui-pre-wgpu = { path = "crates/nd-gpui/vendor/gpui-pre-wgpu" }
 gpui-fast-wgpu = { path = "crates/nd-gpui/vendor/gpui-fast-wgpu" }
+gpui-pre-windows = { path = "crates/nd-gpui/vendor/gpui-pre-windows" }
+gpui-fast-windows = { path = "crates/nd-gpui/vendor/gpui-fast-windows" }
 # gpui-fork: end

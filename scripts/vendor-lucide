@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Vendors the Lucide icons nd names (crates/nd-icons/lucide.txt) from the pinned lucide-static
+# release into crates/nd-icons/lucide, with the license. Bump LUCIDE_VERSION to update, then
+# rebuild: nd-icons' build script turns the SVGs into drawing data.
+set -euo pipefail
+LUCIDE_VERSION=1.57.0
+cd "$(dirname "$0")/../crates/nd-icons"
+mkdir -p lucide
+members=("package/LICENSE")
+while read -r n; do
+    case "$n" in ''|'#'*) continue ;; esac
+    members+=("package/icons/$n.svg")
+done < lucide.txt
+curl -fsSL "https://registry.npmjs.org/lucide-static/-/lucide-static-${LUCIDE_VERSION}.tgz" \
+    | tar -xz --strip-components=1 -C lucide "${members[@]}"
+echo "$LUCIDE_VERSION" > lucide/VERSION

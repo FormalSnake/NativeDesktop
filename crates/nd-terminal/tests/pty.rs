@@ -1,6 +1,8 @@
 //! Tier 1 with a real pseudo-terminal: input reaches the child and its echo comes back,
 //! `printf` output with colours and wide characters lands in the grid, a resize reaches the
-//! child, and its exit is reported.
+//! child, and its exit is reported. These drive POSIX tools (`sh`, `cat`, `printf`, `stty`);
+//! on Windows a ConPTY session runs `cmd` instead.
+#![cfg_attr(windows, allow(unused_imports))]
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -42,6 +44,7 @@ fn spawn(command: Command) -> TerminalSession {
 mod gate_m9_terminal {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn typed_keys_round_trip_through_cat() {
         let s = spawn(Command::new("cat"));
@@ -59,6 +62,7 @@ mod gate_m9_terminal {
         assert!(s.take_events().iter().any(|e| matches!(e, SessionEvent::Exited(status) if status.success())));
     }
 
+    #[cfg(unix)]
     #[test]
     fn printf_output_lands_in_the_grid() {
         let s = spawn(
@@ -77,6 +81,7 @@ mod gate_m9_terminal {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_resize_reaches_the_child() {
         let s = spawn(Command::new("sh").arg("-c").arg("stty size; read x; stty size"));
@@ -86,6 +91,7 @@ mod gate_m9_terminal {
         pump_until(&s, "the second size", |s| s.screen_text().contains("12 50"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn reports_a_failing_exit() {
         let s = spawn(Command::new("sh").arg("-c").arg("exit 3"));
@@ -117,6 +123,7 @@ mod gate_m9_terminal {
 
     /// A child that exits right after writing keeps its output: at about 4% of runs it used to
     /// arrive empty once the pty's last slave closed before the master read.
+    #[cfg(unix)]
     #[test]
     fn short_lived_children_keep_their_output() {
         let mut lost = 0;
@@ -129,5 +136,14 @@ mod gate_m9_terminal {
             }
         }
         assert_eq!(lost, 0, "{lost} of 100 runs lost their output");
+    }
+
+    /// ConPTY: a child's output lands in the grid and its exit code is reported.
+    #[cfg(windows)]
+    #[test]
+    fn conpty_output_and_exit_code() {
+        let s = spawn(Command::new("cmd").arg("/d").arg("/c").arg("echo hello from conpty& exit /b 3"));
+        pump_until(&s, "cmd to exit", |s| s.exit_status().is_some() && s.screen_text().contains("hello from conpty"));
+        assert_eq!(s.exit_status().unwrap().code, 3);
     }
 }

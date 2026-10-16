@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::forms::glyph::{Glyph, glyph};
 use nd_components::{
     BANNER, BannerProps, CommandPaletteProps, FieldSelection, PALETTE, PaletteKey, PaletteModel, SourceIndex,
     SourceTreeProps, TOAST, Toast, ToastOverlayProps, ToastQueue,
@@ -20,6 +21,7 @@ use nd_gpui::gpui::{
     IntoElement, Keystroke, MouseButton, ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled,
     anchored, deferred, div, point, px, relative,
 };
+use nd_theme::color::with_alpha;
 use nd_theme::{Metrics, Palette, Preset, Scheme, Theme};
 
 /// The baked theme for `scheme`, for rendering the builders outside an app. In an app they get
@@ -101,6 +103,11 @@ pub fn palette_input(keystroke: &Keystroke) -> Option<PaletteInput> {
             .filter(|c| !c.is_empty())
             .map(PaletteInput::Insert),
     }
+}
+
+/// The glyph an icon slot draws, or `None` so the slot is not laid out at all.
+pub(crate) fn icon_glyph(icon: Option<nd_components::Icon>) -> Option<Glyph> {
+    icon.filter(|i| i.shape().is_some()).map(Glyph::of)
 }
 
 /// The presented palette over a window of `viewport`: the scrim, the card, the field and the
@@ -212,8 +219,8 @@ pub fn palette_overlay(
             .rounded(theme.radius.md)
             .text_size(theme.type_scale.body)
             .text_color(fg)
-            // The icon slot holds its column even when empty, so titles line up.
-            .child(div().flex_shrink_0().size(px(m.icon_side)))
+            // A row without an icon (or whose icon draws nothing) has no slot at all.
+            .children(icon_glyph(item.icon).map(|g| glyph(g, px(m.icon_side), fg, px(1.5))))
             .child(
                 div()
                     .flex()
@@ -272,7 +279,7 @@ pub fn palette_overlay(
                 .pl(px(m.search_icon_inset))
                 .pr(px(m.field_trailing))
                 .gap(px(m.search_icon_gap))
-                .child(div().flex_shrink_0().size(px(m.search_icon)))
+                .child(glyph(Glyph::Search, px(m.search_icon), theme.text.secondary, px(1.75)))
                 .child(field.role(gpui::Role::SearchInput).aria_value(model.field_text())),
         );
     if !rows.is_empty() {
@@ -333,10 +340,18 @@ pub fn source_tree_view(
     props: &SourceTreeProps,
     hovered: Option<&SharedString>,
     theme: &Theme,
+    compact: bool,
     on_input: Option<OnInput<TreeInput>>,
     marks: &Marks,
 ) -> AnyElement {
     let (body, footnote) = (theme.type_scale.body, theme.type_scale.footnote);
+    // WinUI's NavigationView: an icon per item, a subtle fill with an accent pill on the selected
+    // one, and an icon-only rail when the pane is compact.
+    let fluent = theme.preset == Preset::Fluent;
+    let subtle = with_alpha(
+        if theme.is_dark() { gpui::white() } else { gpui::black() },
+        if theme.is_dark() { 0.06 } else { 0.04 },
+    );
     let (regular, semibold) = (FontWeight::NORMAL, FontWeight::SEMIBOLD);
     let mut list = div()
         .id(ElementId::Integer(id.0))
@@ -374,6 +389,9 @@ pub fn source_tree_view(
     let indent = theme.spacing.lg.as_f32();
     for (i, depth) in index.visible(&props.nodes) {
         let node = &props.nodes[i];
+        if node.section && compact {
+            continue;
+        }
         if node.section {
             marks.text(&node.title, theme.text.secondary, &[], footnote, semibold);
             list = list.child(
@@ -390,15 +408,16 @@ pub fn source_tree_view(
         }
         let selected = props.selected.as_ref() == Some(&node.id);
         let expandable = index.expandable(&props.nodes, i);
-        let (fg, secondary) = if selected {
+        let (fg, secondary) = if selected && !fluent {
             (theme.accent_container.fg, theme.accent_container.fg.opacity(0.8))
         } else {
             (theme.text.primary, theme.text.secondary)
         };
+        let selected_fill = if fluent { subtle } else { theme.accent_container.bg };
         let mut under = Vec::new();
         if selected {
-            marks.fill("selected row", theme.accent_container.bg, &[]);
-            under.push(theme.accent_container.bg);
+            marks.fill("selected row", selected_fill, &[]);
+            under.push(selected_fill);
         }
         let show_actions = !hover_only || hovered == Some(&node.id);
         if expandable {
@@ -427,39 +446,81 @@ pub fn source_tree_view(
                 on_input(TreeInput::Toggle(key.clone(), expand), window, cx);
             });
         }
+        let icon = node
+            .icon
+            .filter(|_| fluent)
+            .and_then(|icon| icon.segoe_fluent())
+            .map(|code| crate::fluent_icons::glyph(code, px(16.), fg));
+        let pill = (fluent && selected).then(|| {
+            div()
+                .absolute()
+                .left_0()
+                .top(px((theme.control.regular.as_f32() - 16.) / 2.))
+                .w(px(3.))
+                .h(px(16.))
+                .rounded(px(1.5))
+                .bg(theme.accent)
+        });
         let mut row = div()
             .id(ElementId::Name(node.id.clone()))
             .role(gpui::Role::TreeItem)
             .aria_label(node.title.clone())
             .aria_selected(selected)
+            .relative()
             .flex()
             .flex_row()
             .items_center()
             .min_h(theme.control.regular)
-            .pl(px(depth as f32 * indent))
-            .pr(theme.spacing.sm)
             .rounded(theme.radius.md)
             .text_color(fg)
-            .child(disclosure)
-            .child(
-                div().flex().flex_col().flex_1().min_w_0().child(div().truncate().child(node.title.clone())).children(
-                    node.caption
-                        .clone()
-                        .map(|c| div().truncate().text_size(theme.type_scale.footnote).text_color(secondary).child(c)),
-                ),
-            )
-            .children(node.badge.clone().map(|b| {
-                div()
-                    .flex_shrink_0()
-                    .pl(theme.spacing.sm)
-                    .text_size(theme.type_scale.footnote)
-                    .text_color(secondary)
-                    .child(b)
+            .children(pill);
+        if compact {
+            row = row.justify_center().child(icon.unwrap_or_else(|| {
+                crate::fluent_icons::glyph(
+                    nd_components::Icon::FileText.segoe_fluent().unwrap_or_default(),
+                    px(16.),
+                    fg,
+                )
             }));
+        } else {
+            row = row
+                .pl(px(depth as f32 * indent))
+                .pr(theme.spacing.sm)
+                .child(disclosure)
+                .children(match icon {
+                    Some(icon) => Some(icon.mr(theme.spacing.md).into_any_element()),
+                    None => icon_glyph(node.icon).map(|g| {
+                        div()
+                            .flex_shrink_0()
+                            .pr(theme.spacing.sm)
+                            .child(glyph(g, px(16.), secondary, px(1.5)))
+                            .into_any_element()
+                    }),
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().truncate().child(node.title.clone()))
+                        .children(node.caption.clone().map(|c| {
+                            div().truncate().text_size(theme.type_scale.footnote).text_color(secondary).child(c)
+                        })),
+                )
+                .children(node.badge.clone().map(|b| {
+                    div()
+                        .flex_shrink_0()
+                        .pl(theme.spacing.sm)
+                        .text_size(theme.type_scale.footnote)
+                        .text_color(secondary)
+                        .child(b)
+                }));
+        }
         if expandable {
             row = row.aria_expanded(node.expanded);
         }
-        for action_id in &node.actions {
+        for action_id in node.actions.iter().filter(|_| !compact) {
             let Some(action) = actions.get(action_id) else { continue };
             let label = action.label.clone().unwrap_or_else(|| action.accessible_label());
             let color = if action.destructive { theme.danger } else { secondary };
@@ -485,9 +546,9 @@ pub fn source_tree_view(
             row = row.child(button);
         }
         if selected {
-            row = row.bg(theme.accent_container.bg);
+            row = row.bg(selected_fill);
         } else {
-            let hover = theme.hover(theme.surface.sidebar);
+            let hover = if fluent { subtle } else { theme.hover(theme.surface.sidebar) };
             row = row.hover(move |s| s.bg(hover));
         }
         if let Some(on_input) = on_input.clone() {
@@ -658,6 +719,11 @@ pub fn banner_view(
             button = button.on_click(move |_, _, cx| on_action(cx));
         }
         bar = bar.child(button);
+    }
+    // WinUI's InfoBar is a card inset in the content, where libadwaita's banner spans it edge to
+    // edge; inset, it also keeps clear of the rounded corner of a Mica window's content layer.
+    if theme.preset == nd_theme::Preset::Fluent {
+        return div().w_full().p(theme.spacing.md).child(bar.rounded(theme.radius.md)).into_any_element();
     }
     bar.into_any_element()
 }
@@ -1021,7 +1087,15 @@ impl Build<'_> {
             gpui::Refineable::refine(style.style(), &props.style);
             return Some(
                 style
-                    .child(source_tree_view(id, props, hovered.as_ref(), theme, Some(on_input), marks))
+                    .child(source_tree_view(
+                        id,
+                        props,
+                        hovered.as_ref(),
+                        theme,
+                        self.in_hidden_sidebar(node),
+                        Some(on_input),
+                        marks,
+                    ))
                     .into_any_element(),
             );
         }
@@ -1034,5 +1108,28 @@ impl Build<'_> {
             return Some(banner_view(id, props, theme, Some(on_action), marks));
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod icon_slot_tests {
+    use nd_components::Icon;
+
+    use super::icon_glyph;
+    use crate::forms::glyph::Glyph;
+
+    #[test]
+    fn a_slot_exists_only_for_an_icon_that_draws() {
+        assert!(icon_glyph(None).is_none(), "no icon, no slot");
+        assert!(icon_glyph(Some(Icon::Custom("never-registered"))).is_none(), "an icon with no shape, no slot");
+        for icon in Icon::ALL {
+            assert!(icon_glyph(Some(*icon)).is_some(), "{} draws", icon.lucide());
+        }
+    }
+
+    #[test]
+    fn a_toolbar_button_with_an_unknown_icon_name_draws_no_glyph() {
+        assert!(Glyph::named("never-registered").is_none());
+        assert!(Glyph::named("square-pen").is_some());
     }
 }

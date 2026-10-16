@@ -18,5 +18,9 @@ nd-ui = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 
+# Named pipes: Rust's std has no local sockets on Windows.
+[target.'cfg(windows)'.dependencies]
+interprocess = "2.4.5"
+
 [dev-dependencies]
 nd-ui = { workspace = true, features = ["test-support"] }

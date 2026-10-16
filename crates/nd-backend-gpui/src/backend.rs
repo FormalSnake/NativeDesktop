@@ -107,6 +107,9 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
+    /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
+    /// it without the app's state changing.
+    pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -165,6 +168,7 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             drawn: Rc::default(),
+            hidden_sidebars: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
@@ -252,6 +256,24 @@ impl GpuiBackend {
     /// platform's active window, or none is.
     pub fn on_activation(&self, f: impl Fn(bool) + 'static) {
         self.state.borrow_mut().activation_listener = Some(Rc::new(f));
+    }
+
+    /// The OS's own colours (the system accent), as the OS hooks last read them.
+    pub fn platform_palettes(&self) -> nd_theme::SchemePalettes {
+        self.state.borrow().theme.os().palettes
+    }
+
+    /// Records the OS's own colours; true when they changed.
+    pub(crate) fn set_os_palettes(&self, palettes: nd_theme::SchemePalettes) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.theme.os().palettes == palettes {
+            return false;
+        }
+        let os = OsTheme { palettes, ..state.theme.os().clone() };
+        state.theme.set_os(os);
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        true
     }
 
     /// Records the platform's scheme; true when it changed.

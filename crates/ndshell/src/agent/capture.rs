@@ -235,14 +235,18 @@ pub fn still(target: &Target, timeout: Duration) -> Result<Image, String> {
     image
 }
 
-/// What a recording measures in each frame: how far in from the right and bottom edges the
-/// first `key`-coloured pixel sits. Content that tracks the window edge keeps both constant
-/// through a resize; a late frame shifts them or loses the key.
+/// What a recording measures in each frame, at a few rows near the right edge and columns near
+/// the bottom: how far in from the edge the content's own colour starts. With a `key`, that is
+/// the first pixel of the key colour (a marker the app paints along its edges); without one, the
+/// first pixel matching the colour `scan` pixels in, so any window whose content runs to its edge
+/// in one colour can be checked. Content that tracks the window edge keeps both distances fixed
+/// through a resize; a late frame shifts them or loses the match. Each frame also counts the
+/// magenta pixels on a sparse grid, the backend's `ND_DEBUG_EXPOSE` background.
 #[derive(Clone, Copy, Debug)]
 pub struct EdgeProbe {
-    pub key: [u8; 3],
+    pub key: Option<[u8; 3]>,
     pub tolerance: u8,
-    /// How far in to look before giving up.
+    /// How far in to look before giving up; without a key, where the reference colour is read.
     pub scan: u32,
     /// Rows from the top to skip (title row, rounded corner) and columns from the left.
     pub skip: u32,
@@ -253,15 +257,26 @@ pub struct FrameStat {
     pub t_ms: f64,
     pub width: u32,
     pub height: u32,
-    /// Distance of the key from the right edge, per sampled row: min and max.
+    /// Distance of the content from the right edge, per sampled row: min and max.
     pub right: Option<(u32, u32)>,
     pub bottom: Option<(u32, u32)>,
+    pub magenta: u32,
 }
 
 impl EdgeProbe {
-    fn matches(&self, [r, g, b, _]: [u8; 4]) -> bool {
-        let close = |a: u8, k: u8| a.abs_diff(k) <= self.tolerance;
-        close(r, self.key[0]) && close(g, self.key[1]) && close(b, self.key[2])
+    fn close(&self, [r, g, b, _]: [u8; 4], key: [u8; 3]) -> bool {
+        let near = |a: u8, k: u8| a.abs_diff(k) <= self.tolerance;
+        near(r, key[0]) && near(g, key[1]) && near(b, key[2])
+    }
+
+    /// The first distance from the edge at which `at(d)` matches the key (or the colour at `scan`).
+    fn depth(&self, extent: u32, at: impl Fn(u32) -> [u8; 4]) -> Option<u32> {
+        let scan = self.scan.min(extent.saturating_sub(1));
+        let key = self.key.unwrap_or_else(|| {
+            let [r, g, b, _] = at(scan);
+            [r, g, b]
+        });
+        (0..=scan).find(|&d| self.close(at(d), key))
     }
 
     fn measure(&self, image: &Image, t_ms: f64) -> FrameStat {
@@ -272,15 +287,16 @@ impl EdgeProbe {
         };
         let rows: Vec<u32> = (1..=5).map(|i| self.skip + (h.saturating_sub(2 * self.skip)) * i / 6).collect();
         let cols: Vec<u32> = (1..=5).map(|i| self.skip + (w.saturating_sub(2 * self.skip)) * i / 6).collect();
-        let right = rows
-            .iter()
-            .map(|&y| (0..self.scan.min(w)).find(|&d| y < h && self.matches(image.pixel(w - 1 - d, y))))
-            .collect();
-        let bottom = cols
-            .iter()
-            .map(|&x| (0..self.scan.min(h)).find(|&d| x < w && self.matches(image.pixel(x, h - 1 - d))))
-            .collect();
-        FrameStat { t_ms, width: w, height: h, right: spread(right), bottom: spread(bottom) }
+        let right = rows.iter().filter(|&&y| y < h).map(|&y| self.depth(w, |d| image.pixel(w - 1 - d, y))).collect();
+        let bottom = cols.iter().filter(|&&x| x < w).map(|&x| self.depth(h, |d| image.pixel(x, h - 1 - d))).collect();
+        let mut magenta = 0;
+        for y in (0..h).step_by(4) {
+            for x in (0..w).step_by(4) {
+                let [r, g, b, a] = image.pixel(x, y);
+                magenta += u32::from(a > 200 && r > 200 && g < 70 && b > 200);
+            }
+        }
+        FrameStat { t_ms, width: w, height: h, right: spread(right), bottom: spread(bottom), magenta }
     }
 }
 

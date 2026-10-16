@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Starts a fresh Claude Code session in a Herdr pane with a prompt file, for a scheduled resume
+# (launchd runs it; see docs/plan/HANDOFF.md). Usage: resume-in-herdr <pane-id> <cwd> <prompt-file>
+# If the pane still holds an agent it is told to exit first; if the pane is gone, a new workspace
+# is opened at <cwd>.
+set -euo pipefail
+pane=$1 cwd=$2 prompt_file=$3
+prompt=$(cat "$prompt_file")
+
+field() { herdr pane get "$pane" 2>/dev/null | jq -r ".result.pane.$1 // empty"; }
+
+if ! herdr pane get "$pane" >/dev/null 2>&1; then
+  pane=$(herdr workspace create --cwd "$cwd" | jq -r '.result.root_pane.pane_id')
+fi
+
+if [ -n "$(field agent)" ]; then
+  herdr agent prompt "$pane" "/exit" || true
+  for _ in $(seq 60); do
+    [ -z "$(field agent)" ] && break
+    sleep 2
+  done
+fi
+
+n=$RANDOM
+herdr pane run "$pane" "cd '$cwd'; echo __resume_cd_$n:\$status"
+herdr pane wait-output "$pane" --regex "__resume_cd_$n:[0-9]+" --timeout 30000 >/dev/null
+herdr agent start nd-resume --kind claude --pane "$pane" --timeout 60000 -- \
+  --dangerously-skip-permissions "$prompt"

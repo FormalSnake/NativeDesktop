@@ -157,16 +157,8 @@ impl VirtualInput {
         file.write_all(text.as_bytes()).and_then(|()| file.write_all(&[0])).map_err(|e| e.to_string())?;
         keyboard.keymap(xkbcommon::xkb::KEYMAP_FORMAT_TEXT_V1, file.as_fd(), text.len() as u32 + 1);
 
-        let mut this = Self {
-            conn,
-            queue,
-            pointer,
-            keyboard,
-            extent,
-            position: (0., 0.),
-            mod_masks,
-            started: Instant::now(),
-        };
+        let mut this =
+            Self { conn, queue, pointer, keyboard, extent, position: (0., 0.), mod_masks, started: Instant::now() };
         this.sync()?;
         Ok(this)
     }

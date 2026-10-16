@@ -91,7 +91,8 @@ fn run(args: &[String]) -> Result<(), String> {
     let ["drag", rest @ ..] = args.as_slice() else {
         return Err(format!("{USAGE} | ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h>"));
     };
-    let n: Vec<f64> = rest.iter().map(|a| a.parse::<f64>().map_err(|e| format!("{a}: {e}"))).collect::<Result<_, _>>()?;
+    let n: Vec<f64> =
+        rest.iter().map(|a| a.parse::<f64>().map_err(|e| format!("{a}: {e}"))).collect::<Result<_, _>>()?;
     let [x, y, dx, dy, steps, step_ms, w, h] = n[..] else { return Err("drag takes eight numbers".into()) };
     let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| "XDG_RUNTIME_DIR is not set")?;
     let display = std::env::var("WAYLAND_DISPLAY").map_err(|_| "WAYLAND_DISPLAY is not set")?;

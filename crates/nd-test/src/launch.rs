@@ -35,7 +35,7 @@ pub fn example_bin(name: &str) -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
-    target.join("debug").join(name)
+    target.join("debug").join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 #[derive(Clone, Debug)]
@@ -81,15 +81,33 @@ impl LaunchOptions {
     }
 }
 
+#[cfg(unix)]
+type LocalStream = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+type LocalStream = interprocess::local_socket::Stream;
+
+#[cfg(unix)]
+fn connect_local(path: &Path) -> std::io::Result<LocalStream> {
+    LocalStream::connect(path)
+}
+
+/// The app listens on a named pipe ([`nd_automation::server::pipe_path`]).
+#[cfg(windows)]
+fn connect_local(path: &Path) -> std::io::Result<LocalStream> {
+    use interprocess::local_socket::GenericFilePath;
+    use interprocess::local_socket::prelude::*;
+    let pipe = nd_automation::server::pipe_path(path);
+    LocalStream::connect(pipe.as_path().to_fs_name::<GenericFilePath>()?)
+}
+
 struct SocketDriver {
-    stream: RefCell<std::os::unix::net::UnixStream>,
+    stream: RefCell<LocalStream>,
     next_id: Cell<u64>,
 }
 
 impl SocketDriver {
     fn connect(path: &Path) -> Result<Self> {
-        let stream = std::os::unix::net::UnixStream::connect(path)
-            .map_err(|e| Error::Launch(format!("connect {}: {e}", path.display())))?;
+        let stream = connect_local(path).map_err(|e| Error::Launch(format!("connect {}: {e}", path.display())))?;
         Ok(Self { stream: RefCell::new(stream), next_id: Cell::new(1) })
     }
 }

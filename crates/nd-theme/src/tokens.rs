@@ -18,6 +18,9 @@ pub struct SurfaceTokens {
     pub raised_hover: Hsla,
     /// Popovers, menus and sheets drawn by nd.
     pub overlay: Hsla,
+    /// The opaque content layer a window with a backdrop material (Mica) lays beside a
+    /// see-through sidebar and title row, as Windows' own apps do (measured on Task Manager).
+    pub layer: Hsla,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,6 +114,7 @@ impl Theme {
                 raised: p.surface_raised,
                 raised_hover,
                 overlay: p.surface_overlay,
+                layer: nd_gpui::gpui::rgb(if scheme.is_dark() { 0x191919 } else { 0xf9f9f9 }).into(),
             },
             border: BorderTokens { subtle: p.separator, strong },
             separator: p.separator,

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Drives the Windows hardware run from the macbook (scripts/windows/native-run.ps1 does the work
+# on the machine). The prebuilt binaries come from the g815 Windows VM.
+#
+#   scripts/windows/native wait          until `ssh windows` answers and a console session is Active
+#   scripts/windows/native push <bin>    copy <bin> (hello, pacing, ndshell, real_resize_gate .exe)
+#                                        and this checkout's source to C:\nd-native
+#   scripts/windows/native run           run it there; results land in target/windows-native/
+#   scripts/windows/native cleanup       remove C:\nd-native, the agent and the test install
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/../.." && pwd)
+host=${ND_WINDOWS_HOST:-windows}
+dir='C:\nd-native'
+quiet='post-quantum|store now|openssh.com/pq'
+ps() { ssh -o ServerAliveInterval=30 "$host" "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$1\"" 2>&1 | { grep -Ev "$quiet" || true; }; }
+
+case "${1:-}" in
+  wait)
+    until ssh -o ConnectTimeout=5 -o BatchMode=yes "$host" 'query user' 2>/dev/null | grep -Eiq 'console +[0-9]+ +Active'; do
+      sleep 15
+    done
+    echo "windows: console session active"
+    ;;
+  push)
+    bin=${2:?usage: native push <dir with the prebuilt .exe files>}
+    ps "New-Item -ItemType Directory -Force $dir\\bin,$dir\\src | Out-Null"
+    scp -q "$bin"/*.exe "$host:C:/nd-native/bin/" 2>&1 | { grep -Ev "$quiet" || true; }
+    scp -q "$root/scripts/windows/native-run.ps1" "$host:C:/nd-native/" 2>&1 | { grep -Ev "$quiet" || true; }
+    tarball=$(mktemp -t nd-native).tar
+    (cd "$root" && git ls-files -co --exclude-standard -z | tar --null -T - -cf "$tarball")
+    scp -q "$tarball" "$host:C:/nd-native/src.tar" 2>&1 | { grep -Ev "$quiet" || true; }
+    rm -f "$tarball"
+    ps "tar -xf $dir\\src.tar -C $dir\\src; Remove-Item $dir\\src.tar; 'pushed'"
+    ;;
+  run)
+    ps "& $dir\\native-run.ps1 -Root $dir"
+    mkdir -p "$root/target/windows-native"
+    scp -q -r "$host:C:/nd-native/out/*" "$root/target/windows-native/" 2>&1 | { grep -Ev "$quiet" || true; }
+    echo "results in $root/target/windows-native"
+    ;;
+  cleanup)
+    ps "& $dir\\native-run.ps1 -Root $dir -Cleanup"
+    ;;
+  *)
+    sed -n '2,11p' "$0"
+    exit 2
+    ;;
+esac
