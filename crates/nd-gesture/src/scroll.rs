@@ -74,6 +74,8 @@ struct AxisState {
     motion: Motion,
     tracker: VelocityTracker,
     last_time: f64,
+    /// Carries past an edge and springs back; otherwise stops at it.
+    overscroll: bool,
 }
 
 impl AxisState {
@@ -86,6 +88,7 @@ impl AxisState {
             motion: Motion::Idle,
             tracker: VelocityTracker::default(),
             last_time: 0.,
+            overscroll: true,
         }
     }
 
@@ -104,6 +107,10 @@ impl AxisState {
     }
 
     fn show_raw(&mut self) {
+        if !self.overscroll {
+            // Pulling past the edge does nothing, and pulling back moves at once.
+            self.raw = self.edge(self.raw);
+        }
         let excess = self.excess(self.raw);
         self.offset = self.edge(self.raw) + rubber_band(excess, self.viewport);
     }
@@ -157,7 +164,11 @@ impl AxisState {
         if self.excess(next) != 0. {
             let edge = self.edge(next);
             self.offset = edge;
-            self.motion = Motion::Spring(Spring::SETTLE.start(f64::from(edge), f64::from(edge), velocity, time));
+            self.motion = if self.overscroll {
+                Motion::Spring(Spring::SETTLE.start(f64::from(edge), f64::from(edge), velocity, time))
+            } else {
+                Motion::Idle
+            };
         } else {
             self.offset = next;
         }
@@ -192,7 +203,11 @@ impl AxisState {
                 let decay = (k * t).exp();
                 let x = x0 + v0 * (decay - 1.) / k;
                 let v = v0 * decay;
-                if x < 0. || x > f64::from(self.max) {
+                if (x < 0. || x > f64::from(self.max)) && !self.overscroll {
+                    // The fling stops dead at the edge, as GTK's and WinUI's do.
+                    self.offset = self.edge(x as f32);
+                    self.motion = Motion::Idle;
+                } else if x < 0. || x > f64::from(self.max) {
                     // The fling hit an edge: the content carries past it on the spring and comes
                     // back, the bounce.
                     let edge = self.edge(x as f32);
@@ -275,6 +290,12 @@ pub struct Scroller {
 impl Scroller {
     pub fn new(axes: Axes) -> Self {
         Self { axes, x: AxisState::new(), y: AxisState::new() }
+    }
+
+    /// Whether content carries past an edge and springs back (the default) or stops there.
+    pub fn set_overscroll(&mut self, overscroll: bool) {
+        self.x.overscroll = overscroll;
+        self.y.overscroll = overscroll;
     }
 
     pub fn axes(&self) -> Axes {

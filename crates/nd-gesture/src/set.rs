@@ -84,6 +84,9 @@ pub struct GestureConfig {
     /// Seconds a notched wheel's step eases over; 0 jumps. WinUI's ScrollViewer eases a wheel
     /// notch, so Windows builds glide (120 ms); GTK and AppKit move the content by the step.
     pub wheel_glide: f64,
+    /// Content carries past an edge and springs back (AppKit's rubber band). GTK and WinUI stop
+    /// at the edge, so only macOS builds overscroll.
+    pub overscroll: bool,
 }
 
 impl Default for GestureConfig {
@@ -94,6 +97,7 @@ impl Default for GestureConfig {
             long_press: 0.5,
             double_tap: 0.5,
             wheel_glide: if cfg!(target_os = "windows") { 0.12 } else { 0. },
+            overscroll: cfg!(target_os = "macos"),
         }
     }
 }

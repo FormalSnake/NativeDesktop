@@ -72,15 +72,38 @@ mod gate_m4 {
         (seen, t)
     }
 
+    /// A router with AppKit's rubber band, which these physics tests were written against on
+    /// every OS.
+    fn bouncy() -> GestureRouter {
+        GestureRouter::new(GestureConfig { overscroll: true, ..GestureConfig::default() })
+    }
+
     fn vertical() -> GestureSet {
         GestureSet { scroll: Axes { horizontal: false, vertical: true }, ..GestureSet::default() }
+    }
+
+    /// GTK and WinUI stop at the edge: no rubber band while dragging, a fling ends there.
+    #[test]
+    fn without_overscroll_the_content_stops_at_the_edge() {
+        let mut router = GestureRouter::new(GestureConfig { overscroll: false, ..GestureConfig::default() });
+        let list = NodeId(1);
+        let set = vertical();
+        router.set_scroll_extent(list, &set, size(400., 600.), size(400., 1000.));
+        let hit = [HitEntry { node: list, gestures: &set, bounds: BOUNDS }];
+        let t = fingers(&mut router, &hit, p(0., -30.), 10, 0.);
+        assert_eq!(router.scroll_offset(list).y, 0., "pulling down at the top does nothing");
+        let t = fingers(&mut router, &hit, p(0., 60.), 12, t);
+        lift(&mut router, t);
+        let (seen, _) = run(&mut router, list, t, 120.);
+        assert!(seen.iter().all(|y| *y <= 400.), "the fling never passes the end: {seen:?}");
+        assert_eq!(router.scroll_offset(list).y, 400.);
     }
 
     /// A trackpad that sends only moves (GPUI on Wayland): the gesture ends by itself once the
     /// deltas stop, and the next scroll over another scroller goes to that one.
     #[test]
     fn a_scroll_with_no_began_or_ended_ends_when_the_deltas_stop() {
-        let mut router = GestureRouter::new(GestureConfig::default());
+        let mut router = bouncy();
         let (sidebar, thread) = (NodeId(1), NodeId(2));
         let set = vertical();
         router.set_scroll_extent(sidebar, &set, size(300., 600.), size(300., 3000.));
@@ -166,7 +189,7 @@ mod gate_m4 {
     fn pulling_past_the_edge_rubber_bands_and_springs_back_without_overshoot() {
         let list = NodeId(1);
         let set = vertical();
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(list, &set, size(400., 600.), size(400., 2000.));
         let hit = [HitEntry { node: list, gestures: &set, bounds: BOUNDS }];
         // Pull down 120 pt from the top: offset goes negative, resisted.
@@ -187,7 +210,7 @@ mod gate_m4 {
     fn a_fling_into_the_end_bounces_past_it_and_back() {
         let list = NodeId(1);
         let set = vertical();
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(list, &set, size(400., 600.), size(400., 1000.));
         let hit = [HitEntry { node: list, gestures: &set, bounds: BOUNDS }];
         let t = fingers(&mut router, &hit, p(0., 25.), 8, 0.);
@@ -203,7 +226,7 @@ mod gate_m4 {
     fn os_momentum_replaces_the_framework_fling() {
         let list = NodeId(1);
         let set = vertical();
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(list, &set, size(400., 600.), size(400., 10_000.));
         let hit = [HitEntry { node: list, gestures: &set, bounds: BOUNDS }];
         let t = fingers(&mut router, &hit, p(0., 10.), 12, 0.);
@@ -230,7 +253,7 @@ mod gate_m4 {
     fn touching_during_a_fling_catches_it() {
         let list = NodeId(1);
         let set = vertical();
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(list, &set, size(400., 600.), size(400., 100_000.));
         let hit = [HitEntry { node: list, gestures: &set, bounds: BOUNDS }];
         let t = fingers(&mut router, &hit, p(0., 20.), 12, 0.);
@@ -283,7 +306,7 @@ mod gate_m4 {
             row_swipe: Some(RowSwipeConfig { leading: 0., trailing: 80., full_swipe: Some(RowEdge::Trailing) }),
             ..GestureSet::default()
         };
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(list, &list_set, size(400., 600.), size(400., 4000.));
         router.set_row_config(row, &row_set, 400.);
         let hit = [
@@ -309,7 +332,7 @@ mod gate_m4 {
         let (pager, carousel) = (NodeId(1), NodeId(2));
         let page_set = GestureSet { swipe_page: true, ..GestureSet::default() };
         let carousel_set = GestureSet { scroll: Axes { horizontal: true, vertical: false }, ..GestureSet::default() };
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(carousel, &carousel_set, size(400., 200.), size(1200., 200.));
         let hit = [
             HitEntry { node: carousel, gestures: &carousel_set, bounds: Rect::new(0., 0., 400., 200.) },
@@ -360,7 +383,7 @@ mod gate_m4 {
     fn a_nested_scroller_with_no_room_rubber_bands_when_nothing_outer_takes_it() {
         let (outer, inner) = (NodeId(1), NodeId(2));
         let set = vertical();
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_scroll_extent(outer, &set, size(400., 600.), size(400., 3000.));
         router.set_scroll_extent(inner, &set, size(400., 300.), size(400., 900.));
         let hit = [
@@ -389,7 +412,7 @@ mod gate_m4 {
             row_swipe: Some(RowSwipeConfig { leading: 0., trailing: 80., full_swipe: Some(RowEdge::Trailing) }),
             ..GestureSet::default()
         };
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_row_config(row, &set, 400.);
         let hit = [HitEntry { node: row, gestures: &set, bounds: Rect::new(0., 0., 400., 44.) }];
         let mut out = Vec::new();
@@ -437,7 +460,7 @@ mod gate_m4 {
             row_swipe: Some(RowSwipeConfig { leading: 0., trailing: 80., full_swipe: None }),
             ..GestureSet::default()
         };
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         router.set_row_config(row, &set, 400.);
         let hit = [HitEntry { node: row, gestures: &set, bounds: Rect::new(0., 0., 400., 44.) }];
         let t = fingers(&mut router, &hit, p(5., 0.), 4, 0.);
@@ -479,7 +502,7 @@ mod gate_m4 {
             HitEntry { node: button, gestures: &button_set, bounds: BOUNDS },
             HitEntry { node: card, gestures: &card_set, bounds: BOUNDS },
         ];
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
 
         let mut out = press(&mut router, &hit, p(50., 50.), 0.);
         out.extend(pointer(&mut router, PointerPhase::Move, p(51., 51.), 0.02));
@@ -511,7 +534,7 @@ mod gate_m4 {
             HitEntry { node: inner, gestures: &set, bounds: BOUNDS },
             HitEntry { node: outer, gestures: &set, bounds: BOUNDS },
         ];
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         let mut out = press(&mut router, &hit, p(5., 5.), 0.);
         out.extend(pointer(&mut router, PointerPhase::Up, p(5., 5.), 0.05));
         assert_eq!(events(&out).iter().map(|(n, _)| *n).collect::<Vec<_>>(), [inner]);
@@ -522,7 +545,7 @@ mod gate_m4 {
         let node = NodeId(1);
         let set = GestureSet { tap: true, long_press: true, ..GestureSet::default() };
         let hit = [HitEntry { node, gestures: &set, bounds: BOUNDS }];
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         let mut out = press(&mut router, &hit, p(5., 5.), 0.);
         assert_eq!(router.next_deadline(), Some(0.5));
         out.extend(router.step(0.49));
@@ -544,7 +567,7 @@ mod gate_m4 {
         let node = NodeId(1);
         let set = GestureSet { tap: true, double_tap: true, ..GestureSet::default() };
         let hit = [HitEntry { node, gestures: &set, bounds: BOUNDS }];
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         let mut out = press(&mut router, &hit, p(5., 5.), 0.);
         out.extend(pointer(&mut router, PointerPhase::Up, p(5., 5.), 0.05));
         out.extend(router.step(0.2));
@@ -571,7 +594,7 @@ mod gate_m4 {
             HitEntry { node: slider, gestures: &slider_set, bounds: BOUNDS },
             HitEntry { node: sheet, gestures: &sheet_set, bounds: BOUNDS },
         ];
-        let mut router = GestureRouter::default();
+        let mut router = bouncy();
         let mut out = press(&mut router, &hit, p(50., 50.), 0.);
         for i in 1..=5 {
             out.extend(pointer(&mut router, PointerPhase::Move, p(50., 50. + i as f32 * 4.), f64::from(i) / 120.));
@@ -589,7 +612,7 @@ mod gate_m4 {
             HitEntry { node: canvas, gestures: &none, bounds: BOUNDS },
             HitEntry { node: editor, gestures: &pinch, bounds: BOUNDS },
         ];
-        let router = GestureRouter::default();
+        let router = bouncy();
         let event = GestureEvent::Pinch(PinchEvent { position: p(1., 1.), scale: 1.1, phase: GesturePhase::Changed });
         assert_eq!(router.route(event, &hit), Some(Output::Event(editor, event)));
         let rotate =

@@ -174,7 +174,12 @@ impl GestureRouter {
     /// Registers a scroll view and its laid-out extent. Called every frame for each scroller the
     /// backend shows.
     pub fn set_scroll_extent(&mut self, node: NodeId, set: &GestureSet, viewport: Size, content: Size) {
-        let scroller = self.scrollers.entry(node).or_insert_with(|| Scroller::new(set.scroll));
+        let overscroll = self.config.overscroll;
+        let scroller = self.scrollers.entry(node).or_insert_with(|| {
+            let mut s = Scroller::new(set.scroll);
+            s.set_overscroll(overscroll);
+            s
+        });
         scroller.set_axes(set.scroll);
         scroller.set_extent(viewport, content);
     }
