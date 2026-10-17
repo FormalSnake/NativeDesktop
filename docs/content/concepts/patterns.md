@@ -1,13 +1,13 @@
 +++
 title = "Patterns"
-description = "How window structure such as the toolbar, sidebar, inspector and titlebar is declared once and drawn by each OS."
+description = "Declare window structure such as the toolbar, sidebar, inspector, and titlebar once, and let each OS draw it."
 +++
 
 Declare the structure of a window with intents (`scaffold`, `toolbar`, `sidebar`, `inspector`,
-`titlebar`) and let the OS draw it. On macOS each one is the system's own component, so a new
-macOS release restyles the app with no change here. Do not rebuild a sidebar or toolbar from
-`div`s; a pixel copy goes stale the day the OS changes. The Chrome example declares a Mail-style
-window and names no AppKit class.
+`titlebar`), and let the OS draw it. On macOS, each intent is the system's own component, so a new
+macOS release restyles your app without any change from you. Don't rebuild a sidebar or toolbar
+from `div`s, because a pixel copy goes stale as soon as the OS changes. The Chrome example declares
+a Mail-style window and names no AppKit class.
 
 <!-- docs:example chrome -->
 
@@ -26,92 +26,99 @@ window and names no AppKit class.
 | settings window | toolbar-tab window with grouped rows, `cmd-,` | separate window |
 | `glass()` | `NSGlassEffectView` on macOS 26 and later, `NSVisualEffectView` before | the preset's material: Acrylic on Windows, a transparent surface the compositor may blur on Linux |
 
-On Windows the drawn chrome follows WinUI, checked against Windows 11's own apps (Settings,
-Task Manager): the sidebar and toolbar are one Mica surface with no divider, the content sits on
-an opaque layer whose leading corner takes the window's radius, the sidebar draws like
-NavigationView (Segoe Fluent icons, a subtle fill with an accent pill on the selected row) and its
-toggle folds it to a 48 px icon rail, the caption buttons are as tall as the toolbar, the window
-title is set in the 12 pt caption style, and `banner` is an inset card like InfoBar. Form
-controls, dialogs and menus still use the Adwaita look there. Linux is checked on Hyprland.
+On Windows, the drawn chrome follows WinUI and is checked against Windows 11's own apps, such as
+Settings and Task Manager:
+
+- The sidebar and toolbar are one Mica surface with no divider.
+- The content sits on an opaque layer whose leading corner takes the window's radius.
+- The sidebar draws like NavigationView, with Segoe Fluent icons and a subtle fill with an accent
+  pill on the selected row. Its toggle folds it to a 48 px icon rail.
+- The caption buttons are as tall as the toolbar, and the window title uses the 12 pt caption
+  style.
+- `banner` is an inset card like InfoBar.
+
+Form controls, dialogs, and menus still use the Adwaita look on Windows. Linux is checked on
+Hyprland.
 
 ## Scaffold, toolbar, sidebar and inspector
 
-`scaffold()` takes a toolbar, a sidebar, the content and an inspector. Every part is optional.
+`scaffold()` takes a toolbar, a sidebar, the content, and an inspector. Every part is optional.
 The toolbar holds system items (`sidebar_toggle`, `inspector_toggle`, `flexible_space`) next to
 your own buttons, and macOS gives them the system look and sizing.
 
 <!-- docs:snippet examples/chrome/src/lib.rs#toolbar -->
 
-The sidebar holds a `source_list`: sections of items with an icon and badge, the selection owned
-by your state. On macOS it is an `NSOutlineView` in source-list style.
+The sidebar holds a `source_list`: sections of items, each with an icon and a badge. Your state
+owns the selection. On macOS, the list is an `NSOutlineView` in source-list style.
 
 <!-- docs:snippet examples/chrome/src/lib.rs#sidebar -->
 
-The inspector collapses from state and its toggle sits in the toolbar:
+Your state controls whether the inspector is collapsed, and its toggle sits in the toolbar:
 
 <!-- docs:snippet examples/chrome/src/lib.rs#inspector -->
 
-Key equivalents come from the bindings, not from the menu items: `cx.bind_keys` registers
-`secondary-n`, and `secondary` is cmd on macOS and ctrl elsewhere. `set_menus` builds the menu bar
-and shows each item's shortcut from the same binding.
+Key equivalents come from the bindings instead of the menu items. `cx.bind_keys` registers
+`secondary-n`, where `secondary` is Cmd on macOS and Ctrl on other platforms. `set_menus` builds
+the menu bar and shows each item's shortcut from the same binding.
 
 <!-- docs:snippet examples/chrome/src/lib.rs#menus -->
 
 ## Titlebar and window controls
 
-A window with `Titlebar::Native` gets the OS titlebar, or the scaffold's toolbar in it. For a
-custom row, open the window with `Titlebar::Custom` and build it with `titlebar()`, which reserves
-the room the OS controls need: the traffic lights on the left on macOS, the caption buttons on
-the right on Windows, GNOME's `button-layout` on Linux, and nothing on Hyprland, where the
-compositor draws no controls. It updates on fullscreen and right-to-left layouts.
+A window with `Titlebar::Native` gets the OS titlebar, or the scaffold's toolbar inside it. For a
+custom row, open the window with `Titlebar::Custom` and build the row with `titlebar()`. It
+reserves the room that the OS controls need: the traffic lights on the left on macOS, the caption
+buttons on the right on Windows, and GNOME's `button-layout` on Linux. On Hyprland, the compositor
+draws no controls, so it reserves nothing. The reserved room updates for fullscreen and
+right-to-left layouts.
 
 <!-- docs:snippet examples/overrides/src/lib.rs#titlebar -->
 
-`window_controls()` places the real buttons. With no argument they take the slot `titlebar()`
-reserves. `.at(point(..))` pins them at window coordinates, which Hello uses to put the traffic
-lights where its layout wants them:
+`window_controls()` places the real buttons. With no argument, they take the slot that
+`titlebar()` reserves. `.at(point(..))` pins them at window coordinates. Hello uses it to put the
+traffic lights where its layout wants them:
 
 <!-- docs:snippet examples/hello/src/lib.rs#controls -->
 
-`.embedded()` makes the controls a layout slot instead: the backend moves the real buttons onto
-the slot's rectangle on every layout pass, so they ride along with a sliding sidebar. The buttons
-stay the OS's, with their hover group, menu and accessibility. On Linux they are drawn only when
-the window has client-side decorations, so the same code shows none on Hyprland.
+`.embedded()` makes the controls a layout slot instead. The backend moves the real buttons onto
+the slot's rectangle on every layout pass, so they move with a sliding sidebar. The buttons stay
+the OS's own, with their hover group, menu, and accessibility. On Linux, nd draws them only when the
+window has client-side decorations, so the same code shows no buttons on Hyprland.
 
 ## Alerts, sheets and pickers
 
-`window.alert` shows an `Alert` and calls back with the index of the pressed button. By default it
-is attached to the window as a sheet on macOS; `.modal()` shows it in front of the whole app.
-`window.open_dialog` opens the system file picker.
+`window.alert` shows an `Alert` and calls back with the index of the button that the user
+selected. On macOS, the alert is attached to the window as a sheet by default, and `.modal()` shows
+it in front of the whole app. `window.open_dialog` opens the system file picker.
 
 <!-- docs:snippet examples/chrome/src/lib.rs#delete-alert -->
 
-Do not block in the callback: it runs after the dialog closes, with the app free to handle
+Don't block in the callback. It runs after the dialog closes, while the app is free to handle
 events.
 
 ## Settings
 
-`open_settings` opens the app's settings window, or brings the open one forward. On macOS it is
-the system preferences shape: a toolbar of tabs over grouped rows, opened with `cmd-,` when the
-app binds `OpenSettings`. The tabs are a `toolbar().tab(..)`, the rows a `form` of
-`form_section` and `form_row`:
+`open_settings` opens the app's settings window, or brings the open one to the front. On macOS,
+the window has the system preferences layout: a toolbar of tabs over grouped rows. It opens with
+`cmd-,` when the app binds `OpenSettings`. The tabs are a `toolbar().tab(..)`, and the rows are a
+`form` of `form_section` and `form_row`:
 
 <!-- docs:snippet examples/chrome/src/lib.rs#settings-tabs -->
 
 For settings that persist to a file, `settings_form` builds the whole window from a settings
-struct; see [settings and config](../guides/settings-and-config.md).
+struct. For more information, see [settings and config](../guides/settings-and-config.md).
 
 ## Glass
 
-`glass()` is a container that maps to the system material and never to a replica. It takes
-`.variant(GlassVariant::Regular | Clear)`, `.tint(color)` and `.interactive()`, and `glass_group()`
-merges neighbouring glass where the OS does. It takes every override like any other element. The
-Overrides example tints one:
+`glass()` is a container that always maps to the system material, never to a replica. It takes
+`.variant(GlassVariant::Regular | Clear)`, `.tint(color)`, and `.interactive()`. `glass_group()`
+merges neighboring glass where the OS does. Like any other element, `glass()` accepts every
+override. The Overrides example tints one:
 
 <!-- docs:snippet examples/overrides/src/lib.rs#subtree -->
 
 ## Changing a pattern
 
-If a pattern is wrong for your app, [Overrides](overrides.md#patterns) shows how to swap one for a
-drawn version. If it looks wrong on an OS, that is a bug in the backend: the fix goes there so
-every app benefits, not in a per-app margin.
+If a pattern is wrong for your app, [Overrides](overrides.md#patterns) shows how to swap it for a
+drawn version. If a pattern looks wrong on an OS, that's a bug in the backend. Fix it there, so
+that every app gets the fix, instead of adding a margin to one app.
