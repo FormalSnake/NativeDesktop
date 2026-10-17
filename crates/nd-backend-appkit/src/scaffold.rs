@@ -131,7 +131,7 @@ use objc2::Message;
 /// One pane: a view controller whose view is an [`NdPaneView`] holding the node's content.
 pub(crate) struct PaneNative {
     pub role: PaneRole,
-    _controller: Retained<NSViewController>,
+    controller: Retained<NSViewController>,
     pub host: Retained<NdPaneView>,
     pub content: Retained<NdLayerView>,
     pub item: Option<Retained<NSSplitViewItem>>,
@@ -159,7 +159,7 @@ impl PaneNative {
         };
         let this = Self {
             role: props.role,
-            _controller: controller,
+            controller,
             host,
             content,
             item,
@@ -233,7 +233,10 @@ impl PaneNative {
             self.collapsed.set(props.collapsed);
             // Once on screen, through the animator: the pane slides in and out as AppKit's own
             // sidebar and inspector toggles slide it. Reduce Motion makes AppKit skip the slide.
-            if !first && self.host.window().is_some_and(|w| w.isVisible()) {
+            // On screen is the split view's window, not the pane's: an item added collapsed has
+            // its view loaded and put in the split view only when it first expands.
+            let split = self.controller.parentViewController().and_then(|p| p.viewIfLoaded());
+            if !first && split.and_then(|v| v.window()).is_some_and(|w| w.isVisible()) {
                 let animator: Retained<NSSplitViewItem> = unsafe { msg_send![&**item, animator] };
                 animator.setCollapsed(props.collapsed);
             } else {
