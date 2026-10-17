@@ -81,10 +81,19 @@ pub struct GestureConfig {
     pub lock_distance: f32,
     pub long_press: f64,
     pub double_tap: f64,
+    /// Seconds a notched wheel's step eases over; 0 jumps. WinUI's ScrollViewer eases a wheel
+    /// notch, so Windows builds glide (120 ms); GTK and AppKit move the content by the step.
+    pub wheel_glide: f64,
 }
 
 impl Default for GestureConfig {
     fn default() -> Self {
-        Self { slop: 4., lock_distance: 8., long_press: 0.5, double_tap: 0.5 }
+        Self {
+            slop: 4.,
+            lock_distance: 8.,
+            long_press: 0.5,
+            double_tap: 0.5,
+            wheel_glide: if cfg!(target_os = "windows") { 0.12 } else { 0. },
+        }
     }
 }
