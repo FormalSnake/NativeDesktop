@@ -30,9 +30,12 @@ target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
 cap=${ND_LINUX_TARGET_CAP_GB:-40}
 floor=${ND_LINUX_FREE_FLOOR_GB:-25}
 
+# Exits with the remote command's status, so a failing gate fails the caller. The status is the
+# last command's: end `run` commands with the cargo call, or `set -o pipefail` before a pipe.
 remote() {
   # The login shell there may be fish; everything runs under bash.
-  ssh "$host" "bash -lc $(printf %q "$1")" 2>&1 | grep -v -e 'post-quantum' -e 'store now' -e 'openssh.com/pq' || true
+  ssh "$host" "bash -lc $(printf %q "$1")" 2>&1 | { grep -v -e 'post-quantum' -e 'store now' -e 'openssh.com/pq' || true; }
+  return "${PIPESTATUS[0]}"
 }
 
 # Wraps a command in the dev shell with the lane's target and the quiet settings. Every lane shares
