@@ -333,6 +333,10 @@ define_class!(
             if !self.ivars().props.borrow().transform.is_identity() {
                 self.apply_transform();
             }
+            // A `rounded_full()` radius is clamped to the size, so it follows the size.
+            if self.ivars().props.borrow().corner_radius > 0. {
+                self.setNeedsDisplay(true);
+            }
         }
 
         // Runs under the view's effective appearance, so system colours resolve for it here and
@@ -343,8 +347,13 @@ define_class!(
             let props = self.current_look();
             let background = props.background.or(self.ivars().surface.get()).map(|c| c.ns_color().CGColor());
             layer.setBackgroundColor(background.as_deref());
-            let radius = props.corner_radius * self.ivars().radius_scale.get();
-            layer.setCornerRadius(radius.into());
+            // `rounded_full()` asks for an unbounded radius; Core Animation draws a layer with one
+            // past half its size, and everything in it, as nothing.
+            let size = self.bounds().size;
+            let radius = f64::from(props.corner_radius * self.ivars().radius_scale.get())
+                .min(size.width.min(size.height) / 2.)
+                .max(0.);
+            layer.setCornerRadius(radius);
             match props.border {
                 Some((width, color)) => {
                     layer.setBorderWidth(width.into());

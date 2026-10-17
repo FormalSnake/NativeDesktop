@@ -356,6 +356,7 @@ mod gaps {
                 .child(nd_components::glass().id("pill").w(px(120.)).h(px(36.)))
                 .child(nd_components::glass().id("dot").w(px(36.)).h(px(36.)))
                 .child(nd_components::glass().id("panel").w(px(200.)).h(px(200.)))
+                .child(div().id("ring").size(px(60.)).rounded_full().border_2().child(div().id("inside").size(px(20.))))
         }
     }
 
@@ -374,6 +375,8 @@ mod gaps {
         c.check(radius("pill") == 18., &format!("glass: a control-sized one is a capsule ({})", radius("pill")));
         c.check(radius("dot") == 18., &format!("glass: a square one is a circle ({})", radius("dot")));
         c.check(radius("panel") == 0., &format!("glass: a large surface stays square ({})", radius("panel")));
+        let ring = rig.view(win, "ring").layer().map(|l| l.cornerRadius());
+        c.check(ring == Some(30.), &format!("rounded_full(): the radius is half the size, not unbounded ({ring:?})"));
         rig.close(opened);
     }
 
