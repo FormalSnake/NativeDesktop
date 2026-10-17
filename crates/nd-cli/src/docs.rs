@@ -349,7 +349,6 @@ fn chrome_command(work: &Path, name: &str) -> Result<Command> {
             "--force-device-scale-factor=1",
             "--enable-unsafe-webgpu",
             "--window-size=1100,760",
-            "--virtual-time-budget=15000",
         ])
         .arg(format!("--user-data-dir={}", work.join(format!("profile-{name}")).display()));
     // Chrome 137 and later no longer fall back to SwiftShader by themselves, so a runner without a
@@ -395,7 +394,9 @@ fn explain_blank(dir: &Path, url: &str, work: &Path, name: &str) {
         let _ = std::fs::remove_file(&probe);
     }
     if let Ok(mut command) = chrome_command(work, &format!("{name}-log"))
-        && let Ok(output) = command.args(["--enable-logging=stderr", "--v=0", "--dump-dom", url]).output()
+        && let Ok(output) = command
+            .args(["--virtual-time-budget=15000", "--enable-logging=stderr", "--v=0", "--dump-dom", url])
+            .output()
     {
         let log = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = log.lines().filter(|l| l.contains("CONSOLE") || l.contains("Uncaught")).collect();
@@ -406,24 +407,26 @@ fn explain_blank(dir: &Path, url: &str, work: &Path, name: &str) {
     }
 }
 
-/// Loads `url` in headless Chrome and returns the screenshot's distinct colours (capped).
+/// Loads `url` in headless Chrome and returns the distinct colours (capped) of its viewport once
+/// it has drawn: screenshots every half second until the page shows more than the flat
+/// background or 30 s pass.
 fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
-    let shot = work.join(format!("{name}.png"));
-    let mut command = chrome_command(work, name)?;
-    command.arg(format!("--screenshot={}", shot.display()));
-    let output = command.arg(url).output().context("running Chrome")?;
-    if !output.status.success() {
-        bail!("Chrome exited with {}", output.status);
-    }
-    let image = image::open(&shot).with_context(|| format!("reading {}", shot.display()))?.to_rgba8();
-    let mut seen = std::collections::HashSet::new();
-    for pixel in image.pixels() {
-        seen.insert(pixel.0);
-        if seen.len() > 64 {
-            break;
+    let mut page = crate::cdp::Page::open(chrome_command(work, name)?, url)?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let image = image::load_from_memory(&page.screenshot()?)?.to_rgba8();
+        let mut seen = std::collections::HashSet::new();
+        for pixel in image.pixels() {
+            seen.insert(pixel.0);
+            if seen.len() > 64 {
+                break;
+            }
         }
+        if seen.len() > 4 || Instant::now() > deadline {
+            return Ok(seen.len());
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
-    Ok(seen.len())
 }
 
 fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {

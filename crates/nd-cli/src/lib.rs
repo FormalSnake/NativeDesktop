@@ -1,6 +1,7 @@
 //! The `nd` command line: `new`, `check`, `test`, `build`, `serve`, `diagnose`, `package`, `release`,
 //! `diag`, `docs`, `doctor`.
 
+pub mod cdp;
 pub mod check;
 pub mod diag;
 pub mod diagnose;

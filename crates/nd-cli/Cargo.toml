@@ -16,11 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 nd-config.workspace = true
 nd-update.workspace = true
 rusty-s3 = "0.10"
 tiny_http = "0.12"
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
 ureq = "3.4"
 url = "2"
 nd-core.workspace = true
