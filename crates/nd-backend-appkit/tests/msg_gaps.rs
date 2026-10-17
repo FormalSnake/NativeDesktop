@@ -356,6 +356,7 @@ mod gaps {
                 .child(nd_components::glass().id("pill").w(px(120.)).h(px(36.)))
                 .child(nd_components::glass().id("dot").w(px(36.)).h(px(36.)))
                 .child(nd_components::glass().id("panel").w(px(200.)).h(px(200.)))
+                .child(div().id("ring").size(px(60.)).rounded_full().border_2().child(div().id("inside").size(px(20.))))
         }
     }
 
@@ -374,6 +375,8 @@ mod gaps {
         c.check(radius("pill") == 18., &format!("glass: a control-sized one is a capsule ({})", radius("pill")));
         c.check(radius("dot") == 18., &format!("glass: a square one is a circle ({})", radius("dot")));
         c.check(radius("panel") == 0., &format!("glass: a large surface stays square ({})", radius("panel")));
+        let ring = rig.view(win, "ring").layer().map(|l| l.cornerRadius());
+        c.check(ring == Some(30.), &format!("rounded_full(): the radius is half the size, not unbounded ({ring:?})"));
         rig.close(opened);
     }
 
@@ -388,6 +391,8 @@ mod gaps {
                 .toolbar(toolbar().hide_title().navigation(icon(Icon::SquarePen, 16.)))
                 .sidebar(sidebar().child(div().size_full()))
                 .content_under_toolbar()
+                .toolbar_extension(28.)
+                .content_edge_on_hover()
                 .content(
                     div()
                         .size_full()
@@ -432,6 +437,12 @@ mod gaps {
         );
         let inset = list.contentInsets().top;
         c.check((inset - bars).abs() < 1., &format!("under toolbar: the list is inset by the bars ({inset})"));
+        c.check(
+            (bars - 80.).abs() < 1.,
+            &format!("under toolbar: toolbar_extension(28) adds to the 52 pt bars ({bars})"),
+        );
+        let edges: usize = unsafe { nd_backend_appkit::objc2::msg_send![&**list, allowedPocketEdges] };
+        c.check(edges == 0, &format!("under toolbar: at rest the edge effect is off ({edges})"));
         let rest = list.contentView().bounds().origin.y;
         c.check((rest + bars).abs() < 1., &format!("under toolbar: the first row rests below the bar ({rest})"));
         if nd_backend_appkit::objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some() {

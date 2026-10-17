@@ -920,6 +920,11 @@ fn place_clip(scroll: &NSScrollView, shared: &Shared, handle: &ListHandle) {
     if (current.top - inset).abs() > 0.25 {
         scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. });
     }
+    if bars > 0.
+        && let Some(shown) = crate::scaffold::NdPaneView::edge_shown(scroll)
+    {
+        crate::edge::set(scroll, shown);
+    }
     let origin = clip.bounds().origin;
     let target = layout.scroll_top - bars;
     let model_moved = match shared.user_top.take() {
