@@ -117,25 +117,31 @@ fn hit_path(
     scroll: bool,
 ) -> Vec<NodeId> {
     let Some(root) = hit_start(nodes, bounds, root, at, scroll) else { return Vec::new() };
-    let mut path = vec![root];
-    let mut cursor = root;
-    while let Some(node) = nodes.get(&cursor) {
-        let next = node
-            .children
-            .iter()
-            .rev()
-            .filter(|c| !nodes.get(c).is_some_and(hidden))
-            .find(|c| bounds.get(c).is_some_and(|b| contains(b, at)));
-        match next {
-            Some(c) => {
-                path.push(*c);
-                cursor = *c;
-            }
-            None => break,
-        }
-    }
+    let mut path = descend(nodes, bounds, root, at);
     path.reverse();
     path
+}
+
+/// The path from `node` to the innermost node under `at`, outermost first. Of overlapping
+/// children the topmost (last painted) wins, unless nothing in it takes a gesture and an earlier
+/// one does: a layer drawn over the content that is empty where the pointer is (the scaffold's
+/// overlay pane, a full-size toast host) lets the gesture through to what is under it, as GPUI
+/// lets a click through an element with no hitbox.
+fn descend(nodes: &HashMap<NodeId, Node>, bounds: &HashMap<NodeId, Rect>, node: NodeId, at: Point) -> Vec<NodeId> {
+    let mut first: Option<Vec<NodeId>> = None;
+    if let Some(n) = nodes.get(&node) {
+        for c in n.children.iter().rev() {
+            if nodes.get(c).is_some_and(hidden) || !bounds.get(c).is_some_and(|b| contains(b, at)) {
+                continue;
+            }
+            let path = descend(nodes, bounds, *c, at);
+            if path.iter().any(|p| nodes.get(p).and_then(gestures_of).is_some()) {
+                return std::iter::once(node).chain(path).collect();
+            }
+            first.get_or_insert(path);
+        }
+    }
+    std::iter::once(node).chain(first.unwrap_or_default()).collect()
 }
 
 /// A window's retained tree as the hit test reads it: nodes, painted bounds, root.
@@ -496,5 +502,53 @@ impl gpui::Element for Shifted {
         cx: &mut App,
     ) {
         self.inner.paint(window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nd_gesture::GestureSet;
+
+    fn view(parent: Option<NodeId>, children: Vec<NodeId>, tap: bool) -> Node {
+        let props = DivProps {
+            style: Default::default(),
+            scope: None,
+            drag_region: false,
+            titlebar_insets: false,
+            gestures: GestureSet { tap, ..GestureSet::default() },
+            role: None,
+            transform: Default::default(),
+            hover: None,
+            tracks_hover: false,
+        };
+        Node { kind: NodeKind::View, props: Rc::new(props), parent, children }
+    }
+
+    #[test]
+    fn an_empty_layer_over_the_content_lets_the_gesture_through() {
+        let (root, content, layer) = (NodeId(1), NodeId(2), NodeId(3));
+        let nodes = HashMap::from([
+            (root, view(None, vec![content, layer], false)),
+            (content, view(Some(root), vec![], true)),
+            (layer, view(Some(root), vec![], false)),
+        ]);
+        let full = Rect::new(0., 0., 100., 100.);
+        let bounds = HashMap::from([(root, full), (content, full), (layer, full)]);
+        let path = hit_path(&nodes, &bounds, root, Point { x: 50., y: 50. }, false);
+        assert_eq!(path, vec![content, root], "the tap reaches the content under the empty layer");
+    }
+
+    #[test]
+    fn the_topmost_layer_wins_when_it_takes_the_gesture() {
+        let (root, under, over) = (NodeId(1), NodeId(2), NodeId(3));
+        let nodes = HashMap::from([
+            (root, view(None, vec![under, over], false)),
+            (under, view(Some(root), vec![], true)),
+            (over, view(Some(root), vec![], true)),
+        ]);
+        let full = Rect::new(0., 0., 100., 100.);
+        let bounds = HashMap::from([(root, full), (under, full), (over, full)]);
+        assert_eq!(hit_path(&nodes, &bounds, root, Point { x: 50., y: 50. }, false), vec![over, root]);
     }
 }
