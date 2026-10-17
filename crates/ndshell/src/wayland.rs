@@ -284,8 +284,11 @@ impl VirtualInput {
     }
 }
 
-/// One frame the compositor presented, as XRGB8888 or ARGB8888 (B, G, R, X bytes in memory).
+/// One frame the compositor presented, as XRGB8888 or ARGB8888 (B, G, R, X bytes in memory), or
+/// XBGR8888 or ABGR8888 (R, G, B, X) where the compositor offers only those, as labwc does.
 pub struct CapturedFrame {
+    /// The bytes are R, G, B, X rather than B, G, R, X.
+    pub red_first: bool,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
@@ -299,7 +302,11 @@ pub struct CapturedFrame {
 impl CapturedFrame {
     pub fn rgb(&self, x: u32, y: u32) -> [u8; 3] {
         let i = (y * self.stride + x * 4) as usize;
-        [self.data[i + 2], self.data[i + 1], self.data[i]]
+        if self.red_first {
+            [self.data[i], self.data[i + 1], self.data[i + 2]]
+        } else {
+            [self.data[i + 2], self.data[i + 1], self.data[i]]
+        }
     }
 
     /// The frame as a 24-bit BMP, for keeping evidence of a failed check.
@@ -318,9 +325,9 @@ impl CapturedFrame {
         out.extend_from_slice(&24u16.to_le_bytes());
         out.extend_from_slice(&[0; 24]);
         for y in 0..self.height {
-            let start = (y * self.stride) as usize;
-            for x in 0..self.width as usize {
-                out.extend_from_slice(&self.data[start + x * 4..start + x * 4 + 3]);
+            for x in 0..self.width {
+                let [r, g, b] = self.rgb(x, y);
+                out.extend_from_slice(&[b, g, r]);
             }
             out.resize(out.len() + (row - self.width * 3) as usize, 0);
         }
@@ -430,11 +437,17 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn start(
-        hyprland: &Hyprland,
+    pub fn start(hyprland: &Hyprland, on_frame: impl FnMut(&CapturedFrame) + Send + 'static) -> Result<Self, String> {
+        Self::start_socket(&hyprland.wayland_socket(), on_frame)
+    }
+
+    /// As [`Capture::start`], on the compositor behind `socket` (any with
+    /// `ext-image-copy-capture-v1`, such as labwc).
+    pub fn start_socket(
+        socket: &std::path::Path,
         mut on_frame: impl FnMut(&CapturedFrame) + Send + 'static,
     ) -> Result<Self, String> {
-        let conn = connect(hyprland)?;
+        let conn = connect_socket(socket)?;
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
         let flag = stop.clone();
@@ -457,10 +470,15 @@ impl Capture {
                     return Err("no buffer constraints from the capture session".into());
                 }
                 let (width, height) = state.size.ok_or("capture session sent no buffer size")?;
-                let format = [wl_shm::Format::Xrgb8888, wl_shm::Format::Argb8888]
-                    .into_iter()
-                    .find(|f| state.formats.contains(f))
-                    .ok_or_else(|| format!("no 32-bit shm format offered: {:?}", state.formats))?;
+                let format = [
+                    wl_shm::Format::Xrgb8888,
+                    wl_shm::Format::Argb8888,
+                    wl_shm::Format::Xbgr8888,
+                    wl_shm::Format::Abgr8888,
+                ]
+                .into_iter()
+                .find(|f| state.formats.contains(f))
+                .ok_or_else(|| format!("no 32-bit shm format offered: {:?}", state.formats))?;
                 let stride = width * 4;
                 let len = stride * height;
                 let fd = rustix::fs::memfd_create("nd-capture", rustix::fs::MemfdFlags::CLOEXEC)
@@ -482,8 +500,16 @@ impl Capture {
                     request.capture();
                     request
                 };
-                let mut frame =
-                    CapturedFrame { width, height, stride, data: vec![0; len as usize], presented: None, sequence: 0 };
+                let red_first = matches!(format, wl_shm::Format::Xbgr8888 | wl_shm::Format::Abgr8888);
+                let mut frame = CapturedFrame {
+                    red_first,
+                    width,
+                    height,
+                    stride,
+                    data: vec![0; len as usize],
+                    presented: None,
+                    sequence: 0,
+                };
                 let mut count = 0u64;
                 let mut current = 0;
                 let mut request = capture_into(&buffers[current]);
@@ -555,8 +581,13 @@ impl Drop for Capture {
 
 /// One frame of the output as it is now.
 pub fn screenshot(hyprland: &Hyprland) -> Result<CapturedFrame, String> {
+    screenshot_socket(&hyprland.wayland_socket())
+}
+
+/// As [`screenshot`], on the compositor behind `socket`.
+pub fn screenshot_socket(socket: &std::path::Path) -> Result<CapturedFrame, String> {
     let (tx, rx) = std::sync::mpsc::channel();
-    let capture = Capture::start(hyprland, move |frame| {
+    let capture = Capture::start_socket(socket, move |frame| {
         let _ = tx.send(CapturedFrame { data: frame.data.clone(), ..*frame });
     })?;
     let frame = rx.recv_timeout(Duration::from_secs(5)).map_err(|_| "no frame in 5 s".to_string());
