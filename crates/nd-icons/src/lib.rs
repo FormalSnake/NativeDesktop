@@ -90,6 +90,7 @@ icons! {
     ArrowUp "arrow-up" ["arrow.up"] '\u{E74A}';
     BellOff "bell-off" ["bell.slash"] '\u{E7ED}';
     Calendar "calendar" ["calendar"] '\u{E787}';
+    Car "car" ["car"] '\u{E804}';
     Check "check" ["checkmark"] '\u{E73E}';
     ChevronDown "chevron-down" ["chevron.down"] '\u{E70D}';
     ChevronLeft "chevron-left" ["chevron.left"] '\u{E76B}';
@@ -106,11 +107,15 @@ icons! {
     EyeOff "eye-off" ["eye.slash"] '\u{ED1A}';
     File "file" ["doc"] '\u{E7C3}';
     FileText "file-text" ["doc.text"] '\u{E8A5}';
+    Flag "flag" ["flag"] '\u{E7C1}';
     Folder "folder" ["folder"] '\u{E8B7}';
     Globe "globe" ["globe"] '\u{E774}';
+    Hand "hand" ["hand.raised"] '\u{ED53}';
+    Heart "heart" ["heart"] '\u{EB51}';
     Image "image" ["photo"] '\u{EB9F}';
     Inbox "inbox" ["tray"] '\u{E8F1}';
     Info "info" ["info.circle"] '\u{E946}';
+    Lightbulb "lightbulb" ["lightbulb"] '\u{EA80}';
     LocateFixed "locate-fixed" ["location.fill"] '\u{E81D}';
     Lock "lock" ["lock"] '\u{E72E}';
     Mail "mail" ["envelope"] '\u{E715}';
@@ -122,7 +127,9 @@ icons! {
     PanelLeft "panel-left" ["sidebar.left"] '\u{E90C}';
     PanelRight "panel-right" ["sidebar.right"] '\u{E90D}';
     Paperclip "paperclip" ["paperclip"] '\u{E723}';
+    PartyPopper "party-popper" ["party.popper"] '\u{ED55}';
     Pause "pause" ["pause.fill"] '\u{E769}';
+    PawPrint "paw-print" ["pawprint"] '\u{ED54}';
     Pin "pin" ["pin"] '\u{E718}';
     Play "play" ["play.fill"] '\u{E768}';
     Plus "plus" ["plus"] '\u{E710}';
@@ -139,6 +146,7 @@ icons! {
     Trash "trash" ["trash"] '\u{E74D}';
     TriangleAlert "triangle-alert" ["exclamationmark.triangle"] '\u{E7BA}';
     User "user" ["person"] '\u{E77B}';
+    Utensils "utensils" ["fork.knife"] '\u{ED56}';
     Video "video" ["video.fill"] '\u{E714}';
     Volume "volume" ["speaker.fill"] '\u{E767}';
     Volume1 "volume-1" ["speaker.wave.1.fill"] '\u{E993}';

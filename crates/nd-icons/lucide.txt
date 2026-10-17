@@ -3,6 +3,7 @@ archive
 arrow-up
 bell-off
 calendar
+car
 check
 chevron-down
 chevron-left
@@ -19,11 +20,15 @@ eye
 eye-off
 file
 file-text
+flag
 folder
 globe
+hand
+heart
 image
 inbox
 info
+lightbulb
 locate-fixed
 lock
 mail
@@ -35,7 +40,9 @@ notebook
 panel-left
 panel-right
 paperclip
+party-popper
 pause
+paw-print
 pin
 play
 plus
@@ -52,6 +59,7 @@ star
 trash
 triangle-alert
 user
+utensils
 video
 volume
 volume-1

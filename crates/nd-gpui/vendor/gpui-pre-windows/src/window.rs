@@ -1061,6 +1061,41 @@ impl PlatformWindow for WindowsWindow {
         self.state.renderer.borrow().gpu_specs().log_err()
     }
 
+    fn show_character_palette(&self) {
+        let this = self.0.clone();
+        // On the executor rather than inline: the caret comes from the input handler, which
+        // calls back into the app, and this runs from inside one of its handlers.
+        self.0
+            .executor
+            .spawn(async move {
+                // The emoji panel opens at the caret the IME was last told about.
+                if let Some(caret) = this.retrieve_caret_position() {
+                    this.update_ime_position(this.hwnd, caret);
+                }
+                // CoreInputView::TryShow(Emoji) needs a CoreWindow, which a Win32 window does not
+                // have; the panel's own shortcut is how Chromium opens it from an HWND too
+                // (ui/base/emoji/emoji_panel_helper_win.cc).
+                let key = |vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: vk,
+                            dwFlags: flags,
+                            ..Default::default()
+                        },
+                    },
+                };
+                let inputs = [
+                    key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+                    key(VK_OEM_PERIOD, KEYBD_EVENT_FLAGS(0)),
+                    key(VK_OEM_PERIOD, KEYEVENTF_KEYUP),
+                    key(VK_LWIN, KEYEVENTF_KEYUP),
+                ];
+                unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+            })
+            .detach();
+    }
+
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let scale_factor = self.state.scale_factor.get();
         let caret_position = POINT {
