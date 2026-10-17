@@ -150,10 +150,13 @@ impl Build<'_> {
                     let after: Vec<AnyElement> = items.split_off(c + 1);
                     let center = items.pop().expect("the centred item");
                     let side = || div().flex().flex_row().items_center().gap(s.sm).flex_1().flex_basis(px(0.));
+                    // The insets are spacers, not padding: a group's padding would add to its
+                    // flex basis and push the centre off the middle by half the inset.
+                    let inset = |w: f32| div().flex_none().w(px(w));
                     vec![
-                        side().pl(px(self.insets.leading)).children(items).into_any_element(),
+                        side().child(inset(self.insets.leading)).children(items).into_any_element(),
                         div().flex_none().child(center).into_any_element(),
-                        side().justify_end().pr(px(self.insets.trailing)).children(after).into_any_element(),
+                        side().justify_end().children(after).child(inset(self.insets.trailing)).into_any_element(),
                     ]
                 }
                 None => items,
