@@ -109,8 +109,8 @@ impl GlassNative {
     fn apply(&self) {
         let frame = self.view().frame().size;
         let explicit = self.props.style.corner_radii.top_left.is_some();
-        let r = radius(&self.props, (frame.width, frame.height))
-            * if explicit { f64::from(self.radius_scale) } else { 1. };
+        let r =
+            radius(&self.props, (frame.width, frame.height)) * if explicit { f64::from(self.radius_scale) } else { 1. };
         let tint = self.props.tint.map(|t| Color::from(t).ns_color());
         match &self.material {
             Material::Glass(glass) => {

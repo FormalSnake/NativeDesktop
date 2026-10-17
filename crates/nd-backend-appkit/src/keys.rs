@@ -19,6 +19,18 @@ fn named_key(code: u16) -> Option<&'static str> {
         0x7c => "right",
         0x7d => "down",
         0x7e => "up",
+        0x7a => "f1",
+        0x78 => "f2",
+        0x63 => "f3",
+        0x76 => "f4",
+        0x60 => "f5",
+        0x61 => "f6",
+        0x62 => "f7",
+        0x64 => "f8",
+        0x65 => "f9",
+        0x6d => "f10",
+        0x67 => "f11",
+        0x6f => "f12",
         _ => return None,
     })
 }
