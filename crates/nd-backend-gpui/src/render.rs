@@ -793,7 +793,8 @@ impl<'a> Build<'a> {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(6.))
+            // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 6.
+            .rounded(theme.radius.md)
             .text_color(ink)
             // Inside a drag region the button keeps its clicks and never starts a window move.
             .occlude();
