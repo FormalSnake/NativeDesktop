@@ -295,7 +295,8 @@ fn system_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
 fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
     let chrome = chrome().context("no Chrome: set ND_CHROME")?;
     let shot = work.join(format!("{name}.png"));
-    let output = system_command(chrome)
+    let mut command = system_command(chrome);
+    command
         .args([
             "--headless=new",
             "--hide-scrollbars",
@@ -305,10 +306,13 @@ fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
             "--virtual-time-budget=15000",
         ])
         .arg(format!("--user-data-dir={}", work.join(format!("profile-{name}")).display()))
-        .arg(format!("--screenshot={}", shot.display()))
-        .arg(url)
-        .output()
-        .context("running Chrome")?;
+        .arg(format!("--screenshot={}", shot.display()));
+    // Chrome 137 and later no longer fall back to SwiftShader by themselves, so a runner without a
+    // GPU draws no canvas unless software GL is asked for.
+    if cfg!(target_os = "linux") {
+        command.args(["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]);
+    }
+    let output = command.arg(url).output().context("running Chrome")?;
     if !output.status.success() {
         bail!("Chrome exited with {}", output.status);
     }
