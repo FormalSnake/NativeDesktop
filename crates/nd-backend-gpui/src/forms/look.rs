@@ -218,6 +218,9 @@ impl FormLook {
             switch_height: px(20.),
             switch_inset: px(4.),
             slider_knob: px(20.),
+            // ControlFastAnimationDuration on Fluent's "fast out, slow in" curve.
+            toggle_seconds: 0.167,
+            toggle_ease: [0., 0., 0., 1.],
             field_stroke: Some(with_alpha(theme.text.primary, 0.07)),
             switch_outline: Some(theme.text.secondary),
             knob_off: theme.text.secondary,

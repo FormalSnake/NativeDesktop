@@ -181,6 +181,8 @@ impl HostBuilder {
         let backend = GpuiBackend::new();
         backend.set_platform_scheme(scheme_of(cx.window_appearance()));
         backend.set_os_palettes(self.hooks.os_palettes());
+        backend.set_os_reduce_motion(self.hooks.reduce_motion());
+        backend.gestures.set_smooth_wheel(self.hooks.smooth_wheel());
         let mut app = App::with_backend(Box::new(backend.clone()));
         init(&mut app);
         let (tx, rx) = mpsc::unbounded();

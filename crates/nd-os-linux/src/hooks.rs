@@ -73,6 +73,21 @@ impl OsHooks for LinuxHooks {
         }
     }
 
+    /// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), which
+    /// libadwaita honours; a desktop without the schema gives no answer.
+    fn reduce_motion(&self) -> Option<bool> {
+        let out = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "enable-animations"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "false" => Some(true),
+            "true" => Some(false),
+            _ => None,
+        }
+    }
+
     fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
         *self.layout.borrow_mut() = button_layout(cx);
     }

@@ -281,6 +281,19 @@ impl GpuiBackend {
         self.state.borrow().theme.os().palettes
     }
 
+    /// The OS's animations-off setting, as the OS hooks read it at launch.
+    pub fn platform_reduce_motion(&self) -> Option<bool> {
+        self.state.borrow().theme.os().metrics.reduce_motion
+    }
+
+    pub(crate) fn set_os_reduce_motion(&self, reduce: Option<bool>) {
+        self.gestures.set_reduce_motion(reduce == Some(true));
+        let mut state = self.state.borrow_mut();
+        let mut os = state.theme.os().clone();
+        os.metrics.reduce_motion = reduce;
+        state.theme.set_os(os);
+    }
+
     /// Records the OS's own colours; true when they changed.
     pub(crate) fn set_os_palettes(&self, palettes: nd_theme::SchemePalettes) -> bool {
         let mut state = self.state.borrow_mut();

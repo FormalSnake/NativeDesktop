@@ -104,6 +104,18 @@ pub trait OsHooks: 'static {
 
     /// Installs the one callback the OS crate calls when the system colours change.
     fn on_os_colors_changed(&self, _changed: Rc<dyn Fn(&mut gpui::App)>) {}
+
+    /// The user turned animations off (Windows' "Animation effects", GNOME's "Animations"):
+    /// `Some(true)` makes nd skip motion. `None` when the OS gives no answer.
+    fn reduce_motion(&self) -> Option<bool> {
+        None
+    }
+
+    /// Whether a notched wheel eases its steps (Windows' "Smooth-scroll list boxes"); `None`
+    /// keeps the platform default.
+    fn smooth_wheel(&self) -> Option<bool> {
+        None
+    }
 }
 
 /// Plain GPUI windows: every hook at its default.
