@@ -1,3 +1,14 @@
+# Status, 2026-10-18
+
+v0.6.1 is tagged (e319443e) and the docs site runs it. Since 2026-10-14: video playback on
+Windows (Media Foundation) and Linux (GStreamer), emoji pickers on all three platforms, Wayland
+touchpad scroll phases, per-platform scroll physics and Fluent motion with exit animations, the
+macOS Messages fixes (hover header, progressive search blur, details slide, pinned grid,
+double-click Quick Look), the docs prose rewrite, and v0.6.0 itself on 2026-10-16. CI: macOS
+green; Linux fails only the headless Chrome embed render check (see HANDOFF).
+
+The rest of this file is the 2026-10-14 snapshot.
+
 # Status, 2026-10-14 morning
 
 `main` at dc2430f6: 32 crates, 14 examples, 172 commits since last evening. Merged lanes all

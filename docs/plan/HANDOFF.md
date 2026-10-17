@@ -1,69 +1,66 @@
-# Handoff, 2026-10-16
+# Handoff, 2026-10-18
 
-Work paused on the user's request to save Claude Code usage (weekly limit resets Tuesday
+Work paused at the user's request to save Claude Code usage (weekly limit resets Tuesday
 2026-10-20). Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request plus every
 dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md` (machine rules).
 
 ## Where things are
 
-`main` on GitHub (FormalSnake/NativeDesktop) is the Rust rewrite; the old Zig framework is branch
-`zig`. M0 to M12 are built and merged; the full suite runs in under 6 minutes on the macbook. Open
-lane branches (local worktrees under `~/Developer/ecosystem/nativedesktop-wt-*`, pushed for
-visibility, not merged unless noted):
+`main` on GitHub (FormalSnake/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
+2026-10-16 to 18 is merged: msg-gaps, msg-linux, nd-emoji, nd-video, ci-fix, ci-fling, docs-prose.
+No lane branch holds unmerged nd work. The docs site runs v0.6.1
+(https://nativedesktop.formalsnake.dev, deployed by hand with wrangler on 2026-10-18).
 
-| Branch | State | Next step |
-| --- | --- | --- |
-| `gpui-polish` | goldens re-recorded (Linux and macOS), patches renumbered after main's (Windows 0005 to 0007, apple 0008, swapchain 0009), weak-GPU resize gate added; patch 0009 leaves a 4 to 8 px background strip at the right edge in 115 of 127 drag frames on g815 (passes with `ND_DEBUG_SWAPCHAIN=eager`) | an agent is root-causing the strip (wp_viewport crop vs committed buffer in gpui_linux window.rs); merge when `real_resize_drag` passes |
-| `linux-webview` | being compiled and gated on g815 | CEF off-screen gates in headless Hyprland, e1504g screenshot, merge |
-| `messages` `nd-port` | 63 of 89 parity items; port-gaps landed | an agent is closing parity items on macOS; framework gaps go to nd branch `msg-gaps` |
+CI on main: the macOS job is green. The Linux job fails one step, `nd docs check --web`: in the
+runner's headless Chrome every embed stays one flat colour, with a SwiftShader WebGPU adapter and
+no console errors. The same check renders all five embeds on the macbook (65 colours each). The
+check now polls for the first frame for 30 s and prints the GPU probe and page console on failure.
+Next idea: run that Chrome under `xvfb-run`, or check whether the WebGPU surface presents at all
+with SwiftShader. Until it passes, the `docs-deploy` job never runs, and it also still needs the
+`CLOUDFLARE_API_TOKEN` repo secret (user action).
 
-Merged into main on 2026-10-16: `mac-polish` (plus the window title after a late toolbar attach), `ndshell-dbus` (nested compositors get a private D-Bus and their process group is killed, so the user manager env and the build lock are safe), `port-ytm-fixes` (with tests), `port-gaps` (rich text, hover/animation, fill roles, canvas, SVG, focus by id, AppKit video, out-of-tree `nd new`). `scripts/linux-gate` now gives each lane its own target dir under `~/.cache/nd-build/targets/` with LRU eviction under the lock; the old shared `~/.cache/nd-build/target` (7.6 GB) is unused once running lanes have merged main.
+The Linux layout goldens (`gate_m6::gpui_layout_goldens`) differ 0.6% on e1504g, on main as well;
+they were recorded on g815. Not a regression.
 
-Merged into main this session: icons on every backend (`nd-icons`, Lucide + SF Symbols), the notes
-example, docs app (35 pages, macOS captures), the messages-port fixes, the e1504g scroll budget.
+## Ports
 
-Ports (separate repos under `~/Developer/ecosystem/`, never merged until a written parity checklist
-is fully checked; then the nd branch becomes the app's main and the nix config switches to it):
-- messages: branch `nd-port` (worktree `messages-nd`), macOS works on demo data, 63 of 89 parity items
-  (`docs/nd-parity.md` there); waits on `port-gaps`; Linux leg not run.
-- youtubemusic: branch `nd-port` (88728dd, worktree `youtubemusic-nd`), macOS green incl. tier 3 test;
-  the user's "library isn't fully loading" bug: their YouTube session cookies are dead; the port now
-  reads the sign-in answer as signed out and prompts. Linux leg, Nix package and switch not run; nix
-  edits wait on branch `formalmusic-nd` (worktree `~/.config/nix-wt-formalmusic`); framework gaps in
-  its `docs/port-parity.md` (dispatch buttons, media icons, drag reorder, container hover, menu button).
-- nativebrowser: not started; needs the Linux engine and Chrome-style extensions (M15).
+- messages (`~/Developer/ecosystem/messages`): branch `nd-port` (worktree `messages-nd`, macOS) and
+  `nd-port-linux` (worktree `messages-nd-linux`, Linux and Windows); both merged with each other
+  and pushed. Their nd path deps point at `../nativedesktop-wt-msg-gaps`, which tracks main.
+  Builds run on the macbook (`target/release/messages`, real config), on e1504g (demo data,
+  `MESSAGES_LINUX_HOST=e1504g ND_DIR=<nd worktree> scripts/linux-gate`), and on the Windows PC
+  (`C:\nd\msg`, task `ndmsgrun`). Parity is tracked in `docs/nd-parity.md` there.
+  Open on macOS: the "+" menu rows have no icons; a double-click on a bubble selects a word
+  (Messages does nothing); the header hover fade drives the private `NSScrollPocket`.
+  Open on Linux: a .MOV in the user's own session not yet seen playing (GStreamer now in the
+  app's dev shell and package); the "+" menu not yet clicked by hand.
+- youtubemusic, nativebrowser: unchanged since 2026-10-16.
+
+## Upstream GPUI PRs (zed-industries/zed, user's account)
+
+#65728 macOS, #65729 Windows, #65730 Linux: CLA signed, descriptions final. #65730's X11 paragraph
+reports the measured runs without a before/after claim (the user chose not to wait for more).
+Replies on these PRs are the user's to write.
 
 ## Machines
 
-- macbook: overloaded host for the user's services (BlueBubbles). The repo's rustc wrapper builds at
-  low priority, the dev shell caps jobs at 4. Only macOS work runs here.
-- g815: NixOS, small root disk. Every build goes through `scripts/linux-gate` (one build at a time via
-  `~/.cache/nd-build/build.lock`, shared target capped at 25 GB, no incremental). Check `df -h /`.
-  Headless Hyprland only; never touch the user's displays or power settings.
-- e1504g: never build on it. Build on g815, copy binaries, run, delete.
-- Windows: the VM on g815 boots the real Windows disk behind a per-session overlay (nothing reaches
-  the real install). Native Windows runs need someone at the keyboard for the PIN.
-  The g815 itself booted into Windows is `ssh windows` (desktop-vjmk52d): C: is nearly full, so
-  build and run under `F:\nd-native` (`native-run.ps1 -Root F:\nd-native`). Leftover agent copies,
-  26 `nd-*` scheduled tasks, temp dirs and this run's own files were removed there on 2026-10-14
-  (19 GB); only `.nd-tools` (zig, .NET SDK) stays. A fresh native build takes about 3 minutes;
-  a dev `hello.exe` needs its source tree next to it.
-
-## Pending with the user
-
-- iGPU passthrough for the Windows VM plus a TEMPORARY SDDM autologin: branch `g815-igd` in
-  `~/.config/nix` (worktree `~/.config/nix-igd`), built, not staged. After the formalshell session's
-  combined rebuild is done: rebase onto main (drop 5b0bef66, already on main), `nixos-rebuild boot`,
-  user reboots; then verify passthrough, VM, real Windows partition unchanged, and turn autologin off
-  (`systems/g815/temp-autologin.nix`) with a rebuild and push.
-- Windows code signing choice (only needed for Windows packaging).
+- macbook: low priority, macOS crates only, `-p`, one heavy build at a time.
+- g815: NixOS when on Linux; builds only through `scripts/linux-gate`. It was booted into Windows
+  most of 2026-10-17 and is off now.
+- e1504g: the user allowed cargo builds and `nixos-rebuild` on it for this session (2026-10-17).
+  Its dev-shell env drvs are built locally with `--max-jobs 1 --option builders ""` because its
+  remote builders point at g815. Its system runs `~/.config/nix` ae6c39b2 (Plasma logout ends the
+  graphical session, Steamed theme in Plasma, panel-gamma only under Hyprland).
+- Windows PC (g815 booted into Windows, `ssh windows`): Rust MSVC toolchain; agent dirs `C:\nd\msg`,
+  `C:\nd\video`, `C:\nd\emoji` with their scheduled tasks are still there.
 
 ## Rules that bit us (keep them)
 
 No `rm`/`mv` on variable paths; never `pkill -f` by pattern; never git reset/checkout/restore/stash;
-one heavy macbook build at a time; disk checks before builds on both the cache drive and g815;
-`just clean-merged` after merging lanes; every merge pushed to GitHub main; fix bugs found, never
-note-and-move-on.
+one heavy macbook build at a time; every merge pushed to GitHub main. Agents must never type into
+the real Messages.app or the port running on the user's real account: composer and send tests run
+only in a `MESSAGES_DEMO=1` instance. A dev shell's `LD_LIBRARY_PATH` must not reach system
+binaries (it broke git and Chrome on CI); wasm code uses `nd_core::time`, never `std::time`.
 
 ## Scheduled resume
 
