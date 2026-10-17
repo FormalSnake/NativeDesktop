@@ -101,7 +101,9 @@ icons! {
     CircleX "circle-x" ["xmark.circle.fill"] '\u{EA39}';
     Clock "clock" ["clock"] '\u{E823}';
     Code "code" ["chevron.left.forwardslash.chevron.right"] '\u{E943}';
+    Copy "copy" ["doc.on.doc"] '\u{E8C8}';
     Download "download" ["arrow.down.circle"] '\u{E896}';
+    ExternalLink "external-link" ["arrow.up.forward.app"] '\u{E8A7}';
     Eye "eye" ["eye"] '\u{E890}';
     EyeOff "eye-off" ["eye.slash"] '\u{ED1A}';
     File "file" ["doc"] '\u{E7C3}';

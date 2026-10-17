@@ -14,7 +14,9 @@ circle-check
 circle-x
 clock
 code
+copy
 download
+external-link
 eye
 eye-off
 file
