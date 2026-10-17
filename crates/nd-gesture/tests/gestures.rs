@@ -76,6 +76,48 @@ mod gate_m4 {
         GestureSet { scroll: Axes { horizontal: false, vertical: true }, ..GestureSet::default() }
     }
 
+    /// A trackpad that sends only moves (GPUI on Wayland): the gesture ends by itself once the
+    /// deltas stop, and the next scroll over another scroller goes to that one.
+    #[test]
+    fn a_scroll_with_no_began_or_ended_ends_when_the_deltas_stop() {
+        let mut router = GestureRouter::new(GestureConfig::default());
+        let (sidebar, thread) = (NodeId(1), NodeId(2));
+        let set = vertical();
+        router.set_scroll_extent(sidebar, &set, size(300., 600.), size(300., 3000.));
+        router.set_scroll_extent(thread, &set, size(400., 600.), size(400., 3000.));
+        let on_sidebar = [HitEntry { node: sidebar, gestures: &set, bounds: Rect::new(0., 0., 300., 600.) }];
+        let on_thread = [HitEntry { node: thread, gestures: &set, bounds: Rect::new(300., 0., 400., 600.) }];
+        let moved = |router: &mut GestureRouter, hit: &[HitEntry<'_>], t: f64| {
+            router.scroll(
+                &ScrollInput {
+                    position: p(10., 10.),
+                    delta: p(0., 10.),
+                    phase: ScrollPhase::Changed,
+                    momentum: MomentumPhase::None,
+                    time: t,
+                },
+                hit,
+            );
+        };
+        let mut t = 0.;
+        for _ in 0..10 {
+            t += 1. / 120.;
+            moved(&mut router, &on_sidebar, t);
+        }
+        assert!(router.scroll_offset(sidebar).y > 0., "the sidebar follows the fingers");
+        assert!(router.needs_frame(), "frames keep coming while the gesture may still be live");
+        let (_, end) = run(&mut router, sidebar, t, 120.);
+        assert!(!router.needs_frame(), "the gesture ended and its fling settled by {end}");
+        let settled = router.scroll_offset(sidebar).y;
+        t = end + 0.5;
+        for _ in 0..10 {
+            t += 1. / 120.;
+            moved(&mut router, &on_thread, t);
+        }
+        assert!(router.scroll_offset(thread).y > 0., "the next scroll goes to the scroller under it");
+        assert_eq!(router.scroll_offset(sidebar).y, settled, "and the sidebar stays put");
+    }
+
     // Momentum and rubber band.
 
     #[test]

@@ -54,7 +54,14 @@ struct ScrollSession {
     route: Option<Route>,
     /// Scrollers whose fling the touch caught, released again if they do not win.
     caught: Vec<NodeId>,
+    /// For a trackpad that sends no Began and no Ended (GPUI on Wayland passes every axis event
+    /// as a move): when its last delta came. The gesture ends after [`IMPLICIT_SCROLL_END`]
+    /// without one, so the content settles and the next scroll starts where the pointer is.
+    implicit: Option<f64>,
 }
+
+/// Seconds without a delta after which a trackpad scroll with no Ended is over.
+pub const IMPLICIT_SCROLL_END: f64 = 0.1;
 
 /// A window's gesture state: the pointer arena, the scroll arbiter, every scroller's physics and
 /// every row's swipe state. The backend feeds it raw input with the hit path and applies its
@@ -219,6 +226,12 @@ impl GestureRouter {
                 if self.session.is_none() {
                     // A trackpad that sent no Began (some Linux drivers): this delta starts one.
                     self.begin_session(hit, input.time);
+                    if let Some(session) = self.session.as_mut() {
+                        session.implicit = Some(input.time);
+                    }
+                }
+                if let Some(ScrollSession { implicit: Some(last), .. }) = self.session.as_mut() {
+                    *last = input.time;
                 }
                 self.track(input, &mut out);
             }
@@ -280,8 +293,14 @@ impl GestureRouter {
                 candidates.push(Candidate::Page(entry.node, entry.bounds.size.width));
             }
         }
-        self.session =
-            Some(ScrollSession { candidates, accumulated: Point::default(), lock: None, route: None, caught });
+        self.session = Some(ScrollSession {
+            candidates,
+            accumulated: Point::default(),
+            lock: None,
+            route: None,
+            caught,
+            implicit: None,
+        });
     }
 
     fn track(&mut self, input: &ScrollInput, out: &mut Vec<Output>) {
@@ -430,6 +449,14 @@ impl GestureRouter {
     pub fn step(&mut self, now: f64) -> Vec<Output> {
         let mut out: Vec<Output> = self.arena.tick(now).into_iter().map(|(n, e)| Output::Event(n, e)).collect();
         let before = self.offsets();
+        if let Some(ScrollSession { implicit: Some(last), .. }) = &self.session
+            && now - *last >= IMPLICIT_SCROLL_END
+        {
+            let last = *last;
+            self.end_fingers(last, &mut out);
+            // No OS momentum follows such a trackpad: the next delta starts a new gesture.
+            self.session = None;
+        }
         for s in self.scrollers.values_mut() {
             s.step(now);
         }
@@ -445,6 +472,7 @@ impl GestureRouter {
     /// A fling, spring or timer needs the next frame.
     pub fn needs_frame(&self) -> bool {
         self.scrollers.values().any(Scroller::is_animating)
+            || self.session.as_ref().is_some_and(|s| s.implicit.is_some())
             || self.rows.values().any(RowSwipe::is_animating)
             || self.arena.next_deadline().is_some()
     }
