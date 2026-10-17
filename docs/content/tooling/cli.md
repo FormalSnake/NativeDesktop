@@ -50,7 +50,7 @@ restores `Cargo.toml`.
 - `--path <dir>`: the app's directory. The default is the current directory.
 
 ```sh
-nd upgrade --to v0.6.1
+nd upgrade --to v0.7.0
 ```
 
 ## check

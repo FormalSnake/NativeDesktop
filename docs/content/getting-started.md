@@ -22,7 +22,7 @@ dependencies.
 
 ```sh
 cargo install cargo-nextest --locked
-cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.0 --locked nd-cli
+cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.1 --locked nd-cli
 ```
 
 `--locked` builds with the versions that nd was tested with. Without it, cargo takes the newest
@@ -58,7 +58,7 @@ space, set `CARGO_TARGET_DIR` to a folder on another drive.
 nd new demo
 ```
 
-The new project depends on nd at the CLI's own release tag (`tag = "v0.6.0"` for CLI 0.6.0), and its
+The new project depends on nd at the CLI's own release tag (`tag = "v0.6.1"` for CLI 0.6.1), and its
 `[patch.crates-io]` block points the GPUI crates at the fork vendored in the same tag. `nd new`
 also writes nd's `Cargo.lock`, so the first build resolves to the versions nd was released with.
 Add `--standalone` if the new directory is inside another Cargo workspace. The name must start
@@ -113,7 +113,7 @@ nd upgrade
 
 This moves the `nd` dependencies and the GPUI patch block to the newest release tag, updates
 `Cargo.lock`, and prints the [changelog](https://github.com/FormalSnake/NativeDesktop/blob/main/CHANGELOG.md)
-entries between the two versions. To pick a tag, add `--to v0.6.1`. Then install the matching CLI
+entries between the two versions. To pick a tag, add `--to v0.7.0`. Then install the matching CLI
 with the same `cargo install --git ... --tag <tag> --locked nd-cli` command.
 
 ## Run it in a browser

@@ -3,6 +3,24 @@
 Releases are git tags on this repository. `nd upgrade` prints the entries between an app's tag
 and the one it moves to.
 
+## v0.6.1
+
+- Video plays in the GPUI backend: Media Foundation on Windows, GStreamer on Linux (loaded at run
+  time). A file that can't play opens in the system player.
+- An emoji picker for text fields: the system panel on Windows and macOS, and a built-in picker
+  with search, categories, skin tones and recents on Linux.
+- Scrolling: Wayland touchpad scrolls report their start and end (GPUI patch 0010), wheel input
+  eases on Windows, and only macOS rubber-bands at the edges. A scroll goes to the innermost
+  scrollable under the pointer.
+- Motion follows each platform: Fluent durations and curves on Windows, hover and press fades,
+  popover and panel entrances and exits, and a page transition between views. The OS setting
+  that turns animations off is respected on Windows and GNOME.
+- Fixes: taps and scrolls reached nothing under an empty overlay, circles drew no content on
+  macOS, avatars and images swallowed clicks, double-clicks in scroll views never counted, and
+  the web build panicked on `std::time` (now caught by a wasm clippy pass in `nd docs check`).
+- The `nd docs` web check waits for the first frame and prints the page console when an embed
+  stays blank.
+
 ## v0.6.0
 
 The first release of the Rust rewrite. Tags up to v0.5.9 are the Zig framework, kept on branch

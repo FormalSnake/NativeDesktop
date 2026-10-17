@@ -19,7 +19,7 @@ against, and then scaffold the app:
 
 ```sh
 cargo install cargo-nextest --locked
-cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.0 --locked nd-cli
+cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.1 --locked nd-cli
 nd new my-app
 cd my-app
 just dev
@@ -84,7 +84,7 @@ nd upgrade
 
 This command moves the `nd` dependency and the GPUI `[patch.crates-io]` block in `Cargo.toml` to
 the newest release tag, re-resolves `Cargo.lock`, and prints the changelog entries in between.
-`--to v0.6.1` picks a tag, and `--path <dir>` points it at an app outside the current directory.
+`--to v0.7.0` picks a tag, and `--path <dir>` points it at an app outside the current directory.
 If the new tag doesn't resolve, `nd upgrade` puts `Cargo.toml` back. After an upgrade:
 
 1. Install the matching CLI with the same `cargo install --git ... --tag <tag> --locked nd-cli`
