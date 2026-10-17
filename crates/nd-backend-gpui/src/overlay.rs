@@ -139,7 +139,9 @@ impl Build<'_> {
         // one), or at once when the OS has animations off. Tooltips just appear.
         let content = content.children(children);
         let reduce = self.backend.platform_reduce_motion() == Some(true);
+        // A cover is the whole window: it fades, it does not rise.
         let rise = match props.placement {
+            _ if cover => 0.,
             Placement::Above => -8.,
             _ => 8.,
         };
