@@ -135,6 +135,11 @@ impl Theme {
         let surfaces = [p.surface, p.surface_sidebar, p.surface_raised];
         let text_primary = legible(p.text_primary, &surfaces, 4.5);
         let text_secondary = legible(p.text_secondary, &surfaces, 4.5);
+        // libadwaita draws borders and separators as 15% of the text colour over what is under
+        // them (`--border-color`). A source that gives an opaque line (matugen's outline_variant)
+        // would read as a hard grey rule on the Linux look, so it takes libadwaita's instead.
+        let separator =
+            if preset == Preset::Adwaita && p.separator.a >= 0.99 { with_alpha(ink, 0.15) } else { p.separator };
         Theme {
             preset,
             scheme,
@@ -146,8 +151,8 @@ impl Theme {
                 overlay: p.surface_overlay,
                 layer: nd_gpui::gpui::rgb(if scheme.is_dark() { 0x191919 } else { 0xf9f9f9 }).into(),
             },
-            border: BorderTokens { subtle: p.separator, strong },
-            separator: p.separator,
+            border: BorderTokens { subtle: separator, strong },
+            separator,
             text: TextTokens {
                 primary: text_primary,
                 secondary: text_secondary,
@@ -302,6 +307,20 @@ fn fill_under(fill: Hsla, text: Hsla, ratio: f32) -> Hsla {
 mod tests {
     use super::fill_under;
     use crate::color::{contrast, parse_hex};
+
+    #[test]
+    fn an_opaque_separator_is_softened_to_libadwaitas_border_on_the_linux_look() {
+        use crate::palette::{Palette, Scheme};
+        use crate::preset::{Metrics, Preset};
+        use crate::tokens::Theme;
+        let mut palette = Palette::baked(Scheme::Dark);
+        palette.separator = parse_hex("#44474f").unwrap();
+        let adwaita = Theme::derive(Preset::Adwaita, Scheme::Dark, palette, Metrics::preset(Preset::Adwaita), 1.);
+        assert!((adwaita.separator.a - 0.15).abs() < 0.001, "15% of the text colour, as libadwaita's border");
+        assert_eq!(adwaita.border.subtle, adwaita.separator);
+        let mac = Theme::derive(Preset::MacOs, Scheme::Dark, palette, Metrics::preset(Preset::MacOs), 1.);
+        assert_eq!(mac.separator, palette.separator, "other looks keep the source's line");
+    }
 
     #[test]
     fn a_fill_under_white_text_darkens_until_the_text_reads() {

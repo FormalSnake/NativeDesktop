@@ -13,6 +13,7 @@ mod controls;
 pub mod custom;
 mod diag;
 mod dispatch;
+mod edge;
 mod events;
 mod form;
 mod forms;

@@ -382,7 +382,10 @@ pub(crate) mod gpui_host {
                 scheme: backend.platform_scheme(),
                 palettes,
                 fonts: nd_theme::fonts::resolve(),
-                ..OsTheme::default()
+                metrics: nd_theme::SystemMetrics {
+                    reduce_motion: backend.platform_reduce_motion(),
+                    ..nd_theme::SystemMetrics::default()
+                },
             });
             // Called on a light or dark switch and when the system colours change (the accent).
             let os = backend.clone();

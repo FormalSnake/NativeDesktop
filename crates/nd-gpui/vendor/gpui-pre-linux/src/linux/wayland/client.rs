@@ -398,6 +398,10 @@ pub(crate) struct WaylandClientState {
     vertical_modifier: f32,
     horizontal_modifier: f32,
     scroll_event_received: bool,
+    /// A touchpad scroll is under way: its first frame went out as `TouchPhase::Started`.
+    finger_scroll: bool,
+    /// `axis_stop` came for a touchpad scroll; the frame ends it with `TouchPhase::Ended`.
+    axis_stopped: bool,
     enter_token: Option<()>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
@@ -1117,6 +1121,8 @@ impl WaylandConnection {
             mouse_location: None,
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
+            finger_scroll: false,
+            axis_stopped: false,
             vertical_modifier: -1.0,
             horizontal_modifier: -1.0,
             button_pressed: None,
@@ -2617,10 +2623,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
                 state.scroll_event_received = true;
+                // A touchpad's deltas are already in surface pixels and move the content one to
+                // one, as GTK and the compositor's own clients scroll them.
+                let modifier = if state.axis_source == AxisSource::Finger {
+                    1.0
+                } else {
+                    3.0
+                };
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                let modifier = 3.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += px(value as f32 * modifier * axis_modifier);
@@ -2629,6 +2641,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         scroll_delta.x += px(value as f32 * modifier * axis_modifier);
                     }
                     _ => unreachable!(),
+                }
+            }
+            wl_pointer::Event::AxisStop { .. } => {
+                if state.axis_source == AxisSource::Finger && state.finger_scroll {
+                    state.axis_stopped = true;
+                    state.scroll_event_received = true;
                 }
             }
             wl_pointer::Event::AxisDiscrete {
@@ -2691,16 +2709,43 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     state.scroll_event_received = false;
                     let continuous = state.continuous_scroll_delta.take();
                     let discrete = state.discrete_scroll_delta.take();
-                    if let Some(continuous) = continuous {
+                    // A touchpad scroll carries its phases, from `axis_source(finger)` to
+                    // `axis_stop`, so the app can end the gesture and start its own momentum
+                    // the way it does for macOS's phased scroll events.
+                    let finger = state.axis_source == AxisSource::Finger;
+                    let stopped = std::mem::take(&mut state.axis_stopped);
+                    if continuous.is_some() || stopped {
                         if let Some(window) = state.mouse_focused_window.clone() {
-                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                position: state.mouse_location.unwrap(),
-                                delta: ScrollDelta::Pixels(continuous),
-                                modifiers: state.modifiers,
-                                touch_phase: TouchPhase::Moved,
-                            });
+                            let position = state.mouse_location.unwrap();
+                            let modifiers = state.modifiers;
+                            let mut inputs = Vec::new();
+                            if let Some(continuous) = continuous {
+                                let touch_phase = if finger && !state.finger_scroll {
+                                    state.finger_scroll = true;
+                                    TouchPhase::Started
+                                } else {
+                                    TouchPhase::Moved
+                                };
+                                inputs.push(ScrollWheelEvent {
+                                    position,
+                                    delta: ScrollDelta::Pixels(continuous),
+                                    modifiers,
+                                    touch_phase,
+                                });
+                            }
+                            if stopped {
+                                state.finger_scroll = false;
+                                inputs.push(ScrollWheelEvent {
+                                    position,
+                                    delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+                                    modifiers,
+                                    touch_phase: TouchPhase::Ended,
+                                });
+                            }
                             drop(state);
-                            window.handle_input(input);
+                            for input in inputs {
+                                window.handle_input(PlatformInput::ScrollWheel(input));
+                            }
                         }
                     } else if let Some(discrete) = discrete
                         && let Some(window) = state.mouse_focused_window.clone()

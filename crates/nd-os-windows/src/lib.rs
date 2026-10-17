@@ -28,3 +28,55 @@ pub use hooks::WindowsHooks;
 pub use nd_backend_gpui;
 #[cfg(windows)]
 pub use windows::Win32::Foundation::HWND;
+
+/// Windows' "Animation effects" (Settings, Accessibility, Visual effects): whether apps animate
+/// their client area, as WinUI's controls ask before they do.
+#[cfg(windows)]
+pub(crate) fn client_area_animation() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    use windows::core::BOOL;
+    let mut on = BOOL(1);
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut on as *mut BOOL as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    ok.is_err() || on.as_bool()
+}
+
+/// Windows' "Smooth-scroll list boxes" (Performance Options, Visual Effects): whether a notched
+/// wheel eases its steps.
+#[cfg(windows)]
+pub(crate) fn list_smooth_scrolling() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_GETLISTBOXSMOOTHSCROLLING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    use windows::core::BOOL;
+    let mut on = BOOL(1);
+    // SAFETY: SPI_GETLISTBOXSMOOTHSCROLLING writes one BOOL through the pointer.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETLISTBOXSMOOTHSCROLLING,
+            0,
+            Some(&mut on as *mut BOOL as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    ok.is_err() || on.as_bool()
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn the_animation_effects_setting_reads() {
+        // The value is the machine's; the call has to answer without failing.
+        println!("client area animation: {}", super::client_area_animation());
+        println!("list smooth scrolling: {}", super::list_smooth_scrolling());
+    }
+}

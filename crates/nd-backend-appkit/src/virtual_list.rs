@@ -385,6 +385,13 @@ define_class!(
                 core.scroll_top()
             };
             shared.user_top.set(Some(top));
+            // AppKit makes the edge effect's view once rows first scroll under the bars.
+            if shared.bars.get() > 0.
+                && let Some(scroll) = unsafe { clip.superview() }.and_then(|v| v.downcast::<NSScrollView>().ok())
+                && let Some(shown) = crate::scaffold::NdPaneView::edge_shown(&scroll)
+            {
+                crate::edge::set(&scroll, shown, false);
+            }
             shared.ask_for_rows();
         }
 
@@ -919,6 +926,11 @@ fn place_clip(scroll: &NSScrollView, shared: &Shared, handle: &ListHandle) {
     let current = scroll.contentInsets();
     if (current.top - inset).abs() > 0.25 {
         scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. });
+    }
+    if bars > 0.
+        && let Some(shown) = crate::scaffold::NdPaneView::edge_shown(scroll)
+    {
+        crate::edge::set(scroll, shown, false);
     }
     let origin = clip.bounds().origin;
     let target = layout.scroll_top - bars;

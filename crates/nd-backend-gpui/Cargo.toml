@@ -48,6 +48,10 @@ name = "overlays"
 harness = false
 
 [[test]]
+name = "popover_menu"
+harness = false
+
+[[test]]
 name = "forms"
 harness = false
 

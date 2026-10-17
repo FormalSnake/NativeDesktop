@@ -7,8 +7,6 @@ use crate::velocity::VelocityTracker;
 /// UIScrollView's normal deceleration: velocity keeps this fraction per millisecond.
 pub const DECELERATION_RATE: f64 = 0.998;
 /// Apple's rubber band constant.
-/// Seconds a wheel notch takes to ease to where it scrolls.
-pub const WHEEL_GLIDE: f64 = 0.12;
 const RUBBER_BAND: f32 = 0.55;
 /// Below this a fling stops, in points per second.
 const MIN_VELOCITY: f64 = 8.;
@@ -53,12 +51,13 @@ enum Motion {
     },
     /// The OS sends momentum deltas itself; the framework applies them.
     OsMomentum,
-    /// A wheel notch eases from `from` to `to` over [`WHEEL_GLIDE`] from `t0`, as WinUI's
-    /// ScrollViewer and browsers animate a notched wheel instead of jumping a line at a time.
+    /// A wheel notch eases from `from` to `to` over `duration` from `t0`, as WinUI's
+    /// ScrollViewer animates a notched wheel instead of jumping a line at a time.
     Glide {
         from: f32,
         to: f32,
         t0: f64,
+        duration: f64,
     },
     Spring(SpringMotion),
 }
@@ -75,6 +74,8 @@ struct AxisState {
     motion: Motion,
     tracker: VelocityTracker,
     last_time: f64,
+    /// Carries past an edge and springs back; otherwise stops at it.
+    overscroll: bool,
 }
 
 impl AxisState {
@@ -87,6 +88,7 @@ impl AxisState {
             motion: Motion::Idle,
             tracker: VelocityTracker::default(),
             last_time: 0.,
+            overscroll: true,
         }
     }
 
@@ -105,6 +107,10 @@ impl AxisState {
     }
 
     fn show_raw(&mut self) {
+        if !self.overscroll {
+            // Pulling past the edge does nothing, and pulling back moves at once.
+            self.raw = self.edge(self.raw);
+        }
         let excess = self.excess(self.raw);
         self.offset = self.edge(self.raw) + rubber_band(excess, self.viewport);
     }
@@ -158,7 +164,11 @@ impl AxisState {
         if self.excess(next) != 0. {
             let edge = self.edge(next);
             self.offset = edge;
-            self.motion = Motion::Spring(Spring::SETTLE.start(f64::from(edge), f64::from(edge), velocity, time));
+            self.motion = if self.overscroll {
+                Motion::Spring(Spring::SETTLE.start(f64::from(edge), f64::from(edge), velocity, time))
+            } else {
+                Motion::Idle
+            };
         } else {
             self.offset = next;
         }
@@ -170,18 +180,19 @@ impl AxisState {
         }
     }
 
-    fn wheel(&mut self, delta: f32, time: f64) {
+    fn wheel(&mut self, delta: f32, time: f64, glide: f64) {
         // Notches that come while one glides add to where it is heading.
         let from_target = match self.motion {
             Motion::Glide { to, .. } => to,
             _ => self.offset,
         };
         let to = self.edge(from_target + delta);
-        if to == self.offset {
+        if glide <= 0. || to == self.offset {
             self.motion = Motion::Idle;
+            self.offset = to;
             return;
         }
-        self.motion = Motion::Glide { from: self.offset, to, t0: time };
+        self.motion = Motion::Glide { from: self.offset, to, t0: time, duration: glide };
     }
 
     fn step(&mut self, time: f64) {
@@ -192,7 +203,11 @@ impl AxisState {
                 let decay = (k * t).exp();
                 let x = x0 + v0 * (decay - 1.) / k;
                 let v = v0 * decay;
-                if x < 0. || x > f64::from(self.max) {
+                if (x < 0. || x > f64::from(self.max)) && !self.overscroll {
+                    // The fling stops dead at the edge, as GTK's and WinUI's do.
+                    self.offset = self.edge(x as f32);
+                    self.motion = Motion::Idle;
+                } else if x < 0. || x > f64::from(self.max) {
                     // The fling hit an edge: the content carries past it on the spring and comes
                     // back, the bounce.
                     let edge = self.edge(x as f32);
@@ -216,8 +231,8 @@ impl AxisState {
                     self.offset = spring.sample(time).0 as f32;
                 }
             }
-            Motion::Glide { from, to, t0 } => {
-                let t = ((time - t0) / WHEEL_GLIDE).clamp(0., 1.);
+            Motion::Glide { from, to, t0, duration } => {
+                let t = ((time - t0) / duration).clamp(0., 1.);
                 // Ease out cubic: the notch lands at once and settles.
                 let eased = 1. - (1. - t).powi(3);
                 self.offset = self.edge(from + (to - from) * eased as f32);
@@ -236,7 +251,9 @@ impl AxisState {
         self.motion = match self.motion {
             Motion::Decay { x0, v0, t0 } => Motion::Decay { x0: x0 + f64::from(delta), v0, t0 },
             Motion::Spring(s) => Motion::Spring(s.shifted(f64::from(delta))),
-            Motion::Glide { from, to, t0 } => Motion::Glide { from: from + delta, to: to + delta, t0 },
+            Motion::Glide { from, to, t0, duration } => {
+                Motion::Glide { from: from + delta, to: to + delta, t0, duration }
+            }
             m => m,
         };
     }
@@ -273,6 +290,12 @@ pub struct Scroller {
 impl Scroller {
     pub fn new(axes: Axes) -> Self {
         Self { axes, x: AxisState::new(), y: AxisState::new() }
+    }
+
+    /// Whether content carries past an edge and springs back (the default) or stops there.
+    pub fn set_overscroll(&mut self, overscroll: bool) {
+        self.x.overscroll = overscroll;
+        self.y.overscroll = overscroll;
     }
 
     pub fn axes(&self) -> Axes {
@@ -359,13 +382,13 @@ impl Scroller {
     }
 
     /// A notched wheel: moves by `delta`, clamped, and stops any animation.
-    /// A notched wheel's step, eased in over [`WHEEL_GLIDE`] from `time`.
-    pub fn wheel(&mut self, delta: Point, time: f64) {
+    /// A notched wheel's step, eased in over `glide` seconds from `time` (0 jumps).
+    pub fn wheel(&mut self, delta: Point, time: f64, glide: f64) {
         if self.axes.horizontal {
-            self.x.wheel(delta.x, time);
+            self.x.wheel(delta.x, time, glide);
         }
         if self.axes.vertical {
-            self.y.wheel(delta.y, time);
+            self.y.wheel(delta.y, time, glide);
         }
     }
 
@@ -412,13 +435,14 @@ mod tests {
     fn a_wheel_notch_glides_to_its_step_and_notches_add_up() {
         let mut s = Scroller::new(Axes { horizontal: false, vertical: true });
         s.set_extent(Size { width: 100., height: 100. }, Size { width: 100., height: 1000. });
-        s.wheel(Point { x: 0., y: 60. }, 0.);
+        const GLIDE: f64 = 0.12;
+        s.wheel(Point { x: 0., y: 60. }, 0., GLIDE);
         assert!(s.is_animating(), "the notch eases instead of jumping");
-        s.step(WHEEL_GLIDE / 2.);
+        s.step(GLIDE / 2.);
         let mid = s.offset().y;
         assert!(mid > 0. && mid < 60., "halfway through the glide: {mid}");
-        s.wheel(Point { x: 0., y: 60. }, WHEEL_GLIDE / 2.);
-        s.step(WHEEL_GLIDE * 2.);
+        s.wheel(Point { x: 0., y: 60. }, GLIDE / 2., GLIDE);
+        s.step(GLIDE * 2.);
         assert_eq!(s.offset().y, 120., "a second notch mid-glide lands one step past the first");
         assert!(!s.is_animating());
     }
@@ -427,8 +451,10 @@ mod tests {
     fn a_wheel_notch_stops_at_the_edge() {
         let mut s = Scroller::new(Axes { horizontal: false, vertical: true });
         s.set_extent(Size { width: 100., height: 100. }, Size { width: 100., height: 150. });
-        s.wheel(Point { x: 0., y: 200. }, 0.);
+        s.wheel(Point { x: 0., y: 200. }, 0., 0.12);
         s.step(1.);
         assert_eq!(s.offset().y, 50.);
+        s.wheel(Point { x: 0., y: -20. }, 2., 0.);
+        assert_eq!(s.offset().y, 30., "with no glide the step lands at once");
     }
 }
