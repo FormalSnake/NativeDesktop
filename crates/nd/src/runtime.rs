@@ -386,7 +386,6 @@ pub(crate) mod gpui_host {
                     reduce_motion: backend.platform_reduce_motion(),
                     ..nd_theme::SystemMetrics::default()
                 },
-                ..OsTheme::default()
             });
             // Called on a light or dark switch and when the system colours change (the accent).
             let os = backend.clone();
