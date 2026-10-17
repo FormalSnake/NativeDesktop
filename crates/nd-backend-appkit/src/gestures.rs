@@ -70,10 +70,17 @@ pub(crate) fn window_point(view: &NSView, event: &NSEvent) -> Point {
     Point { x: p.x as f32, y: p.y as f32 }
 }
 
+/// The root node's view in `view`'s window. A scaffold moves the root under its split view,
+/// beside the panes, so it is neither the content view nor an ancestor of a pane's views.
 fn root_content(view: &NSView) -> Option<Retained<NSView>> {
-    let content = view.window()?.contentView()?;
-    let root = content.downcast::<NdRootView>().ok()?;
-    Some(Retained::into_super(root.content().retain()))
+    let mut queue = std::collections::VecDeque::from([view.window()?.contentView()?]);
+    while let Some(v) = queue.pop_front() {
+        if let Some(root) = v.downcast_ref::<NdRootView>() {
+            return Some(Retained::into_super(root.content().retain()));
+        }
+        queue.extend(v.subviews().iter());
+    }
+    None
 }
 
 fn window_rect(view: &NSView) -> Rect {

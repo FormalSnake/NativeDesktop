@@ -493,16 +493,18 @@ mod gaps {
                         .child(label("Ana")),
                 )
                 .child(
-                    div()
-                        .id("picture")
-                        .on_tap(record::<TapEvent>("picture tap", cx))
-                        .on_double_tap(record::<DoubleTapEvent>("picture double", cx))
-                        .child(
-                            image(ImageSource::path("/nonexistent/picture.png"))
-                                .id("picture.image")
-                                .w(px(120.))
-                                .h(px(80.)),
-                        ),
+                    v_flex().id("row").on_double_tap(record::<DoubleTapEvent>("row double", cx)).child(
+                        div()
+                            .id("picture")
+                            .on_tap(record::<TapEvent>("picture tap", cx))
+                            .on_double_tap(record::<DoubleTapEvent>("picture double", cx))
+                            .child(
+                                image(ImageSource::path("/nonexistent/picture.png"))
+                                    .id("picture.image")
+                                    .w(px(120.))
+                                    .h(px(80.)),
+                            ),
+                    ),
                 )
                 .child(div().id("plain").size(px(60.)).bg(hsla(0.6, 0.5, 0.5, 1.)).on_double_tap(record::<
                     DoubleTapEvent,
