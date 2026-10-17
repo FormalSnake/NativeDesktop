@@ -4628,6 +4628,7 @@ version = "0.6.0"
 dependencies = [
  "futures",
  "image",
+ "libloading 0.8.9",
  "nd-backend-gpui",
  "nd-components",
  "nd-core",
@@ -4642,6 +4643,8 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "unicode-segmentation",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

@@ -67,6 +67,24 @@ let
       };
       cef = import ./cef.nix { inherit pkgs; };
       web = webview && pkgs.stdenv.hostPlatform.isLinux;
+      # Audio and video() dlopen GStreamer; libgstapp is in plugins-base.
+      gst = {
+        libs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+          pkgs.gst_all_1.gstreamer
+          pkgs.gst_all_1.gst-plugins-base
+        ];
+        wrap = lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--prefix GST_PLUGIN_SYSTEM_PATH_1_0 : ${
+          lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" (
+            with pkgs.gst_all_1;
+            [
+              gstreamer
+              gst-plugins-base
+              gst-plugins-good
+              gst-libav
+            ]
+          )
+        }";
+      };
       common = {
         inherit pname;
         src = cleanSrc;
@@ -104,10 +122,10 @@ let
               cp -rL ${cef}/. $out/libexec/${pname}/
               rm -rf $out/libexec/${pname}/{include,libcef_dll,cmake,CMakeLists.txt,archive.json}
               makeWrapper $out/libexec/${pname}/${pname} $out/bin/${pname} \
-                --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs)}
+                --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs ++ gst.libs)} ${gst.wrap}
             ''
             + lib.optionalString (!web) ''
-              wrapProgram $out/bin/${pname} --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs)}
+              wrapProgram $out/bin/${pname} --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (runtimeLibs pkgs ++ gst.libs)} ${gst.wrap}
             '';
         }
       );

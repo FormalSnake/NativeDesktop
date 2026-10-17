@@ -25,6 +25,29 @@ futures = "0.3.34"
 unicode-segmentation = "1.13.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+# `video()` decodes through GStreamer, loaded with dlopen (media/video/gst.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8.9"
+
+# `video()` decodes through Media Foundation (media/video/mf.rs), with the windows-rs release
+# gpui-pre-windows links.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+]
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62"
+
 [dev-dependencies]
 nd-gpui = { workspace = true, features = ["platform", "test-support"] }
 nd-backend-gpui = { path = ".", features = ["capture"] }
