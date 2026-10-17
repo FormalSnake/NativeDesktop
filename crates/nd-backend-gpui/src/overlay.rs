@@ -93,8 +93,11 @@ impl Build<'_> {
         content.style().position = Some(gpui::Position::Relative);
         // The app's own background, or the theme's overlay surface; content builds over it.
         let styled = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
-        let fill = styled.unwrap_or(theme.surface.overlay);
-        if styled.is_none() {
+        let cover = props.kind == OverlayKind::Cover;
+        let fill = styled.unwrap_or(if cover { theme.scrim } else { theme.surface.overlay });
+        if cover {
+            content = content.bg(fill).size_full();
+        } else if styled.is_none() {
             content =
                 content.bg(fill).border_1().border_color(theme.border.subtle).rounded(theme.radius.lg).shadow_md();
         }
@@ -102,7 +105,8 @@ impl Build<'_> {
             node.children.iter().map(|c| self.node(*c, window, cx)).collect()
         });
         if !passive {
-            content = content
+            content = self
+                .feed_gestures(content)
                 .occlude()
                 .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
@@ -110,7 +114,9 @@ impl Build<'_> {
         let content = Tracked::new(id, content.children(children).into_any_element(), self.backend.bounds.clone());
 
         let viewport = window.viewport_size();
-        let positioned = if props.kind == OverlayKind::Panel {
+        let positioned = if cover {
+            div().absolute().top_0().left_0().w(viewport.width).h(viewport.height).child(content).into_any_element()
+        } else if props.kind == OverlayKind::Panel {
             div()
                 .absolute()
                 .top_0()
@@ -145,7 +151,7 @@ impl Build<'_> {
             let emit = self.backend.state.borrow().events.emitter(id);
             let (wake, backend, window_id) = (self.wake.clone(), self.backend.clone(), self.window_id);
             let light = props.modality == Modality::LightDismiss;
-            let mut backdrop = div().id(ElementId::Name(format!("nd-backdrop-{}", id.0).into()));
+            let mut backdrop = self.feed_gestures(div().id(ElementId::Name(format!("nd-backdrop-{}", id.0).into())));
             backdrop = if light { backdrop.block_mouse_except_scroll() } else { backdrop.occlude() };
             let backdrop = backdrop
                 .absolute()
@@ -165,6 +171,46 @@ impl Build<'_> {
             anchored().position(point(px(0.), px(0.))).child(backdrop).into_any_element()
         };
         deferred(layer).with_priority(PANEL_PRIORITY + 1 + self.overlay_depth(id)).into_any_element()
+    }
+
+    /// Hands the pointer to nd's gesture recognizers from inside the overlay layer. The host
+    /// feeds them from the window's root, whose hitbox an occluding overlay hides, so a tap inside
+    /// an overlay would otherwise never be seen. Where the press lands is still nd's hit test.
+    fn feed_gestures(&self, element: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+        let feed = |phase: nd_gesture::PointerPhase| {
+            let (backend, wake, window_id) = (self.backend.clone(), self.wake.clone(), self.window_id);
+            move |at: gpui::Point<Pixels>, window: &mut gpui::Window, cx: &mut gpui::App| {
+                backend.gesture_pointer(
+                    window_id,
+                    phase,
+                    Point { x: at.x.as_f32(), y: at.y.as_f32() },
+                    &wake,
+                    window,
+                    cx,
+                )
+            }
+        };
+        let (down, up, moved) = (
+            feed(nd_gesture::PointerPhase::Down),
+            feed(nd_gesture::PointerPhase::Up),
+            feed(nd_gesture::PointerPhase::Move),
+        );
+        element
+            .capture_any_mouse_down(move |e, window, cx| {
+                if e.button == gpui::MouseButton::Left {
+                    down(e.position, window, cx);
+                }
+            })
+            .capture_any_mouse_up(move |e, window, cx| {
+                if e.button == gpui::MouseButton::Left {
+                    up(e.position, window, cx);
+                }
+            })
+            .on_mouse_move(move |e, window, cx| {
+                if e.pressed_button == Some(gpui::MouseButton::Left) {
+                    moved(e.position, window, cx);
+                }
+            })
     }
 
     /// A native surface. The GPU test pattern draws stripes and counts the pointer input that
@@ -415,6 +461,33 @@ impl GpuiBackend {
     /// overlay closed under it, so nothing below sees half a click.
     pub(crate) fn swallow_release(&self, window: WindowId) {
         self.state.borrow_mut().swallow_up.insert(window);
+    }
+
+    /// One pointer event for the gesture recognizers of `window`, delivered as the host
+    /// delivers its own.
+    pub(crate) fn gesture_pointer(
+        &self,
+        window: WindowId,
+        phase: nd_gesture::PointerPhase,
+        at: Point,
+        wake: &crate::backend::Wake,
+        gpui_window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let outputs = {
+            let state = self.state.borrow();
+            let Some(root) = state.windows.get(&window).and_then(|w| w.root) else { return };
+            let bounds = self.bounds.borrow();
+            self.gestures.pointer(window, phase, at, (&state.nodes, &bounds, root))
+        };
+        let events = self.state.borrow().events.clone();
+        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
+        if queued {
+            wake(cx);
+        }
+        if scrolled || self.gestures.needs_frame(window) {
+            gpui_window.refresh();
+        }
     }
 
     pub(crate) fn clear_swallow(&self, window: WindowId) {

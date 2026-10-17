@@ -96,7 +96,7 @@ impl OverlayNative {
                 popover.setContentViewController(Some(&controller));
                 Presenter::Popover(popover)
             }
-            OverlayKind::Panel | OverlayKind::Tooltip => {
+            OverlayKind::Panel | OverlayKind::Cover | OverlayKind::Tooltip => {
                 let panel = new_panel(mtm);
                 panel.setContentView(Some(&content));
                 if props.kind == OverlayKind::Tooltip {
@@ -125,7 +125,7 @@ impl OverlayNative {
         if props.style != self.props.style {
             let look = match props.kind {
                 OverlayKind::Popover => ViewLook::from_style(&props.style, false),
-                OverlayKind::Panel | OverlayKind::Tooltip => panel_look(props),
+                OverlayKind::Panel | OverlayKind::Cover | OverlayKind::Tooltip => panel_look(props),
             };
             self.content.set_props(&look);
         }
@@ -199,6 +199,7 @@ impl OverlayNative {
                         };
                         NSRect::new(NSPoint::new(x, y), size)
                     }
+                    OverlayKind::Cover => owner.convertRectToScreen(owner.contentLayoutRect()),
                     _ => {
                         let content = owner.contentLayoutRect();
                         let screen = owner.convertRectToScreen(content);

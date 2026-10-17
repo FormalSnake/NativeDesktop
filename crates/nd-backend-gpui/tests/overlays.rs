@@ -23,6 +23,8 @@ gpui::actions!(test, [Chosen]);
 struct Scene {
     popover: bool,
     panel: bool,
+    cover: bool,
+    cover_taps: u32,
     under: u32,
     chosen: u32,
     taps: u32,
@@ -75,6 +77,14 @@ impl Render for Scene {
                     ),
             )
             .child(text(format!("under={} chosen={}", self.under, self.chosen)).id("status"))
+            .when(self.cover, |d| {
+                d.child(cover("cover").child(v_flex().size_full().p(px(40.)).child(
+                    div().id("cover-zone").size_full().on_tap(cx.listener(|this, _: &TapEvent, _, cx| {
+                        this.cover_taps += 1;
+                        cx.notify();
+                    })),
+                )))
+            })
             .when(self.panel, |d| {
                 d.child(panel("panel").w(px(200.)).h(px(80.)).child(text("panel")).on_dismiss(cx.listener(
                     |this, e: &Dismissed, _, cx| {
@@ -289,6 +299,17 @@ mod gate_m4_overlays {
         assert_eq!(under(&o), 1, "the button works once the panel is gone");
     }
 
+    pub fn gpui_cover_fills_the_window_and_taps_reach_its_content() {
+        let mut o = open();
+        let button = center(&o.host, o.window, "under");
+        set(&mut o, |s| s.cover = true);
+        let bounds = by_test_id(&o.host, o.window, "cover").and_then(|n| n.bounds).expect("cover bounds");
+        assert_eq!((bounds.size.width, bounds.size.height), (480., 360.), "the cover fills the window");
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(under(&o), 0, "nothing under the cover takes a press");
+        assert_eq!(o.host.read(|app| o.scene.read(app).cover_taps), 1, "a tap inside the cover reaches its content");
+    }
+
     pub fn gpui_context_menu_is_drawn_above_and_consumes() {
         let mut o = open();
         let surface = center(&o.host, o.window, "surface");
@@ -332,6 +353,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_modal_panel_blocks_outside_and_escape_closes",
             gate_m4_overlays::gpui_modal_panel_blocks_outside_and_escape_closes,
+        ),
+        (
+            "gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content",
+            gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content,
         ),
         (
             "gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes",
