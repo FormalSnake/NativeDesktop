@@ -1280,27 +1280,7 @@ impl Inner {
         cx: &mut gpui::App,
         f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
     ) {
-        if self.backend.palette_covers(id) {
-            return;
-        }
-        let outputs = {
-            let state = self.backend.state.borrow();
-            // An open context menu's or palette's backdrop takes every press.
-            if state.menus.contains_key(&id) {
-                return;
-            }
-            let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
-            let bounds = self.backend.bounds.borrow();
-            f(&self.backend.gestures, (&state.nodes, &bounds, root))
-        };
-        let events = self.backend.state.borrow().events.clone();
-        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
-        if queued {
-            (self.wake())(cx);
-        }
-        if scrolled || self.backend.gestures.needs_frame(id) {
-            window.refresh();
-        }
+        self.backend.gesture_input(id, window, cx, &self.wake(), f);
     }
 
     /// First-frame bookkeeping and the budget knobs, once GPUI has drawn this frame.

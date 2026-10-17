@@ -741,6 +741,39 @@ impl Backend for GpuiBackend {
 }
 
 impl GpuiBackend {
+    /// Runs one input through the window's gesture router with the current tree and the bounds
+    /// of the last paint, then queues the events it produced and redraws for moved scroll views.
+    pub(crate) fn gesture_input(
+        &self,
+        id: WindowId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+        wake: &Wake,
+        f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
+    ) {
+        if self.palette_covers(id) {
+            return;
+        }
+        let outputs = {
+            let state = self.state.borrow();
+            // An open context menu's or palette's backdrop takes every press.
+            if state.menus.contains_key(&id) {
+                return;
+            }
+            let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
+            let bounds = self.bounds.borrow();
+            f(&self.gestures, (&state.nodes, &bounds, root))
+        };
+        let events = self.state.borrow().events.clone();
+        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
+        if queued {
+            wake(cx);
+        }
+        if scrolled || self.gestures.needs_frame(id) {
+            window.refresh();
+        }
+    }
+
     /// Scrolls the virtual list `node` sits in until the row holding it shows, the nearest edge
     /// first. A node in no list has nothing to scroll here.
     fn scroll_row_into_view(&self, node: NodeId) -> Result<(), ActionError> {
