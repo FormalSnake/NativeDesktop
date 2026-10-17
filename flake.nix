@@ -103,6 +103,10 @@
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux (
               [
+                # libghostty-vt-sys's build script runs `git clone`. The runner's /usr/bin/git
+                # loads the nix glibc through LD_LIBRARY_PATH below and dies, so ship one that
+                # is linked against the same store.
+                git
                 pkg-config
                 clang
                 mold
