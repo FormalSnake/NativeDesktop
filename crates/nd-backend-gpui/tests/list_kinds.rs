@@ -13,7 +13,7 @@ use nd_backend_gpui::GpuiHost;
 use nd_gpui::gpui::{HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput, point};
 use nd_ui::WindowId;
 use nd_ui::prelude::*;
-use nd_virtual::{ListState, SortChanged, SortDirection, TreeNode, column, grid, table, tree};
+use nd_virtual::{ListState, SortChanged, SortDirection, TreeNode, column, grid, list, table, tree};
 
 fn headless() -> HeadlessAppContext {
     let text = nd_gpui::gpui_platform::current_platform(true).text_system();
@@ -201,8 +201,53 @@ pub fn grid_fills_lanes_and_reaches_the_end() {
     assert!(bottom <= viewport.origin.y + viewport.size.height + 0.5, "last item fully in view: {last:?}");
 }
 
+struct Plain {
+    list: ListState<u32>,
+}
+
+impl Render for Plain {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(list("plain", &self.list, |row: u32, _, _| {
+            div().h(px(30.)).child(div().id(format!("cell-{row}")).child(format!("row {row}")))
+        }))
+    }
+}
+
+/// Automation's ScrollIntoView on a node inside a row below the fold scrolls the list until
+/// that row shows, as a test reaching a sidebar's last chat needs.
+pub fn scroll_into_view_reaches_a_row_below_the_fold() {
+    let (mut cx, host, window, view) = open(300., |cx| {
+        let mut list = ListState::new(cx);
+        list.set_items((0..16).collect::<Vec<u32>>(), cx);
+        Plain { list }
+    });
+    let state = host.read(|app| view.read(app).list.clone());
+    let shows = |host: &GpuiHost| {
+        let (viewport, rows) = painted(host);
+        rows.iter().any(|(r, b)| {
+            state.key_of(*r) == Some(14)
+                && b.origin.y >= viewport.origin.y - 0.5
+                && b.origin.y + b.size.height <= viewport.origin.y + viewport.size.height + 0.5
+        })
+    };
+    assert!(!shows(&host), "row 14 starts below the fold");
+    let node = host.read(|app| {
+        let tree = app.semantic_window(window).expect("window");
+        tree.root.iter().find(|n| n.test_id.as_deref() == Some("cell-14")).map(|n| n.id).expect("row 14's node")
+    });
+    let host2 = host.clone();
+    cx.update(|cx| host2.update(cx, |app| app.perform(node, &nd_ui::semantics::SemanticAction::ScrollIntoView)))
+        .expect("scrolled");
+    frames(&mut cx, &host, 6);
+    assert!(shows(&host), "row 14 shows whole after ScrollIntoView");
+}
+
 fn main() {
-    let tests: [(&str, fn()); 3] = [
+    let tests: [(&str, fn()); 4] = [
+        (
+            "gate_m5::gpui_kinds::scroll_into_view_reaches_a_row_below_the_fold",
+            scroll_into_view_reaches_a_row_below_the_fold,
+        ),
         ("gate_m5::gpui_kinds::table_columns_and_sort", table_columns_and_sort),
         ("gate_m5::gpui_kinds::tree_disclosure_expands_children", tree_disclosure_expands_children),
         ("gate_m5::gpui_kinds::grid_fills_lanes_and_reaches_the_end", grid_fills_lanes_and_reaches_the_end),

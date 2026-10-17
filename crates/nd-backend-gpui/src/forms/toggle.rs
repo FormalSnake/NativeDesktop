@@ -3,6 +3,7 @@
 
 use nd_components::forms::*;
 use nd_core::NodeId;
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, App, CursorStyle, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, Window, div, px,
@@ -126,7 +127,12 @@ pub(crate) fn switch(b: &Build, id: NodeId, p: &SwitchProps, window: &mut Window
         .w(look.switch_width)
         .h(look.switch_height)
         .rounded_full()
-        .bg(if p.checked { look.accent } else { look.track })
+        .bg(match (p.checked, look.switch_outline) {
+            (true, _) => look.accent,
+            (false, Some(_)) => look.fill,
+            (false, None) => look.track,
+        })
+        .when_some(look.switch_outline.filter(|_| !p.checked), |track, outline| track.border_1().border_color(outline))
         .child(
             div()
                 .absolute()
@@ -134,7 +140,7 @@ pub(crate) fn switch(b: &Build, id: NodeId, p: &SwitchProps, window: &mut Window
                 .left(look.switch_inset + travel * at)
                 .size(knob)
                 .rounded_full()
-                .bg(look.knob)
+                .bg(if p.checked { look.knob } else { look.knob_off })
                 .border_1()
                 .border_color(look.knob_edge),
         );

@@ -700,6 +700,7 @@ impl Backend for GpuiBackend {
                     self.synthesize(window, &input)?;
                 }
             }
+            SemanticAction::ScrollIntoView => self.scroll_row_into_view(node)?,
             _ => return Err(ActionError::Unsupported(format!("{action:?} on {kind:?}"))),
         }
         Ok(())
@@ -740,6 +741,42 @@ impl Backend for GpuiBackend {
 }
 
 impl GpuiBackend {
+    /// Scrolls the virtual list `node` sits in until the row holding it shows, the nearest edge
+    /// first. A node in no list has nothing to scroll here.
+    fn scroll_row_into_view(&self, node: NodeId) -> Result<(), ActionError> {
+        let (handle, row) = {
+            let state = self.state.borrow();
+            let mut row = None;
+            let mut at = Some(node);
+            let mut found = None;
+            while let Some(id) = at {
+                let Some(n) = state.nodes.get(&id) else { break };
+                if let Some(tag) = n
+                    .props
+                    .downcast_ref::<nd_ui::DivProps>()
+                    .and_then(|p| p.scope.as_ref())
+                    .and_then(|s| s.get::<nd_virtual::RowTag>())
+                {
+                    row = Some(tag.row);
+                }
+                if let Some(list) = n.props.downcast_ref::<nd_virtual::ListProps>() {
+                    found = Some(list.handle.clone());
+                    break;
+                }
+                at = n.parent;
+            }
+            match (found, row) {
+                (Some(handle), Some(row)) => (handle, row),
+                _ => return Err(ActionError::Unsupported(format!("ScrollIntoView: {node:?} is in no list row"))),
+            }
+        };
+        handle.0.borrow_mut().scroll_to(row, nd_virtual::Align::Nearest, 0., false);
+        let window = self.window_of(node).ok_or_else(|| not_actionable(format!("{node:?} is not in a window")))?;
+        self.state.borrow_mut().dirty.insert(window);
+        let _ = self.with_window(window, |w, _| w.refresh());
+        Ok(())
+    }
+
     pub(crate) fn paints_of(&self, window: WindowId) -> Result<Vec<Paint>, ActionError> {
         let state = self.state.try_borrow().map_err(|_| not_actionable("the backend is busy"))?;
         if !state.windows.contains_key(&window) {

@@ -111,6 +111,10 @@ pub struct FormLook {
     pub type_scale: TextStyles,
     /// A field's outline at rest: WinUI's control stroke; libadwaita's entries have none.
     pub field_stroke: Option<Hsla>,
+    /// An off switch outlined in this colour over the plain fill, its knob in `knob_off`:
+    /// WinUI's toggle switch. libadwaita fills the track instead.
+    pub switch_outline: Option<Hsla>,
+    pub knob_off: Hsla,
 }
 
 impl FormLook {
@@ -173,6 +177,8 @@ impl FormLook {
             spinner_seconds: 0.9,
             type_scale: theme.text_styles,
             field_stroke: None,
+            switch_outline: None,
+            knob_off: theme.text.on_accent,
         }
     }
 
@@ -213,6 +219,9 @@ impl FormLook {
             switch_inset: px(4.),
             slider_knob: px(20.),
             field_stroke: Some(with_alpha(theme.text.primary, 0.07)),
+            switch_outline: Some(theme.text.secondary),
+            knob_off: theme.text.secondary,
+            knob_edge: nd_gpui::gpui::transparent_black(),
             ..Self::adwaita(theme)
         }
     }

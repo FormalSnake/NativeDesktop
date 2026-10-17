@@ -1005,7 +1005,9 @@ pub(crate) fn text_field(
     };
     let name = p.label.clone().or_else(|| p.tooltip.clone()).or_else(|| p.placeholder.clone()).unwrap_or_default();
     let mut field = chrome(&ctl, &editor, &f).role(role).aria_label(name);
-    if p.large {
+    // Only macOS has a larger field size; libadwaita's entries and WinUI's AutoSuggestBox
+    // (a sidebar's search) stay at the control height and radius.
+    if p.large && b.theme().preset == nd_theme::Preset::MacOs {
         field = field.h(look.control_height * 1.5).rounded_full();
     }
     if p.field != FieldStyle::Secure {
