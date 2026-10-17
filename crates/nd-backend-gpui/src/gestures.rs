@@ -50,6 +50,13 @@ impl Default for Gestures {
     }
 }
 
+/// `ND_DEBUG_GESTURES=1` prints where each press and scroll is routed (the nodes under the
+/// pointer that take gestures, innermost first), to read a routing bug off a user's machine.
+fn debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("ND_DEBUG_GESTURES").is_some_and(|v| v == "1"))
+}
+
 fn gestures_of(node: &Node) -> Option<&GestureSet> {
     if let NodeKind::Widget(w) = node.kind
         && w.type_id == std::any::TypeId::of::<nd_virtual::ListWidget>()
@@ -181,7 +188,13 @@ impl Gestures {
         let mut windows = self.windows.borrow_mut();
         let w = windows.entry(window).or_default();
         if phase == PointerPhase::Down {
-            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| w.router.pointer(&input, hit))
+            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| {
+                if debug() {
+                    let path: Vec<(NodeId, Rect)> = hit.iter().map(|h| (h.node, h.bounds)).collect();
+                    eprintln!("nd: press at {at:?} to {path:?}");
+                }
+                w.router.pointer(&input, hit)
+            })
         } else if w.router.pointer_active() {
             w.router.pointer(&input, &[])
         } else {
@@ -208,7 +221,13 @@ impl Gestures {
         let w = windows.entry(window).or_default();
         let (phase, momentum) = w.momentum.classify(finger);
         let input = ScrollInput { position: at, delta, phase, momentum, time: self.now() };
-        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| w.router.scroll(&input, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| {
+            if debug() {
+                let path: Vec<(NodeId, Rect)> = hit.iter().map(|h| (h.node, h.bounds)).collect();
+                eprintln!("nd: scroll at {at:?} {:?} {:?} to {path:?}", input.phase, input.delta);
+            }
+            w.router.scroll(&input, hit)
+        })
     }
 
     pub fn os_gesture(&self, window: WindowId, event: GestureEvent, at: Point, tree: Tree<'_>) -> Option<Output> {
