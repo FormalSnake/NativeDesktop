@@ -202,6 +202,10 @@ impl SeekInner {
 }
 
 impl Input for SeekInner {
+    fn takes_mouse(&self) -> bool {
+        true
+    }
+
     fn mouse_down(&self, at: NSPoint, _event: &NSEvent) {
         if let Some(w) = self.view.window() {
             w.makeFirstResponder(Some(&self.view));

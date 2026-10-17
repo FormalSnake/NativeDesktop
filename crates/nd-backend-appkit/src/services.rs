@@ -341,11 +341,12 @@ impl ChromeServices for AppKitChrome {
         let ns = NSMenu::new(mtm);
         ns.setAutoenablesItems(false);
         builder.items(&ns, menu.items);
+        let y = if menu.above { f64::from(y) - ns.size().height } else { f64::from(y) };
         // Menu tracking is a nested run loop: start it from a later turn, never inside the
         // handler that asked for it (3.13).
         crate::events::defer(move || {
             let _target = target;
-            ns.popUpMenuPositioningItem_atLocation_inView(None, NSPoint::new(x.into(), y.into()), Some(&view));
+            ns.popUpMenuPositioningItem_atLocation_inView(None, NSPoint::new(x.into(), y), Some(&view));
         });
     }
 

@@ -50,6 +50,8 @@ pub(crate) struct MenuOverlay {
     /// The node that asked for it, which its paints are recorded under.
     pub node: NodeId,
     pub at: Point,
+    /// `at` is the menu's bottom left corner rather than its top left.
+    pub above: bool,
     pub content: MenuContent,
 }
 
@@ -434,7 +436,11 @@ impl Build<'_> {
                 wake(cx);
             })
             .child(
-                anchored().position(point(px(menu.at.x), px(menu.at.y))).snap_to_window_with_margin(px(8.)).child(list),
+                anchored()
+                    .position(point(px(menu.at.x), px(menu.at.y)))
+                    .anchor(if menu.above { Anchor::BottomLeft } else { Anchor::TopLeft })
+                    .snap_to_window_with_margin(px(8.))
+                    .child(list),
             );
         deferred(anchored().position(point(px(0.), px(0.))).child(backdrop))
             .with_priority(MENU_PRIORITY)
@@ -500,9 +506,10 @@ impl GpuiBackend {
         let replaced = {
             let mut state = self.state.borrow_mut();
             state.dirty.insert(window);
-            state
-                .menus
-                .insert(window, MenuOverlay { node, at: Point { x: origin.x + at.x, y: origin.y + at.y }, content })
+            state.menus.insert(
+                window,
+                MenuOverlay { node, at: Point { x: origin.x + at.x, y: origin.y + at.y }, above: false, content },
+            )
         };
         if let Some(old) = replaced {
             old.dismissed();
@@ -589,7 +596,9 @@ impl ChromeServices for GpuiChrome {
         let replaced = {
             let mut state = self.0.state.borrow_mut();
             state.dirty.insert(window);
-            state.menus.insert(window, MenuOverlay { node, at, content: MenuContent::Actions(menu.items) })
+            state
+                .menus
+                .insert(window, MenuOverlay { node, at, above: menu.above, content: MenuContent::Actions(menu.items) })
         };
         if let Some(old) = replaced {
             old.dismissed();
