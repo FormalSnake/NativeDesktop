@@ -5,6 +5,7 @@
 //! `web-*.diff.png` beside the golden. `ND_CHROME` points at another Chrome.
 
 #![cfg(not(target_arch = "wasm32"))]
+#![allow(clippy::expect_used)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
