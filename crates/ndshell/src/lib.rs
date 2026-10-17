@@ -11,6 +11,8 @@ pub mod grant;
 pub mod hyprland;
 #[cfg(target_os = "macos")]
 pub mod input;
+#[cfg(target_os = "linux")]
+pub mod labwc;
 pub mod lock;
 #[cfg(target_os = "macos")]
 pub mod preflight;
