@@ -81,6 +81,10 @@
           inherit (pkgs) lib stdenv;
           gpuLibs = runtimeLibs pkgs;
           webLibs = cefLibs pkgs;
+          hostRustflags =
+            "CARGO_TARGET_"
+            + lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] stdenv.hostPlatform.rust.rustcTarget)
+            + "_RUSTFLAGS";
 
           # A darwin stdenv carries the apple-sdk setup hook, which exports SDKROOT and
           # DEVELOPER_DIR and pins Swift and the linker to nixpkgs' old SDK.
@@ -119,10 +123,13 @@
                 weston
                 # dbus-daemon: each headless run's compositors get a private session bus.
                 dbus
-                # nd-system's audio dlopens GStreamer; these give its tests playbin, spectrum and wavparse.
+                # nd-system's audio and the GPUI backend's video() dlopen GStreamer: playbin,
+                # appsink, videoconvert and videoscale (base), qtdemux, videoflip, spectrum and the
+                # PulseAudio sink (good), the H.264 and HEVC decoders (libav).
                 gst_all_1.gstreamer
                 gst_all_1.gst-plugins-base
                 gst_all_1.gst-plugins-good
+                gst_all_1.gst-libav
               ]
               ++ gpuLibs
             );
@@ -162,8 +169,15 @@
             # $CEF_PATH, outside the target dir so a `cargo clean` keeps it.
             export CEF_PATH="''${CEF_PATH:-''${XDG_CACHE_HOME:-$HOME/.cache}/nd-cef}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
-            export RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-fuse-ld=mold"
-            export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.gst_all_1.gstreamer ]}:$LD_LIBRARY_PATH"
+            # Scoped to the host triple: a plain RUSTFLAGS reaches the wasm32 link too, where rust-lld
+            # rejects -fuse-ld=mold.
+            export ${hostRustflags}="''${${hostRustflags}:+''$${hostRustflags} }-C link-arg=-fuse-ld=mold"
+            export LD_LIBRARY_PATH="${
+              lib.makeLibraryPath [
+                pkgs.gst_all_1.gstreamer
+                pkgs.gst_all_1.gst-plugins-base
+              ]
+            }:$LD_LIBRARY_PATH"
             export GST_PLUGIN_SYSTEM_PATH_1_0="${
               lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" (
                 with pkgs.gst_all_1;
@@ -171,6 +185,7 @@
                   gstreamer
                   gst-plugins-base
                   gst-plugins-good
+                  gst-libav
                 ]
               )
             }"

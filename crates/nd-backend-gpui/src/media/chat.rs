@@ -103,7 +103,20 @@ pub(super) fn bubble(
                 p.text.clone().into_any_element()
             }
         };
-        let [tl, tr, br, bl] = p.corners();
+        // Fluent's chat bubbles (Phone Link, Teams) are the skin's cards: the control radius,
+        // a smaller one where a run's bubbles meet, no tail.
+        let fluent = theme.preset == nd_theme::Preset::Fluent;
+        let [tl, tr, br, bl] = if fluent {
+            let (r, t) = (theme.radius.lg.as_f32(), theme.radius.md.as_f32());
+            p.corners().map(|c| if c < BUBBLE.radius { t } else { r })
+        } else {
+            p.corners()
+        };
+        // The tail goes under the body: where it meets the body's rounded corner it must not
+        // cover the first or last letters on the bottom line.
+        if p.has_tail() && !fluent {
+            root = root.pb(px(BUBBLE.tail_drop)).child(tail(fill, sent));
+        }
         root = root.child(
             div()
                 .max_w(px(BUBBLE.max_width))
@@ -119,9 +132,6 @@ pub(super) fn bubble(
                 .text_color(ink)
                 .child(body),
         );
-        if p.has_tail() {
-            root = root.pb(px(BUBBLE.tail_drop)).child(tail(fill, sent));
-        }
     }
     if !p.reactions.is_empty() {
         let behind = b.backdrop();
@@ -190,8 +200,11 @@ fn face(
     let (bg, fg) = (theme.accent_container.bg, theme.accent_container.fg);
     marks.fill("monogram", bg, &[]);
     let circle = circle.bg(bg);
+    // Too small for letters (a group's cluster in a sidebar row): a person mark, so the circle
+    // reads as someone rather than an empty slot.
     if size < MONOGRAM_MIN {
-        return circle;
+        marks.fill("monogram glyph", fg, &[bg]);
+        return circle.child(glyph(Glyph::Person, px(size * 0.62), fg, px(1.25)));
     }
     let letters = initials(&person.name);
     if letters == "#" {

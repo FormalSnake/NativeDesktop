@@ -13,8 +13,9 @@
 
 mod choice;
 mod display;
+mod emoji;
 pub(crate) mod glyph;
-mod look;
+pub(crate) mod look;
 mod pickers;
 mod text;
 mod toggle;
@@ -203,7 +204,7 @@ impl Build<'_> {
         };
         let ctl = Ctl {
             id,
-            look: FormLook::adwaita(&self.theme()),
+            look: FormLook::of(&self.theme()),
             focused: focus.is_focused(window),
             sink,
             time: self.time,

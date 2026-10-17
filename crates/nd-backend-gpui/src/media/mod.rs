@@ -1,6 +1,6 @@
 //! The media and content kinds (`nd_components::media`) drawn on GPUI from theme tokens: images
 //! from the shared pipeline, the seek bar, synced lyrics, the sideways shelf, chat bubbles,
-//! avatars and the video placeholder. The models in `nd-components` hold every rule; this
+//! avatars and video. The models in `nd-components` hold every rule; this
 //! module draws them and turns input into their calls. Per-node state lives with the forms
 //! controls' (`Build::ctl`), so a released node drops it.
 

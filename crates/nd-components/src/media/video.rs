@@ -4,8 +4,10 @@
 //! extrapolates between), when it ends and when it fails. Size it with the style; `fit` crops or letterboxes
 //! the picture into that box.
 //!
-//! On AppKit the picture is an `AVPlayerLayer`. Backends without a video surface draw the
-//! placeholder fill and report [`VideoFailed`], so the app can fall back to the system player.
+//! On AppKit the picture is an `AVPlayerLayer`; on GPUI it is frames from Media Foundation
+//! (Windows) or GStreamer (Linux) drawn as images. Where neither is available, or the file does
+//! not open, the node draws the placeholder fill and reports [`VideoFailed`], so the app can fall
+//! back to the system player.
 
 use std::panic::Location;
 

@@ -654,7 +654,7 @@ impl WindowsWindowInner {
         if handled { Some(0) } else { Some(1) }
     }
 
-    fn retrieve_caret_position(&self) -> Option<POINT> {
+    pub(crate) fn retrieve_caret_position(&self) -> Option<POINT> {
         self.with_input_handler_and_scale_factor(|input_handler, scale_factor| {
             let caret_range = input_handler.selected_text_range(false)?;
             let caret_position = input_handler.bounds_for_range(caret_range.range)?;

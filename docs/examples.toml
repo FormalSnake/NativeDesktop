@@ -75,6 +75,7 @@ name = "terminal"
 title = "Terminal"
 summary = "A terminal with tabs over libghostty-vt: one shell per tab, titled by what the shell reports."
 web_reason = "Runs a shell in a pty."
+env = { TERMINAL_DEMO = "1" }
 
 [[example]]
 name = "system"

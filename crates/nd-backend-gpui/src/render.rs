@@ -508,7 +508,7 @@ impl<'a> Build<'a> {
                 d.style().text.color = Some(color);
                 d.child(props.text.clone()).into_any_element()
             }
-            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node),
+            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node, window),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
@@ -592,7 +592,18 @@ impl<'a> Build<'a> {
         let props = node.props.downcast_ref::<nd_virtual::ListProps>().expect("ListProps").clone();
         let emit = self.backend.state.borrow().events.emitter(id);
         let look = self.look();
-        let selection = look.control_active;
+        let theme = self.theme();
+        let fluent = theme.preset == nd_theme::Preset::Fluent;
+        // A sidebar's selection is the platform's subtle one, the surface under it one hover
+        // step deeper: libadwaita's navigation sidebar tints the row with a tenth of the text
+        // colour, WinUI's navigation view with its subtle fill and an accent pill. Other lists
+        // keep the pressed control fill.
+        let selection = if props.inset { theme.hover(self.top().background) } else { look.control_active };
+        let sidebar = crate::virtual_list::SidebarSelection {
+            inset: if fluent { 4. } else { 6. },
+            radius: theme.radius.md.as_f32(),
+            pill: fluent.then_some(theme.accent),
+        };
         let rows = node
             .children
             .iter()
@@ -636,6 +647,7 @@ impl<'a> Build<'a> {
             gestures: self.backend.gestures.clone(),
             window_id: self.window_id,
             selection_color: selection,
+            sidebar,
             disclosure_color: self.top().text,
         }
         .into_any_element()
@@ -728,14 +740,24 @@ impl<'a> Build<'a> {
             .into_any_element()
     }
 
-    fn button(&self, id: NodeId, node: &Node) -> AnyElement {
+    fn button(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
         let props = GpuiBackend::button_label(&node.props);
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
         let look = self.look();
         let theme = self.theme();
-        // An icon-only button draws its glyph; one with no glyph here shows its tooltip.
-        let glyph = if props.label.is_empty() { props.icon.as_deref().and_then(Glyph::named) } else { None };
+        // An icon-only button draws its glyph; one with no glyph here shows its tooltip. An
+        // accent button with a circled icon (the composer's send) is the filled circle itself,
+        // with the bare mark in it, as Messages draws it.
+        let explicit_fill = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let filled_circle = (props.variant == ButtonVariant::Accent || explicit_fill.is_some())
+            && props.label.is_empty()
+            && props.icon.as_deref().is_some_and(|i| i.strip_prefix("circle-").and_then(Glyph::named).is_some());
+        let glyph = match props.icon.as_deref() {
+            _ if !props.label.is_empty() => None,
+            Some(icon) if filled_circle => icon.strip_prefix("circle-").and_then(Glyph::named),
+            icon => icon.and_then(Glyph::named),
+        };
         let label = if props.label.is_empty() {
             props.tooltip.clone().or_else(|| props.icon.clone()).unwrap_or_default()
         } else {
@@ -743,7 +765,7 @@ impl<'a> Build<'a> {
         };
         let name = if props.label.is_empty() { label.clone() } else { props.label.clone() };
         // A background the element sets is the bezel colour, as on AppKit.
-        let explicit = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
+        let explicit = explicit_fill;
         let accent = props.variant == ButtonVariant::Accent || explicit.is_some();
         let (fill, ink) = match explicit {
             Some(fill) => (fill, props.style.text.color.unwrap_or_else(|| readable_ink(fill))),
@@ -771,7 +793,8 @@ impl<'a> Build<'a> {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(6.))
+            // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 6.
+            .rounded(theme.radius.md)
             .text_color(ink)
             // Inside a drag region the button keeps its clicks and never starts a window move.
             .occlude();
@@ -782,17 +805,51 @@ impl<'a> Build<'a> {
         if bezel {
             button = button.border_1().border_color(look.border).bg(fill);
         }
-        if props.bezel == Bezel::Circle {
+        if props.bezel == Bezel::Circle || filled_circle {
             button = button.rounded_full();
         }
         let button = crate::forms::with_style(button, &props.style);
         if !props.enabled {
             return button.into_any_element();
         }
+        // Rest, hover and pressed fills fade into each other at the look's own speed (WinUI's
+        // 83 ms), or switch at once when the OS has animations off.
         let (hover, active) = (theme.hover(fill), theme.pressed(fill));
+        let duration =
+            if self.backend.platform_reduce_motion() == Some(true) { 0. } else { theme.motion.fast.as_secs_f64() };
+        let fades = self.backend.fades.clone();
+        let pointer = fades.pointer(id);
+        let rest = if bezel { fill } else { with_alpha(fill, 0.) };
+        let target = if pointer.pressed {
+            active
+        } else if pointer.hovered {
+            hover
+        } else {
+            rest
+        };
+        let (shown, moving) = fades.sample(id, target, self.time, duration);
+        if moving {
+            window.request_animation_frame();
+        }
+        let (on_hover, on_down, on_up, on_up_out) = (fades.clone(), fades.clone(), fades.clone(), fades);
         button
-            .hover(move |s| s.bg(hover))
-            .active(move |s| s.bg(active))
+            .bg(shown)
+            .on_hover(move |hovered, window, _| {
+                on_hover.set_pointer(id, |p| p.hovered = *hovered);
+                window.refresh();
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, _| {
+                on_down.set_pointer(id, |p| p.pressed = true);
+                window.refresh();
+            })
+            .on_mouse_up(gpui::MouseButton::Left, move |_, window, _| {
+                on_up.set_pointer(id, |p| p.pressed = false);
+                window.refresh();
+            })
+            .on_mouse_up_out(gpui::MouseButton::Left, move |_, window, _| {
+                on_up_out.set_pointer(id, |p| p.pressed = false);
+                window.refresh();
+            })
             .on_click(move |_, _, cx| {
                 emit.emit(ClickEvent);
                 wake(cx);

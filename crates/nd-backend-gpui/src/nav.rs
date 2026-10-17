@@ -27,8 +27,8 @@ use nd_theme::{Metrics, Palette, Preset, Scheme, Theme};
 /// The baked theme for `scheme`, for rendering the builders outside an app. In an app they get
 /// the window's resolved theme.
 pub fn theme_for(scheme: Scheme) -> Theme {
-    let preset = if cfg!(target_os = "windows") { Preset::Fluent } else { Preset::Adwaita };
-    Theme::derive(preset, scheme, Palette::baked(scheme), Metrics::preset(preset), 1.)
+    let preset = Preset::forced().unwrap_or(if cfg!(target_os = "windows") { Preset::Fluent } else { Preset::Adwaita });
+    Theme::derive(preset, scheme, Palette::baked_for(preset, scheme), Metrics::preset(preset), 1.)
 }
 
 /// One colour a drawn widget paints at rest, for the backend's paint record (the appearance

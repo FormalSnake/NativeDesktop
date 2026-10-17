@@ -142,10 +142,21 @@ pub fn bind_keys(cx: &mut App) {
     // docs:end keys
 }
 
+/// The user's shell. `TERMINAL_DEMO=1` (docs captures) runs a plain `sh` with a bare prompt in a
+/// scratch home instead, so a capture shows no user name, host name or rc file.
+fn shell_command() -> Command {
+    if std::env::var_os("TERMINAL_DEMO").is_none() {
+        return Command::shell();
+    }
+    let home = std::env::temp_dir().join("nd-terminal-demo");
+    let _ = std::fs::create_dir_all(&home);
+    Command::new("/bin/sh").cwd(&home).env("HOME", &home).env("PS1", "$ ").env("ENV", "")
+}
+
 /// The window with one tab running the user's shell.
 pub fn open(cx: &mut App) -> WindowHandle<Terminals> {
     bind_keys(cx);
-    let command = Command::shell();
+    let command = shell_command();
     let sessions = TerminalSession::spawn(&command, SessionOptions::default()).into_iter().collect();
     open_with(cx, command, sessions)
 }

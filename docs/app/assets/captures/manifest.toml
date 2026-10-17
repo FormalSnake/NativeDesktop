@@ -1,93 +1,93 @@
 # Written by `nd docs capture`; do not edit by hand.
 
 [browser.macos]
-hash = "444573603746d876"
+hash = "8bcf80d5ec68689c"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [chrome.macos]
-hash = "d0e501a5fd82e297"
+hash = "24ef7082512f1e7c"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [gallery.macos]
-hash = "494709d72bb7dfef"
+hash = "8769eea29f74e7c5"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [hello.macos]
-hash = "2813406f56f751eb"
+hash = "a63361ba78452bc8"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [native-widget.macos]
-hash = "8400b1cdeb565652"
+hash = "f0c8608509125115"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [notes.macos]
-hash = "ca4ef1ba8fa6e53d"
+hash = "124a6b2c81005a60"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [overlays.macos]
-hash = "de0c4ea8b76b0863"
+hash = "52982c677407e9b6"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [overrides.macos]
-hash = "81ae7960987aded2"
+hash = "8b816b60d07e859d"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [pacing.macos]
-hash = "dfb91fcae4d3424c"
+hash = "267554b9d32854d5"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [scroll.macos]
-hash = "cc6a8399245ddae3"
+hash = "6bb3ffdc2340d4ce"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 recording = "macos.gif"
 
 [system.macos]
-hash = "71271b3bf7c2a3d3"
+hash = "73aba961b45f4c68"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [tabs.macos]
-hash = "0276e1db1762d582"
+hash = "e58a13907e20d0bf"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [terminal.macos]
-hash = "2ca2a4307ed7b3d0"
+hash = "a360d4c0e5b30b6c"
 captured_on = "macOS 27.0"
-date = "2026-10-14"
+date = "2026-10-17"
 light = "macos-light.png"
 dark = "macos-dark.png"

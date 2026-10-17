@@ -6,6 +6,7 @@
 //!
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens. A mismatch writes `<golden>.actual.png` beside
 //! the golden. Prints `ND_OVERRIDES_GOLDENS_OK`.
+#![allow(clippy::print_stdout, clippy::expect_used)]
 
 #[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {

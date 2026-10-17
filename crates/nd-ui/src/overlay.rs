@@ -39,6 +39,9 @@ pub enum OverlayKind {
     /// A floating panel over the window's content (command palette, sheet-like panel), centred
     /// near the top of the window.
     Panel,
+    /// The whole window under a dimmed backdrop, its content filling it: a media viewer or a
+    /// lightbox. The overlay's background is the dim, the theme's scrim unless styled.
+    Cover,
     /// A hint next to its parent; never takes input.
     Tooltip,
 }
@@ -112,6 +115,11 @@ pub fn popover(id: impl Into<SharedString>) -> OverlayElement {
 /// A floating panel over the window's content; modal until the app closes it or Esc.
 pub fn panel(id: impl Into<SharedString>) -> OverlayElement {
     overlay(Key::Id(id.into()), OverlayKind::Panel, Modality::Modal, Placement::Below)
+}
+
+/// A modal layer over the whole window, dimming it; its content fills the window.
+pub fn cover(id: impl Into<SharedString>) -> OverlayElement {
+    overlay(Key::Id(id.into()), OverlayKind::Cover, Modality::Modal, Placement::Below)
 }
 
 /// A tooltip above its parent; passive.

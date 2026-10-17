@@ -14,6 +14,7 @@ use nd_gpui::gpui::{
     self, HeadlessAppContext, Modifiers, MouseButton as GpuiButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point,
 };
+use nd_ui::backend::Backend;
 use nd_ui::prelude::*;
 use nd_ui::{InputCounts, KeyBinding, Keystroke, SemanticNode, SurfaceSource, WindowId};
 
@@ -23,6 +24,8 @@ gpui::actions!(test, [Chosen]);
 struct Scene {
     popover: bool,
     panel: bool,
+    cover: bool,
+    cover_taps: u32,
     under: u32,
     chosen: u32,
     taps: u32,
@@ -75,6 +78,14 @@ impl Render for Scene {
                     ),
             )
             .child(text(format!("under={} chosen={}", self.under, self.chosen)).id("status"))
+            .when(self.cover, |d| {
+                d.child(cover("cover").child(v_flex().size_full().p(px(40.)).child(
+                    div().id("cover-zone").size_full().on_tap(cx.listener(|this, _: &TapEvent, _, cx| {
+                        this.cover_taps += 1;
+                        cx.notify();
+                    })),
+                )))
+            })
             .when(self.panel, |d| {
                 d.child(panel("panel").w(px(200.)).h(px(80.)).child(text("panel")).on_dismiss(cx.listener(
                     |this, e: &Dismissed, _, cx| {
@@ -265,6 +276,24 @@ mod gate_m4_overlays {
         assert_eq!(under(&o), 1);
     }
 
+    /// A closed popover keeps drawing its content for the look's exit, takes no input while it
+    /// does, and is gone once the exit is over.
+    pub fn gpui_a_closed_popover_animates_out_then_is_gone() {
+        let mut o = open();
+        let button = center(&o.host, o.window, "under");
+        set(&mut o, |s| s.popover = true);
+        let inside =
+            |o: &Opened| o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == "inside");
+        assert!(inside(&o), "the open popover is drawn");
+        set(&mut o, |s| s.popover = false);
+        assert!(inside(&o), "right after closing, the popover is still drawn, leaving");
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(o.host.read(|app| o.scene.read(app).under), 1, "the leaving popover takes no input");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        assert!(!inside(&o), "after its exit the popover is gone");
+    }
+
     pub fn gpui_modal_panel_blocks_outside_and_escape_closes() {
         let mut o = open();
         let button = center(&o.host, o.window, "under");
@@ -287,6 +316,17 @@ mod gate_m4_overlays {
         assert_eq!(log(&o), ["panel Escape"]);
         post(&mut o, click(button, GpuiButton::Left));
         assert_eq!(under(&o), 1, "the button works once the panel is gone");
+    }
+
+    pub fn gpui_cover_fills_the_window_and_taps_reach_its_content() {
+        let mut o = open();
+        let button = center(&o.host, o.window, "under");
+        set(&mut o, |s| s.cover = true);
+        let bounds = by_test_id(&o.host, o.window, "cover").and_then(|n| n.bounds).expect("cover bounds");
+        assert_eq!((bounds.size.width, bounds.size.height), (480., 360.), "the cover fills the window");
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(under(&o), 0, "nothing under the cover takes a press");
+        assert_eq!(o.host.read(|app| o.scene.read(app).cover_taps), 1, "a tap inside the cover reaches its content");
     }
 
     pub fn gpui_context_menu_is_drawn_above_and_consumes() {
@@ -330,8 +370,16 @@ fn main() {
             gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface,
         ),
         (
+            "gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone",
+            gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone,
+        ),
+        (
             "gate_m4_overlays::gpui_modal_panel_blocks_outside_and_escape_closes",
             gate_m4_overlays::gpui_modal_panel_blocks_outside_and_escape_closes,
+        ),
+        (
+            "gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content",
+            gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content,
         ),
         (
             "gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes",

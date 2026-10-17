@@ -373,7 +373,8 @@ pub(crate) mod gpui_host {
     /// The registry from the platform's light or dark setting and the app's files, kept
     /// following the platform as it changes.
     pub fn install(cx: &mut App, files: &ThemeFiles, app_theme: ThemeRefinement, patterns: Patterns) {
-        let preset = if cfg!(target_os = "macos") { Preset::Adwaita } else { Preset::current() };
+        let preset =
+            if cfg!(target_os = "macos") { Preset::forced().unwrap_or(Preset::Adwaita) } else { Preset::current() };
         let mut registry = ThemeRegistry::new(preset);
         if let Some(backend) = cx.backend_as::<GpuiBackend>() {
             let palettes = backend.platform_palettes();
@@ -381,7 +382,10 @@ pub(crate) mod gpui_host {
                 scheme: backend.platform_scheme(),
                 palettes,
                 fonts: nd_theme::fonts::resolve(),
-                ..OsTheme::default()
+                metrics: nd_theme::SystemMetrics {
+                    reduce_motion: backend.platform_reduce_motion(),
+                    ..nd_theme::SystemMetrics::default()
+                },
             });
             // Called on a light or dark switch and when the system colours change (the accent).
             let os = backend.clone();
