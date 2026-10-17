@@ -290,7 +290,7 @@ pub(crate) fn new_runtime_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn render_node() -> Result<PathBuf, String> {
+pub(crate) fn render_node() -> Result<PathBuf, String> {
     if let Some(node) = std::env::var_os("ND_RENDER_NODE") {
         return Ok(node.into());
     }
