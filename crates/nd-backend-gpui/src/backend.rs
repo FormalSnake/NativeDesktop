@@ -16,6 +16,7 @@ use nd_ui::events::EventQueue;
 use nd_ui::semantics::{ActionError, Capture, Paint, Probe, SemanticAction, SyntheticInput, WindowState};
 use nd_ui::{App, Button, ButtonProps, ClickEvent, InputCounts, SurfaceProps};
 
+#[derive(Clone)]
 pub(crate) struct Node {
     pub kind: NodeKind,
     pub props: Props,
@@ -107,6 +108,8 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Controls' fills fading between rest, hover and pressed.
     pub(crate) fades: crate::fade::Fades,
+    /// Each open overlay's subtree as last drawn, and the closed ones still animating out.
+    pub(crate) overlay_exits: crate::overlay::Exits,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
@@ -170,6 +173,7 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             fades: crate::fade::Fades::default(),
+            overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
             splits: Rc::default(),
@@ -565,6 +569,10 @@ impl Backend for GpuiBackend {
         };
         if let Some(custom) = custom {
             custom.released(node);
+        }
+        // A closing overlay keeps drawing its last subtree while it animates out.
+        if let Some(window) = self.overlay_exits.leave(node, self.platform_reduce_motion() == Some(true)) {
+            self.state.borrow_mut().dirty.insert(window);
         }
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {

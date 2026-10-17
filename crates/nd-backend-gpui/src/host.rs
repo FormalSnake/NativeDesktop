@@ -1115,6 +1115,24 @@ impl Inner {
                 .into_any_element(),
             None => element,
         };
+        // Overlays that closed draw their last subtree a moment longer, animating out.
+        let (exit_duration, exit_ease) = crate::overlay::exit_timing(state.theme.window_theme(id));
+        let mut ghosts = Vec::new();
+        let mut ghost_paints = Vec::new();
+        for (ghost, snapshot, elapsed) in self.backend.overlay_exits.leaving(id, exit_duration) {
+            let Some(node) = snapshot.nodes.get(&ghost) else { continue };
+            let t = exit_ease((elapsed / exit_duration).clamp(0., 1.) as f32);
+            let ghost_build =
+                Build::new(&self.backend, &snapshot.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
+            ghosts.push(ghost_build.overlay_with(ghost, node, Some((t, snapshot.anchor)), window, cx));
+            ghost_paints.extend(ghost_build.take_paints());
+            window.request_animation_frame();
+        }
+        let element = if ghosts.is_empty() {
+            element
+        } else {
+            div().size_full().child(element).children(ghosts).into_any_element()
+        };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         let body_font = state.theme.window_theme(id).fonts.body.clone();
         // Text nothing sized is the look's body style (Adwaita and Fluent set it at 14 px), not
@@ -1125,7 +1143,8 @@ impl Inner {
         };
         let look = crate::render::Look::of(state.theme.window_theme(id));
         let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
-        let paints = build.take_paints();
+        let mut paints = build.take_paints();
+        paints.extend(ghost_paints);
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
         // Building gave a drawn target GPUI focus; a request left over means nd focus is

@@ -16,12 +16,13 @@
 //! gpui-fast's overlay composition surface to stay under this layer; that arrives with the M8
 //! engines. Today's GPU test surface draws inside GPUI, so the deferred layer covers it already.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use nd_components::services::{AlertCallback, ChromeServices, OpenCallback, SaveCallback};
 use nd_components::{AboutPanel, Alert, ContextMenu, Menu, MenuItem, OpenDialog, SaveDialog};
-use nd_core::{NodeId, Point, WindowId};
+use nd_core::{NodeId, Point, Rect, WindowId};
 use nd_gpui::gpui::{
     self, Anchor, AnyElement, Bounds, DispatchPhase, ElementId, HitboxBehavior, InteractiveElement, IntoElement,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent, SharedString,
@@ -75,7 +76,8 @@ impl Build<'_> {
         let mut depth = 0;
         let mut at = self.nodes.get(&id).and_then(|n| n.parent);
         while let Some(n) = at {
-            let node = &self.nodes[&n];
+            // A leaving overlay's snapshot holds only its own subtree.
+            let Some(node) = self.nodes.get(&n) else { break };
             if node.props.downcast_ref::<OverlayProps>().is_some() {
                 depth += 1;
             }
@@ -85,9 +87,30 @@ impl Build<'_> {
     }
 
     pub(crate) fn overlay(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut gpui::App) -> AnyElement {
+        self.overlay_with(id, node, None, window, cx)
+    }
+
+    /// The overlay `id`, or with `exit` its ghost animating out: `exit` is the eased progress
+    /// and the anchor's bounds as they were. A ghost takes no input.
+    pub(crate) fn overlay_with(
+        &self,
+        id: NodeId,
+        node: &Node,
+        exit: Option<(f32, Option<Rect>)>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> AnyElement {
         let props = node.props.downcast_ref::<OverlayProps>().expect("Overlay node needs OverlayProps");
         let theme = self.theme();
-        let passive = props.modality == Modality::Passive;
+        let passive = props.modality == Modality::Passive || exit.is_some();
+        if exit.is_none() && props.modality != Modality::Passive {
+            self.backend.overlay_exits.seen(
+                id,
+                self.window_id,
+                self.subtree(id),
+                node.parent.and_then(|p| self.backend.bounds(p)),
+            );
+        }
         let mut content = div().id(ElementId::Integer(id.0));
         content.style().refine(&props.style);
         content.style().position = Some(gpui::Position::Relative);
@@ -112,15 +135,17 @@ impl Build<'_> {
         // one), or at once when the OS has animations off. Tooltips just appear.
         let content = content.children(children);
         let reduce = self.backend.platform_reduce_motion() == Some(true);
-        let content = if passive || reduce {
+        let rise = match props.placement {
+            Placement::Above => -8.,
+            _ => 8.,
+        };
+        let content = if let Some((t, _)) = exit {
+            content.opacity(1. - t).mt(px(rise * t)).into_any_element()
+        } else if passive || reduce {
             content.into_any_element()
         } else {
             let fluent = theme.preset == nd_theme::Preset::Fluent;
             let duration = if props.kind == OverlayKind::Panel { theme.motion.slow } else { theme.motion.normal };
-            let rise = match props.placement {
-                Placement::Above => -8.,
-                _ => 8.,
-            };
             let ease: fn(f32) -> f32 = if fluent {
                 |t| crate::forms::look::cubic_bezier([0., 0., 0., 1.], t)
             } else {
@@ -152,7 +177,11 @@ impl Build<'_> {
                 .into_any_element()
         } else {
             let mut layer = anchored().snap_to_window_with_margin(px(8.));
-            if let Some(a) = node.parent.and_then(|p| self.backend.bounds(p)) {
+            let anchor = match exit {
+                Some((_, anchor)) => anchor,
+                None => node.parent.and_then(|p| self.backend.bounds(p)),
+            };
+            if let Some(a) = anchor {
                 let (left, top, right, bottom) =
                     (a.origin.x, a.origin.y, a.origin.x + a.size.width, a.origin.y + a.size.height);
                 let (at, corner) = match props.placement {
@@ -506,5 +535,84 @@ impl ChromeServices for GpuiChrome {
 
     fn save_dialog(&self, cx: &mut nd_ui::App, _window: WindowId, _dialog: SaveDialog, done: SaveCallback) {
         done(None, cx);
+    }
+}
+
+/// Seconds and curve an overlay takes to leave, by look: WinUI's "gentle exit"
+/// (cubic-bezier(1, 0, 1, 1), 167 ms); elsewhere the look's fast motion, easing in.
+pub(crate) fn exit_timing(theme: &nd_theme::Theme) -> (f64, fn(f32) -> f32) {
+    if theme.preset == nd_theme::Preset::Fluent {
+        (0.167, |t| crate::forms::look::cubic_bezier([1., 0., 1., 1.], t))
+    } else {
+        (theme.motion.fast.as_secs_f64(), |t| t * t * t)
+    }
+}
+
+/// An overlay's subtree and where it hung, as last drawn.
+#[derive(Clone)]
+pub(crate) struct Snapshot {
+    pub window: nd_core::WindowId,
+    pub nodes: std::collections::HashMap<NodeId, Node>,
+    pub anchor: Option<Rect>,
+    /// When it closed; `None` while it is open.
+    pub left: Option<std::time::Instant>,
+}
+
+/// Open overlays' snapshots and the closed ones still animating out.
+#[derive(Clone, Default)]
+pub(crate) struct Exits(Rc<RefCell<std::collections::HashMap<NodeId, Snapshot>>>);
+
+impl Exits {
+    pub fn seen(
+        &self,
+        id: NodeId,
+        window: nd_core::WindowId,
+        nodes: std::collections::HashMap<NodeId, Node>,
+        anchor: Option<Rect>,
+    ) {
+        self.0.borrow_mut().insert(id, Snapshot { window, nodes, anchor, left: None });
+    }
+
+    /// `id` closed: it starts leaving, unless motion is off (then it is forgotten). Returns its
+    /// window when it leaves.
+    pub fn leave(&self, id: NodeId, reduce: bool) -> Option<nd_core::WindowId> {
+        let mut map = self.0.borrow_mut();
+        let snapshot = map.get_mut(&id)?;
+        if snapshot.left.is_some() {
+            return None;
+        }
+        if reduce {
+            map.remove(&id);
+            return None;
+        }
+        snapshot.left = Some(std::time::Instant::now());
+        Some(snapshot.window)
+    }
+
+    /// The overlays of `window` animating out, with how long ago each closed. Ones done after
+    /// `duration` are dropped.
+    pub fn leaving(&self, window: nd_core::WindowId, duration: f64) -> Vec<(NodeId, Snapshot, f64)> {
+        let mut map = self.0.borrow_mut();
+        let now = std::time::Instant::now();
+        map.retain(|_, s| s.left.is_none_or(|at| now.duration_since(at).as_secs_f64() < duration));
+        map.iter()
+            .filter(|(_, s)| s.window == window)
+            .filter_map(|(id, s)| s.left.map(|at| (*id, s.clone(), now.duration_since(at).as_secs_f64())))
+            .collect()
+    }
+}
+
+impl Build<'_> {
+    /// `id` and every node under it.
+    fn subtree(&self, id: NodeId) -> std::collections::HashMap<NodeId, Node> {
+        let mut out = std::collections::HashMap::new();
+        let mut stack = vec![id];
+        while let Some(n) = stack.pop() {
+            if let Some(node) = self.nodes.get(&n) {
+                stack.extend(node.children.iter().copied());
+                out.insert(n, node.clone());
+            }
+        }
+        out
     }
 }
