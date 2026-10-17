@@ -42,12 +42,29 @@ pub(crate) struct Gestures {
     /// unshifted bounds.
     content: Rc<RefCell<HashMap<NodeId, Rect>>>,
     origin: Instant,
+    /// The OS's animations-off setting: a wheel notch then jumps instead of easing.
+    reduce_motion: Rc<std::cell::Cell<bool>>,
+    /// The OS's own say on easing a wheel notch, over the platform default.
+    smooth_wheel: Rc<std::cell::Cell<Option<bool>>>,
 }
 
 impl Default for Gestures {
     fn default() -> Self {
-        Self { windows: Rc::default(), content: Rc::default(), origin: Instant::now() }
+        Self {
+            windows: Rc::default(),
+            content: Rc::default(),
+            origin: Instant::now(),
+            reduce_motion: Rc::default(),
+            smooth_wheel: Rc::default(),
+        }
     }
+}
+
+/// `ND_DEBUG_GESTURES=1` prints where each press and scroll is routed (the nodes under the
+/// pointer that take gestures, innermost first), to read a routing bug off a user's machine.
+fn debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("ND_DEBUG_GESTURES").is_some_and(|v| v == "1"))
 }
 
 fn gestures_of(node: &Node) -> Option<&GestureSet> {
@@ -117,31 +134,53 @@ fn hit_path(
     scroll: bool,
 ) -> Vec<NodeId> {
     let Some(root) = hit_start(nodes, bounds, root, at, scroll) else { return Vec::new() };
-    let mut path = vec![root];
-    let mut cursor = root;
-    while let Some(node) = nodes.get(&cursor) {
-        let next = node
-            .children
-            .iter()
-            .rev()
-            .filter(|c| !nodes.get(c).is_some_and(hidden))
-            .find(|c| bounds.get(c).is_some_and(|b| contains(b, at)));
-        match next {
-            Some(c) => {
-                path.push(*c);
-                cursor = *c;
-            }
-            None => break,
-        }
-    }
+    let mut path = descend(nodes, bounds, root, at);
     path.reverse();
     path
+}
+
+/// The path from `node` to the innermost node under `at`, outermost first. Of overlapping
+/// children the topmost (last painted) wins, unless nothing in it takes a gesture and an earlier
+/// one does: a layer drawn over the content that is empty where the pointer is (the scaffold's
+/// overlay pane, a full-size toast host) lets the gesture through to what is under it, as GPUI
+/// lets a click through an element with no hitbox.
+fn descend(nodes: &HashMap<NodeId, Node>, bounds: &HashMap<NodeId, Rect>, node: NodeId, at: Point) -> Vec<NodeId> {
+    let mut first: Option<Vec<NodeId>> = None;
+    if let Some(n) = nodes.get(&node) {
+        for c in n.children.iter().rev() {
+            if nodes.get(c).is_some_and(hidden) || !bounds.get(c).is_some_and(|b| contains(b, at)) {
+                continue;
+            }
+            let path = descend(nodes, bounds, *c, at);
+            if path.iter().any(|p| nodes.get(p).and_then(gestures_of).is_some()) {
+                return std::iter::once(node).chain(path).collect();
+            }
+            first.get_or_insert(path);
+        }
+    }
+    std::iter::once(node).chain(first.unwrap_or_default()).collect()
 }
 
 /// A window's retained tree as the hit test reads it: nodes, painted bounds, root.
 pub(crate) type Tree<'a> = (&'a HashMap<NodeId, Node>, &'a HashMap<NodeId, Rect>, NodeId);
 
 impl Gestures {
+    pub(crate) fn set_reduce_motion(&self, reduce: bool) {
+        self.reduce_motion.set(reduce);
+    }
+
+    pub(crate) fn set_smooth_wheel(&self, smooth: Option<bool>) {
+        self.smooth_wheel.set(smooth);
+    }
+
+    fn window_state(&self) -> WindowGestures {
+        let mut config = nd_gesture::GestureConfig::default();
+        if self.reduce_motion.get() || self.smooth_wheel.get() == Some(false) {
+            config.wheel_glide = 0.;
+        }
+        WindowGestures { router: GestureRouter::new(config), ..WindowGestures::default() }
+    }
+
     pub fn needs_frame(&self, window: WindowId) -> bool {
         self.windows.borrow().get(&window).is_some_and(|w| w.router.needs_frame())
     }
@@ -173,9 +212,15 @@ impl Gestures {
     pub fn pointer(&self, window: WindowId, phase: PointerPhase, at: Point, tree: Tree<'_>) -> Vec<Output> {
         let input = PointerInput::new(phase, at, self.now());
         let mut windows = self.windows.borrow_mut();
-        let w = windows.entry(window).or_default();
+        let w = windows.entry(window).or_insert_with(|| self.window_state());
         if phase == PointerPhase::Down {
-            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| w.router.pointer(&input, hit))
+            self.with_hit(tree.0, tree.1, tree.2, at, false, |hit| {
+                if debug() {
+                    let path: Vec<(NodeId, Rect)> = hit.iter().map(|h| (h.node, h.bounds)).collect();
+                    eprintln!("nd: press at {at:?} to {path:?}");
+                }
+                w.router.pointer(&input, hit)
+            })
         } else if w.router.pointer_active() {
             w.router.pointer(&input, &[])
         } else {
@@ -199,10 +244,16 @@ impl Gestures {
             ScrollDelta::Lines(d) => (Point { x: -d.x * 20., y: -d.y * 20. }, None),
         };
         let mut windows = self.windows.borrow_mut();
-        let w = windows.entry(window).or_default();
+        let w = windows.entry(window).or_insert_with(|| self.window_state());
         let (phase, momentum) = w.momentum.classify(finger);
         let input = ScrollInput { position: at, delta, phase, momentum, time: self.now() };
-        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| w.router.scroll(&input, hit))
+        self.with_hit(tree.0, tree.1, tree.2, at, true, |hit| {
+            if debug() {
+                let path: Vec<(NodeId, Rect)> = hit.iter().map(|h| (h.node, h.bounds)).collect();
+                eprintln!("nd: scroll at {at:?} {:?} {:?} to {path:?}", input.phase, input.delta);
+            }
+            w.router.scroll(&input, hit)
+        })
     }
 
     pub fn os_gesture(&self, window: WindowId, event: GestureEvent, at: Point, tree: Tree<'_>) -> Option<Output> {
@@ -216,7 +267,7 @@ impl Gestures {
     /// A pressure event: the step into the force stage is a force click.
     pub fn pressure(&self, window: WindowId, stage: PressureStage) -> bool {
         let mut windows = self.windows.borrow_mut();
-        let w = windows.entry(window).or_default();
+        let w = windows.entry(window).or_insert_with(|| self.window_state());
         let force = stage == PressureStage::Force;
         let fired = force && !w.force;
         w.force = force;
@@ -236,7 +287,7 @@ impl Gestures {
     pub fn scroll_offset(&self, window: WindowId, node: NodeId, set: &GestureSet, viewport: Option<Rect>) -> Point {
         let content = self.content.borrow().get(&node).copied();
         let mut windows = self.windows.borrow_mut();
-        let w = windows.entry(window).or_default();
+        let w = windows.entry(window).or_insert_with(|| self.window_state());
         if let (Some(viewport), Some(content)) = (viewport, content) {
             let extent = Size {
                 width: content.origin.x + content.size.width - viewport.origin.x,
@@ -267,7 +318,7 @@ impl Gestures {
         position: f32,
     ) -> f32 {
         let mut windows = self.windows.borrow_mut();
-        let w = windows.entry(window).or_default();
+        let w = windows.entry(window).or_insert_with(|| self.window_state());
         let content = Size { width: viewport.width, height: viewport.height + range.max(0.) };
         w.router.set_scroll_extent(node, set, viewport, content);
         let Some(s) = w.router.scroller_mut(node) else { return position };
@@ -280,7 +331,12 @@ impl Gestures {
     }
 
     pub fn row_config(&self, window: WindowId, node: NodeId, set: &GestureSet, width: f32) {
-        self.windows.borrow_mut().entry(window).or_default().router.set_row_config(node, set, width);
+        self.windows
+            .borrow_mut()
+            .entry(window)
+            .or_insert_with(|| self.window_state())
+            .router
+            .set_row_config(node, set, width);
     }
 
     pub fn forget_window(&self, window: WindowId) {
@@ -291,7 +347,7 @@ impl Gestures {
     pub fn hand_over(&self, from: WindowId, to: WindowId, nodes: &[NodeId]) {
         let mut windows = self.windows.borrow_mut();
         let Some(mut source) = windows.remove(&from) else { return };
-        let target = windows.entry(to).or_default();
+        let target = windows.entry(to).or_insert_with(|| self.window_state());
         for node in nodes {
             source.router.hand_over(*node, &mut target.router);
         }
@@ -496,5 +552,53 @@ impl gpui::Element for Shifted {
         cx: &mut App,
     ) {
         self.inner.paint(window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nd_gesture::GestureSet;
+
+    fn view(parent: Option<NodeId>, children: Vec<NodeId>, tap: bool) -> Node {
+        let props = DivProps {
+            style: Default::default(),
+            scope: None,
+            drag_region: false,
+            titlebar_insets: false,
+            gestures: GestureSet { tap, ..GestureSet::default() },
+            role: None,
+            transform: Default::default(),
+            hover: None,
+            tracks_hover: false,
+        };
+        Node { kind: NodeKind::View, props: Rc::new(props), parent, children }
+    }
+
+    #[test]
+    fn an_empty_layer_over_the_content_lets_the_gesture_through() {
+        let (root, content, layer) = (NodeId(1), NodeId(2), NodeId(3));
+        let nodes = HashMap::from([
+            (root, view(None, vec![content, layer], false)),
+            (content, view(Some(root), vec![], true)),
+            (layer, view(Some(root), vec![], false)),
+        ]);
+        let full = Rect::new(0., 0., 100., 100.);
+        let bounds = HashMap::from([(root, full), (content, full), (layer, full)]);
+        let path = hit_path(&nodes, &bounds, root, Point { x: 50., y: 50. }, false);
+        assert_eq!(path, vec![content, root], "the tap reaches the content under the empty layer");
+    }
+
+    #[test]
+    fn the_topmost_layer_wins_when_it_takes_the_gesture() {
+        let (root, under, over) = (NodeId(1), NodeId(2), NodeId(3));
+        let nodes = HashMap::from([
+            (root, view(None, vec![under, over], false)),
+            (under, view(Some(root), vec![], true)),
+            (over, view(Some(root), vec![], true)),
+        ]);
+        let full = Rect::new(0., 0., 100., 100.);
+        let bounds = HashMap::from([(root, full), (under, full), (over, full)]);
+        assert_eq!(hit_path(&nodes, &bounds, root, Point { x: 50., y: 50. }, false), vec![over, root]);
     }
 }

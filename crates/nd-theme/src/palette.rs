@@ -108,6 +108,52 @@ fn hex(text: &str) -> Hsla {
 }
 
 impl Palette {
+    /// The baked-in palette of `preset`: Fluent's are WinUI 3's theme resources (Mica base
+    /// under the sidebar, the layer fill under content, cards, the default accent, the system
+    /// fill colours), so the Windows skin reads as Windows where the OS gives no colour and
+    /// where it is drawn off Windows (`ND_PRESET=fluent`). Every other preset takes [`Palette::baked`].
+    pub fn baked_for(preset: crate::Preset, scheme: Scheme) -> Palette {
+        match (preset, scheme) {
+            (crate::Preset::Fluent, Scheme::Light) => Palette {
+                surface: hex("#f9f9f9"),
+                surface_sidebar: hex("#f3f3f3"),
+                surface_raised: hex("#ffffff"),
+                surface_overlay: hex("#fcfcfc"),
+                text_primary: hex("#000000e4"),
+                text_secondary: hex("#0000009e"),
+                text_tertiary: hex("#00000072"),
+                accent: hex("#005fb8"),
+                on_accent: hex("#ffffff"),
+                accent_container: hex("#cce4f6"),
+                on_accent_container: hex("#003e73"),
+                separator: hex("#0000000f"),
+                selection: hex("#cce4f6"),
+                danger: hex("#c42b1c"),
+                success: hex("#0f7b0f"),
+                warning: hex("#9d5d00"),
+            },
+            (crate::Preset::Fluent, Scheme::Dark) => Palette {
+                surface: hex("#272727"),
+                surface_sidebar: hex("#202020"),
+                surface_raised: hex("#2d2d2d"),
+                surface_overlay: hex("#2c2c2c"),
+                text_primary: hex("#ffffff"),
+                text_secondary: hex("#ffffffc5"),
+                text_tertiary: hex("#ffffff87"),
+                accent: hex("#60cdff"),
+                on_accent: hex("#000000"),
+                accent_container: hex("#004a83"),
+                on_accent_container: hex("#ffffff"),
+                separator: hex("#ffffff15"),
+                selection: hex("#004a83"),
+                danger: hex("#ff99a4"),
+                success: hex("#6ccb5f"),
+                warning: hex("#fce100"),
+            },
+            _ => Palette::baked(scheme),
+        }
+    }
+
     /// The baked-in palette: the last source in the chain, used where nothing else answers.
     pub fn baked(scheme: Scheme) -> Palette {
         match scheme {

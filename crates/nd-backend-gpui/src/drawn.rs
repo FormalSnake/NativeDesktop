@@ -122,11 +122,45 @@ impl Build<'_> {
                 row.style().refine(&p.style);
             }
             let merged = row.style().clone();
-            *row.style() = with_titlebar_insets(&merged, self.insets);
+            // A centred item (Messages' conversation) sits at the middle of the window: the
+            // items before and after it go in two groups that share what is left equally, each
+            // holding its own OS inset, so the centre stays put on resize and the groups never
+            // shrink under their content (the centre gives way instead of overlapping them).
+            let centered = node.children.iter().position(|c| {
+                self.nodes.get(c).and_then(|n| n.props.downcast_ref::<ToolbarItemProps>()).is_some_and(|p| p.centered)
+            });
+            let insets = if centered.is_some() {
+                nd_ui::TitlebarInsets { leading: 0., trailing: 0., ..self.insets }
+            } else {
+                self.insets
+            };
+            *row.style() = with_titlebar_insets(&merged, insets);
             let mut items = children(window, cx);
+            let mut centered = centered;
             if let Some((at, title)) = self.toolbar_title(id, node) {
+                if let Some(c) = centered.as_mut()
+                    && at <= *c
+                {
+                    *c += 1;
+                }
                 items.insert(at, title);
             }
+            let items = match centered {
+                Some(c) => {
+                    let after: Vec<AnyElement> = items.split_off(c + 1);
+                    let center = items.pop().expect("the centred item");
+                    let side = || div().flex().flex_row().items_center().gap(s.sm).flex_1().flex_basis(px(0.));
+                    // The insets are spacers, not padding: a group's padding would add to its
+                    // flex basis and push the centre off the middle by half the inset.
+                    let inset = |w: f32| div().flex_none().w(px(w));
+                    vec![
+                        side().child(inset(self.insets.leading)).children(items).into_any_element(),
+                        div().flex_none().child(center).into_any_element(),
+                        side().justify_end().children(after).child(inset(self.insets.trailing)).into_any_element(),
+                    ]
+                }
+                None => items,
+            };
             row.flex()
                 .flex_row()
                 .items_center()
@@ -145,7 +179,43 @@ impl Build<'_> {
                 .children(items)
                 .into_any_element()
         } else if is::<ToolbarItem>(kind) {
-            div().flex().occlude().children(children(window, cx)).into_any_element()
+            // The item occludes the title row under it, so a press on it is never a window drag
+            // (on Windows, never the caption). That also hides it from the window root's pointer
+            // listeners, which GPUI only calls where the root is hovered: the item hands its own
+            // presses to the gesture router, so a tap on what it holds (Messages' conversation)
+            // still fires.
+            let (backend, wake, window_id) = (self.backend.clone(), self.wake.clone(), self.window_id);
+            let (b2, w2, b3, w3) = (backend.clone(), wake.clone(), backend.clone(), wake.clone());
+            let at = |p: gpui::Point<gpui::Pixels>| nd_core::Point { x: p.x.as_f32(), y: p.y.as_f32() };
+            div()
+                .flex()
+                .occlude()
+                .capture_any_mouse_down(move |e, window, cx| {
+                    if e.button == MouseButton::Left {
+                        let p = at(e.position);
+                        backend.gesture_input(window_id, window, cx, &wake, |g, tree| {
+                            g.pointer(window_id, nd_gesture::PointerPhase::Down, p, tree)
+                        });
+                    }
+                })
+                .capture_any_mouse_up(move |e, window, cx| {
+                    if e.button == MouseButton::Left {
+                        let p = at(e.position);
+                        b2.gesture_input(window_id, window, cx, &w2, |g, tree| {
+                            g.pointer(window_id, nd_gesture::PointerPhase::Up, p, tree)
+                        });
+                    }
+                })
+                .on_mouse_move(move |e, window, cx| {
+                    if e.pressed_button == Some(MouseButton::Left) {
+                        let p = at(e.position);
+                        b3.gesture_input(window_id, window, cx, &w3, |g, tree| {
+                            g.pointer(window_id, nd_gesture::PointerPhase::Move, p, tree)
+                        });
+                    }
+                })
+                .children(children(window, cx))
+                .into_any_element()
         } else if is::<ToolbarSystemItem>(kind) {
             match props::<SystemItemProps>(node)?.item {
                 SystemItem::ToggleSidebar => self.sidebar_toggle(id, node, &theme),

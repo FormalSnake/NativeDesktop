@@ -66,6 +66,13 @@ pub struct MatugenTheme {
     pub palettes: SchemePalettes,
 }
 
+impl MatugenTheme {
+    /// Whether the file set any colour nd knows.
+    pub fn has_colours(&self) -> bool {
+        self.palettes != SchemePalettes::default()
+    }
+}
+
 #[derive(Debug)]
 pub enum ParseError {
     Json(serde_json::Error),

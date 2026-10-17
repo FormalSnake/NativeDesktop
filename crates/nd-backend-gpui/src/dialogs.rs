@@ -179,7 +179,7 @@ pub fn alert_view(
     on_input: Option<OnInput<DialogInput>>,
     marks: &Marks,
 ) -> AnyElement {
-    let look = FormLook::adwaita(theme);
+    let look = FormLook::of(theme);
     let s = &theme.spacing;
     let surface = theme.surface.overlay;
     let under = [theme.scrim, surface];
@@ -259,7 +259,7 @@ pub fn about_view(
     on_input: Option<OnInput<DialogInput>>,
     marks: &Marks,
 ) -> AnyElement {
-    let look = FormLook::adwaita(theme);
+    let look = FormLook::of(theme);
     let s = &theme.spacing;
     let surface = theme.surface.overlay;
     let under = [theme.scrim, surface];

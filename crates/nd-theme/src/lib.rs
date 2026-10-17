@@ -69,11 +69,17 @@ fn shell_theme_json() -> Option<PathBuf> {
     Some(state.join("formalshell/theme.json"))
 }
 
+/// The app's own file when it holds colours nd reads, else the shell's. An app's config dir can
+/// keep a `theme.json` its pre-nd build had matugen render in that build's own keys; nd finds
+/// no colour in it and would otherwise never reach the shell's palette.
 fn discover(own: PathBuf, shell: Option<PathBuf>) -> PathBuf {
-    if own.exists() {
+    let readable = |p: &PathBuf| {
+        std::fs::read_to_string(p).ok().and_then(|t| MatugenTheme::parse(&t).ok()).is_some_and(|m| m.has_colours())
+    };
+    if own.exists() && readable(&own) {
         return own;
     }
-    shell.filter(|p| p.exists()).unwrap_or(own)
+    shell.filter(|p| p.exists()).filter(|p| !own.exists() || readable(p)).unwrap_or(own)
 }
 
 fn from_env(name: &str) -> Option<Option<PathBuf>> {
@@ -86,8 +92,10 @@ impl ThemeFiles {
     pub fn for_app(name: &str) -> ThemeFiles {
         let dir = config_dir(name);
         let toml = from_env("ND_THEME_TOML").unwrap_or_else(|| Some(dir.join("theme.toml")));
+        // A Linux build drawing another platform's look (`ND_PRESET`) leaves matugen out, as
+        // that platform would.
         let matugen = from_env("ND_THEME_JSON").unwrap_or_else(|| {
-            (cfg!(target_os = "linux") || cfg!(target_os = "freebsd"))
+            ((cfg!(target_os = "linux") || cfg!(target_os = "freebsd")) && Preset::current() == Preset::Adwaita)
                 .then(|| discover(dir.join("theme.json"), shell_theme_json()))
         });
         ThemeFiles { toml, matugen }
@@ -110,9 +118,12 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let (own, shell) = (root.join("own.json"), root.join("shell.json"));
         assert_eq!(discover(own.clone(), Some(shell.clone())), own);
-        std::fs::write(&shell, "{}").unwrap();
+        std::fs::write(&shell, r##"{"mode": "dark", "background": "#111318", "primary": "#adc6ff"}"##).unwrap();
         assert_eq!(discover(own.clone(), Some(shell.clone())), shell);
-        std::fs::write(&own, "{}").unwrap();
+        // A file in some other app's keys has no colour for nd: the shell's palette wins.
+        std::fs::write(&own, r##"{"canvas": "#111318", "secondary": "#c4c6d0"}"##).unwrap();
+        assert_eq!(discover(own.clone(), Some(shell.clone())), shell);
+        std::fs::write(&own, r##"{"colors": {"primary": {"default": "#3366ff"}}}"##).unwrap();
         assert_eq!(discover(own.clone(), Some(shell)), own);
         assert_eq!(discover(own.clone(), None), own);
     }

@@ -1,7 +1,7 @@
 //! Override layers on containers (ARCHITECTURE.md 3.6): a subtree theme, a pattern choice and a
 //! context menu, plus the per-platform closures every element takes.
 
-use nd_theme::ThemeRefinement;
+use nd_theme::{Preset, ThemeRefinement};
 use nd_ui::prelude::*;
 use nd_ui::{ContainerElement, Scope};
 
@@ -94,18 +94,25 @@ pub trait SubtreeOverrides: ScopedContainer {
 impl<T: ScopedContainer> SubtreeOverrides for T {}
 
 /// Per-platform adjustments on any element; the closure runs only on that platform, so app
-/// code needs no `cfg`.
+/// code needs no `cfg`. A GPUI build drawing another look (`ND_PRESET=fluent` on Linux) runs the
+/// closures of the look it draws.
 pub trait OnPlatform: Sized {
     fn on_macos(self, f: impl FnOnce(Self) -> Self) -> Self {
         if cfg!(target_os = "macos") { f(self) } else { self }
     }
 
     fn on_windows(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if cfg!(target_os = "windows") { f(self) } else { self }
+        if !cfg!(target_os = "macos") && Preset::current() == Preset::Fluent { f(self) } else { self }
     }
 
     fn on_linux(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if cfg!(all(unix, not(target_os = "macos"), not(target_family = "wasm"))) { f(self) } else { self }
+        if cfg!(all(unix, not(target_os = "macos"), not(target_family = "wasm")))
+            && Preset::current() == Preset::Adwaita
+        {
+            f(self)
+        } else {
+            self
+        }
     }
 
     fn on_web(self, f: impl FnOnce(Self) -> Self) -> Self {

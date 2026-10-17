@@ -84,7 +84,18 @@ pub(crate) struct VirtualList {
     pub gestures: crate::gestures::Gestures,
     pub window_id: nd_core::WindowId,
     pub selection_color: Hsla,
+    pub sidebar: SidebarSelection,
     pub disclosure_color: Hsla,
+}
+
+/// How an inset list (a sidebar's) draws its selection.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SidebarSelection {
+    /// From the list's edges.
+    pub inset: f32,
+    pub radius: f32,
+    /// WinUI's selection indicator at the leading edge, in this colour.
+    pub pill: Option<Hsla>,
 }
 
 pub(crate) struct Prepainted {
@@ -366,11 +377,17 @@ impl gpui::Element for VirtualList {
             for b in &prepainted.selected {
                 if self.props.inset {
                     // A sidebar's selection: inset from the edges, rounded.
+                    let s = self.sidebar;
                     let inner = Bounds::new(
-                        point(b.origin.x + px(10.), b.origin.y + px(1.)),
-                        size(b.size.width - px(20.), b.size.height - px(2.)),
+                        point(b.origin.x + px(s.inset), b.origin.y + px(1.)),
+                        size(b.size.width - px(s.inset * 2.), b.size.height - px(2.)),
                     );
-                    window.paint_quad(fill(inner, self.selection_color).corner_radii(px(8.)));
+                    window.paint_quad(fill(inner, self.selection_color).corner_radii(px(s.radius)));
+                    if let Some(pill) = s.pill {
+                        let h = px(16.).min(inner.size.height - px(8.));
+                        let at = point(inner.origin.x, inner.origin.y + (inner.size.height - h) / 2.);
+                        window.paint_quad(fill(Bounds::new(at, size(px(3.), h)), pill).corner_radii(px(1.5)));
+                    }
                 } else {
                     window.paint_quad(fill(*b, self.selection_color));
                 }

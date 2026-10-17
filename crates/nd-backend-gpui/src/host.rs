@@ -181,6 +181,8 @@ impl HostBuilder {
         let backend = GpuiBackend::new();
         backend.set_platform_scheme(scheme_of(cx.window_appearance()));
         backend.set_os_palettes(self.hooks.os_palettes());
+        backend.set_os_reduce_motion(self.hooks.reduce_motion());
+        backend.gestures.set_smooth_wheel(self.hooks.smooth_wheel());
         let mut app = App::with_backend(Box::new(backend.clone()));
         init(&mut app);
         let (tx, rx) = mpsc::unbounded();
@@ -1113,11 +1115,36 @@ impl Inner {
                 .into_any_element(),
             None => element,
         };
+        // Overlays that closed draw their last subtree a moment longer, animating out.
+        let (exit_duration, exit_ease) = crate::overlay::exit_timing(state.theme.window_theme(id));
+        let mut ghosts = Vec::new();
+        let mut ghost_paints = Vec::new();
+        for (ghost, snapshot, elapsed) in self.backend.overlay_exits.leaving(id, exit_duration) {
+            let Some(node) = snapshot.nodes.get(&ghost) else { continue };
+            let t = exit_ease((elapsed / exit_duration).clamp(0., 1.) as f32);
+            let ghost_build =
+                Build::new(&self.backend, &snapshot.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
+            ghosts.push(ghost_build.overlay_with(ghost, node, Some((t, snapshot.anchor)), window, cx));
+            ghost_paints.extend(ghost_build.take_paints());
+            window.request_animation_frame();
+        }
+        let element = if ghosts.is_empty() {
+            element
+        } else {
+            div().size_full().child(element).children(ghosts).into_any_element()
+        };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
         let body_font = state.theme.window_theme(id).fonts.body.clone();
+        // Text nothing sized is the look's body style (Adwaita and Fluent set it at 14 px), not
+        // GPUI's 16 px rem. The macOS preset keeps the rem its goldens were drawn at.
+        let body = {
+            let theme = state.theme.window_theme(id);
+            (theme.preset != nd_theme::Preset::MacOs).then(|| theme.text_styles[nd_theme::TextStyle::Body])
+        };
         let look = crate::render::Look::of(state.theme.window_theme(id));
         let overlay = self.hooks.window_overlay(id, look, build.title_bottom.get(), window);
-        let paints = build.take_paints();
+        let mut paints = build.take_paints();
+        paints.extend(ghost_paints);
         drop(state);
         self.backend.state.borrow_mut().paints.insert(id, paints);
         // Building gave a drawn target GPUI focus; a request left over means nd focus is
@@ -1140,6 +1167,10 @@ impl Inner {
         div()
             .size_full()
             .font(body_font)
+            // Relative, so text sized smaller below keeps the body's leading, not its 20 px.
+            .when_some(body, |d, body| {
+                d.text_size(body.size).line_height(gpui::relative(body.line_height.as_f32() / body.size.as_f32()))
+            })
             // A new press starts clean: a release owed to an earlier consumed press that never
             // arrived (the compositor dropped it) must not eat this press's release.
             .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))
@@ -1270,27 +1301,7 @@ impl Inner {
         cx: &mut gpui::App,
         f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
     ) {
-        if self.backend.palette_covers(id) {
-            return;
-        }
-        let outputs = {
-            let state = self.backend.state.borrow();
-            // An open context menu's or palette's backdrop takes every press.
-            if state.menus.contains_key(&id) {
-                return;
-            }
-            let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
-            let bounds = self.backend.bounds.borrow();
-            f(&self.backend.gestures, (&state.nodes, &bounds, root))
-        };
-        let events = self.backend.state.borrow().events.clone();
-        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
-        if queued {
-            (self.wake())(cx);
-        }
-        if scrolled || self.backend.gestures.needs_frame(id) {
-            window.refresh();
-        }
+        self.backend.gesture_input(id, window, cx, &self.wake(), f);
     }
 
     /// First-frame bookkeeping and the budget knobs, once GPUI has drawn this frame.

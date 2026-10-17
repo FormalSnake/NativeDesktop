@@ -381,19 +381,24 @@ mod gate_m4 {
         assert!(rested < at_lift - 100., "the fling travelled on ({at_lift} -> {rested})");
         assert!(rested >= top - (40. * 30. - 200.) - 0.5, "and stopped at the end at most ({rested}, top {top})");
 
-        // Back to the top and past it: the list stretches, then springs back to the edge.
+        // Back to the top and past it. macOS stretches the list, then springs it back to the
+        // edge; Linux and Windows have no rubber band and stop at the edge.
         scroll(&mut cx, &host, window, 0., TouchPhase::Started);
         for _ in 0..80 {
             scroll(&mut cx, &host, window, 25., TouchPhase::Moved);
         }
         frames(&mut cx, &host, 16);
         let stretched = row_top(&host, window);
-        assert!(stretched > top, "pulled past the top ({stretched} > {top})");
-        assert!(stretched < top + 200., "but resisted ({stretched})");
+        if cfg!(target_os = "macos") {
+            assert!(stretched > top, "pulled past the top ({stretched} > {top})");
+            assert!(stretched < top + 200., "but resisted ({stretched})");
+        } else {
+            assert!((stretched - top).abs() < 0.5, "held at the top with no overshoot ({stretched}, top {top})");
+        }
         std::thread::sleep(Duration::from_millis(80));
         scroll(&mut cx, &host, window, 0., TouchPhase::Ended);
         frames(&mut cx, &host, 1200);
-        assert!((row_top(&host, window) - top).abs() < 0.5, "sprang back to the top");
+        assert!((row_top(&host, window) - top).abs() < 0.5, "rests at the top");
     }
 
     pub fn pinch_and_drag_reach_their_handlers() {

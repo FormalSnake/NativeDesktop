@@ -76,9 +76,9 @@ pub(crate) struct Editor {
     accepts_media: bool,
     /// Height of the laid-out text, for an area that grows with it.
     content: Pixels,
-    /// The emoji picker request last seen, and whether the picker is open.
+    /// The emoji picker request last seen, and nd's own picker while it is open.
     emoji: Option<u64>,
-    emoji_open: bool,
+    picker: Option<super::emoji::Picker>,
 }
 
 impl Editor {
@@ -109,7 +109,7 @@ impl Editor {
             accepts_media: false,
             content: px(0.),
             emoji: None,
-            emoji_open: false,
+            picker: None,
         }
     }
 
@@ -192,6 +192,12 @@ impl Editor {
             return self.text.len();
         }
         self.text[offset..].find('\n').map_or(self.text.len(), |i| offset + i)
+    }
+
+    /// Where the caret was last painted, in window coordinates.
+    fn caret(&self) -> Option<Point<Pixels>> {
+        let (_, origin) = self.painted?;
+        Some(origin + self.position(self.cursor()))
     }
 
     /// Replaces `range` with `new`, leaving the caret after it, and reports the edit.
@@ -854,7 +860,11 @@ pub(crate) fn chrome(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, f: &Fie
         .rounded(look.radius)
         .bg(look.fill)
         .border_2()
-        .border_color(if ctl.focused { look.focus_ring } else { gpui::transparent_black() })
+        .border_color(if ctl.focused {
+            look.focus_ring
+        } else {
+            look.field_stroke.unwrap_or(gpui::transparent_black())
+        })
         .text_size(look.text_size)
         .line_height(look.line_height)
         .text_color(look.text);
@@ -1005,7 +1015,9 @@ pub(crate) fn text_field(
     };
     let name = p.label.clone().or_else(|| p.tooltip.clone()).or_else(|| p.placeholder.clone()).unwrap_or_default();
     let mut field = chrome(&ctl, &editor, &f).role(role).aria_label(name);
-    if p.large {
+    // Only macOS has a larger field size; libadwaita's entries and WinUI's AutoSuggestBox
+    // (a sidebar's search) stay at the control height and radius.
+    if p.large && b.theme().preset == nd_theme::Preset::MacOs {
         field = field.h(look.control_height * 1.5).rounded_full();
     }
     if p.field != FieldStyle::Secure {
@@ -1056,35 +1068,43 @@ pub(crate) fn text_area(
     let (ctl, editor) = editor(b, id, &f, || Commit::Text, window, cx);
     let look = ctl.look;
     let name = p.label.clone().or_else(|| p.tooltip.clone()).or_else(|| p.placeholder.clone()).unwrap_or_default();
-    let (content, picker) = {
+    let (content, request) = {
         let mut e = editor.borrow_mut();
         e.submit_on_return = p.submit_on_return;
         e.accepts_media = p.accepts_media;
         // Each new request opens the picker; the first one seen is where the app started.
-        if e.emoji.is_some_and(|seen| seen != p.emoji_picker) && p.enabled {
-            e.emoji_open = true;
-        }
+        let request = e.emoji.is_some_and(|seen| seen != p.emoji_picker) && p.enabled;
         e.emoji = Some(p.emoji_picker);
-        (e.content, e.emoji_open && p.enabled)
+        if !p.enabled {
+            e.picker = None;
+        }
+        (e.content, request)
     };
     let min = look.line_height * f32::from(p.min_lines.max(1));
     let text_height = match p.max_lines {
         Some(max) => content.max(min).min(look.line_height * f32::from(max.max(p.min_lines).max(1))),
         None => min,
     };
+    // A rounded area (a chat composer) keeps its outline at rest, and one line of it is as tall
+    // as the composer's buttons beside and inside it, so they line up with its text.
+    let rounded = p.style.corner_radii.top_left.is_some();
+    let padding_y = if rounded {
+        ((px(nd_components::COMPOSER_ROW) - look.line_height - px(4.)) / 2.).max(px(0.))
+    } else {
+        look.padding_y
+    };
     let mut area = chrome(&ctl, &editor, &f)
         .role(gpui::Role::MultilineTextInput)
         .aria_label(name)
         .aria_value(p.text.clone())
         .min_w(look.field_min_width)
-        .h(text_height + look.padding_y * 2. + px(4.));
-    // A rounded area (a chat composer) keeps its outline at rest.
-    let rounded = p.style.corner_radii.top_left.is_some();
+        .py(padding_y)
+        .h(text_height + padding_y * 2. + px(4.));
     if rounded && !ctl.focused {
         area = area.border_color(look.border);
     }
     if p.enabled {
-        area = area.on_key_down(on_key(&editor));
+        area = area.on_key_down(picker_keys(&editor, on_key(&editor)));
         if p.accepts_media {
             let sink = ctl.sink.clone();
             area = area.on_drop(move |paths: &gpui::ExternalPaths, _: &mut Window, cx: &mut App| {
@@ -1093,85 +1113,119 @@ pub(crate) fn text_area(
         }
     }
     let mut area = with_style(area.child(text_element(&ctl, &editor, &f)), &p.style);
+    // WinUI rounds a text box at the control radius, a composer's too.
+    if rounded && b.theme().preset == nd_theme::Preset::Fluent {
+        area = area.rounded(b.theme().radius.md);
+    }
     if p.trailing_room > 0. {
         area = area.pr(px(p.trailing_room));
     }
-    if !picker {
-        return area.into_any_element();
+    if request {
+        open_emoji_picker(&ctl, &editor, window, cx);
     }
-    let close = {
-        let editor = editor.clone();
-        move |_: &MouseDownEvent, window: &mut Window, _: &mut App| {
-            editor.borrow_mut().emoji_open = false;
-            window.refresh();
-        }
+    let Some(picker) = emoji_popover(b, id, &ctl, &editor, window) else {
+        return area.into_any_element();
     };
-    let grid =
-        EMOJI.iter().enumerate().fold(div().w(px(8. * 34.)).flex().flex_row().flex_wrap(), |grid, (i, emoji)| {
-            let (editor, sink) = (editor.clone(), ctl.sink.clone());
-            grid.child(
-                div()
-                    .id(ElementId::Integer(i as u64))
-                    .role(gpui::Role::Button)
-                    .aria_label(*emoji)
-                    .size(px(34.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(look.radius)
-                    .text_size(px(20.))
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(move |s| s.bg(look.fill_hover))
-                    .child(*emoji)
-                    .on_click(move |_, window, cx| {
-                        sink.take_focus(window, cx);
-                        let mut e = editor.borrow_mut();
-                        e.emoji_open = false;
-                        let at = e.selected.clone();
-                        e.replace(at, emoji, cx);
-                        drop(e);
-                        window.refresh();
-                    }),
-            )
-        });
-    div().flex().flex_col().child(area).child(popover(b, id, window, look, close, [grid])).into_any_element()
+    div().flex().flex_col().child(area).child(picker).into_any_element()
 }
 
-/// What the drawn emoji picker offers.
-static EMOJI: [&str; 32] = [
-    "\u{1f600}",
-    "\u{1f602}",
-    "\u{1f60a}",
-    "\u{1f60d}",
-    "\u{1f618}",
-    "\u{1f60e}",
-    "\u{1f914}",
-    "\u{1f644}",
-    "\u{1f62d}",
-    "\u{1f621}",
-    "\u{1f631}",
-    "\u{1f634}",
-    "\u{1f973}",
-    "\u{1f607}",
-    "\u{1f643}",
-    "\u{1f609}",
-    "\u{1f44d}",
-    "\u{1f44e}",
-    "\u{1f44f}",
-    "\u{1f64f}",
-    "\u{1f44b}",
-    "\u{1f4aa}",
-    "\u{1f440}",
-    "\u{1f525}",
-    "\u{2764}\u{fe0f}",
-    "\u{1f494}",
-    "\u{2728}",
-    "\u{1f389}",
-    "\u{1f4af}",
-    "\u{2705}",
-    "\u{274c}",
-    "\u{1f680}",
-];
+/// The platform's picker where it has one (the Character Viewer, the Windows emoji panel),
+/// opened at the caret once the field has focus; nd's own elsewhere.
+fn open_emoji_picker(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, window: &mut Window, cx: &mut App) {
+    ctl.sink.take_focus(window, cx);
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        // A frame later the focused field has painted and registered its input handler, which
+        // is where the platform reads the caret.
+        window.on_next_frame(|window, _| window.show_character_palette());
+    } else {
+        editor.borrow_mut().picker = Some(super::emoji::Picker::new());
+    }
+}
+
+/// While nd's picker is open, keys drive it first; the rest reach the field.
+fn picker_keys(
+    editor: &Rc<std::cell::RefCell<Editor>>,
+    keys: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
+    use super::emoji::Outcome;
+    let editor = editor.clone();
+    move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+        let mut e = editor.borrow_mut();
+        let Some(picker) = e.picker.as_mut() else {
+            drop(e);
+            return keys(event, window, cx);
+        };
+        match picker.key(&event.keystroke) {
+            Outcome::Pass => {
+                drop(e);
+                return keys(event, window, cx);
+            }
+            Outcome::Handled => {}
+            Outcome::Close => e.picker = None,
+            Outcome::Pick(emoji) => {
+                e.picker = None;
+                let at = e.selected.clone();
+                e.replace(at, emoji, cx);
+                super::emoji::used(emoji);
+            }
+        }
+        drop(e);
+        cx.stop_propagation();
+        window.refresh();
+    }
+}
+
+/// nd's picker over the window at the caret, while it is open.
+fn emoji_popover(
+    b: &Build,
+    id: NodeId,
+    ctl: &Ctl,
+    editor: &Rc<std::cell::RefCell<Editor>>,
+    window: &Window,
+) -> Option<gpui::AnyElement> {
+    let e = editor.borrow();
+    let picker = e.picker.as_ref()?;
+    let caret = e.caret().or_else(|| e.painted.map(|(bounds, _)| bounds.origin))?;
+    let with = {
+        let editor = editor.clone();
+        Rc::new(move |f: &mut dyn FnMut(&mut super::emoji::Picker)| {
+            let mut e = editor.borrow_mut();
+            e.picker.as_mut().map(f).is_some()
+        })
+    };
+    let pick = {
+        let (editor, sink) = (editor.clone(), ctl.sink.clone());
+        Rc::new(move |emoji: &'static str, window: &mut Window, cx: &mut App| {
+            sink.take_focus(window, cx);
+            let mut e = editor.borrow_mut();
+            e.picker = None;
+            let at = e.selected.clone();
+            e.replace(at, emoji, cx);
+            drop(e);
+            super::emoji::used(emoji);
+            window.refresh();
+        })
+    };
+    let close = {
+        let editor = editor.clone();
+        Rc::new(move |window: &mut Window, _: &mut App| {
+            editor.borrow_mut().picker = None;
+            window.refresh();
+        })
+    };
+    let (backend, window_id) = (b.backend.clone(), b.window_id);
+    let host = super::emoji::Host { with, pick, close };
+    Some(super::emoji::popover(
+        picker,
+        host,
+        caret,
+        ctl.look,
+        b.theme().preset == nd_theme::Preset::Fluent,
+        crate::overlay::PANEL_PRIORITY + 1 + b.overlay_depth(id),
+        move |_| backend.swallow_release(window_id),
+        window,
+    ))
+}
 
 pub(crate) fn combo_box(
     b: &Build,

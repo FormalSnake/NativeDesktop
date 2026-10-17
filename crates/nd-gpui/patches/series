@@ -9,3 +9,5 @@
 0007-gpui_windows-render-grayscale-text-symmetric-and-wit.patch
 0008-gpui_apple-nudge-the-font-size-only-of-a-run-continu.patch
 0009-gpui_wgpu-keep-the-swapchain-through-an-interactive-.patch
+0010-gpui_linux-phase-a-touchpad-s-wayland-scroll-from-ax.patch
+0011-gpui_windows-open-the-emoji-panel-at-the-caret-from-.patch

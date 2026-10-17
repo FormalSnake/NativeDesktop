@@ -44,7 +44,8 @@ pub use nd_gesture::{
 pub use nd_gpui::gpui::prelude::FluentBuilder;
 pub use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keystroke, Modifiers, StyleRefinement, Styled};
 pub use overlay::{
-    DismissCause, Dismissed, Modality, OverlayElement, OverlayKind, OverlayProps, Placement, panel, popover, tooltip,
+    DismissCause, Dismissed, Modality, OverlayElement, OverlayKind, OverlayProps, Placement, cover, panel, popover,
+    tooltip,
 };
 pub use rich_text::{LinkClicked, RichText, Span, SpanStyle, TextColor, span};
 pub use surface::{InputCounts, SurfaceProps, SurfaceSource, native_surface};
@@ -52,7 +53,9 @@ pub use window::{Titlebar, TitlebarInsets, Window, WindowHandle, WindowKind, Win
 
 /// What an app imports: the vocabulary plus GPUI's geometry and colour helpers.
 pub mod prelude {
-    pub use crate::overlay::{DismissCause, Dismissed, Modality, OverlayKind, Placement, panel, popover, tooltip};
+    pub use crate::overlay::{
+        DismissCause, Dismissed, Modality, OverlayKind, Placement, cover, panel, popover, tooltip,
+    };
     pub use crate::surface::{SurfaceSource, native_surface};
     pub use crate::{
         Animation, Canvas, CanvasPath, Curve, LinkClicked, Painter, Pose, RichText, Span, TextColor, canvas, rich_text,
