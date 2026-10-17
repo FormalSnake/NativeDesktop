@@ -142,8 +142,15 @@
             export PATH="/usr/bin:$PATH"
             for v in $(env | sed -n 's/^\(NIX_\(CC\|BINTOOLS\|CFLAGS\|LDFLAGS\|HARDENING\|APPLE\)[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
             # nd-cef's build script downloads the CEF binary distribution (about 500 MB unpacked) into
-            # $CEF_PATH; on the macbook that is the cache drive, next to the cargo build dir.
-            export CEF_PATH="/Volumes/Kyan Drive/dev-cache.noindex/cef"
+            # $CEF_PATH; on the macbook that is the cache drive, next to the cargo build dir. Anywhere
+            # else (CI runners) it falls back to the user cache.
+            if [ -z "''${CEF_PATH:-}" ]; then
+              if [ -d "/Volumes/Kyan Drive" ]; then
+                export CEF_PATH="/Volumes/Kyan Drive/dev-cache.noindex/cef"
+              else
+                export CEF_PATH="''${XDG_CACHE_HOME:-$HOME/Library/Caches}/nd-cef"
+              fi
+            fi
             # Several agents build here at once next to the user's own services; cap each build and
             # test run. Workspace-wide and Linux-capable runs belong on g815 (scripts/linux-gate).
             export CARGO_BUILD_JOBS="''${CARGO_BUILD_JOBS:-4}"
