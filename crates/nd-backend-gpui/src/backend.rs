@@ -105,6 +105,8 @@ pub struct GpuiBackend {
     pub(crate) lists: crate::virtual_list::Presenters,
     /// Gesture recognition and scroll physics per window.
     pub(crate) gestures: crate::gestures::Gestures,
+    /// Controls' fills fading between rest, hover and pressed.
+    pub(crate) fades: crate::fade::Fades,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
@@ -167,6 +169,7 @@ impl GpuiBackend {
             menu_bar: Rc::default(),
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
+            fades: crate::fade::Fades::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
             splits: Rc::default(),
@@ -576,6 +579,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.fades.forget(node);
         self.surface_counts.borrow_mut().remove(&node);
         self.drawn.borrow_mut().remove(&node);
         let mut tabs = self.tab_seam.borrow_mut();

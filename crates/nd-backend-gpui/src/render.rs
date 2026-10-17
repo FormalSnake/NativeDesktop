@@ -508,7 +508,7 @@ impl<'a> Build<'a> {
                 d.style().text.color = Some(color);
                 d.child(props.text.clone()).into_any_element()
             }
-            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node),
+            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node, window),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
@@ -740,7 +740,7 @@ impl<'a> Build<'a> {
             .into_any_element()
     }
 
-    fn button(&self, id: NodeId, node: &Node) -> AnyElement {
+    fn button(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
         let props = GpuiBackend::button_label(&node.props);
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
@@ -812,10 +812,44 @@ impl<'a> Build<'a> {
         if !props.enabled {
             return button.into_any_element();
         }
+        // Rest, hover and pressed fills fade into each other at the look's own speed (WinUI's
+        // 83 ms), or switch at once when the OS has animations off.
         let (hover, active) = (theme.hover(fill), theme.pressed(fill));
+        let duration =
+            if self.backend.platform_reduce_motion() == Some(true) { 0. } else { theme.motion.fast.as_secs_f64() };
+        let fades = self.backend.fades.clone();
+        let pointer = fades.pointer(id);
+        let rest = if bezel { fill } else { with_alpha(fill, 0.) };
+        let target = if pointer.pressed {
+            active
+        } else if pointer.hovered {
+            hover
+        } else {
+            rest
+        };
+        let (shown, moving) = fades.sample(id, target, self.time, duration);
+        if moving {
+            window.request_animation_frame();
+        }
+        let (on_hover, on_down, on_up, on_up_out) = (fades.clone(), fades.clone(), fades.clone(), fades);
         button
-            .hover(move |s| s.bg(hover))
-            .active(move |s| s.bg(active))
+            .bg(shown)
+            .on_hover(move |hovered, window, _| {
+                on_hover.set_pointer(id, |p| p.hovered = *hovered);
+                window.refresh();
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, _| {
+                on_down.set_pointer(id, |p| p.pressed = true);
+                window.refresh();
+            })
+            .on_mouse_up(gpui::MouseButton::Left, move |_, window, _| {
+                on_up.set_pointer(id, |p| p.pressed = false);
+                window.refresh();
+            })
+            .on_mouse_up_out(gpui::MouseButton::Left, move |_, window, _| {
+                on_up_out.set_pointer(id, |p| p.pressed = false);
+                window.refresh();
+            })
             .on_click(move |_, _, cx| {
                 emit.emit(ClickEvent);
                 wake(cx);

@@ -241,7 +241,7 @@ impl FormLook {
 }
 
 /// y at x on the curve from (0, 0) to (1, 1) with control points `c`, solved for x by bisection.
-fn cubic_bezier(c: [f32; 4], x: f32) -> f32 {
+pub(crate) fn cubic_bezier(c: [f32; 4], x: f32) -> f32 {
     let at = |a: f32, b: f32, t: f32| {
         let u = 1. - t;
         3. * u * u * t * a + 3. * u * t * t * b + t * t * t

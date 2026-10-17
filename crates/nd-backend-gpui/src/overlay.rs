@@ -107,7 +107,34 @@ impl Build<'_> {
                 .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
         }
-        let content = Tracked::new(id, content.children(children).into_any_element(), self.backend.bounds.clone());
+        // Popovers, menus and panels come in with the look's entrance: a short rise and a fade
+        // over its normal duration (WinUI's "fast out, slow in", 167 ms; the panel takes the slow
+        // one), or at once when the OS has animations off. Tooltips just appear.
+        let content = content.children(children);
+        let reduce = self.backend.platform_reduce_motion() == Some(true);
+        let content = if passive || reduce {
+            content.into_any_element()
+        } else {
+            let fluent = theme.preset == nd_theme::Preset::Fluent;
+            let duration = if props.kind == OverlayKind::Panel { theme.motion.slow } else { theme.motion.normal };
+            let rise = match props.placement {
+                Placement::Above => -8.,
+                _ => 8.,
+            };
+            let ease: fn(f32) -> f32 = if fluent {
+                |t| crate::forms::look::cubic_bezier([0., 0., 0., 1.], t)
+            } else {
+                |t| 1. - (1. - t).powi(3)
+            };
+            gpui::AnimationExt::with_animation(
+                content,
+                ElementId::NamedInteger("nd-overlay-enter".into(), id.0),
+                gpui::Animation::new(duration).with_easing(ease),
+                move |el, t| el.opacity(t).mt(px(rise * (1. - t))),
+            )
+            .into_any_element()
+        };
+        let content = Tracked::new(id, content, self.backend.bounds.clone());
 
         let viewport = window.viewport_size();
         let positioned = if props.kind == OverlayKind::Panel {
