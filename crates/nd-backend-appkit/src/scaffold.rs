@@ -185,6 +185,14 @@ impl PaneNative {
             );
             view.heightAnchor().constraintEqualToConstant(height).setActive(true);
             accessory.setView(&view);
+            // A sidebar's band blurs what scrolls under it progressively, strongest at the top, as
+            // Messages' does under its search field: the soft scroll edge effect (macOS 26.1).
+            if props.role == PaneRole::Sidebar
+                && let Some(styles) = objc2::runtime::AnyClass::get(c"NSScrollEdgeEffectStyle")
+            {
+                let soft: Retained<objc2::runtime::AnyObject> = unsafe { msg_send![styles, softStyle] };
+                let _: () = unsafe { msg_send![&*accessory, setPreferredScrollEdgeEffectStyle: &*soft] };
+            }
             item.addTopAlignedAccessoryViewController(&accessory);
             // A sidebar's band ends without a line, as Messages' does under its search field.
             if props.role == PaneRole::Sidebar {
