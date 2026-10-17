@@ -223,7 +223,14 @@ impl PaneNative {
         }
         if (first || props.collapsed != self.props.collapsed) && props.collapsed != self.collapsed.get() {
             self.collapsed.set(props.collapsed);
-            item.setCollapsed(props.collapsed);
+            // Once on screen, through the animator: the pane slides in and out as AppKit's own
+            // sidebar and inspector toggles slide it. Reduce Motion makes AppKit skip the slide.
+            if !first && self.host.window().is_some_and(|w| w.isVisible()) {
+                let animator: Retained<NSSplitViewItem> = unsafe { msg_send![&**item, animator] };
+                animator.setCollapsed(props.collapsed);
+            } else {
+                item.setCollapsed(props.collapsed);
+            }
         }
     }
 
