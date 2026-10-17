@@ -256,7 +256,7 @@ impl GestureRouter {
             .find(|e| self.scrollers.get(&e.node).is_some_and(|s| s.has_room(axis, along)))
             .map(|e| e.node);
         if let Some(s) = target.and_then(|n| self.scrollers.get_mut(&n)) {
-            s.wheel(input.delta);
+            s.wheel(input.delta, input.time);
         }
     }
 
