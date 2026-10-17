@@ -168,7 +168,7 @@ impl PaneNative {
             expose,
         };
         this.apply(props, true);
-        if props.role == PaneRole::Content
+        if props.role != PaneRole::Overlay
             && props.toolbar_extension > 0.
             && let Some(item) = &this.item
         {
@@ -186,6 +186,10 @@ impl PaneNative {
             view.heightAnchor().constraintEqualToConstant(height).setActive(true);
             accessory.setView(&view);
             item.addTopAlignedAccessoryViewController(&accessory);
+            // A sidebar's band ends without a line, as Messages' does under its search field.
+            if props.role == PaneRole::Sidebar {
+                item.setTitlebarSeparatorStyle(objc2_app_kit::NSTitlebarSeparatorStyle::None);
+            }
         }
         this
     }

@@ -222,6 +222,19 @@ impl Pane {
         self.0.props_mut().width = Some(width.as_f32());
         self.w(width)
     }
+
+    /// The pane's content runs up under the toolbar, its lists scrolling under the bar's blur,
+    /// as Messages' conversation list does under its search field.
+    pub fn under_toolbar(mut self) -> Self {
+        self.0.props_mut().under_toolbar = true;
+        self
+    }
+
+    /// The toolbar's band, and its blur, reach `points` further down over this pane.
+    pub fn toolbar_extension(mut self, points: f32) -> Self {
+        self.0.props_mut().toolbar_extension = points;
+        self
+    }
 }
 
 impl Styled for Pane {
