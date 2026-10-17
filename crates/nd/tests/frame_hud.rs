@@ -3,6 +3,7 @@
 //! arithmetic is `FrameSummary`'s unit test in nd-diag).
 //! Prints `ND_FRAME_HUD_OK`.
 
+#[cfg_attr(not(target_os = "macos"), allow(clippy::needless_return))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let name = "nd::frame_hud";
