@@ -33,6 +33,9 @@ pub struct PaneIvars {
     on_resize: RefCell<Option<Hook>>,
     /// Smallest and largest size along a `split()`'s axis, which its delegate holds a drag to.
     limits: Cell<(Option<f64>, Option<f64>)>,
+    /// `content_edge_on_hover`: whether the edge effect under the toolbar shows now.
+    edge: RefCell<Option<Rc<Cell<bool>>>>,
+    edge_tracker: RefCell<Option<Retained<crate::edge::NdEdgeTracker>>>,
 }
 
 define_class!(
@@ -63,6 +66,17 @@ define_class!(
             }
         }
 
+        #[unsafe(method(viewDidMoveToWindow))]
+        fn did_move_to_window(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
+            let shown = self.ivars().edge.borrow().clone();
+            if let (Some(shown), Some(window)) = (shown, self.window())
+                && self.ivars().edge_tracker.borrow().is_none()
+            {
+                *self.ivars().edge_tracker.borrow_mut() = crate::edge::NdEdgeTracker::install(&window, self, shown);
+            }
+        }
+
         #[unsafe(method(safeAreaInsetsDidChange))]
         fn safe_area_changed(&self) {
             let _: () = unsafe { msg_send![super(self), safeAreaInsetsDidChange] };
@@ -84,6 +98,19 @@ impl NdPaneView {
         this.addSubview(child);
         *this.ivars().child.borrow_mut() = Some(child.retain());
         this
+    }
+
+    /// Whether the edge effect under the toolbar shows now in the pane holding `view`, when that
+    /// pane shows it only on hover.
+    pub(crate) fn edge_shown(view: &NSView) -> Option<bool> {
+        let mut cursor = unsafe { view.superview() };
+        while let Some(v) = cursor {
+            if let Some(pane) = v.downcast_ref::<NdPaneView>() {
+                return pane.ivars().edge.borrow().as_ref().map(|s| s.get());
+            }
+            cursor = unsafe { v.superview() };
+        }
+        None
     }
 
     pub(crate) fn set_on_resize(&self, hook: Option<Hook>) {
@@ -119,6 +146,9 @@ impl PaneNative {
     pub fn new(mtm: MainThreadMarker, props: &PaneProps, expose: bool) -> Self {
         let content = NdLayerView::new(mtm, &ViewLook::from_style(&props.style, expose));
         let host = NdPaneView::new(mtm, &content);
+        if props.role == PaneRole::Content && props.edge_on_hover {
+            *host.ivars().edge.borrow_mut() = Some(Rc::new(Cell::new(false)));
+        }
         let controller = NSViewController::new(mtm);
         controller.setView(&host);
         let item = match props.role {
@@ -138,6 +168,25 @@ impl PaneNative {
             expose,
         };
         this.apply(props, true);
+        if props.role == PaneRole::Content
+            && props.toolbar_extension > 0.
+            && let Some(item) = &this.item
+        {
+            // The toolbar's band reaches down over an empty top accessory, and its scroll edge
+            // effect with it. AppKit pads an accessory by 9 pt above and below its view.
+            let height = (f64::from(props.toolbar_extension) - 18.).max(0.);
+            let accessory = objc2_app_kit::NSSplitViewItemAccessoryViewController::new(mtm);
+            let view = NSView::initWithFrame(
+                NSView::alloc(mtm),
+                objc2_foundation::NSRect::new(
+                    objc2_foundation::NSPoint::ZERO,
+                    objc2_foundation::NSSize::new(1., height),
+                ),
+            );
+            view.heightAnchor().constraintEqualToConstant(height).setActive(true);
+            accessory.setView(&view);
+            item.addTopAlignedAccessoryViewController(&accessory);
+        }
         this
     }
 

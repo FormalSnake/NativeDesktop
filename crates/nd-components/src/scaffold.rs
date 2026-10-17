@@ -44,6 +44,10 @@ pub struct PaneProps {
     /// The pane runs up under the window's toolbar: lists in it scroll under the bar, which
     /// blurs them, and rest clear of it; other content is the app's to keep clear.
     pub under_toolbar: bool,
+    /// Points the toolbar's band reaches below its row over this pane (at least 18 on macOS).
+    pub toolbar_extension: f32,
+    /// The edge effect under the toolbar shows only while the pointer is over the toolbar.
+    pub edge_on_hover: bool,
     pub style: StyleRefinement,
 }
 
@@ -62,6 +66,8 @@ pub struct Scaffold {
     inspector: Option<Pane>,
     overlay: Option<AnyElement>,
     content_under_toolbar: bool,
+    toolbar_extension: f32,
+    content_edge_on_hover: bool,
 }
 
 #[track_caller]
@@ -75,6 +81,8 @@ pub fn scaffold() -> Scaffold {
         inspector: None,
         overlay: None,
         content_under_toolbar: false,
+        toolbar_extension: 0.,
+        content_edge_on_hover: false,
     }
 }
 
@@ -106,6 +114,21 @@ impl Scaffold {
         self
     }
 
+    /// The toolbar's band, and its blur, reach `points` further down over the content: room for
+    /// what the content shows at its top under the toolbar (Messages' conversation name).
+    pub fn toolbar_extension(mut self, points: f32) -> Self {
+        self.toolbar_extension = points;
+        self
+    }
+
+    /// The blur and bottom edge over content under the toolbar show only while the pointer is
+    /// over the toolbar's band, as Messages' transcript on macOS 26; at rest the content runs
+    /// under the toolbar untouched.
+    pub fn content_edge_on_hover(mut self) -> Self {
+        self.content_edge_on_hover = true;
+        self
+    }
+
     /// Floats over the content: palettes, sheets drawn in-window.
     pub fn overlay(mut self, overlay: impl IntoElement) -> Self {
         self.overlay = Some(overlay.into_any_element());
@@ -134,9 +157,13 @@ impl ScopedContainer for Scaffold {
 impl IntoElement for Scaffold {
     fn into_any_element(self) -> AnyElement {
         let under = self.content_under_toolbar;
+        let extension = self.toolbar_extension;
+        let edge_on_hover = self.content_edge_on_hover;
         let content = self.content.map(|c| {
             let mut pane = pane_with(Key::Id("nd-content".into()), PaneRole::Content);
             pane.0.props_mut().under_toolbar = under;
+            pane.0.props_mut().toolbar_extension = extension;
+            pane.0.props_mut().edge_on_hover = edge_on_hover;
             pane.flex_1().min_w_0().h_full().child(c)
         });
         let overlay = self.overlay.map(|o| {

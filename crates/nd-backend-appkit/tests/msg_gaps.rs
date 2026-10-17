@@ -391,6 +391,8 @@ mod gaps {
                 .toolbar(toolbar().hide_title().navigation(icon(Icon::SquarePen, 16.)))
                 .sidebar(sidebar().child(div().size_full()))
                 .content_under_toolbar()
+                .toolbar_extension(28.)
+                .content_edge_on_hover()
                 .content(
                     div()
                         .size_full()
@@ -435,6 +437,12 @@ mod gaps {
         );
         let inset = list.contentInsets().top;
         c.check((inset - bars).abs() < 1., &format!("under toolbar: the list is inset by the bars ({inset})"));
+        c.check(
+            (bars - 80.).abs() < 1.,
+            &format!("under toolbar: toolbar_extension(28) adds to the 52 pt bars ({bars})"),
+        );
+        let edges: usize = unsafe { nd_backend_appkit::objc2::msg_send![&**list, allowedPocketEdges] };
+        c.check(edges == 0, &format!("under toolbar: at rest the edge effect is off ({edges})"));
         let rest = list.contentView().bounds().origin.y;
         c.check((rest + bars).abs() < 1., &format!("under toolbar: the first row rests below the bar ({rest})"));
         if nd_backend_appkit::objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some() {
