@@ -23,6 +23,7 @@ nd-virtual.workspace = true
 nd-gpui = { workspace = true, features = ["platform"] }
 futures = "0.3.34"
 unicode-segmentation = "1.13.3"
+emojis = "0.9.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 # `video()` decodes through GStreamer, loaded with dlopen (media/video/gst.rs).
@@ -67,6 +68,10 @@ harness = false
 # the button or GPU surface under it.
 [[test]]
 name = "overlays"
+harness = false
+
+[[test]]
+name = "popover_menu"
 harness = false
 
 [[test]]

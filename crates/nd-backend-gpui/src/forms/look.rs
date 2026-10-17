@@ -218,6 +218,9 @@ impl FormLook {
             switch_height: px(20.),
             switch_inset: px(4.),
             slider_knob: px(20.),
+            // ControlFastAnimationDuration on Fluent's "fast out, slow in" curve.
+            toggle_seconds: 0.167,
+            toggle_ease: [0., 0., 0., 1.],
             field_stroke: Some(with_alpha(theme.text.primary, 0.07)),
             switch_outline: Some(theme.text.secondary),
             knob_off: theme.text.secondary,
@@ -238,7 +241,7 @@ impl FormLook {
 }
 
 /// y at x on the curve from (0, 0) to (1, 1) with control points `c`, solved for x by bisection.
-fn cubic_bezier(c: [f32; 4], x: f32) -> f32 {
+pub(crate) fn cubic_bezier(c: [f32; 4], x: f32) -> f32 {
     let at = |a: f32, b: f32, t: f32| {
         let u = 1. - t;
         3. * u * u * t * a + 3. * u * t * t * b + t * t * t

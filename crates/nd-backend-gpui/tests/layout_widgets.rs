@@ -56,6 +56,8 @@ enum Kind {
         title: Option<&'static str>,
         leading_item: bool,
     },
+    /// A toolbar with a centred item that takes taps, a short leading run and a long trailing one.
+    Centered,
 }
 
 #[derive(Default)]
@@ -115,6 +117,20 @@ impl Render for Scene {
                     .child(button("new", "New Note")),
             ),
             Kind::Plain => root.child(text("Inbox")),
+            Kind::Centered => {
+                let log = self.log.clone();
+                let bar = toolbar()
+                    .sidebar_toggle()
+                    .item(button("new", "New"))
+                    .flexible_space()
+                    .centered_item(div().id("who").w(px(120.)).h(px(28.)).on_tap(move |_, _, _| {
+                        log.borrow_mut().clicks.push("who");
+                    }))
+                    .flexible_space()
+                    .item(button("catch-up", "Catch Me Up"))
+                    .item(button("call", "Call"));
+                return scaffold().toolbar(bar).content(text("Body")).into_any_element();
+            }
             Kind::Bar { title, leading_item } => {
                 let bar = toolbar().sidebar_toggle();
                 let bar = match title {
@@ -319,6 +335,16 @@ mod gate_m6 {
         let paints = o.host.backend().paints(o.window).expect("paints");
         assert!(paints.iter().any(|p| p.label == "Under"), "the visible button painted");
         assert!(!paints.iter().any(|p| p.label == "Over"), "nothing in the hidden page painted");
+    }
+
+    /// The centred item sits at the window's middle whatever sits beside it, and takes taps.
+    pub fn gpui_toolbar_centres_its_centred_item_on_the_window() {
+        let mut o = open(Kind::Centered);
+        let who = o.node("who").bounds.expect("who");
+        let centre = who.origin.x + who.size.width / 2.;
+        assert!((centre - 400.).abs() < 1., "centred on the 800 pt window, not between its neighbours: {centre}");
+        o.click(Point { x: centre, y: who.origin.y + who.size.height / 2. });
+        assert_eq!(o.log.borrow().clicks, ["who"], "a tap on the centred item reaches it");
     }
 
     pub fn gpui_status_page_lays_out_centred() {
@@ -544,6 +570,10 @@ fn main() {
             gate_m6::gpui_split_hidden_subtree_is_not_hit_or_painted,
         ),
         ("gate_m6::gpui_status_page_lays_out_centred", gate_m6::gpui_status_page_lays_out_centred),
+        (
+            "gate_m6::gpui_toolbar_centres_its_centred_item_on_the_window",
+            gate_m6::gpui_toolbar_centres_its_centred_item_on_the_window,
+        ),
         (
             "gate_m6::gpui_toolbar_shows_a_title_in_an_empty_leading_run",
             gate_m6::gpui_toolbar_shows_a_title_in_an_empty_leading_run,

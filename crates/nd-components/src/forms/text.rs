@@ -155,7 +155,9 @@ pub struct TextAreaProps {
     /// Pasted or dropped images arrive as [`ImagesPasted`] and dropped files as
     /// [`FilesDropped`], instead of as text.
     pub accepts_media: bool,
-    /// Opens the system emoji picker at the caret each time it changes.
+    /// Opens the emoji picker at the caret each time it changes: the platform's (the Character
+    /// Viewer, the Windows emoji panel) or, where there is none, nd's own. The chosen emoji goes
+    /// in at the caret.
     pub emoji_picker: u64,
     /// Points kept clear at the trailing edge, inside the field's outline: room for a button
     /// laid over it (a chat bar's send button).
@@ -556,7 +558,8 @@ impl TextArea {
         self
     }
 
-    /// Opens the system emoji picker whenever `request` changes; pass a counter the app bumps.
+    /// Opens the emoji picker at the caret whenever `request` changes (the platform's, or nd's
+    /// own where it has none); pass a counter the app bumps. The chosen emoji goes in at the caret.
     pub fn emoji_picker(mut self, request: u64) -> Self {
         self.element.props_mut().emoji_picker = request;
         self

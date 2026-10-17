@@ -16,6 +16,7 @@ use nd_ui::events::EventQueue;
 use nd_ui::semantics::{ActionError, Capture, Paint, Probe, SemanticAction, SyntheticInput, WindowState};
 use nd_ui::{App, Button, ButtonProps, ClickEvent, InputCounts, SurfaceProps};
 
+#[derive(Clone)]
 pub(crate) struct Node {
     pub kind: NodeKind,
     pub props: Props,
@@ -105,6 +106,10 @@ pub struct GpuiBackend {
     pub(crate) lists: crate::virtual_list::Presenters,
     /// Gesture recognition and scroll physics per window.
     pub(crate) gestures: crate::gestures::Gestures,
+    /// Controls' fills fading between rest, hover and pressed.
+    pub(crate) fades: crate::fade::Fades,
+    /// Each open overlay's subtree as last drawn, and the closed ones still animating out.
+    pub(crate) overlay_exits: crate::overlay::Exits,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
     pub(crate) drawn: crate::nav::DrawnMap,
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
@@ -167,6 +172,8 @@ impl GpuiBackend {
             menu_bar: Rc::default(),
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
+            fades: crate::fade::Fades::default(),
+            overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
             splits: Rc::default(),
@@ -279,6 +286,19 @@ impl GpuiBackend {
     /// The OS's own colours (the system accent), as the OS hooks last read them.
     pub fn platform_palettes(&self) -> nd_theme::SchemePalettes {
         self.state.borrow().theme.os().palettes
+    }
+
+    /// The OS's animations-off setting, as the OS hooks read it at launch.
+    pub fn platform_reduce_motion(&self) -> Option<bool> {
+        self.state.borrow().theme.os().metrics.reduce_motion
+    }
+
+    pub(crate) fn set_os_reduce_motion(&self, reduce: Option<bool>) {
+        self.gestures.set_reduce_motion(reduce == Some(true));
+        let mut state = self.state.borrow_mut();
+        let mut os = state.theme.os().clone();
+        os.metrics.reduce_motion = reduce;
+        state.theme.set_os(os);
     }
 
     /// Records the OS's own colours; true when they changed.
@@ -550,6 +570,10 @@ impl Backend for GpuiBackend {
         if let Some(custom) = custom {
             custom.released(node);
         }
+        // A closing overlay keeps drawing its last subtree while it animates out.
+        if let Some(window) = self.overlay_exits.leave(node, self.platform_reduce_motion() == Some(true)) {
+            self.state.borrow_mut().dirty.insert(window);
+        }
         let mut state = self.state.borrow_mut();
         if let Some(n) = state.nodes.remove(&node) {
             if let Some(p) = n.parent.and_then(|p| state.nodes.get_mut(&p)) {
@@ -563,6 +587,7 @@ impl Backend for GpuiBackend {
         }
         drop(state);
         self.bounds.borrow_mut().remove(&node);
+        self.fades.forget(node);
         self.surface_counts.borrow_mut().remove(&node);
         self.drawn.borrow_mut().remove(&node);
         let mut tabs = self.tab_seam.borrow_mut();
@@ -741,6 +766,39 @@ impl Backend for GpuiBackend {
 }
 
 impl GpuiBackend {
+    /// Runs one input through the window's gesture router with the current tree and the bounds
+    /// of the last paint, then queues the events it produced and redraws for moved scroll views.
+    pub(crate) fn gesture_input(
+        &self,
+        id: WindowId,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+        wake: &Wake,
+        f: impl FnOnce(&crate::gestures::Gestures, crate::gestures::Tree<'_>) -> Vec<nd_gesture::Output>,
+    ) {
+        if self.palette_covers(id) {
+            return;
+        }
+        let outputs = {
+            let state = self.state.borrow();
+            // An open context menu's or palette's backdrop takes every press.
+            if state.menus.contains_key(&id) {
+                return;
+            }
+            let Some(root) = state.windows.get(&id).and_then(|w| w.root) else { return };
+            let bounds = self.bounds.borrow();
+            f(&self.gestures, (&state.nodes, &bounds, root))
+        };
+        let events = self.state.borrow().events.clone();
+        let (queued, scrolled) = crate::gestures::deliver(&events, outputs);
+        if queued {
+            wake(cx);
+        }
+        if scrolled || self.gestures.needs_frame(id) {
+            window.refresh();
+        }
+    }
+
     /// Scrolls the virtual list `node` sits in until the row holding it shows, the nearest edge
     /// first. A node in no list has nothing to scroll here.
     fn scroll_row_into_view(&self, node: NodeId) -> Result<(), ActionError> {

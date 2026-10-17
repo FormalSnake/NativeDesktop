@@ -2,20 +2,23 @@
 //! toolbar's band (`Scaffold::content_edge_on_hover`), as Messages shows its transcript's on
 //! macOS 26: at rest the content runs under the toolbar untouched.
 //!
-//! AppKit has no public switch for the effect. `-[NSScrollView setAllowedPocketEdges:]` (the
-//! scroll view's own record of which edges may draw it) is undocumented; with no edge allowed the
-//! effect and its edge line go, and allowing the top edge again brings them back.
+//! AppKit has no public switch for the effect. It draws it in a scroll pocket, a private
+//! subview of the scroll view (`NSScrollPocket`); nd fades that view's alpha, with the durations
+//! and curves measured off Messages at 60 fps: 0.25 s easing out on the way in, 0.3 s easing in
+//! and out on the way out.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
+use block2::RcBlock;
 use objc2::rc::{Retained, Weak};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSEvent, NSScrollView, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow};
+use objc2_app_kit::{
+    NSAnimatablePropertyContainer, NSAnimationContext, NSEvent, NSScrollView, NSTrackingArea, NSTrackingAreaOptions,
+    NSView, NSWindow, NSWorkspace,
+};
 use objc2_foundation::{MainThreadMarker, NSObject, NSRect};
-
-/// The edges a scroll view's edge effect may show on: the top edge and the bottom one.
-const EDGES: usize = 3;
+use objc2_quartz_core::{CAMediaTimingFunction, kCAMediaTimingFunctionEaseInEaseOut, kCAMediaTimingFunctionEaseOut};
 
 pub struct EdgeIvars {
     window: Weak<NSWindow>,
@@ -95,21 +98,43 @@ fn deepest_bars(view: &NSView) -> f64 {
 /// Shows or hides the edge effect of every scroll view under `view` that runs under the bars.
 pub(crate) fn apply(view: &NSView, shown: bool) {
     if let Some(scroll) = view.downcast_ref::<NSScrollView>() {
-        set(scroll, shown);
+        set(scroll, shown, true);
     }
     for child in view.subviews().iter() {
         apply(&child, shown);
     }
 }
 
-/// One scroll view, when it runs under the bars.
-pub(crate) fn set(scroll: &NSScrollView, shown: bool) {
+/// How long the effect takes to show and to go, in seconds.
+const SHOW: f64 = 0.25;
+const HIDE: f64 = 0.3;
+
+/// One scroll view, when it runs under the bars: its pocket's alpha, faded when `animated`.
+pub(crate) fn set(scroll: &NSScrollView, shown: bool, animated: bool) {
     if scroll.safeAreaInsets().top <= 0. {
         return;
     }
-    let edges: usize = if shown { EDGES } else { 0 };
-    let current: usize = unsafe { msg_send![scroll, allowedPocketEdges] };
-    if current != edges {
-        let _: () = unsafe { msg_send![scroll, setAllowedPocketEdges: edges] };
+    let to = if shown { 1. } else { 0. };
+    for pocket in scroll.subviews().iter() {
+        if !pocket.class().name().to_string_lossy().ends_with("NSScrollPocket") || pocket.alphaValue() == to {
+            continue;
+        }
+        if !animated || NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion() {
+            pocket.setAlphaValue(to);
+            continue;
+        }
+        let fading = pocket.clone();
+        let changes = RcBlock::new(move |context: std::ptr::NonNull<NSAnimationContext>| {
+            let context = unsafe { context.as_ref() };
+            context.setDuration(if shown { SHOW } else { HIDE });
+            let curve = if shown {
+                unsafe { kCAMediaTimingFunctionEaseOut }
+            } else {
+                unsafe { kCAMediaTimingFunctionEaseInEaseOut }
+            };
+            context.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(curve)));
+            fading.animator().setAlphaValue(to);
+        });
+        NSAnimationContext::runAnimationGroup(&changes);
     }
 }

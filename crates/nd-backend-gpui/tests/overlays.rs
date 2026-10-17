@@ -14,6 +14,7 @@ use nd_gpui::gpui::{
     self, HeadlessAppContext, Modifiers, MouseButton as GpuiButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point,
 };
+use nd_ui::backend::Backend;
 use nd_ui::prelude::*;
 use nd_ui::{InputCounts, KeyBinding, Keystroke, SemanticNode, SurfaceSource, WindowId};
 
@@ -275,6 +276,24 @@ mod gate_m4_overlays {
         assert_eq!(under(&o), 1);
     }
 
+    /// A closed popover keeps drawing its content for the look's exit, takes no input while it
+    /// does, and is gone once the exit is over.
+    pub fn gpui_a_closed_popover_animates_out_then_is_gone() {
+        let mut o = open();
+        let button = center(&o.host, o.window, "under");
+        set(&mut o, |s| s.popover = true);
+        let inside =
+            |o: &Opened| o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == "inside");
+        assert!(inside(&o), "the open popover is drawn");
+        set(&mut o, |s| s.popover = false);
+        assert!(inside(&o), "right after closing, the popover is still drawn, leaving");
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(o.host.read(|app| o.scene.read(app).under), 1, "the leaving popover takes no input");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        assert!(!inside(&o), "after its exit the popover is gone");
+    }
+
     pub fn gpui_modal_panel_blocks_outside_and_escape_closes() {
         let mut o = open();
         let button = center(&o.host, o.window, "under");
@@ -349,6 +368,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface",
             gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone",
+            gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone,
         ),
         (
             "gate_m4_overlays::gpui_modal_panel_blocks_outside_and_escape_closes",

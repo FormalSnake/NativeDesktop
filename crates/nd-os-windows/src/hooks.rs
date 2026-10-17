@@ -179,6 +179,14 @@ impl OsHooks for WindowsHooks {
         *self.colors_changed.borrow_mut() = Some(changed);
     }
 
+    fn reduce_motion(&self) -> Option<bool> {
+        Some(!crate::client_area_animation())
+    }
+
+    fn smooth_wheel(&self) -> Option<bool> {
+        Some(crate::list_smooth_scrolling())
+    }
+
     fn window_closed(&self, window: WindowId) {
         self.chrome.borrow_mut().remove(&window);
     }

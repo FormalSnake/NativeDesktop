@@ -13,8 +13,9 @@
 
 mod choice;
 mod display;
+mod emoji;
 pub(crate) mod glyph;
-mod look;
+pub(crate) mod look;
 mod pickers;
 mod text;
 mod toggle;

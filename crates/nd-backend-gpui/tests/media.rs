@@ -14,10 +14,10 @@ use std::time::Duration;
 use nd_backend_gpui::GpuiHost;
 use nd_components::forms::{PastedImage, TextChanged, TextSubmitted, text_area};
 use nd_components::{
-    Attachment, BubbleSide, ChatMessage, Draft, ImageLoaded, ImageSource, LyricClicked, LyricLine, Lyrics,
-    LyricsFollowChanged, NowPlaying, Person, PlaybackClock, Reaction, RunPosition, SeekPhase, Seeked, ShelfArrows,
-    ShelfHandle, ShelfScrolled, avatar, avatar_group, chat_bubble, chat_row, composer, image, image_placeholder,
-    lyrics_view, player_bar, seek_bar, shelf,
+    Attachment, BubbleSide, ChatMessage, ComposerEvent, Draft, ImageLoaded, ImageSource, LyricClicked, LyricLine,
+    Lyrics, LyricsFollowChanged, NowPlaying, Person, PlaybackClock, Reaction, RunPosition, SeekPhase, Seeked,
+    ShelfArrows, ShelfHandle, ShelfScrolled, avatar, avatar_group, chat_bubble, chat_row, composer, image,
+    image_placeholder, lyrics_view, player_bar, seek_bar, shelf,
 };
 use nd_gpui::gpui::{HeadlessAppContext, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase};
 use nd_gpui::gpui::{WindowAppearance, point as gpoint, px as gpx};
@@ -201,7 +201,12 @@ impl Render for Board {
                     .child(avatar(Person::new("+1 555 0100"), 40.).id("number"))
                     .child(avatar_group([alice, bob, Person::new("Cleo Park")], 40.).id("group")),
             )
-            .child(composer("composer", &self.draft))
+            .child(composer("composer", &self.draft).on_event(on!(
+                cx,
+                ComposerEvent,
+                |this, e| format!("composer:{e:?}"),
+                this.draft.apply(e)
+            )))
             .child(
                 text_area("area")
                     .text(self.area.clone())
@@ -255,6 +260,10 @@ struct Rig {
 const SIZE: (f32, f32) = (900., 690.);
 
 fn open_with(appearance: WindowAppearance) -> Rig {
+    open_in(Preset::current(), appearance)
+}
+
+fn open_in(preset: Preset, appearance: WindowAppearance) -> Rig {
     let mut cx = headless();
     let log: Log = Rc::default();
     let view = Rc::new(RefCell::new(None));
@@ -273,7 +282,7 @@ fn open_with(appearance: WindowAppearance) -> Rig {
             window = Some(handle.id());
         })
     });
-    let mut registry = ThemeRegistry::new(Preset::current());
+    let mut registry = ThemeRegistry::new(preset);
     let scheme = if matches!(appearance, WindowAppearance::Dark) { Scheme::Dark } else { Scheme::Light };
     registry.set_os(OsTheme { scheme: Some(scheme), ..registry.os().clone() });
     host.backend().set_theme(registry);
@@ -494,6 +503,60 @@ mod media {
         assert!(fr - sr < 8., "send hugs the trailing edge ({} px in)", fr - sr);
     }
 
+    /// Where the platform has no emoji picker (Linux), the composer's button opens nd's at the
+    /// caret: typing searches without reaching the field, Return inserts the top hit at the
+    /// caret, the pick is kept as recent, and Escape closes it so keys reach the field again.
+    pub fn emoji_picker_searches_and_inserts_at_the_caret() {
+        if !cfg!(target_os = "linux") {
+            println!("skipped: the platform's own picker opens here");
+            return;
+        }
+        let state = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("emoji-state");
+        let _ = std::fs::remove_dir_all(&state);
+        // SAFETY: the harness runs tests one after another on this thread, before any picker
+        // reads the variable.
+        unsafe { std::env::set_var("XDG_STATE_HOME", &state) };
+        let edited = |rig: &Rig| {
+            rig.log.borrow().iter().rev().find(|l| l.starts_with("composer:Edited")).cloned().unwrap_or_default()
+        };
+        for preset in [Preset::Adwaita, Preset::Fluent] {
+            let mut rig = open_in(preset, WindowAppearance::Light);
+            rig.settle_until("the board's images", |r| r.log.borrow().iter().any(|l| l.starts_with("loaded:")));
+            rig.click_point(rig.at("composer.field", 0.5, 0.5));
+            rig.keys(&["end", "space"]);
+            rig.click_point(rig.at("composer.emoji", 0.5, 0.5));
+            assert!(rig.log.borrow().iter().any(|l| l == "composer:EmojiPicker"), "the button asked for the picker");
+            rig.keys(&["c", "a", "t"]);
+            assert_eq!(edited(&rig), "composer:Edited(\"Two photos from today \")", "the search took the keys");
+            if let Some(png) = nd_gpui::gpui_platform::current_headless_renderer()
+                .ok()
+                .flatten()
+                .map(|_| rig.host.job(|app| app.capture(rig.window)).expect("capture").png)
+            {
+                let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("emoji-picker-{preset:?}.png"));
+                std::fs::write(&out, png).expect("write capture");
+                println!("picker capture: {}", out.display());
+            }
+            rig.keys(&["enter"]);
+            assert_eq!(
+                edited(&rig),
+                "composer:Edited(\"Two photos from today \u{1f408}\")",
+                "the cat went in at the caret"
+            );
+            rig.keys(&["x"]);
+            assert_eq!(
+                edited(&rig),
+                "composer:Edited(\"Two photos from today \u{1f408}x\")",
+                "closed: keys reach the field"
+            );
+            let saved = std::fs::read_to_string(state.join("nd/emoji-recents")).expect("recents saved");
+            assert!(saved.lines().any(|l| l == "\u{1f408}"), "{saved}");
+            rig.click_point(rig.at("composer.emoji", 0.5, 0.5));
+            rig.keys(&["escape", "y"]);
+            assert_eq!(edited(&rig), "composer:Edited(\"Two photos from today \u{1f408}xy\")", "escape closed it");
+        }
+    }
+
     pub fn disabled_button_takes_no_click() {
         let mut rig = opened();
         rig.click_point(rig.at("off", 0.5, 0.5));
@@ -618,6 +681,10 @@ fn main() {
             media::text_area_return_submits_and_shift_return_breaks,
         ),
         ("media::composer_send_sits_inside_the_field", media::composer_send_sits_inside_the_field),
+        (
+            "media::emoji_picker_searches_and_inserts_at_the_caret",
+            media::emoji_picker_searches_and_inserts_at_the_caret,
+        ),
         ("media::disabled_button_takes_no_click", media::disabled_button_takes_no_click),
         ("media::echo", media::echo),
         ("media::reentrancy", media::reentrancy),

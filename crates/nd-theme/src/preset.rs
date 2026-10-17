@@ -369,10 +369,12 @@ impl Metrics {
                     rounded: font("Segoe UI Variable Text"),
                     mono: font("Cascadia Mono"),
                 },
+                // WinUI's ControlFasterAnimationDuration, ControlFastAnimationDuration and
+                // ControlNormalAnimationDuration (learn.microsoft.com, Timing and easing).
                 motion: Motion {
                     fast: ms(83),
                     normal: ms(167),
-                    slow: ms(333),
+                    slow: ms(250),
                     spring: Spring { response: 0.3, damping: 0.9 },
                 },
                 materials: Materials {
