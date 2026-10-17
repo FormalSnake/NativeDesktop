@@ -343,8 +343,12 @@ mod gate_m4 {
             modifiers: Default::default(),
             touch_phase: phase,
         };
+        // Moves come 8 ms apart, and an end right after the last move: a slow CI runner can
+        // oversleep, and a gap of 40 ms before the end would read as a pause with no fling.
+        if phase == TouchPhase::Moved {
+            std::thread::sleep(Duration::from_millis(8));
+        }
         send(cx, host, window, PlatformInput::ScrollWheel(event));
-        std::thread::sleep(Duration::from_millis(8));
     }
 
     /// Draws frames in real time for `ms`, as the display link would while something animates.
