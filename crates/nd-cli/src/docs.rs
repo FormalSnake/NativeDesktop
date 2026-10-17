@@ -280,14 +280,22 @@ fn chrome() -> Option<PathBuf> {
     ["google-chrome", "chromium"]
         .iter()
         .map(PathBuf::from)
-        .find(|p| Command::new(p).arg("--version").stdout(Stdio::null()).status().is_ok())
+        .find(|p| system_command(p).arg("--version").stdout(Stdio::null()).status().is_ok())
+}
+
+/// A command for a binary the system installed. The dev shell's `LD_LIBRARY_PATH` points at nix
+/// store libraries built against a newer glibc than the system's, which a system binary cannot load.
+fn system_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.env_remove("LD_LIBRARY_PATH");
+    command
 }
 
 /// Loads `url` in headless Chrome and returns the screenshot's distinct colours (capped).
 fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
     let chrome = chrome().context("no Chrome: set ND_CHROME")?;
     let shot = work.join(format!("{name}.png"));
-    let output = Command::new(chrome)
+    let output = system_command(chrome)
         .args([
             "--headless=new",
             "--hide-scrollbars",
@@ -762,5 +770,12 @@ mod tests {
         let hello = Example { package: "hello".into(), ..Example::default() };
         assert_eq!(feature_flags(&[&notes, &hello]), ["--features", "notes/m6"]);
         assert!(feature_flags(&[&hello]).is_empty());
+    }
+
+    #[test]
+    fn system_binaries_do_not_inherit_the_dev_shell_library_path() {
+        let command = system_command("google-chrome");
+        let removed = command.get_envs().find(|(key, _)| *key == "LD_LIBRARY_PATH");
+        assert_eq!(removed, Some((std::ffi::OsStr::new("LD_LIBRARY_PATH"), None)));
     }
 }

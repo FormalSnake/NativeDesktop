@@ -28,7 +28,7 @@ fn chrome() -> PathBuf {
     ["google-chrome", "chromium"]
         .iter()
         .map(PathBuf::from)
-        .find(|p| Command::new(p).arg("--version").output().is_ok())
+        .find(|p| Command::new(p).env_remove("LD_LIBRARY_PATH").arg("--version").output().is_ok())
         .expect("no Chrome: set ND_CHROME")
 }
 
@@ -96,7 +96,9 @@ fn hello_web_golden() {
     // Blink's `PreferredColorScheme`: 0 dark, 1 light.
     for (scheme, setting) in [("light", 1), ("dark", 0)] {
         let shot = work.path().join(format!("{scheme}.png"));
+        // The dev shell's LD_LIBRARY_PATH holds nix libraries a system Chrome cannot load.
         let status = Command::new(chrome())
+            .env_remove("LD_LIBRARY_PATH")
             .args([
                 "--headless=new",
                 "--hide-scrollbars",
