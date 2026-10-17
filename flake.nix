@@ -121,10 +121,11 @@
                 dbus
                 # nd-system's audio and the GPUI backend's video() dlopen GStreamer: playbin,
                 # appsink, videoconvert and videoscale (base), qtdemux, videoflip, spectrum and the
-                # PulseAudio sink (good), the H.264 and HEVC decoders (libav).
+                # PulseAudio sink (good), the H.264 and HEVC decoders (libav, and bad's VA-API ones).
                 gst_all_1.gstreamer
                 gst_all_1.gst-plugins-base
                 gst_all_1.gst-plugins-good
+                gst_all_1.gst-plugins-bad
                 gst_all_1.gst-libav
               ]
               ++ gpuLibs
@@ -179,6 +180,7 @@
                   gstreamer
                   gst-plugins-base
                   gst-plugins-good
+                  gst-plugins-bad
                   gst-libav
                 ]
               )

@@ -80,6 +80,7 @@ let
               gstreamer
               gst-plugins-base
               gst-plugins-good
+              gst-plugins-bad
               gst-libav
             ]
           )
