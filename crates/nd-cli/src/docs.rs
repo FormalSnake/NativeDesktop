@@ -291,10 +291,9 @@ fn system_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-/// Loads `url` in headless Chrome and returns the screenshot's distinct colours (capped).
-fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
+/// Headless Chrome with the flags every web check shares.
+fn chrome_command(work: &Path, name: &str) -> Result<Command> {
     let chrome = chrome().context("no Chrome: set ND_CHROME")?;
-    let shot = work.join(format!("{name}.png"));
     let mut command = system_command(chrome);
     command
         .args([
@@ -305,13 +304,66 @@ fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
             "--window-size=1100,760",
             "--virtual-time-budget=15000",
         ])
-        .arg(format!("--user-data-dir={}", work.join(format!("profile-{name}")).display()))
-        .arg(format!("--screenshot={}", shot.display()));
+        .arg(format!("--user-data-dir={}", work.join(format!("profile-{name}")).display()));
     // Chrome 137 and later no longer fall back to SwiftShader by themselves, so a runner without a
     // GPU draws no canvas unless software GL is asked for.
     if cfg!(target_os = "linux") {
         command.args(["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]);
     }
+    Ok(command)
+}
+
+const PROBE_PAGE: &str = r#"<!doctype html><meta charset="utf-8"><pre id="out">probe did not run</pre><script>
+(async () => {
+  const lines = [];
+  lines.push('navigator.gpu: ' + (navigator.gpu ? 'present' : 'absent'));
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      lines.push('webgpu adapter: ' + (adapter ? JSON.stringify(adapter.info ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture, description: adapter.info.description } : 'no info') : 'null'));
+    } catch (e) { lines.push('webgpu adapter error: ' + e); }
+  }
+  const gl = document.createElement('canvas').getContext('webgl2');
+  if (!gl) lines.push('webgl2: unavailable');
+  else {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    lines.push('webgl2 renderer: ' + (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)));
+  }
+  document.getElementById('out').textContent = lines.join('\n');
+})();
+</script>"#;
+
+/// Prints why a page drew nothing: what the browser offers for graphics, and what the page logged.
+fn explain_blank(dir: &Path, url: &str, work: &Path, name: &str) {
+    let probe = dir.join("nd-probe.html");
+    if std::fs::write(&probe, PROBE_PAGE).is_ok()
+        && let Ok(mut command) = chrome_command(work, &format!("{name}-probe"))
+        && let Ok(output) = command.args(["--dump-dom", &format!("{url}nd-probe.html")]).output()
+    {
+        let dom = String::from_utf8_lossy(&output.stdout);
+        let text = dom.split("<pre id=\"out\">").nth(1).and_then(|t| t.split("</pre>").next()).unwrap_or("no output");
+        for line in text.lines() {
+            println!("    {line}");
+        }
+        let _ = std::fs::remove_file(&probe);
+    }
+    if let Ok(mut command) = chrome_command(work, &format!("{name}-log"))
+        && let Ok(output) = command.args(["--enable-logging=stderr", "--v=0", "--dump-dom", url]).output()
+    {
+        let log = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = log.lines().filter(|l| l.contains("CONSOLE") || l.contains("Uncaught")).collect();
+        println!("    page console: {} line(s)", lines.len());
+        for line in lines.iter().take(20) {
+            println!("    {}", line.chars().take(400).collect::<String>());
+        }
+    }
+}
+
+/// Loads `url` in headless Chrome and returns the screenshot's distinct colours (capped).
+fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
+    let shot = work.join(format!("{name}.png"));
+    let mut command = chrome_command(work, name)?;
+    command.arg(format!("--screenshot={}", shot.display()));
     let output = command.arg(url).output().context("running Chrome")?;
     if !output.status.success() {
         bail!("Chrome exited with {}", output.status);
@@ -360,6 +412,9 @@ fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {
         // A canvas that never drew is one flat colour: the page background.
         let loaded = colours > 4;
         println!("  {} {name} ({colours} colours)", if loaded { "ok  " } else { "FAIL" });
+        if !loaded {
+            explain_blank(&dir, &format!("http://127.0.0.1:{port}/"), &work, &name.replace(' ', "-"));
+        }
         ok &= loaded;
     }
     Ok(ok)
