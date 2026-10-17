@@ -537,6 +537,10 @@ impl Input for LyricsInner {
 struct Document(Weak<LyricsInner>);
 
 impl Input for Document {
+    fn takes_mouse(&self) -> bool {
+        true
+    }
+
     fn mouse_up(&self, at: NSPoint, _event: &NSEvent) {
         if let Some(inner) = self.0.upgrade() {
             inner.click(at);

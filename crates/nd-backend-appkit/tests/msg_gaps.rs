@@ -2,7 +2,8 @@
 //! lines; `icon` shows a symbol on its own; the composer's send button takes another icon and
 //! fill; a video reports where it is and seeks; an image cuts a bubble tail out of its picture;
 //! a panel fades in and out; a reaction landing on a shown bubble fades in; a transcript runs
-//! up under the toolbar and rests clear of it. Prints
+//! up under the toolbar and rests clear of it; a press on an avatar or a picture reaches
+//! the tap and double tap of the element around it. Prints
 //! `ND_MSG_GAPS_OK`.
 
 mod harness;
@@ -27,8 +28,8 @@ mod gaps {
     use nd_backend_appkit::objc2_foundation::NSString;
     use nd_components::forms::label;
     use nd_components::media::{
-        BubbleSide, Draft, ImageLoaded, ImageSource, Reaction, VideoProgress, VideoReady, chat_bubble, composer, image,
-        video,
+        BubbleSide, Draft, ImageLoaded, ImageSource, Person, Reaction, VideoProgress, VideoReady, avatar, chat_bubble,
+        composer, image, video,
     };
     use nd_components::{Icon, icon};
     use nd_ui::panel;
@@ -51,6 +52,7 @@ mod gaps {
         titlebar(&rig, &mut c);
         glass_shapes(&rig, &mut c);
         under_toolbar(&rig, &mut c);
+        presses_through_media(&rig, &mut c);
         if c.0 == 0 {
             println!("ND_MSG_GAPS_OK");
             std::process::exit(0);
@@ -470,6 +472,129 @@ mod gaps {
             toolbar.items().iter().any(|i| i.isNavigational()),
             "under toolbar: navigation() is a navigational item",
         );
+        rig.close(opened);
+    }
+
+    struct Presses {
+        log: Vec<&'static str>,
+    }
+
+    impl Render for Presses {
+        fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .p(px(12.))
+                .gap(px(8.))
+                .child(
+                    v_flex()
+                        .id("tile")
+                        .p(px(6.))
+                        .on_tap(record::<TapEvent>("tile", cx))
+                        .child(avatar(Person::new("Ana Ruiz"), 60.).id("tile.avatar"))
+                        .child(label("Ana")),
+                )
+                .child(
+                    div()
+                        .id("picture")
+                        .on_tap(record::<TapEvent>("picture tap", cx))
+                        .on_double_tap(record::<DoubleTapEvent>("picture double", cx))
+                        .child(
+                            image(ImageSource::path("/nonexistent/picture.png"))
+                                .id("picture.image")
+                                .w(px(120.))
+                                .h(px(80.)),
+                        ),
+                )
+                .child(div().id("plain").size(px(60.)).bg(hsla(0.6, 0.5, 0.5, 1.)).on_double_tap(record::<
+                    DoubleTapEvent,
+                >(
+                    "plain double", cx
+                )))
+        }
+    }
+
+    fn record<E: 'static>(
+        what: &'static str,
+        cx: &mut Context<Presses>,
+    ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+        cx.listener(move |this: &mut Presses, _: &E, _, cx| {
+            this.log.push(what);
+            cx.notify();
+        })
+    }
+
+    /// Posts a click at the middle of `test_id` the way AppKit delivers one: to the view the
+    /// window's hit test finds, with the click count and the time of a real press.
+    fn click(rig: &Rig, opened: &rig::Opened<Presses>, test_id: &str, count: isize) -> String {
+        use nd_backend_appkit::objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+        use nd_backend_appkit::objc2_foundation::{NSPoint, NSProcessInfo};
+        let target = rig.view(opened.id(), test_id);
+        let b = target.bounds();
+        let in_window = target.convertPoint_toView(NSPoint::new(b.size.width / 2., b.size.height / 2.), None);
+        let content = opened.window.contentView().expect("content view");
+        // SAFETY: main thread, a view in a live window.
+        let at = unsafe { content.superview() }.map_or(in_window, |s| s.convertPoint_fromView(in_window, None));
+        let Some(hit) = content.hitTest(at) else { return "nothing".into() };
+        let hit_class = hit.class().name().to_string_lossy().into_owned();
+        let event = |kind| {
+            NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind,
+                in_window,
+                NSEventModifierFlags::empty(),
+                NSProcessInfo::processInfo().systemUptime(),
+                opened.window.windowNumber(),
+                None,
+                0,
+                count,
+                1.,
+            )
+            .expect("mouse event")
+        };
+        hit.mouseDown(&event(NSEventType::LeftMouseDown));
+        hit.mouseUp(&event(NSEventType::LeftMouseUp));
+        hit_class
+    }
+
+    /// A press on a media view (an avatar, a picture) is the element's around it: a
+    /// pinned tile's picture selects it, a double click on a photo opens it. A double click on
+    /// a plain element fires its double tap too.
+    fn presses_through_media(rig: &Rig, c: &mut Checks) {
+        let opened = rig.open("presses", |_| Presses { log: Vec::new() });
+        rig.pump();
+        rig.pump();
+        let settle = |rig: &Rig| {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_millis(700) {
+                rig.pump();
+            }
+        };
+        let log = |rig: &Rig| rig.read(&opened, |p| p.log.clone());
+
+        let hit = click(rig, &opened, "tile.avatar", 1);
+        settle(rig);
+        c.check(
+            log(rig) == ["tile"],
+            &format!("press: a click on the avatar taps its tile (hit {hit}, {:?})", log(rig)),
+        );
+        rig.update(&opened, |p, _| p.log.clear());
+
+        click(rig, &opened, "picture.image", 1);
+        click(rig, &opened, "picture.image", 2);
+        settle(rig);
+        c.check(
+            log(rig) == ["picture double"],
+            &format!("press: a double click on a picture is its element's double tap, not a tap ({:?})", log(rig)),
+        );
+        rig.update(&opened, |p, _| p.log.clear());
+
+        click(rig, &opened, "picture.image", 1);
+        settle(rig);
+        c.check(log(rig) == ["picture tap"], &format!("press: one click on a picture is one tap ({:?})", log(rig)));
+        rig.update(&opened, |p, _| p.log.clear());
+
+        click(rig, &opened, "plain", 1);
+        click(rig, &opened, "plain", 2);
+        settle(rig);
+        c.check(log(rig) == ["plain double"], &format!("press: a double click on a plain element ({:?})", log(rig)));
         rig.close(opened);
     }
 }

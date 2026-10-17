@@ -45,6 +45,12 @@ pub(crate) trait Input {
     fn mouse_dragged(&self, _at: NSPoint, _event: &NSEvent) {}
     fn mouse_up(&self, _at: NSPoint, _event: &NSEvent) {}
     fn hover(&self, _inside: bool, _at: NSPoint) {}
+    /// `true` when the view handles presses itself (a seek bar). Otherwise mouse down, drag
+    /// and up go up the responder chain, so a tap or double tap on the element around an
+    /// avatar, a picture or a bubble reaches its gesture recognizers.
+    fn takes_mouse(&self) -> bool {
+        false
+    }
     /// `true` when it took the key.
     fn key_down(&self, _event: &NSEvent) -> bool {
         false
@@ -86,22 +92,31 @@ define_class!(
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            if let Some(input) = self.input() {
-                input.mouse_down(self.point(event), event);
+            match self.input().filter(|i| i.takes_mouse()) {
+                Some(input) => input.mouse_down(self.point(event), event),
+                None => {
+                    let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+                }
             }
         }
 
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
-            if let Some(input) = self.input() {
-                input.mouse_dragged(self.point(event), event);
+            match self.input().filter(|i| i.takes_mouse()) {
+                Some(input) => input.mouse_dragged(self.point(event), event),
+                None => {
+                    let _: () = unsafe { msg_send![super(self), mouseDragged: event] };
+                }
             }
         }
 
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
-            if let Some(input) = self.input() {
-                input.mouse_up(self.point(event), event);
+            match self.input().filter(|i| i.takes_mouse()) {
+                Some(input) => input.mouse_up(self.point(event), event),
+                None => {
+                    let _: () = unsafe { msg_send![super(self), mouseUp: event] };
+                }
             }
         }
 
