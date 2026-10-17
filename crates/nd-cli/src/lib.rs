@@ -13,6 +13,7 @@ pub mod project;
 pub mod publish;
 pub mod release;
 pub mod testcmd;
+pub mod upgrade;
 pub mod vpk;
 pub mod web;
 
@@ -32,6 +33,8 @@ pub struct Cli {
 pub enum Command {
     /// Create a new app.
     New(new::NewArgs),
+    /// Move the app's nd dependency to a newer release tag and print what changed.
+    Upgrade(upgrade::UpgradeArgs),
     /// fmt, clippy with the framework lint table, framework lints.
     Check(check::CheckArgs),
     /// Run the test tiers through nextest.
@@ -57,6 +60,7 @@ pub enum Command {
 pub fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::New(args) => new::run(args).map(|()| ExitCode::SUCCESS),
+        Command::Upgrade(args) => upgrade::run(args).map(|()| ExitCode::SUCCESS),
         Command::Check(args) => check::run(args),
         Command::Test(args) => testcmd::run(args),
         Command::Diagnose(args) => diagnose::run(args),
