@@ -1,5 +1,8 @@
 //! Incident bundles (ARCHITECTURE.md 9.3) and their retention (9.6).
 
+// File modification times are std's type, and a browser tab has no files to read them from.
+#![allow(clippy::disallowed_types)]
+
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};

@@ -630,7 +630,7 @@ pub(crate) struct Snapshot {
     pub nodes: std::collections::HashMap<NodeId, Node>,
     pub anchor: Option<Rect>,
     /// When it closed; `None` while it is open.
-    pub left: Option<std::time::Instant>,
+    pub left: Option<nd_core::time::Instant>,
 }
 
 /// Open overlays' snapshots and the closed ones still animating out.
@@ -660,7 +660,7 @@ impl Exits {
             map.remove(&id);
             return None;
         }
-        snapshot.left = Some(std::time::Instant::now());
+        snapshot.left = Some(nd_core::time::Instant::now());
         Some(snapshot.window)
     }
 
@@ -668,7 +668,7 @@ impl Exits {
     /// `duration` are dropped.
     pub fn leaving(&self, window: nd_core::WindowId, duration: f64) -> Vec<(NodeId, Snapshot, f64)> {
         let mut map = self.0.borrow_mut();
-        let now = std::time::Instant::now();
+        let now = nd_core::time::Instant::now();
         map.retain(|_, s| s.left.is_none_or(|at| now.duration_since(at).as_secs_f64() < duration));
         map.iter()
             .filter(|(_, s)| s.window == window)

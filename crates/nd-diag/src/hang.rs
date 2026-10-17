@@ -2,10 +2,10 @@
 //! the main thread; a ping left unanswered past the threshold writes a `-hang` bundle, with a
 //! minidump holding every thread's stack when the crash helper runs.
 
+use nd_core::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
 
 use serde_json::json;
 

@@ -6,10 +6,14 @@
 //! cost nothing. An mtime stat every [`POLL`] catches anything the OS dropped. A file that
 //! fails to parse (half written, mid-edit) is skipped, so the last good theme stays.
 
+// Modification times are std's type, and a browser tab has no theme files to watch.
+#![allow(clippy::disallowed_types)]
+
+use nd_core::time::{Duration, Instant};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::SystemTime;
 
 use notify::{RecursiveMode, Watcher};
 

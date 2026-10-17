@@ -266,7 +266,54 @@ fn compile(repo: &Path, examples: &[Example]) -> Result<bool> {
     }
     wasm.args(feature_flags(&web));
     ok &= wasm.status().context("cargo check --target wasm32")?.success();
+    ok &= std_clocks_in_web_crates(repo, &web, &feature_flags(&web))?;
     Ok(ok)
+}
+
+/// `std::time::Instant::now` and `SystemTime::now` compile for wasm32 and panic when the page runs.
+/// Clippy with `clippy-web/clippy.toml` over every workspace crate the web examples and the docs
+/// app link reports a direct use of std's types.
+fn std_clocks_in_web_crates(repo: &Path, web: &[&Example], features: &[String]) -> Result<bool> {
+    let mut tree = cargo();
+    tree.current_dir(repo).args([
+        "tree",
+        "--target",
+        web::WASM_TARGET,
+        "-e",
+        "normal",
+        "--prefix",
+        "none",
+        "-p",
+        APP_PACKAGE,
+    ]);
+    for e in web {
+        tree.args(["-p", &e.package]);
+    }
+    tree.args(features);
+    let output = tree.output().context("cargo tree")?;
+    if !output.status.success() {
+        bail!("cargo tree failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let root = repo.to_string_lossy().into_owned();
+    let mut packages: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| l.contains(&format!("({root}")) && !l.contains("proc-macro") && !l.contains("/vendor/"))
+        .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
+        .collect();
+    packages.sort();
+    packages.dedup();
+    println!("nd docs: std clocks in the {} crates the web build links", packages.len());
+    let mut clippy = cargo();
+    clippy
+        .current_dir(repo)
+        .env("CLIPPY_CONF_DIR", repo.join("clippy-web"))
+        .args(["clippy", "--lib", "--bins", "--no-deps", "--target", web::WASM_TARGET])
+        .args(features);
+    for package in &packages {
+        clippy.args(["-p", package]);
+    }
+    clippy.args(["--", "-A", "clippy::all", "-D", "clippy::disallowed_types"]);
+    Ok(clippy.status().context("cargo clippy --target wasm32")?.success())
 }
 
 fn chrome() -> Option<PathBuf> {

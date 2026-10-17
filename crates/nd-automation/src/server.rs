@@ -9,11 +9,11 @@
 // Without unix sockets (the web, Windows until named pipes) only `start`'s error is compiled in.
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
+use nd_core::time::{Duration, Instant};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 use nd_ui::App;
 use serde_json::{Value, json};

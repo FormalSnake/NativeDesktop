@@ -1,0 +1,7 @@
+# Read through CLIPPY_CONF_DIR by the wasm clippy pass of `nd docs check --compile`. On
+# wasm32-unknown-unknown nd_core::time resolves to web-time, so only a direct use of std's types
+# is reported. The native pass cannot run this: there nd_core::time re-exports std's types.
+disallowed-types = [
+    { path = "std::time::Instant", reason = "panics in a browser; use nd_core::time::Instant" },
+    { path = "std::time::SystemTime", reason = "panics in a browser; use nd_core::time::SystemTime" },
+]
