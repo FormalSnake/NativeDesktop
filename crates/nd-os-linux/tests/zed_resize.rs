@@ -210,9 +210,11 @@ fn zed_resize_labwc() {
     drag_and_measure(&labwc.wayland_socket(), &probe, "labwc");
 }
 
-/// X11 pacing per monitor: Xwayland on a headless Hyprland with a 240 Hz and a 144 Hz output. The
-/// probe renders every frame, so its frame rate is the refresh GPUI paces the window at. Prints the
-/// rate on each output, moving the (focused) window between the workspaces the outputs show.
+/// X11 pacing per monitor: Xwayland on a headless Hyprland whose first output runs at 144 Hz and
+/// second at 240 Hz. The probe renders every frame, so its frame rate is the slower of the rate GPUI
+/// paces it at and the rate the output presents at (Vulkan FIFO). The slower output comes first,
+/// so a window paced by the first CRTC shows on the faster one. Prints the rate on each output,
+/// moving the focused window between the workspaces the outputs show.
 #[test]
 #[ignore = "needs ZED_PROBE_BIN and Hyprland with Xwayland"]
 fn zed_x11_refresh() {
@@ -223,9 +225,9 @@ fn zed_x11_refresh() {
     };
     let before = x11_sockets();
     let options = ndshell::hyprland::Options {
-        refresh: 240,
+        refresh: 144,
         extra_config: r#"
-hl.monitor({ output = "HEADLESS-2", mode = "1280x800@144", position = "1600x0", scale = "1" })
+hl.monitor({ output = "HEADLESS-2", mode = "1280x800@240", position = "1600x0", scale = "1" })
 hl.config({ xwayland = { enabled = true } })
 "#
         .into(),
@@ -267,10 +269,10 @@ hl.config({ xwayland = { enabled = true } })
         let c = hyprland.wait_for_client(probe.child.id(), Duration::from_secs(1)).unwrap();
         println!("zed-x11 {label}: window at {:?} ({at}): {:.0} fps", c.at, frames as f64 / 3.0);
     };
-    rate("first output, 240 Hz");
+    rate("first output, 144 Hz");
     let moved = hyprland.request("dispatch hl.dsp.window.move({ workspace = 2 })").unwrap();
     println!("move: {}", moved.trim());
-    rate("second output, 144 Hz");
+    rate("second output, 240 Hz");
     let back = hyprland.request("dispatch hl.dsp.window.move({ workspace = 1 })").unwrap();
     println!("move back: {}", back.trim());
     rate("first output again");
