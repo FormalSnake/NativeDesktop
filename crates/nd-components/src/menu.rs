@@ -153,9 +153,17 @@ impl Menu {
 #[derive(Default)]
 pub struct ContextMenu {
     pub items: Vec<MenuItem>,
+    /// Opens with its bottom edge at the point instead of its top: a menu button at the
+    /// bottom of a window, as Messages' composer "+" opens above itself.
+    pub above: bool,
 }
 
 impl ContextMenu {
+    pub fn above(mut self) -> Self {
+        self.above = true;
+        self
+    }
+
     pub fn item(mut self, label: impl Into<SharedString>, action: impl Action) -> Self {
         self.items.push(MenuItem::action(label, action));
         self

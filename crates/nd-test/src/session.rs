@@ -194,6 +194,14 @@ impl Mouse {
         self.pointer("up", x, y, 1)
     }
 
+    /// Two clicks in place, the second carrying a click count of 2, as the OS reports a
+    /// double click.
+    pub fn double_click(&self, x: f32, y: f32) -> Result<Value> {
+        self.click(x, y)?;
+        self.pointer("down", x, y, 2)?;
+        self.pointer("up", x, y, 2)
+    }
+
     /// Press, move and release as one batch (AppKit tracking loops need the whole gesture).
     pub fn drag(&self, from: (f32, f32), to: (f32, f32)) -> Result<Value> {
         self.at.set(to);
