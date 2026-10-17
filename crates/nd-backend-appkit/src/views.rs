@@ -626,8 +626,6 @@ impl NdTextView {
         true
     }
 
-    /// The size the text takes when wrapped at `width` (unbounded when `None`), in points,
-    /// rounded up so the last glyph is never clipped.
     /// Measures in `family` when the caller knows the theme's (`Some`), else in the view's own.
     pub(crate) fn measure_in(&self, width: Option<f32>, family: Option<Option<&str>>) -> Size {
         let Some(props) = self.ivars().props.borrow().clone() else { return Size::default() };

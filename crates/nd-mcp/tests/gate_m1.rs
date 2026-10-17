@@ -16,13 +16,14 @@ mod gate_m1 {
 
     impl Client {
         fn start() -> Self {
-            let mut child = Command::new(env!("CARGO_BIN_EXE_nd-mcp"))
-                .args(["--example", "hello"])
-                .env_remove("ND_AUTOMATION_SOCKET")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .expect("spawn nd-mcp");
+            let mut child =
+                Command::new(std::env::var_os("CARGO_BIN_EXE_nd-mcp").expect("cargo test sets CARGO_BIN_EXE_nd-mcp"))
+                    .args(["--example", "hello"])
+                    .env_remove("ND_AUTOMATION_SOCKET")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .expect("spawn nd-mcp");
             let stdin = child.stdin.take().expect("stdin");
             let stdout = BufReader::new(child.stdout.take().expect("stdout"));
             let mut client = Self { child, stdin, stdout, next_id: 0 };
