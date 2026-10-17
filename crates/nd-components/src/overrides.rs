@@ -106,7 +106,9 @@ pub trait OnPlatform: Sized {
     }
 
     fn on_linux(self, f: impl FnOnce(Self) -> Self) -> Self {
-        if cfg!(all(unix, not(target_os = "macos"), not(target_family = "wasm"))) && Preset::current() == Preset::Adwaita {
+        if cfg!(all(unix, not(target_os = "macos"), not(target_family = "wasm")))
+            && Preset::current() == Preset::Adwaita
+        {
             f(self)
         } else {
             self

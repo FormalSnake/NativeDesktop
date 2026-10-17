@@ -97,7 +97,13 @@ impl ThemeRegistry {
             os: OsTheme::default(),
             app: ThemeRefinement::default(),
             windows: HashMap::new(),
-            app_theme: Theme::derive(preset, Scheme::Light, Palette::baked_for(preset, Scheme::Light), Metrics::preset(preset), 1.),
+            app_theme: Theme::derive(
+                preset,
+                Scheme::Light,
+                Palette::baked_for(preset, Scheme::Light),
+                Metrics::preset(preset),
+                1.,
+            ),
             window_themes: HashMap::new(),
             generation: 0,
         };

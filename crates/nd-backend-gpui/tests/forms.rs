@@ -650,7 +650,9 @@ mod forms {
         // The Windows skin drawn on Linux (what `ND_PRESET=fluent` shows), so it is checked
         // without a Windows machine.
         if cfg!(target_os = "linux") {
-            for (scheme, appearance) in [("fluent-light", WindowAppearance::Light), ("fluent-dark", WindowAppearance::Dark)] {
+            for (scheme, appearance) in
+                [("fluent-light", WindowAppearance::Light), ("fluent-dark", WindowAppearance::Dark)]
+            {
                 let rig = open_in(Preset::Fluent, appearance, false);
                 let capture = rig.host.job(|app| app.capture(rig.window)).expect("capture");
                 compare(scheme, &capture.png);
