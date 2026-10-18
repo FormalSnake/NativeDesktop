@@ -529,6 +529,7 @@ mod capture {
         }
         let bins = build_bins(repo, &chosen)?;
         let _lock = ndshell::lock::acquire("nd docs capture").context("the machine-wide window lock")?;
+        let session = session()?;
         let captured_on = os_version(os);
         let date = today();
         let work = repo.join("target/nd/docs-capture");
@@ -544,8 +545,8 @@ mod capture {
                     let file = dir.join(format!("{}-{scheme}.png", os.key()));
                     let motion = if scheme == "light" { example.motion.as_ref() } else { None };
                     let gif = dir.join(format!("{}.gif", os.key()));
-                    let recorded =
-                        shoot(bin, example, scheme, &work, &file, motion.map(|m| (m, gif.as_path())), args.settle)?;
+                    let motion = motion.map(|m| (m, gif.as_path()));
+                    let recorded = shoot(&session, bin, example, scheme, &work, &file, motion, args.settle)?;
                     if recorded {
                         recording = Some(format!("{}.gif", os.key()));
                     }
@@ -615,7 +616,9 @@ mod capture {
 
     /// One launch of `bin` in `scheme`: waits for its window, captures it into `png`, and when
     /// `motion` is given records it into the GIF as well. Returns whether a recording was written.
+    #[allow(clippy::too_many_arguments)]
     fn shoot(
+        session: &Session,
         bin: &Path,
         example: &Example,
         scheme: &str,
@@ -631,7 +634,7 @@ mod capture {
         // Unix socket paths are capped near 104 bytes, which a worktree path can pass.
         let socket = std::env::temp_dir().join(format!("nd-docs-{}-{scheme}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
-        let mut cmd = Command::new(bin);
+        let mut cmd = launcher(session, bin);
         cmd.envs(&example.env)
             .env("NATIVE_AUTOMATION", "1")
             .env("ND_AUTOMATION_SOCKET", &socket)
@@ -659,13 +662,40 @@ mod capture {
             };
             std::thread::sleep(Duration::from_secs_f32(settle));
             let window_id = window["id"].as_u64();
-            let recorded = composited(child.id(), png, &mut client, window_id, motion)?;
+            let recorded = composited(session, child.id(), png, &mut client, window_id, motion)?;
             Ok(recorded)
         })();
         let _ = child.kill();
         let _ = child.wait();
         let _ = std::fs::remove_file(&socket);
         result
+    }
+
+    /// Linux captures run in a private headless Hyprland, so they draw nothing on the user's session,
+    /// work over ssh, and get the same output and scale on every run.
+    #[cfg(target_os = "linux")]
+    type Session = ndshell::hyprland::Hyprland;
+    #[cfg(not(target_os = "linux"))]
+    type Session = ();
+
+    #[cfg(target_os = "linux")]
+    fn session() -> Result<Session> {
+        ndshell::hyprland::Hyprland::start(Default::default()).map_err(|e| anyhow::anyhow!("headless Hyprland: {e}"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn session() -> Result<Session> {
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn launcher(session: &Session, bin: &Path) -> Command {
+        session.command(bin)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn launcher(_session: &Session, bin: &Path) -> Command {
+        Command::new(bin)
     }
 
     /// Waits for the automation server's ready line on `stderr`, then keeps draining it so the app
@@ -690,6 +720,7 @@ mod capture {
 
     #[cfg(target_os = "macos")]
     fn composited(
+        _session: &Session,
         pid: u32,
         png: &Path,
         client: &mut Rpc,
@@ -757,15 +788,39 @@ mod capture {
         made
     }
 
-    #[cfg(not(target_os = "macos"))]
+    /// The window's rectangle cut from a frame of the headless output. GPUI draws the whole window,
+    /// chrome included, so the client area is the picture; the app's own `screenshot` needs GPUI's
+    /// test-support readback, which only headless GPUI windows have.
+    #[cfg(target_os = "linux")]
     fn composited(
+        session: &Session,
+        pid: u32,
+        png: &Path,
+        _client: &mut Rpc,
+        _window: Option<u64>,
+        _motion: Option<(&nd_docs::examples::Motion, &Path)>,
+    ) -> Result<bool> {
+        let window = session.wait_for_client(pid, Duration::from_secs(5)).map_err(anyhow::Error::msg)?;
+        // A frame or two for the window to present at its settled size.
+        std::thread::sleep(Duration::from_millis(400));
+        let frame = ndshell::wayland::screenshot(session).map_err(anyhow::Error::msg)?;
+        let (x, y) = (window.at.0.max(0) as u32, window.at.1.max(0) as u32);
+        let width = (window.size.0.max(0) as u32).min(frame.width.saturating_sub(x));
+        let height = (window.size.1.max(0) as u32).min(frame.height.saturating_sub(y));
+        let image = image::RgbImage::from_fn(width, height, |dx, dy| image::Rgb(frame.rgb(x + dx, y + dy)));
+        image.save(png).with_context(|| format!("writing {}", png.display()))?;
+        Ok(false)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    fn composited(
+        _session: &Session,
         _pid: u32,
         png: &Path,
         client: &mut Rpc,
         window: Option<u64>,
         _motion: Option<(&nd_docs::examples::Motion, &Path)>,
     ) -> Result<bool> {
-        // GPUI draws the whole window, chrome included, so the backend's own capture is the picture.
         client.call("screenshot", serde_json::json!({ "path": png, "window": window }))?;
         Ok(false)
     }
@@ -835,10 +890,7 @@ fn os_version(os: Os) -> String {
                 .find_map(|l| l.strip_prefix("PRETTY_NAME="))
                 .map(|v| v.trim_matches('"').to_owned())
                 .unwrap_or_else(|| "Linux".into());
-            match std::env::var("XDG_CURRENT_DESKTOP") {
-                Ok(desktop) if !desktop.is_empty() => format!("{name}, {desktop}"),
-                _ => name,
-            }
+            format!("{name}, Hyprland")
         }
         Os::Windows => "Windows".into(),
     }
