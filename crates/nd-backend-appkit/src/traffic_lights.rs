@@ -56,8 +56,11 @@ impl TrafficLights {
 
     /// The height of the band pinned buttons sit centred in: twice their centre's distance
     /// from the window's top. A title row as tall as this centres its title and items on the
-    /// buttons. `None` while the buttons sit where AppKit puts them.
+    /// buttons. `None` while the buttons sit where AppKit puts them, or in a toolbar's band.
     pub fn band(&self, window: &NSWindow) -> Option<f32> {
+        if window.toolbar().is_some() {
+            return None;
+        }
         let at = self.at.get()?;
         let height = buttons(window)?[0].frame().size.height;
         Some((2. * (f64::from(at.y) + height / 2.)).round() as f32)
@@ -149,10 +152,19 @@ impl TrafficLights {
         let stock = stock.as_ref()?;
         let window_height = window.frame().size.height;
         let height = stock.buttons[0].size.height;
-        let centre_from_top = f64::from(at.y) + height / 2.;
-        // The band the buttons sit in has to reach twice their centre, so they stay vertically
-        // centred in it the way AppKit centres them in a toolbar band.
-        let band = stock.container.size.height.max((centre_from_top * 2.).round());
+        let (band, centre_from_top) = if window.toolbar().is_some() {
+            // The toolbar centres its title and items in its own band and cannot move them, so
+            // the buttons take `at.x` and sit centred in that band. Its height is read from the
+            // window each pass: the stock container may have been read before the toolbar came.
+            let toolbar_band = window_height - window.contentLayoutRect().size.height;
+            let band = stock.container.size.height.max(toolbar_band).round();
+            (band, band / 2.)
+        } else {
+            // The band the buttons sit in has to reach twice their centre, so they stay
+            // vertically centred in it the way AppKit centres them in a toolbar band.
+            let centre_from_top = f64::from(at.y) + height / 2.;
+            (stock.container.size.height.max((centre_from_top * 2.).round()), centre_from_top)
+        };
         let mut frame = container.frame();
         frame.size.height = band;
         frame.origin.y = window_height - band;

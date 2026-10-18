@@ -917,7 +917,9 @@ impl IntoElement for Button {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowControlsProps {
     /// Pins the OS window controls with their first button's top-left at this point, in
-    /// window coordinates; `None` leaves them where the OS puts them.
+    /// window coordinates; `None` leaves them where the OS puts them. In a window with a
+    /// toolbar only `x` applies: the controls stay centred in the toolbar's band, where its
+    /// title and items are.
     pub at: Option<nd_core::Point>,
     /// A layout slot the size of the controls: the backend moves the real buttons onto the
     /// slot's rect on every layout pass, so they ride with whatever moves the slot.
