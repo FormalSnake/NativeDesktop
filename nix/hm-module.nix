@@ -36,12 +36,12 @@ let
   settings = prune cfg.settings;
 
   # macOS apps read ~/Library/Application Support/<pname>, everything else $XDG_CONFIG_HOME/<pname>.
-  configFile =
-    name: source:
-    if isDarwin then
-      { home.file."Library/Application Support/${pname}/${name}".source = source; }
-    else
-      { xdg.configFile."${pname}/${name}".source = source; };
+  # Both branches are mkIf rather than an `if`: under useGlobalPkgs `pkgs` comes from config, so a
+  # module whose attribute names depend on `pkgs` recurses forever.
+  configFile = name: source: {
+    home.file."Library/Application Support/${pname}/${name}" = lib.mkIf isDarwin { inherit source; };
+    xdg.configFile."${pname}/${name}" = lib.mkIf (!isDarwin) { inherit source; };
+  };
 in
 {
   options.programs.${pname} = {
