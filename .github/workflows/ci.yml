@@ -79,4 +79,4 @@ jobs:
       - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: deploy -c docs/wrangler.jsonc
+          command: pages deploy target/nd/docs-site --project-name nativedesktop --branch main

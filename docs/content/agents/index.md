@@ -8,9 +8,9 @@ check` names the rule that a change broke, the appearance audit fails any color 
 token, and tier 1 tests run in seconds without a window. These pages are what an agent reads to
 get it right the first time.
 
-The docs are online at https://nativedesktop.formalsnake.dev. Every page is also plain markdown
-at the same path with `.md` added. https://nativedesktop.formalsnake.dev/llms.txt lists the pages,
-and https://nativedesktop.formalsnake.dev/llms-full.txt has all of them in one file.
+The docs are online at https://native.formalsnake.dev. Every page is also plain markdown
+at the same path with `.md` added. https://native.formalsnake.dev/llms.txt lists the pages,
+and https://native.formalsnake.dev/llms-full.txt has all of them in one file.
 
 ## Start a project
 

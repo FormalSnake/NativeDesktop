@@ -12,7 +12,7 @@ use crate::captures::{Manifest, Os, State};
 use crate::examples::Example;
 use crate::model::{Block, Inline, Link, Page, Site, SourceRef};
 
-pub const SITE_URL: &str = "https://nativedesktop.formalsnake.dev";
+pub const SITE_URL: &str = "https://native.formalsnake.dev";
 pub const REPO_URL: &str = "https://github.com/FormalSnake/NativeDesktop";
 
 /// The path a page is served at.
@@ -296,14 +296,14 @@ const CSS: &str = r#"
 :root{color-scheme:light dark;--surface:#fafafa;--sidebar:#f0f0f2;--raised:#ffffff;--text:#000000d9;--text2:#00000080;--accent:#2f6fed;--accent-container:#d9e5ff;--separator:#0000001a;--code:#0000000a}
 @media (prefers-color-scheme:dark){:root{--surface:#1e1e20;--sidebar:#252528;--raised:#2b2b2e;--text:#ffffffd9;--text2:#ffffff8c;--accent:#4c8dff;--accent-container:#1f3a6e;--separator:#ffffff1f;--code:#ffffff0f}}
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:66px}
 body{margin:0;background:var(--surface);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Ubuntu,sans-serif}
 a{color:var(--accent);text-underline-offset:2px}
-.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid var(--separator);background:var(--raised)}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid var(--separator);background:var(--raised);position:sticky;top:0;z-index:1}
 .brand{font-weight:600;color:var(--text);text-decoration:none}
 .links{display:flex;gap:16px;font-size:14px}
 .layout{display:grid;grid-template-columns:260px minmax(0,1fr)}
-.sidebar{grid-column:1;grid-row:1;background:var(--sidebar);border-right:1px solid var(--separator);padding:8px 16px 24px;font-size:14px;min-height:calc(100vh - 50px)}
+.sidebar{grid-column:1;grid-row:1;background:var(--sidebar);border-right:1px solid var(--separator);padding:8px 16px 24px;font-size:14px;position:sticky;top:50px;align-self:start;height:calc(100vh - 50px);overflow-y:auto;overscroll-behavior:contain}
 main{grid-column:2;grid-row:1}
 .to-pages{display:none}
 .sidebar h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin:20px 0 6px}
@@ -332,7 +332,7 @@ hr{border:0;border-top:1px solid var(--separator);margin:32px 0}
 footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--separator);font-size:13px;color:var(--text2)}
 @media (max-width:760px){
 .layout{grid-template-columns:minmax(0,1fr)}
-.sidebar{grid-column:1;grid-row:2;min-height:0;border-right:0;border-top:1px solid var(--separator)}
+.sidebar{grid-column:1;grid-row:2;position:static;height:auto;overflow:visible;border-right:0;border-top:1px solid var(--separator)}
 main{grid-column:1;grid-row:1}
 .to-pages{display:inline}
 .links{gap:12px}

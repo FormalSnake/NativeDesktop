@@ -199,7 +199,7 @@ the repository.
 - `nd docs build`: writes the static site to `target/nd/docs-site/`. That's an HTML page and the
   raw markdown for every page, `llms.txt`, `llms-full.txt`, and the docs app's web bundle under
   `app/`. `nd docs serve` builds and serves it. CI deploys it to
-  https://nativedesktop.formalsnake.dev on every push to main.
+  https://native.formalsnake.dev on every push to main.
 - `nd docs capture [example..]`: runs each example through the test harness on this OS, light
   and dark, and records its source hash in the capture manifest. `--stale` takes only the examples
   whose capture is missing or out of date. A changed example shows "not captured yet" until you

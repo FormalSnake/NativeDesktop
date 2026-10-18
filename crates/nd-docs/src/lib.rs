@@ -177,7 +177,7 @@ mod tests {
         let md = "See [theming](../concepts/theming.md#tokens), [here](#x), [src](../../../examples/hello) \
                   and [web](https://example.com).";
         let out = super::absolute_links(md, "guides/web");
-        assert!(out.contains("(https://nativedesktop.formalsnake.dev/concepts/theming.md#tokens)"), "{out}");
+        assert!(out.contains("(https://native.formalsnake.dev/concepts/theming.md#tokens)"), "{out}");
         assert!(out.contains("[here](#x)"));
         assert!(out.contains("(https://github.com/FormalSnake/NativeDesktop/blob/main/examples/hello)"));
         assert!(out.contains("(https://example.com)"));
