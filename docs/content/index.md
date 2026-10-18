@@ -6,9 +6,7 @@ description = "One Rust view tree that renders as native AppKit controls on macO
 NativeDesktop is a toolkit for desktop apps written in Rust. You describe a window as a tree of
 views and elements, and each platform's backend turns that tree into the controls its OS draws.
 
-<!-- docs:example hello -->
-
-The counter above is all of [hello](../../examples/hello/src/lib.rs): a struct with a `render`
+The counter below is all of [hello](../../examples/hello/src/lib.rs): a struct with a `render`
 method and a button. The same code runs on every target:
 
 - macOS: AppKit. The toolbar is an `NSToolbar`, the button an `NSButton`, a list an `NSTableView`.
@@ -22,6 +20,8 @@ method and a button. The same code runs on every target:
 Your app never names a backend. `scaffold()`, `toolbar()`, and `button()` say what the window
 contains, and the backend decides how that looks on its OS. When a platform has no native version
 of something, the framework draws it from the same theme tokens.
+
+<!-- docs:example hello -->
 
 ## Built for agents
 

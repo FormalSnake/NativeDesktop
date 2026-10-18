@@ -270,15 +270,15 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
     if example.web {
         out.push_str(" It also runs live in the <a href=\"/app/\">docs app</a>.");
     }
-    out.push_str("</figcaption>\n");
+    out.push_str("</figcaption>\n<div class=\"shots\">\n");
     for os in Os::ALL {
         if let State::Fresh(c) = captures.state(example, os) {
             let dir = format!("/app/assets/captures/{}", example.name);
             let _ = writeln!(
                 out,
-                "<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{dark}\">\
+                "<div class=\"shot\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{dark}\">\
                  <img src=\"{dir}/{light}\" alt=\"{title} on {os}\" loading=\"lazy\"></picture>\
-                 <p class=\"source\">Captured on {on}, {date}.</p>",
+                 <p class=\"source\">Captured on {on}, {date}.</p></div>",
                 dark = esc(&c.dark),
                 light = esc(&c.light),
                 title = esc(&example.title),
@@ -288,7 +288,7 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
             );
         }
     }
-    out.push_str("</figure>\n");
+    out.push_str("</div>\n</figure>\n");
 }
 
 /// Colours are `nd-theme`'s baked palette (`palette.rs`), light and dark.
@@ -328,7 +328,9 @@ th,td{border:1px solid var(--separator);padding:6px 10px;text-align:left;vertica
 th{background:var(--sidebar)}
 hr{border:0;border-top:1px solid var(--separator);margin:32px 0}
 .example{margin:20px 0;padding:12px 16px;background:var(--raised);border:1px solid var(--separator);border-radius:8px}
-.example img{max-width:100%;height:auto;display:block;margin-top:12px;border-radius:6px}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px;margin-top:12px}
+.shots img{max-width:100%;height:auto;display:block;border-radius:6px}
+.shot .source{margin:6px 0 0}
 footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--separator);font-size:13px;color:var(--text2)}
 @media (max-width:760px){
 .layout{grid-template-columns:minmax(0,1fr)}
