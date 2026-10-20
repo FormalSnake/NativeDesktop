@@ -1,0 +1,27 @@
+#!/bin/sh
+# Builds the docs site in Cloudflare Pages' build image (Ubuntu, no Rust): the project's build
+# command, with the output in target/nd/docs-site. Installs rustup and the toolchain pinned in
+# rust-toolchain.toml, and takes the release wasm-bindgen matching the lockfile instead of
+# compiling it. nd-cli builds without `capture`, which links libxkbcommon.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+if ! command -v rustup >/dev/null 2>&1; then
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+  . "$HOME/.cargo/env"
+fi
+rustup toolchain install
+
+version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+tools="${XDG_CACHE_HOME:-$HOME/.cache}/nd/tools"
+bindgen="$tools/wasm-bindgen-$version-x86_64-unknown-linux-musl/wasm-bindgen"
+if [ ! -x "$bindgen" ]; then
+  mkdir -p "$tools"
+  curl -sSfL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$version/wasm-bindgen-$version-x86_64-unknown-linux-musl.tar.gz" |
+    tar xz -C "$tools"
+fi
+
+# .cargo/config.toml points build-dir at the macbook's external drive.
+CARGO_BUILD_BUILD_DIR="$root/target/build" ND_WASM_BINDGEN="$bindgen" \
+  cargo run -p nd-cli --no-default-features -- docs build

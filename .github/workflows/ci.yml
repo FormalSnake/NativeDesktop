@@ -49,13 +49,6 @@ jobs:
       - name: docs (pages, links, prose, examples compile, web embeds load)
         if: matrix.name == 'linux'
         run: nix develop -c cargo run -p nd-cli -- docs check --compile --web
-      - name: keep the docs site for docs-deploy
-        if: matrix.name == 'linux' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v7
-        with:
-          name: docs-site
-          path: target/nd/docs-check/site
-          retention-days: 3
       - name: nextest
         run: nix develop -c cargo nextest run --workspace --profile ci
       - name: keep golden mismatches
@@ -68,23 +61,3 @@ jobs:
           retention-days: 7
       - name: doc tests
         run: nix develop -c cargo test --workspace --doc
-
-  # `docs check --web` above built the site; this publishes it once every check has passed.
-  docs-deploy:
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    concurrency:
-      group: docs-deploy
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v8
-        with:
-          name: docs-site
-          path: target/nd/docs-site
-      - uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy target/nd/docs-site --project-name nativedesktop --branch main

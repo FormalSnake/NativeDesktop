@@ -10,14 +10,13 @@
 //! - `capture`: runs each example through the test harness on this OS, light and dark, and
 //!   records the captures with the example's source hash.
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
-use nd_docs::captures::{self, Capture, Manifest, Os, State};
+use nd_docs::captures::{self, Manifest, Os, State};
 use nd_docs::examples::Example;
 
 use crate::web::{self, WebProject};
@@ -509,12 +508,21 @@ fn capture(_repo: &Path, _args: &CaptureArgs) -> Result<ExitCode> {
     bail!("`nd docs capture` talks to the example over a Unix socket; on Windows it is not written yet")
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(feature = "capture")))]
+fn capture(_repo: &Path, _args: &CaptureArgs) -> Result<ExitCode> {
+    bail!("this nd was built without the `capture` feature")
+}
+
+#[cfg(all(unix, feature = "capture"))]
 use capture::capture;
 
 /// Captures through the test harness: launch with automation on, wait for the window, capture.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "capture"))]
 mod capture {
+    use std::io::{BufRead, BufReader};
+
+    use nd_docs::captures::Capture;
+
     use super::*;
 
     pub fn capture(repo: &Path, args: &CaptureArgs) -> Result<ExitCode> {
@@ -879,60 +887,63 @@ mod capture {
             }
         }
     }
-}
 
-fn os_version(os: Os) -> String {
-    let run = |cmd: &str, args: &[&str]| {
-        Command::new(cmd)
-            .args(args)
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-            .filter(|s| !s.is_empty())
-    };
-    match os {
-        Os::Macos => format!("macOS {}", run("sw_vers", &["-productVersion"]).unwrap_or_default()).trim().to_owned(),
-        Os::Linux => {
-            let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-            let name = release
-                .lines()
-                .find_map(|l| l.strip_prefix("PRETTY_NAME="))
-                .map(|v| v.trim_matches('"').to_owned())
-                .unwrap_or_else(|| "Linux".into());
-            format!("{name}, Hyprland")
+    fn os_version(os: Os) -> String {
+        let run = |cmd: &str, args: &[&str]| {
+            Command::new(cmd)
+                .args(args)
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+                .filter(|s| !s.is_empty())
+        };
+        match os {
+            Os::Macos => {
+                format!("macOS {}", run("sw_vers", &["-productVersion"]).unwrap_or_default()).trim().to_owned()
+            }
+            Os::Linux => {
+                let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+                let name = release
+                    .lines()
+                    .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+                    .map(|v| v.trim_matches('"').to_owned())
+                    .unwrap_or_else(|| "Linux".into());
+                format!("{name}, Hyprland")
+            }
+            Os::Windows => "Windows".into(),
         }
-        Os::Windows => "Windows".into(),
     }
-}
 
-/// Today's date in UTC as `YYYY-MM-DD` (Howard Hinnant's days-to-civil).
-fn today() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    civil(secs as i64 / 86_400)
-}
+    /// Today's date in UTC as `YYYY-MM-DD` (Howard Hinnant's days-to-civil).
+    fn today() -> String {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        civil(secs as i64 / 86_400)
+    }
 
-fn civil(days: i64) -> String {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
-}
+    fn civil(days: i64) -> String {
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = doy - (153 * mp + 2) / 5 + 1;
+        let month = if mp < 10 { mp + 3 } else { mp - 9 };
+        let year = yoe + era * 400 + i64::from(month <= 2);
+        format!("{year:04}-{month:02}-{day:02}")
+    }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
+    #[cfg(test)]
     #[test]
     fn civil_dates() {
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(20_740), "2026-10-14");
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn features_are_package_qualified() {

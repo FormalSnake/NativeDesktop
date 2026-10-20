@@ -16,8 +16,8 @@ runner's headless Chrome every embed stays one flat colour, with a SwiftShader W
 no console errors. The same check renders all five embeds on the macbook (65 colours each). The
 check now polls for the first frame for 30 s and prints the GPU probe and page console on failure.
 Next idea: run that Chrome under `xvfb-run`, or check whether the WebGPU surface presents at all
-with SwiftShader. Until it passes, the `docs-deploy` job never runs, and it also still needs the
-`CLOUDFLARE_API_TOKEN` repo secret (user action).
+with SwiftShader. The site no longer deploys from CI: the Cloudflare Pages project `nativedesktop`
+builds every push to main through its GitHub integration, running `scripts/pages-build`.
 
 The Linux layout goldens (`gate_m6::gpui_layout_goldens`) differ 0.6% on e1504g, on main as well;
 they were recorded on g815. Not a regression.
