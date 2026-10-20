@@ -111,6 +111,9 @@
                 # loads the nix glibc through LD_LIBRARY_PATH below and dies, so ship one that
                 # is linked against the same store.
                 git
+                # `nd publish` and its gate_m10 test run rsync, which the runner's copy fails the
+                # same way.
+                rsync
                 pkg-config
                 clang
                 mold
@@ -170,6 +173,29 @@
             # $CEF_PATH, outside the target dir so a `cargo clean` keeps it.
             export CEF_PATH="''${CEF_PATH:-''${XDG_CACHE_HOME:-$HOME/.cache}/nd-cef}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
+            # Goldens draw the Adwaita preset's fonts and the desktop's interface fonts, so every
+            # host sees the same few: without this, the runner's sans-serif is DejaVu and g815 picks
+            # its own monospace from dconf. No host font dirs or /etc/fonts/conf.d, which carry
+            # each distro's own family preferences.
+            export FONTCONFIG_FILE="${
+              pkgs.makeFontsConf {
+                fontDirectories = [
+                  pkgs.adwaita-fonts
+                  pkgs.noto-fonts-color-emoji
+                ];
+                impureFontDirectories = [ ];
+                includes = [
+                  (pkgs.writeText "nd-font-aliases.conf" ''
+                    <?xml version="1.0"?>
+                    <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+                    <fontconfig>
+                      <alias><family>sans-serif</family><prefer><family>Adwaita Sans</family></prefer></alias>
+                      <alias><family>monospace</family><prefer><family>Adwaita Mono</family></prefer></alias>
+                    </fontconfig>
+                  '')
+                ];
+              }
+            }"
             # Scoped to the host triple: a plain RUSTFLAGS reaches the wasm32 link too, where rust-lld
             # rejects -fuse-ld=mold.
             export ${hostRustflags}="''${${hostRustflags}:+''$${hostRustflags} }-C link-arg=-fuse-ld=mold"
