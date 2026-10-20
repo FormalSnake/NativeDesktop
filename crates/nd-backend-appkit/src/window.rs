@@ -71,8 +71,13 @@ define_class!(
             if event.r#type() == NSEventType::KeyDown && self.route_key(event) {
                 return;
             }
-            if event.r#type() == NSEventType::LeftMouseDown && let Some(router) = self.router() {
-                router.pointer_down();
+            if event.r#type() == NSEventType::LeftMouseDown {
+                if let Some(router) = self.router() {
+                    router.pointer_down();
+                }
+                if crate::gestures::double_click_on_text(self, event) {
+                    return;
+                }
             }
             unsafe { msg_send![super(self), sendEvent: event] }
         }
