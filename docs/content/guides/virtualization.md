@@ -88,14 +88,17 @@ To turn on selection, pass `.selection(Selection::single())` or `Selection::mult
 click. To set the selection from code, call `select(key)` or `set_selected(keys)`. The list drops
 keys that are no longer in it.
 
-Row actions are a method of the list because on macOS they're `NSTableViewRowAction`s, which come
-from the table's delegate. The closure runs for the row that the user swipes:
+Row actions are a method of the list, which asks for them per row. The closure runs for the row
+that the user swipes:
 
 <!-- docs:snippet examples/notes/src/note_list.rs#list -->
 
-`full_swipe` makes a long swipe on that edge run its first action. On other platforms, the
-framework draws the swipe and arbitrates it against the list's own scrolling. For details, see
-[gestures](gestures.md).
+`full_swipe` makes a long swipe on that edge run its first action. The framework draws the swipe
+on every platform, with a spring that carries the release velocity and a haptic at the full-swipe
+threshold. On macOS the table takes horizontal trackpad gestures on rows that have actions and
+leaves the rest to its scroll view; `NSTableViewRowAction` is not used because it narrows the
+button as the row closes. Elsewhere the swipe is arbitrated against the list's own scrolling. For
+details, see [gestures](gestures.md).
 
 ## Tables, grids, and trees
 
@@ -125,7 +128,7 @@ Rows are the same on every backend. Only the container differs:
 | Tree | `NSOutlineView` | GPUI presenter with drawn disclosure |
 | Grid | `NSCollectionView` | GPUI presenter |
 | Scrolling | `NSScrollView`: native momentum and elastic overscroll | Framework momentum and rubber band |
-| Row actions | `NSTableViewRowAction` | Drawn, with a direction lock against the list |
+| Row actions | Drawn in the row view, from the table's horizontal scroll gestures | Drawn, with a direction lock against the list |
 | Keyed update | `insertRows`, `removeRows` | Applied directly |
 
 `nd-virtual` owns the height tree on both. On macOS, AppKit's own row-height estimation is off,

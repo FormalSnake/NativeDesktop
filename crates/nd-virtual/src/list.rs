@@ -179,8 +179,8 @@ pub struct RowActionsSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowTag {
     pub row: RowId,
-    /// The row's swipe actions, when the list has `row_actions`. On macOS they are the table's
-    /// own row actions; elsewhere the row draws them under nd-gesture's row swipe.
+    /// The row's swipe actions, when the list has `row_actions`. On macOS the table draws them;
+    /// elsewhere the row draws them under nd-gesture's row swipe.
     pub actions: Option<RowActionsSpec>,
     /// Tree rows: nesting depth, whether the row has children, whether they show.
     pub depth: u16,
@@ -872,8 +872,8 @@ impl<K: RowKey> Render for RowView<K> {
         let (Some(spec), Some(actions)) = (spec, actions) else {
             return content.scope(Scope::new(tag)).into_any_element();
         };
-        // Without native row actions (every backend but AppKit) the row draws its actions under
-        // the content and follows nd-gesture's row swipe; AppKit never sends the swipe.
+        // Every backend but AppKit: the row draws its actions under the content and follows
+        // nd-gesture's row swipe. AppKit's table draws them itself and never sends the swipe.
         let width = |n: usize| n as f32 * ROW_ACTION_WIDTH;
         let config = nd_gesture::RowSwipeConfig {
             leading: width(spec.leading.len()),
@@ -1066,7 +1066,7 @@ impl<K: RowKey> List<K> {
         self
     }
 
-    /// Swipe actions per row. On macOS they are the table's own row actions; elsewhere the row
+    /// Swipe actions per row. On macOS the table draws them in the row view; elsewhere the row
     /// draws them and follows nd-gesture's row swipe.
     pub fn row_actions(self, f: impl Fn(K, &App) -> RowActions + 'static) -> Self {
         self.state.inner.borrow_mut().row_actions = Some(Rc::new(f));

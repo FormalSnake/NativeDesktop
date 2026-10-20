@@ -538,7 +538,7 @@ impl Div {
         self.on(handler)
     }
 
-    /// Swipe-to-reveal on a row, for lists on backends without native row actions. The list's
+    /// Swipe-to-reveal on a row, for lists on backends other than AppKit. The list's
     /// `row_actions` sets this; apps use that instead.
     pub fn on_row_swipe(
         mut self,

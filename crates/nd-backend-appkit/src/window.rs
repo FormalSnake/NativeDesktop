@@ -75,6 +75,9 @@ define_class!(
                 if let Some(router) = self.router() {
                     router.pointer_down();
                 }
+                if crate::virtual_list::window_press(self, event) {
+                    return;
+                }
                 if crate::gestures::double_click_on_text(self, event) {
                     return;
                 }
