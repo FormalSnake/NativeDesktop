@@ -73,9 +73,13 @@ fn build() -> Result<(), String> {
 
     let configuration = if var("PROFILE")? == "release" { "release" } else { "debug" };
     let scratch = out_dir.join("nd-swift/scratch");
+    // A Nix build already runs under the daemon's seatbelt profile, and macOS refuses the nested
+    // `sandbox-exec` SwiftPM wraps manifest compilation in.
+    let sandbox: &[&str] = if env::var_os("NIX_BUILD_TOP").is_some() { &["--disable-sandbox"] } else { &[] };
     let mut swift = system_command("/usr/bin/swift");
     swift
         .args(["build", "-c", configuration, "--product", "NDAggregate"])
+        .args(sandbox)
         .arg("--package-path")
         .arg(&aggregate)
         .arg("--scratch-path")
@@ -85,19 +89,18 @@ fn build() -> Result<(), String> {
     }
     run(&mut swift, "swift build")?;
 
-    let bin_path = output(
-        "/usr/bin/swift",
-        &[
-            "build",
-            "-c",
-            configuration,
-            "--show-bin-path",
-            "--package-path",
-            aggregate.to_str().ok_or("non-UTF-8 path")?,
-            "--scratch-path",
-            scratch.to_str().ok_or("non-UTF-8 path")?,
-        ],
-    )?;
+    let mut show_bin_path = vec![
+        "build",
+        "-c",
+        configuration,
+        "--show-bin-path",
+        "--package-path",
+        aggregate.to_str().ok_or("non-UTF-8 path")?,
+        "--scratch-path",
+        scratch.to_str().ok_or("non-UTF-8 path")?,
+    ];
+    show_bin_path.extend_from_slice(sandbox);
+    let bin_path = output("/usr/bin/swift", &show_bin_path)?;
     let lib = PathBuf::from(bin_path).join("libNDAggregate.a");
     if !lib.exists() {
         return Err(format!("swift build produced no {}", lib.display()));
