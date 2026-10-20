@@ -21,8 +21,8 @@ use std::rc::Rc;
 use nd_core::{NodeId, Rect, Size};
 use nd_ui::events::Emit;
 use nd_virtual::{
-    ColumnResized, ListHandle, ListKind, ListProps, RowActionInvoked, RowActivated, RowDisclosed, RowEdge, RowId,
-    RowMeta, RowsSelected, Selection, SortChanged, SortDirection, ViewportChanged, diff_rows,
+    ColumnResized, ListHandle, ListKind, ListProps, RowActivated, RowDisclosed, RowId, RowMeta, RowsSelected,
+    Selection, SortChanged, SortDirection, ViewportChanged, diff_rows,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -31,19 +31,22 @@ use objc2_app_kit::{
     NSCollectionView, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewFlowLayout,
     NSCollectionViewItem, NSControlTextEditingDelegate, NSIndexPathNSCollectionViewAdditions, NSOutlineView,
     NSOutlineViewDataSource, NSOutlineViewDelegate, NSScrollView, NSTableColumn, NSTableColumnResizingOptions,
-    NSTableRowActionEdge, NSTableView, NSTableViewAnimationOptions, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewRowAction, NSTableViewRowActionStyle, NSTableViewStyle,
-    NSView, NSViewBoundsDidChangeNotification,
+    NSTableView, NSTableViewAnimationOptions, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource,
+    NSTableViewDelegate, NSTableViewStyle, NSView, NSViewBoundsDidChangeNotification,
 };
 use objc2_core_foundation::CGFloat;
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSDictionary, NSEdgeInsets, NSIndexPath, NSIndexSet, NSInteger, NSMutableIndexSet,
+    MainThreadMarker, NSDictionary, NSEdgeInsets, NSIndexPath, NSIndexSet, NSInteger, NSMutableIndexSet,
     NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSString, NSUserDefaults,
 };
 
 use crate::events::Wake;
 use crate::look::ViewLook;
 use crate::views::NdLayerView;
+
+mod swipe;
+
+pub(crate) use swipe::window_press;
 
 /// Turns off AppKit's own row height estimation (on since macOS 13) for this process, in the
 /// registration domain so nothing is written to the app's defaults.
@@ -123,6 +126,8 @@ pub struct Shared {
     /// Points of the list under the window's bars at its top: model offset 0 sits this far down
     /// the clip view, so rows scroll under the bars (which blur them) and rest clear of them.
     bars: Cell<f64>,
+    /// A list without selection never highlights a clicked row.
+    selection: Cell<Selection>,
 }
 
 impl Shared {
@@ -143,6 +148,7 @@ impl Shared {
             asked: RefCell::default(),
             edges: Cell::new((false, false)),
             bars: Cell::new(0.),
+            selection: Cell::new(props.selection),
         }
     }
 
@@ -255,14 +261,9 @@ define_class!(
             shared.wake.wake();
         }
 
-        #[unsafe(method_id(tableView:rowActionsForRow:edge:))]
-        fn row_actions(
-            &self,
-            _table: &NSTableView,
-            row: NSInteger,
-            edge: NSTableRowActionEdge,
-        ) -> Retained<NSArray<NSTableViewRowAction>> {
-            self.native_row_actions(row, edge)
+        #[unsafe(method(tableView:shouldSelectRow:))]
+        fn should_select(&self, _table: &NSTableView, _row: NSInteger) -> bool {
+            self.ivars().shared.selection.get() != Selection::None
         }
 
         #[unsafe(method(tableView:didClickTableColumn:))]
@@ -339,6 +340,11 @@ define_class!(
             Shared::row_of_item(Some(item)).map(|row| Retained::into_super(self.ivars().shared.container(row, 0)))
         }
 
+        #[unsafe(method(outlineView:shouldSelectItem:))]
+        fn should_select_item(&self, _outline: &NSOutlineView, _item: &AnyObject) -> bool {
+            self.ivars().shared.selection.get() != Selection::None
+        }
+
         #[unsafe(method(outlineViewSelectionDidChange:))]
         fn outline_selection_changed(&self, notification: &NSNotification) {
             let shared = &self.ivars().shared;
@@ -410,66 +416,6 @@ define_class!(
 );
 
 impl NdListSource {
-    /// The row's actions on `edge` as `NSTableViewRowAction`s; picking one queues
-    /// [`RowActionInvoked`] for the list, which runs the app's action outside this callback.
-    fn native_row_actions(
-        &self,
-        row: NSInteger,
-        edge: NSTableRowActionEdge,
-    ) -> Retained<NSArray<NSTableViewRowAction>> {
-        let shared = &self.ivars().shared;
-        let Some(id) = shared.snap.borrow().ids.get(row as usize).copied() else { return NSArray::new() };
-        let edge = if edge == NSTableRowActionEdge::Leading { RowEdge::Leading } else { RowEdge::Trailing };
-        let specs = shared
-            .actions
-            .borrow()
-            .get(&id)
-            .map(|a| if edge == RowEdge::Leading { a.leading.clone() } else { a.trailing.clone() })
-            .unwrap_or_default();
-        let actions: Vec<Retained<NSTableViewRowAction>> = specs
-            .iter()
-            .enumerate()
-            .map(|(index, spec)| {
-                let (emit, wake) = (shared.emit.clone(), shared.wake.clone());
-                let handler = block2::RcBlock::new(move |_: std::ptr::NonNull<NSTableViewRowAction>, _: NSInteger| {
-                    emit.emit(RowActionInvoked { row: id, edge, index });
-                    wake.wake();
-                });
-                let style = if spec.destructive {
-                    NSTableViewRowActionStyle::Destructive
-                } else {
-                    NSTableViewRowActionStyle::Regular
-                };
-                let action = NSTableViewRowAction::rowActionWithStyle_title_handler(
-                    style,
-                    &NSString::from_str(&spec.title),
-                    &handler,
-                );
-                if let Some(image) = spec.icon.as_deref().and_then(crate::icons::symbol) {
-                    action.setImage(Some(&image));
-                }
-                if let Some(tint) = spec.tint {
-                    let c = tint.to_rgb();
-                    let color = objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(
-                        c.r.into(),
-                        c.g.into(),
-                        c.b.into(),
-                        c.a.into(),
-                    );
-                    action.setBackgroundColor(Some(&color));
-                }
-                action
-            })
-            .collect();
-        NSArray::from_retained_slice(&actions)
-    }
-
-    /// The row's actions as AppKit would show them, for tests: titles on `edge`.
-    pub fn row_action_titles(&self, row: NSInteger, leading: bool) -> Vec<String> {
-        let edge = if leading { NSTableRowActionEdge::Leading } else { NSTableRowActionEdge::Trailing };
-        self.native_row_actions(row, edge).iter().map(|a| a.title().to_string()).collect()
-    }
-
     fn disclosed(&self, notification: &NSNotification, expanded: bool) {
         let shared = &self.ivars().shared;
         if shared.programmatic.get() > 0 {
@@ -514,7 +460,7 @@ impl TableNative {
             outline.setAutoresizesOutlineColumn(false);
             Retained::into_super(outline)
         } else {
-            NSTableView::new(mtm)
+            Retained::into_super(swipe::NdTableView::new(mtm, shared.clone()))
         };
         table.setUsesAutomaticRowHeights(false);
         table.setIntercellSpacing(objc2_foundation::NSSize::new(0., 0.));
@@ -648,6 +594,7 @@ impl TableNative {
                 }
             });
         }
+        self.shared.selection.set(props.selection);
         if old.selected != props.selected || old.selection != props.selection {
             self.select();
         }
@@ -685,6 +632,9 @@ impl TableNative {
     pub fn detach_row(&mut self, node: NodeId) {
         let Some(row) = self.node_rows.remove(&node) else { return };
         self.shared.actions.borrow_mut().remove(&row);
+        if let Some(table) = self.table.downcast_ref::<swipe::NdTableView>() {
+            table.forget(row);
+        }
         if let Some(r) = self.shared.rows.borrow_mut().remove(&row) {
             r.view.removeFromSuperview();
             for (n, v) in r.cells.values() {
@@ -706,9 +656,13 @@ impl TableNative {
         };
     }
 
-    /// Titles of the row actions AppKit would show for the table's `row` on one edge.
+    /// Titles of the row actions a swipe on the table's `row` reveals on one edge.
     pub fn row_action_titles(&self, row: usize, leading: bool) -> Vec<String> {
-        self.source.row_action_titles(row as NSInteger, leading)
+        let Some(id) = self.shared.snap.borrow().ids.get(row).copied() else { return Vec::new() };
+        let actions = self.shared.actions.borrow();
+        let Some(a) = actions.get(&id) else { return Vec::new() };
+        let edge = if leading { &a.leading } else { &a.trailing };
+        edge.iter().map(|s| s.title.to_string()).collect()
     }
 
     pub fn is_row(&self, node: NodeId) -> bool {

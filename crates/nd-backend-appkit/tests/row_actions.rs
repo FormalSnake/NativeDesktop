@@ -1,6 +1,5 @@
-//! Tier 2: a list's row actions on AppKit are the table's own `NSTableViewRowAction`s, answered
-//! from the rendered row's tag; picking one runs the app's action through the list's event, never
-//! inside the AppKit callback.
+//! Tier 2: a list's row actions on AppKit come from the rendered row's tag; picking one runs the
+//! app's action through the list's event, never inside an AppKit callback.
 
 mod harness;
 
@@ -73,7 +72,7 @@ mod mac {
         let list_node = *backend.lists().first().expect("list");
         assert_eq!(backend.list_row_actions(list_node, 2, false), vec!["Delete".to_owned()]);
         assert_eq!(backend.list_row_actions(list_node, 2, true), vec!["Pin".to_owned()]);
-        // What the action's handler block queues when the user picks Delete on row 2.
+        // What the table queues when the user picks Delete on row 2.
         let row_id = row_id_of(&host, 2);
         host.update(|app| {
             app.events().emitter(list_node).emit(RowActionInvoked { row: row_id, edge: RowEdge::Trailing, index: 0 })

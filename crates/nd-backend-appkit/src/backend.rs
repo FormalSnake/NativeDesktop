@@ -344,7 +344,7 @@ impl AppKitBackend {
         out
     }
 
-    /// Titles of the native row actions the list shows for its `row`th row on one edge.
+    /// Titles of the row actions the list shows for its `row`th row on one edge.
     pub fn list_row_actions(&self, list: NodeId, row: usize, leading: bool) -> Vec<String> {
         match self.0.borrow().nodes.get(&list) {
             Some(Native::List(l)) => l.row_action_titles(row, leading),
