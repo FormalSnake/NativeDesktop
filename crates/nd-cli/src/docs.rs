@@ -352,9 +352,16 @@ fn chrome_command(work: &Path, name: &str) -> Result<Command> {
         ])
         .arg(format!("--user-data-dir={}", work.join(format!("profile-{name}")).display()));
     // Chrome 137 and later no longer fall back to SwiftShader by themselves, so a runner without a
-    // GPU draws no canvas unless software GL is asked for.
+    // GPU draws no canvas unless software GL is asked for. Linux Chrome also keeps Vulkan off,
+    // and without it a WebGPU canvas gets no shared image to present through ("Could not find
+    // SharedImageBackingFactory"), so every frame is dropped and the page stays its background.
     if cfg!(target_os = "linux") {
-        command.args(["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]);
+        command.args([
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+            "--enable-features=Vulkan",
+            "--use-vulkan=swiftshader",
+        ]);
     }
     Ok(command)
 }
