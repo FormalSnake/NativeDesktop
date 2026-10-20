@@ -25,3 +25,9 @@ usage pause. Your own context must stay small: you coordinate, subagents do the 
 5. You merge, resolve conflicts, run the checks, push main after every merge, and keep
    `docs/plan/STATUS.md` and `docs/plan/HANDOFF.md` current, so the next session can resume the same
    way. Follow the user's output rules in ~/.claude/CLAUDE.md for every reply.
+6. Every app a session modifies ends deployed on all machines (user, 2026-10-20). For messages:
+   push nd main, `nix flake update nativedesktop` on messages `nd-port` (merge `nd-port-linux`
+   into it first) and push, then in `~/.config/nix` `nix flake update messages`, commit only
+   `flake.lock`, and switch the macbook (`darwin-rebuild`), g815 (`nixos-rebuild` on g815) and
+   e1504g (built on g815, `--target-host e1504g`, never on e1504g). The same shape applies to
+   every other app input in `~/.config/nix/flake.nix`.
