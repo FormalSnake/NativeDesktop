@@ -683,7 +683,7 @@ mod capture {
     #[cfg(target_os = "linux")]
     type Session = ndshell::hyprland::Hyprland;
     #[cfg(not(target_os = "linux"))]
-    type Session = ();
+    struct Session;
 
     #[cfg(target_os = "linux")]
     fn session() -> Result<Session> {
@@ -692,7 +692,7 @@ mod capture {
 
     #[cfg(not(target_os = "linux"))]
     fn session() -> Result<Session> {
-        Ok(())
+        Ok(Session)
     }
 
     #[cfg(target_os = "linux")]
