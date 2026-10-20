@@ -106,7 +106,7 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 
 ## Phase 7: ports
 - [ ] M13 messages (can start after M7)
-- [ ] M14 youtubemusic (after M7; daemon on `nd-ipc`)
+- [ ] M14 youtubemusic (after M7; on the Kopuz daemon, see the 2026-10-20 decision in PROMPT.md)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
 
