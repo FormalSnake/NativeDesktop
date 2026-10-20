@@ -108,6 +108,8 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
 - [ ] M13 messages (can start after M7)
 - [ ] M14 youtubemusic (after M7; on the Kopuz daemon, see the 2026-10-20 decision in PROMPT.md)
 - [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
+  - [x] Prep lane (`browser`, 2026-10-20): plan and parity checklist on nativebrowser's `nd-port` branch (`docs/nd-port-plan.md`, `docs/nd-parity.md`, 187 items), and a skeleton workspace there on this branch (`crates/lynk`: a window with a sidebar and one CEF page, built and run on the macbook).
+  - The old app runs CEF in Chrome style (extensions, the Web Store, `chrome://` pages, picture-in-picture, 1Password); nd-cef is off-screen Alloy only, and `[webview.cef] style = "chrome"` is read by nothing. nd lanes the port waits on, each with its done criterion in the plan: `cef-chrome-style` (windowed Chrome-style pages, an `NSView` on macOS, an X11 child under XWayland on Hyprland, Chrome UI hidden and its commands routed to the app), `cef-extensions` (installed list, action popups, Web Store install), `cef-request-filter` (synchronous allow, block or redirect on the IO thread for adblock-rust), `webview-private-window` (one `Profile::Private` per window), `cef-user-gesture-js` (picture-in-picture), `nd-tab-drag` (source list and tile grid reorder, live page between windows), `nd-sidebar-reveal` (edge reveal with the traffic lights riding it), `webview-print`.
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
 
 ## Port gaps (branch port-gaps)
