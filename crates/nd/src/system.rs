@@ -291,3 +291,88 @@ pub mod window {
         answer
     }
 }
+
+/// The drawn chrome's file pickers: GPUI has none of its own, so they are the platform's (the
+/// portal on Linux, `IFileDialog` on Windows) through [`Dialogs`], and the rest is the chrome's.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct PlatformFileDialogs(pub Rc<dyn nd_components::services::ChromeServices>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl nd_components::services::ChromeServices for PlatformFileDialogs {
+    fn set_menus(&self, cx: &mut App, menus: Vec<nd_components::Menu>) {
+        self.0.set_menus(cx, menus);
+    }
+
+    fn show_context_menu(
+        &self,
+        cx: &mut App,
+        window: nd_core::WindowId,
+        node: nd_core::NodeId,
+        x: f32,
+        y: f32,
+        menu: nd_components::ContextMenu,
+    ) {
+        self.0.show_context_menu(cx, window, node, x, y, menu);
+    }
+
+    fn alert(
+        &self,
+        cx: &mut App,
+        window: nd_core::WindowId,
+        alert: nd_components::Alert,
+        done: nd_components::services::AlertCallback,
+    ) {
+        self.0.alert(cx, window, alert, done);
+    }
+
+    fn about(&self, cx: &mut App, window: Option<nd_core::WindowId>, about: nd_components::AboutPanel) {
+        self.0.about(cx, window, about);
+    }
+
+    fn open_dialog(
+        &self,
+        _cx: &mut App,
+        _window: nd_core::WindowId,
+        dialog: nd_components::OpenDialog,
+        done: nd_components::services::OpenCallback,
+    ) {
+        let mut options = if dialog.directories && !dialog.files { OpenOptions::folder() } else { OpenOptions::file() };
+        options.title = dialog.title.map(|t| t.to_string());
+        options.directory = dialog.directory;
+        options.multiple = dialog.multiple;
+        if !dialog.extensions.is_empty() {
+            let extensions: Vec<&str> = dialog.extensions.iter().map(|e| e.as_ref()).collect();
+            options = options.filter("Files", &extensions);
+        }
+        spawn(system().dialogs().open(options), move |picked, cx| {
+            done(picked.unwrap_or_else(|e| dialog_failed("open", e)), cx)
+        });
+    }
+
+    fn save_dialog(
+        &self,
+        _cx: &mut App,
+        _window: nd_core::WindowId,
+        dialog: nd_components::SaveDialog,
+        done: nd_components::services::SaveCallback,
+    ) {
+        let mut options = SaveOptions::new();
+        options.title = dialog.title.map(|t| t.to_string());
+        options.directory = dialog.directory;
+        options.file_name = dialog.file_name.map(|n| n.to_string());
+        if !dialog.extensions.is_empty() {
+            let extensions: Vec<&str> = dialog.extensions.iter().map(|e| e.as_ref()).collect();
+            options = options.filter("Files", &extensions);
+        }
+        spawn(system().dialogs().save(options), move |picked, cx| {
+            done(picked.unwrap_or_else(|e| dialog_failed("save", e)), cx)
+        });
+    }
+}
+
+/// A picker that could not show answers as a cancel; the reason goes to stderr.
+#[cfg(not(target_arch = "wasm32"))]
+fn dialog_failed<T>(which: &str, error: Error) -> Option<T> {
+    eprintln!("nd: the {which} dialog failed: {error}");
+    None
+}

@@ -169,7 +169,8 @@ impl Build<'_> {
                 .flex_none()
                 .when(!self.backdrop_shows(theme.materials.toolbar), |row| row.border_b_1().border_color(look.border))
                 .window_control_area(WindowControlArea::Drag)
-                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
+                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
                     if event.click_count >= 2 {
                         window.zoom_window();
                     } else {

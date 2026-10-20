@@ -25,6 +25,7 @@ struct Scene {
     popover: bool,
     panel: bool,
     cover: bool,
+    cover_light: bool,
     cover_taps: u32,
     under: u32,
     chosen: u32,
@@ -79,12 +80,22 @@ impl Render for Scene {
             )
             .child(text(format!("under={} chosen={}", self.under, self.chosen)).id("status"))
             .when(self.cover, |d| {
-                d.child(cover("cover").child(v_flex().size_full().p(px(40.)).child(
-                    div().id("cover-zone").size_full().on_tap(cx.listener(|this, _: &TapEvent, _, cx| {
-                        this.cover_taps += 1;
-                        cx.notify();
-                    })),
-                )))
+                let light = self.cover_light;
+                d.child(
+                    cover("cover")
+                        .when(light, |c| c.modality(Modality::LightDismiss))
+                        .on_dismiss(cx.listener(|this, e: &Dismissed, _, cx| {
+                            this.log.borrow_mut().push(format!("cover {:?}", e.reason));
+                            this.cover = false;
+                            cx.notify();
+                        }))
+                        .child(v_flex().size_full().p(px(40.)).child(div().id("cover-zone").size_full().on_tap(
+                            cx.listener(|this, _: &TapEvent, _, cx| {
+                                this.cover_taps += 1;
+                                cx.notify();
+                            }),
+                        ))),
+                )
             })
             .when(self.panel, |d| {
                 d.child(panel("panel").w(px(200.)).h(px(80.)).child(text("panel")).on_dismiss(cx.listener(
@@ -329,6 +340,26 @@ mod gate_m4_overlays {
         assert_eq!(o.host.read(|app| o.scene.read(app).cover_taps), 1, "a tap inside the cover reaches its content");
     }
 
+    /// A light-dismiss cover closes on a press on its scrim, the padding around its content
+    /// here, and the press goes no further; a press on what it holds reaches that.
+    pub fn gpui_a_light_dismiss_cover_closes_on_its_scrim_only() {
+        let mut o = open();
+        let button = center(&o.host, o.window, "under");
+        set(&mut o, |s| {
+            s.cover = true;
+            s.cover_light = true;
+        });
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(o.host.read(|app| o.scene.read(app).cover_taps), 1, "a tap on its content reaches it");
+        assert!(log(&o).is_empty(), "a press on the content leaves the cover open");
+        post(&mut o, click(nd_ui::Point { x: 20., y: 20. }, GpuiButton::Left));
+        assert_eq!(log(&o), ["cover OutsidePress"], "a press on the scrim closes it");
+        assert!(by_test_id(&o.host, o.window, "cover").is_none(), "the cover is gone");
+        assert_eq!(under(&o), 0, "the press closed the cover and went no further");
+        post(&mut o, click(button, GpuiButton::Left));
+        assert_eq!(under(&o), 1, "the button works once the cover is gone");
+    }
+
     pub fn gpui_context_menu_is_drawn_above_and_consumes() {
         let mut o = open();
         let surface = center(&o.host, o.window, "surface");
@@ -380,6 +411,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content",
             gate_m4_overlays::gpui_cover_fills_the_window_and_taps_reach_its_content,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_light_dismiss_cover_closes_on_its_scrim_only",
+            gate_m4_overlays::gpui_a_light_dismiss_cover_closes_on_its_scrim_only,
         ),
         (
             "gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes",

@@ -322,7 +322,10 @@ impl Application {
             move |cx| {
                 gpui_host::install(cx, &files, app_theme, patterns);
                 if let Some(backend) = cx.backend_as::<crate::gpui_backend::GpuiBackend>().cloned() {
-                    cx.set_global(nd_components::Chrome(crate::gpui_backend::GpuiChrome::new(backend.clone())));
+                    let chrome = crate::gpui_backend::GpuiChrome::new(backend.clone());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let chrome = std::rc::Rc::new(crate::system::PlatformFileDialogs(chrome));
+                    cx.set_global(nd_components::Chrome(chrome));
                     backend.on_file_drop(crate::system::file_dropped);
                     // AppKit's own notifications report activation on macOS.
                     if !cfg!(target_os = "macos") {

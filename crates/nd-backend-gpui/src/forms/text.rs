@@ -79,6 +79,9 @@ pub(crate) struct Editor {
     /// The emoji picker request last seen, and nd's own picker while it is open.
     emoji: Option<u64>,
     picker: Option<super::emoji::Picker>,
+    /// The button that asked for the open picker, in window coordinates: nd's picker hangs from
+    /// it, and the platform's reads it as the caret until text next goes in.
+    picker_from: Option<Bounds<Pixels>>,
 }
 
 impl Editor {
@@ -110,6 +113,7 @@ impl Editor {
             content: px(0.),
             emoji: None,
             picker: None,
+            picker_from: None,
         }
     }
 
@@ -506,6 +510,7 @@ impl gpui::InputHandler for Input {
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut App) {
         let mut e = self.0.borrow_mut();
+        e.picker_from = None;
         let range = range.as_ref().map(|r| e.utf16_to_range(r)).or(e.marked.clone()).unwrap_or(e.selected.clone());
         e.replace(range, text, cx);
         drop(e);
@@ -555,6 +560,11 @@ impl gpui::InputHandler for Input {
 
     fn bounds_for_range(&mut self, range: Range<usize>, _: &mut Window, _: &mut App) -> Option<Bounds<Pixels>> {
         let e = self.0.borrow();
+        if e.picker.is_none()
+            && let Some(from) = e.picker_from
+        {
+            return Some(from);
+        }
         let (_, origin) = e.painted?;
         let range = e.utf16_to_range(&range);
         let (a, b) = (e.position(range.start), e.position(range.end));
@@ -1077,6 +1087,7 @@ pub(crate) fn text_area(
         e.emoji = Some(p.emoji_picker);
         if !p.enabled {
             e.picker = None;
+            e.picker_from = None;
         }
         (e.content, request)
     };
@@ -1121,7 +1132,11 @@ pub(crate) fn text_area(
         area = area.pr(px(p.trailing_room));
     }
     if request {
-        open_emoji_picker(&ctl, &editor, window, cx);
+        let from = b.backend.invoker.borrow_mut().remove(&b.window_id).and_then(|n| b.backend.bounds(n));
+        let from = from.map(|r| {
+            Bounds::new(point(px(r.origin.x), px(r.origin.y)), gpui::size(px(r.size.width), px(r.size.height)))
+        });
+        open_emoji_picker(&ctl, &editor, from, window, cx);
     }
     let Some(picker) = emoji_popover(b, id, &ctl, &editor, window) else {
         return area.into_any_element();
@@ -1130,9 +1145,17 @@ pub(crate) fn text_area(
 }
 
 /// The platform's picker where it has one (the Character Viewer, the Windows emoji panel),
-/// opened at the caret once the field has focus; nd's own elsewhere.
-fn open_emoji_picker(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, window: &mut Window, cx: &mut App) {
+/// opened once the field has focus; nd's own elsewhere. Either opens at `from`, the button that
+/// asked for it, or at the caret.
+fn open_emoji_picker(
+    ctl: &Ctl,
+    editor: &Rc<std::cell::RefCell<Editor>>,
+    from: Option<Bounds<Pixels>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     ctl.sink.take_focus(window, cx);
+    editor.borrow_mut().picker_from = from;
     if cfg!(any(target_os = "macos", target_os = "windows")) {
         // A frame later the focused field has painted and registered its input handler, which
         // is where the platform reads the caret.
@@ -1161,9 +1184,13 @@ fn picker_keys(
                 return keys(event, window, cx);
             }
             Outcome::Handled => {}
-            Outcome::Close => e.picker = None,
+            Outcome::Close => {
+                e.picker = None;
+                e.picker_from = None;
+            }
             Outcome::Pick(emoji) => {
                 e.picker = None;
+                e.picker_from = None;
                 let at = e.selected.clone();
                 e.replace(at, emoji, cx);
                 super::emoji::used(emoji);
@@ -1185,7 +1212,13 @@ fn emoji_popover(
 ) -> Option<gpui::AnyElement> {
     let e = editor.borrow();
     let picker = e.picker.as_ref()?;
-    let caret = e.caret().or_else(|| e.painted.map(|(bounds, _)| bounds.origin))?;
+    let (at, corner) = match e.picker_from {
+        Some(from) => (point(from.right(), from.top() - px(4.)), gpui::Anchor::BottomRight),
+        None => {
+            let caret = e.caret().or_else(|| e.painted.map(|(bounds, _)| bounds.origin))?;
+            (point(caret.x, caret.y - px(4.)), gpui::Anchor::BottomLeft)
+        }
+    };
     let with = {
         let editor = editor.clone();
         Rc::new(move |f: &mut dyn FnMut(&mut super::emoji::Picker)| {
@@ -1199,6 +1232,7 @@ fn emoji_popover(
             sink.take_focus(window, cx);
             let mut e = editor.borrow_mut();
             e.picker = None;
+            e.picker_from = None;
             let at = e.selected.clone();
             e.replace(at, emoji, cx);
             drop(e);
@@ -1209,7 +1243,10 @@ fn emoji_popover(
     let close = {
         let editor = editor.clone();
         Rc::new(move |window: &mut Window, _: &mut App| {
-            editor.borrow_mut().picker = None;
+            let mut e = editor.borrow_mut();
+            e.picker = None;
+            e.picker_from = None;
+            drop(e);
             window.refresh();
         })
     };
@@ -1218,7 +1255,8 @@ fn emoji_popover(
     Some(super::emoji::popover(
         picker,
         host,
-        caret,
+        at,
+        corner,
         ctl.look,
         b.theme().preset == nd_theme::Preset::Fluent,
         crate::overlay::PANEL_PRIORITY + 1 + b.overlay_depth(id),

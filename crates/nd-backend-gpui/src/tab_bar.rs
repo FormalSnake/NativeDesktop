@@ -433,7 +433,8 @@ pub fn tab_bar_view(
     if bar.drag_region {
         bar_row = bar_row.window_control_area(WindowControlArea::Drag).on_mouse_down(
             MouseButton::Left,
-            |event: &MouseDownEvent, window, _| {
+            |event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
                 if event.click_count >= 2 {
                     window.zoom_window();
                 } else {

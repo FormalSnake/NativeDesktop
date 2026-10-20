@@ -557,6 +557,55 @@ mod media {
         }
     }
 
+    /// The composer's button opens nd's picker above itself, not at the caret: a press just over
+    /// the button lands in the picker, which stays open and takes the keys.
+    pub fn emoji_picker_opens_above_its_button() {
+        if !cfg!(target_os = "linux") {
+            println!("skipped: the platform's own picker opens here");
+            return;
+        }
+        let edited = |rig: &Rig| {
+            rig.log.borrow().iter().rev().find(|l| l.starts_with("composer:Edited")).cloned().unwrap_or_default()
+        };
+        let mut rig = open();
+        rig.click_point(rig.at("composer.field", 0.5, 0.5));
+        rig.keys(&["ctrl-home"]);
+        let field = rig.node("composer.field").bounds.expect("field laid out");
+        let emoji = rig.node("composer.emoji").bounds.expect("emoji laid out");
+        let over = Point { x: emoji.origin.x + emoji.size.width - 4., y: emoji.origin.y - 8. };
+        assert!(over.x - field.origin.x > 340., "a picker at the caret would not reach {over:?} from {field:?}");
+        rig.click_point(rig.at("composer.emoji", 0.5, 0.5));
+        let before = edited(&rig);
+        rig.click_point(over);
+        rig.keys(&["c", "a", "t"]);
+        assert_eq!(edited(&rig), before, "the press landed in the picker, which took the keys");
+        rig.keys(&["escape", "escape", "y"]);
+        assert_ne!(edited(&rig), before, "escape cleared the search, then closed it");
+    }
+
+    /// A press on content no control takes ends editing in the focused field; a press on a
+    /// button leaves the field focused.
+    pub fn a_press_beside_the_field_ends_editing() {
+        let mut rig = open();
+        let window = rig.window;
+        let area = rig.node("area").id;
+        rig.click_point(rig.at("area", 0.5, 0.5));
+        rig.keys(&["a"]);
+        assert!(rig.take().iter().any(|l| l.starts_with("area:") && l.ends_with('a')), "the field took the key");
+        rig.click_point(rig.at("on", 0.5, 0.5));
+        rig.keys(&["b"]);
+        let log = rig.take();
+        assert!(log.iter().any(|l| l == "on:click"), "{log:?}");
+        assert!(
+            log.iter().any(|l| l.starts_with("area:") && l.ends_with("ab")),
+            "a button keeps the field focused: {log:?}"
+        );
+        rig.click_point(rig.at("circle", 0.5, 0.5));
+        rig.keys(&["c"]);
+        assert_eq!(rig.take(), Vec::<String>::new(), "the key reached no field");
+        assert_ne!(rig.host.read(|app| app.focused(window)), Some(area), "nd focus left the field");
+    }
+
     pub fn disabled_button_takes_no_click() {
         let mut rig = opened();
         rig.click_point(rig.at("off", 0.5, 0.5));
@@ -685,6 +734,8 @@ fn main() {
             "media::emoji_picker_searches_and_inserts_at_the_caret",
             media::emoji_picker_searches_and_inserts_at_the_caret,
         ),
+        ("media::emoji_picker_opens_above_its_button", media::emoji_picker_opens_above_its_button),
+        ("media::a_press_beside_the_field_ends_editing", media::a_press_beside_the_field_ends_editing),
         ("media::disabled_button_takes_no_click", media::disabled_button_takes_no_click),
         ("media::echo", media::echo),
         ("media::reentrancy", media::reentrancy),

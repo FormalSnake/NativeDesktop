@@ -7,6 +7,8 @@
 //!   consumed; on a light-dismiss overlay it also asks the overlay to close. A modal backdrop
 //!   blocks scrolling outside too; a light-dismiss one lets scrolling through to content outside
 //!   the overlay, as AppKit does.
+//! - A cover fills the window, so its outside is its scrim: a press where nothing it holds draws
+//!   or takes input closes a light-dismiss cover. Scrolling never passes a cover.
 //! - Passive overlays (tooltips) take no input.
 //!
 //! Context menus are a drawn menu in the same layer, opened through [`GpuiChrome`]; items
@@ -21,14 +23,17 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use nd_components::services::{AlertCallback, ChromeServices, OpenCallback, SaveCallback};
-use nd_components::{AboutPanel, Alert, ContextMenu, Menu, MenuItem, OpenDialog, SaveDialog};
+use nd_components::{
+    AboutPanel, Alert, ContextMenu, ImageFit, ImagePipeline, ImageProps, Menu, MenuItem, OpenDialog, SaveDialog,
+};
 use nd_core::{NodeId, Point, Rect, WindowId};
 use nd_gpui::gpui::{
     self, Anchor, AnyElement, Bounds, DispatchPhase, ElementId, HitboxBehavior, InteractiveElement, IntoElement,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement, Styled, anchored, canvas, deferred, div, fill, hsla, point, px,
 };
-use nd_ui::{DismissCause, Dismissed, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
+use nd_ui::backend::NodeKind;
+use nd_ui::{DismissCause, Dismissed, DivProps, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
 
 use crate::backend::{GpuiBackend, Node};
 use crate::render::{Build, Tracked};
@@ -72,6 +77,66 @@ pub enum MenuRow {
 /// Told the index of the row picked in a menu shown with [`GpuiBackend::show_menu`], or `None`
 /// when it closed without a pick.
 pub type MenuResponse = Box<dyn FnOnce(Option<usize>)>;
+
+/// Whether a press at `at` falls on the scrim of the cover `cover`: nothing it holds draws or
+/// takes input there. A container counts through a fill or a gesture of its own, and a picture
+/// fitted inside its box only where it is drawn.
+fn on_scrim(
+    nodes: &std::collections::HashMap<NodeId, Node>,
+    bounds: &std::collections::HashMap<NodeId, Rect>,
+    cover: NodeId,
+    at: Point,
+) -> bool {
+    fn contains(r: &Rect, p: Point) -> bool {
+        p.x >= r.origin.x && p.y >= r.origin.y && p.x < r.origin.x + r.size.width && p.y < r.origin.y + r.size.height
+    }
+    fn shows(
+        nodes: &std::collections::HashMap<NodeId, Node>,
+        bounds: &std::collections::HashMap<NodeId, Rect>,
+        id: NodeId,
+        at: Point,
+    ) -> bool {
+        let Some(node) = nodes.get(&id) else { return false };
+        let div = node.props.downcast_ref::<DivProps>();
+        if div.is_some_and(|d| d.style.visibility == Some(gpui::Visibility::Hidden))
+            || node.props.downcast_ref::<OverlayProps>().is_some()
+        {
+            return false;
+        }
+        let drawn = bounds.get(&id).is_some_and(|b| match (node.kind, div) {
+            (NodeKind::View, Some(d)) => {
+                let fill = d
+                    .style
+                    .background
+                    .as_ref()
+                    .and_then(|f| f.color())
+                    .and_then(|b| b.as_solid())
+                    .is_some_and(|c| c.a > 0.);
+                (fill || !d.gestures.is_empty()) && contains(b, at)
+            }
+            (NodeKind::View, None) => false,
+            _ => match node.props.downcast_ref::<ImageProps>() {
+                Some(p) if p.fit == ImageFit::Contain => {
+                    let (w, h) = p.intrinsic(ImagePipeline::global()).unwrap_or((0, 0));
+                    if w == 0 || h == 0 {
+                        contains(b, at)
+                    } else {
+                        let scale = (b.size.width / w as f32).min(b.size.height / h as f32);
+                        let size = nd_core::Size { width: w as f32 * scale, height: h as f32 * scale };
+                        let origin = Point {
+                            x: b.origin.x + (b.size.width - size.width) / 2.,
+                            y: b.origin.y + (b.size.height - size.height) / 2.,
+                        };
+                        contains(&Rect { origin, size }, at)
+                    }
+                }
+                _ => contains(b, at),
+            },
+        });
+        drawn || node.children.iter().any(|c| shows(nodes, bounds, *c, at))
+    }
+    nodes.get(&cover).is_some_and(|n| !n.children.iter().any(|c| shows(nodes, bounds, *c, at)))
+}
 
 impl Build<'_> {
     pub(crate) fn overlay_depth(&self, id: NodeId) -> usize {
@@ -130,10 +195,27 @@ impl Build<'_> {
             node.children.iter().map(|c| self.node(*c, window, cx)).collect()
         });
         if !passive {
+            let scrim = (cover && props.modality == Modality::LightDismiss).then(|| {
+                let emit = self.backend.state.borrow().events.emitter(id);
+                (emit, self.wake.clone(), self.backend.clone(), self.window_id)
+            });
             content = self
                 .feed_gestures(content)
                 .occlude()
-                .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+                .on_any_mouse_down(move |event, _, cx| {
+                    cx.stop_propagation();
+                    let Some((emit, wake, backend, window_id)) = &scrim else { return };
+                    let at = Point { x: event.position.x.as_f32(), y: event.position.y.as_f32() };
+                    let on_scrim = {
+                        let (state, bounds) = (backend.state.borrow(), backend.bounds.borrow());
+                        on_scrim(&state.nodes, &bounds, id, at)
+                    };
+                    if event.button == gpui::MouseButton::Left && on_scrim {
+                        backend.swallow_release(*window_id);
+                        emit.emit(Dismissed { reason: DismissCause::OutsidePress });
+                        wake(cx);
+                    }
+                })
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
         }
         // Popovers, menus and panels come in with the look's entrance: a short rise and a fade
@@ -212,7 +294,7 @@ impl Build<'_> {
             let (wake, backend, window_id) = (self.wake.clone(), self.backend.clone(), self.window_id);
             let light = props.modality == Modality::LightDismiss;
             let mut backdrop = self.feed_gestures(div().id(ElementId::Name(format!("nd-backdrop-{}", id.0).into())));
-            backdrop = if light { backdrop.block_mouse_except_scroll() } else { backdrop.occlude() };
+            backdrop = if light && !cover { backdrop.block_mouse_except_scroll() } else { backdrop.occlude() };
             let backdrop = backdrop
                 .absolute()
                 .top_0()
