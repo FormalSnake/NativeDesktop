@@ -174,13 +174,25 @@
             export CEF_PATH="''${CEF_PATH:-''${XDG_CACHE_HOME:-$HOME/.cache}/nd-cef}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
             # Goldens draw the Adwaita preset's fonts and the desktop's interface fonts, so every
-            # host sees the same few: without this, the runner falls back to DejaVu and g815 picks
-            # its own monospace from dconf.
+            # host sees the same few: without this, the runner's sans-serif is DejaVu and g815 picks
+            # its own monospace from dconf. No host font dirs or /etc/fonts/conf.d, which carry
+            # each distro's own family preferences.
             export FONTCONFIG_FILE="${
               pkgs.makeFontsConf {
                 fontDirectories = [
                   pkgs.adwaita-fonts
                   pkgs.noto-fonts-color-emoji
+                ];
+                impureFontDirectories = [ ];
+                includes = [
+                  (pkgs.writeText "nd-font-aliases.conf" ''
+                    <?xml version="1.0"?>
+                    <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+                    <fontconfig>
+                      <alias><family>sans-serif</family><prefer><family>Adwaita Sans</family></prefer></alias>
+                      <alias><family>monospace</family><prefer><family>Adwaita Mono</family></prefer></alias>
+                    </fontconfig>
+                  '')
                 ];
               }
             }"
