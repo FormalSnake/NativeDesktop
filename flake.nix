@@ -173,6 +173,17 @@
             # $CEF_PATH, outside the target dir so a `cargo clean` keeps it.
             export CEF_PATH="''${CEF_PATH:-''${XDG_CACHE_HOME:-$HOME/.cache}/nd-cef}"
             export VK_ICD_FILENAMES="${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json"
+            # Goldens draw the Adwaita preset's fonts and the desktop's interface fonts, so every
+            # host sees the same few: without this, the runner falls back to DejaVu and g815 picks
+            # its own monospace from dconf.
+            export FONTCONFIG_FILE="${
+              pkgs.makeFontsConf {
+                fontDirectories = [
+                  pkgs.adwaita-fonts
+                  pkgs.noto-fonts-color-emoji
+                ];
+              }
+            }"
             # Scoped to the host triple: a plain RUSTFLAGS reaches the wasm32 link too, where rust-lld
             # rejects -fuse-ld=mold.
             export ${hostRustflags}="''${${hostRustflags}:+''$${hostRustflags} }-C link-arg=-fuse-ld=mold"
