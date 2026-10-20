@@ -173,6 +173,7 @@ struct Builder<'a> {
     target: &'a NdMenuTarget,
     bindings: &'a [KeyBinding],
     app_name: &'a str,
+    icons_shown: bool,
 }
 
 impl Builder<'_> {
@@ -196,6 +197,10 @@ impl Builder<'_> {
                     }
                     if let Some(icon) = icon {
                         i.setImage(crate::icons::symbol(icon.lucide()).as_deref());
+                        if self.icons_shown && i.respondsToSelector(sel!(setPreferredImageVisibility:)) {
+                            // NSMenuItemImageVisibilityVisible, macOS 27 and later.
+                            let _: () = unsafe { msg_send![&*i, setPreferredImageVisibility: 1isize] };
+                        }
                     }
                     i.setTag(self.target.add(action));
                     menu.addItem(&i);
@@ -272,6 +277,25 @@ fn app_name() -> String {
     objc2_foundation::NSProcessInfo::processInfo().processName().to_string()
 }
 
+/// A context menu's `NSMenu`, as `show_context_menu` pops it up.
+pub fn context_menu(mtm: MainThreadMarker, menu: ContextMenu, bindings: &[KeyBinding]) -> Retained<NSMenu> {
+    context_items(mtm, &NdMenuTarget::new(mtm, None), bindings, menu)
+}
+
+fn context_items(
+    mtm: MainThreadMarker,
+    target: &NdMenuTarget,
+    bindings: &[KeyBinding],
+    menu: ContextMenu,
+) -> Retained<NSMenu> {
+    let name = app_name();
+    let builder = Builder { mtm, target, bindings, app_name: &name, icons_shown: menu.icons_shown };
+    let ns = NSMenu::new(mtm);
+    ns.setAutoenablesItems(false);
+    builder.items(&ns, menu.items);
+    ns
+}
+
 /// The menu bar from `menus`, with the app, Edit and Window menus added where the app left
 /// them out, so the system items (Quit, Copy, Minimize) are always there.
 pub fn menu_bar(mtm: MainThreadMarker, mut menus: Vec<Menu>, bindings: &[KeyBinding]) -> Retained<NSMenu> {
@@ -289,7 +313,7 @@ pub fn menu_bar(mtm: MainThreadMarker, mut menus: Vec<Menu>, bindings: &[KeyBind
     }
     let target = NdMenuTarget::new(mtm, None);
     let name = app_name();
-    let builder = Builder { mtm, target: &target, bindings, app_name: &name };
+    let builder = Builder { mtm, target: &target, bindings, app_name: &name, icons_shown: false };
     let bar = NSMenu::new(mtm);
     for menu in menus {
         let top = item(mtm, &menu.title, None, "");
@@ -336,12 +360,9 @@ impl ChromeServices for AppKitChrome {
         let Some(mtm) = MainThreadMarker::new() else { return };
         let Some(view) = self.backend.view(node) else { return };
         let target = NdMenuTarget::new(mtm, Some(window));
-        let name = app_name();
-        let builder = Builder { mtm, target: &target, bindings: cx.key_bindings(), app_name: &name };
-        let ns = NSMenu::new(mtm);
-        ns.setAutoenablesItems(false);
-        builder.items(&ns, menu.items);
-        let y = if menu.above { f64::from(y) - ns.size().height } else { f64::from(y) };
+        let above = menu.above;
+        let ns = context_items(mtm, &target, cx.key_bindings(), menu);
+        let y = if above { f64::from(y) - ns.size().height } else { f64::from(y) };
         // Menu tracking is a nested run loop: start it from a later turn, never inside the
         // handler that asked for it (3.13).
         crate::events::defer(move || {

@@ -55,7 +55,7 @@ pub use frame_clock::{FrameClock, FrameTick};
 pub use host::WindowHost;
 pub use keys::keystroke;
 pub use platform::NdAppKitPlatform;
-pub use services::{AppKitChrome, menu_bar};
+pub use services::{AppKitChrome, context_menu, menu_bar};
 pub use swift::{SwiftGauge, lookup as swift_symbol};
 pub use system_colors::{AppearanceObserver, os_theme, scheme_of};
 pub use toolbar::{ToolbarHost, titlebar_room};

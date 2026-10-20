@@ -1,6 +1,6 @@
 +++
 title = "Webview"
-description = "Show web pages in a window with WebView and webview(): the app-owned handle, commands, events, WKWebView and CEF, and what Linux and Windows don't have yet."
+description = "Show web pages in a window with WebView and webview(): the app-owned handle, commands, events, WKWebView and CEF, the Linux setup, and what Windows doesn't have yet."
 +++
 
 A page is a `WebView` handle that your app owns. The `webview(id, &page)` element only shows it.
@@ -9,8 +9,9 @@ never reloads the page, because the element doesn't hold it.
 
 <!-- docs:example browser -->
 
-On macOS, the framework ships WKWebView and, as an opt-in, Chromium through CEF. The Linux and
-Windows engines aren't written yet. For details, see [what's missing](#linux-and-windows).
+On macOS, the framework ships WKWebView and, as an opt-in, Chromium through CEF. Linux renders
+with Chromium ([Linux](#linux)). The Windows engine isn't written yet
+([what's missing](#windows)).
 
 ## The handle and the element
 
@@ -122,7 +123,7 @@ chooses one of your items, it arrives as `ContextMenuItemClicked` with the page 
 | --- | --- | --- |
 | macOS | WKWebView, an `NSView` beside the window's other views | Chromium rendering off-screen, composited into the window |
 | Windows | Not written yet | Not packaged yet |
-| Linux | Not written yet | Not packaged yet |
+| Linux | Chromium (the same as CEF; see [Linux](#linux)) | Chromium rendering off-screen, drawn by the window |
 | Web | Not available | Not available |
 
 The default engine is `[webview] engine` in `nativedesktop.toml`, set to `"system"` or `"cef"`.
@@ -148,10 +149,61 @@ panels sit above web views and never pass input through to them. For details, se
 `native_surface(..).count_input()` counts the input that a page received, which is how the leak
 gate proves the rule.
 
-## Linux and Windows
+## Linux
 
-On both platforms, `webview()` renders a notice with the reason, and every command fails with
-that reason. The planned engines are WebView2 in composition mode on Windows and WPE WebKit on
-Linux, with CEF as the fallback if WPE doesn't embed. No part of the engine matrix runs there yet.
-Write the app against the handle as you would on macOS, and it works once the engines land. Until
-then, test the web parts on macOS.
+Linux has no OS engine that embeds in a GPUI Wayland window: WPE WebKit isn't in nixpkgs, and
+webkitgtk can't draw into a window it doesn't own. Web views render with Chromium (CEF)
+off-screen, and the window draws the frames. `Engine::System` resolves to `Engine::Cef` on Linux,
+so `.engine(Engine::System)` and the default both run Chromium, and the app code is the same as on
+macOS. The decision is in [the architecture plan](../../plan/ARCHITECTURE.md#81-linux-renders-web-views-with-cef-decision-2026-10-20).
+
+### Turn it on
+
+1. Enable nd's `webview` feature in the app's `Cargo.toml`. On Linux it brings in Chromium
+   (`nd-os-linux/cef`); no `[webview] engine` setting is needed.
+2. For a Nix build, `mkApp` reads the same feature and its `webview` argument (true when `nd` has
+   the `webview` feature). It builds against the CEF distribution from
+   [nix/cef.nix](../../../nix/cef.nix), which must match the version of the `cef` crate in
+   `crates/nd-cef/Cargo.toml`, and it keeps `libcef.so` and its resources beside the executable
+   in `libexec/<pname>`.
+3. For a dev run outside Nix, use the dev shell: it sets `CEF_PATH`, carries cmake and ninja for
+   the C++ wrapper, and puts the libraries below on `LD_LIBRARY_PATH`.
+4. `ND_WEBVIEW_ENGINE=cef` and `[webview] engine = "cef"` are accepted and change nothing on
+   Linux. `ND_WEBVIEW_ENGINE=system` also resolves to Chromium.
+
+The executable's run path is `$ORIGIN`, so `libcef.so` loads from beside the binary. The app is
+its own helper process; there is no separate helper binary on Linux.
+
+`nd doctor` checks that the runtime beside a built executable is complete and names what's missing.
+
+### Package it
+
+`nd package linux` detects that the executable links `libcef.so` and copies the runtime from the
+build output into the AppDir's binary directory: `libcef.so`, `icudtl.dat`,
+`v8_context_snapshot.bin`, `resources.pak`, `chrome_100_percent.pak`, `chrome_200_percent.pak`,
+`libvk_swiftshader.so`, `vk_swiftshader_icd.json`, `libvulkan.so.1`, and `locales/`. It fails if
+any are missing. Velopack then packs the AppImage. Expect roughly the size of the CEF
+distribution added to the package.
+
+### Libraries the host needs
+
+The AppImage doesn't bundle the system libraries `libcef.so` links. The host must have:
+
+- nss and nspr
+- gtk3, pango, cairo, glib, atk, and at-spi2-atk with at-spi2-core
+- cups
+- libdrm and libgbm
+- alsa-lib
+- dbus, expat, libxkbcommon, libGL, udev, and the X libraries (libxcb, libX11, libXcomposite,
+  libXdamage)
+
+The list mirrors `cefLibs` in [flake.nix](../../../flake.nix). Debian package names are
+`libnss3`, `libgtk-3-0`, `libatk-bridge2.0-0`, `libcups2`, `libdrm2`, `libgbm1`, and
+`libasound2`. The packager doesn't write a `.deb` yet (see [packaging](packaging.md#linux)), so a
+`.deb` you build yourself should declare these as dependencies.
+
+## Windows
+
+`webview()` renders a notice with the reason, and every command fails with that reason. The
+planned engine is WebView2 in composition mode. Write the app against the handle as you would on
+macOS, and it works once the engine lands. Until then, test the web parts on macOS or Linux.

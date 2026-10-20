@@ -34,7 +34,7 @@ they were recorded on g815. Not a regression.
   (Messages does nothing); the header hover fade drives the private `NSScrollPocket`.
   Open on Linux: a .MOV in the user's own session not yet seen playing (GStreamer now in the
   app's dev shell and package); the "+" menu not yet clicked by hand.
-- youtubemusic, nativebrowser: unchanged since 2026-10-16.
+- youtubemusic (`youtubemusic-nd`, branch `nd-port`): must run on the Kopuz daemon, not `formalmusicd` (user, 2026-10-20: their changes are upstream). nativebrowser unchanged since 2026-10-16.
 
 ## Upstream GPUI PRs (zed-industries/zed, user's account)
 
@@ -53,6 +53,14 @@ Replies on these PRs are the user's to write.
   graphical session, Steamed theme in Plasma, panel-gamma only under Hyprland).
 - Windows PC (g815 booted into Windows, `ssh windows`): Rust MSVC toolchain; agent dirs `C:\nd\msg`,
   `C:\nd\video`, `C:\nd\emoji` with their scheduled tasks are still there.
+- Windows VM on g815 (the same bare-metal install as a KVM guest, so Windows work no longer
+  needs a reboot): `ssh g815 'sudo systemctl start windows-vm'`, then
+  `ssh -J g815 -p 2222 kyan@127.0.0.1`; VNC on g815's 127.0.0.1:5901. Its writes land in an
+  overlay recreated on every start, so nothing copied in survives a stop. Monitor disk space
+  throughout: the overlay grows in `/var/lib/windows-vm` on g815's root (shared with the Linux
+  target dir), and the launcher refuses to start under 15 GB free. Check
+  `ssh g815 'df -h / ; du -sh /var/lib/windows-vm'` and the guest's `Get-PSDrive C` before and
+  after every build or copy; stop and report rather than clean when it runs low.
 
 ## Rules that bit us (keep them)
 

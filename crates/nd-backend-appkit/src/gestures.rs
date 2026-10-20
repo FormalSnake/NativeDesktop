@@ -14,7 +14,7 @@ use block2::RcBlock;
 use nd_core::{NodeId, Point, Rect};
 use nd_gesture::{
     ForceClickEvent, GestureEvent, GesturePhase, GestureRouter, GestureSet, Haptic, HitEntry, Output, PinchEvent,
-    PointerInput, PointerPhase, RotateEvent, SmartMagnifyEvent, SwipeDirection, SwipePageEvent,
+    PointerInput, PointerPhase, RotateEvent, SmartMagnifyEvent, SwipeDirection, SwipePageEvent, TapEvent,
 };
 use nd_ui::events::{Emit, emit_gesture};
 use objc2::Message;
@@ -22,7 +22,7 @@ use objc2::rc::Retained;
 use objc2::runtime::Bool;
 use objc2_app_kit::{
     NSEvent, NSEventPhase, NSEventSwipeTrackingOptions, NSHapticFeedbackManager, NSHapticFeedbackPattern,
-    NSHapticFeedbackPerformanceTime, NSHapticFeedbackPerformer, NSView,
+    NSHapticFeedbackPerformanceTime, NSHapticFeedbackPerformer, NSTableView, NSTextField, NSTextView, NSView, NSWindow,
 };
 use objc2_foundation::NSProcessInfo;
 
@@ -232,6 +232,55 @@ pub(crate) fn mouse(view: &NdLayerView, event: &NSEvent, pointer_phase: PointerP
     let Some(outputs) = outputs else { return false };
     apply(outputs);
     arm_timer();
+    true
+}
+
+/// A double click on read-only selectable text is the double tap of the nearest element around
+/// it that has one, not a word selection: a double click on a message opens its tapbacks. The
+/// window sees the press first because after one click the field editor, not the label, is under
+/// the pointer.
+pub(crate) fn double_click_on_text(window: &NSWindow, event: &NSEvent) -> bool {
+    if event.clickCount() != 2 {
+        return false;
+    }
+    let Some(content) = window.contentView() else { return false };
+    let in_window = event.locationInWindow();
+    // SAFETY: main thread, the content view of a live window; `superview` is weak and retained.
+    let at = unsafe { content.superview() }.map_or(in_window, |s| s.convertPoint_fromView(in_window, None));
+    let Some(mut hit) = content.hitTest(at) else { return false };
+    // A table view claims presses on its rows' contents and hands them on in its own mouseDown:
+    // the text under the pointer is in the row view.
+    if let Some(table) = hit.downcast_ref::<NSTableView>() {
+        let point = table.convertPoint_fromView(in_window, None);
+        let row = table.rowAtPoint(point);
+        let Some(inner) = (row >= 0).then(|| table.rowViewAtRow_makeIfNecessary(row, false)).flatten() else {
+            return false;
+        };
+        let Some(inner) = inner.hitTest(point) else { return false };
+        hit = inner;
+    }
+    let on_text = hit.downcast_ref::<NSTextField>().is_some()
+        || hit.downcast_ref::<NSTextView>().is_some_and(|t| t.isFieldEditor());
+    if !on_text {
+        return false;
+    }
+    let mut cursor = Some(hit);
+    let mut field = None;
+    let mut host = None;
+    while let Some(v) = cursor {
+        if field.is_none() {
+            field = v.downcast_ref::<NSTextField>().map(|f| !f.isEditable() && f.isSelectable());
+        } else if let Some(h) =
+            v.downcast_ref::<NdLayerView>().and_then(|l| l.gesture_host()).filter(|h| h.set.double_tap)
+        {
+            host = Some((h, v));
+            break;
+        }
+        // SAFETY: as above.
+        cursor = unsafe { v.superview() };
+    }
+    let (Some(true), Some((host, view))) = (field, host) else { return false };
+    host.deliver(GestureEvent::Tap(TapEvent { position: window_point(&view, event), count: 2 }));
     true
 }
 

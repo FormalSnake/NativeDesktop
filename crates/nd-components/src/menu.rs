@@ -156,11 +156,19 @@ pub struct ContextMenu {
     /// Opens with its bottom edge at the point instead of its top: a menu button at the
     /// bottom of a window, as Messages' composer "+" opens above itself.
     pub above: bool,
+    /// Shows the rows' icons where the platform would hide them: macOS 27 hides menu item
+    /// images unless an item asks for them, and Messages' "+" menu asks.
+    pub icons_shown: bool,
 }
 
 impl ContextMenu {
     pub fn above(mut self) -> Self {
         self.above = true;
+        self
+    }
+
+    pub fn show_icons(mut self) -> Self {
+        self.icons_shown = true;
         self
     }
 

@@ -3,7 +3,9 @@
 //! fill; a video reports where it is and seeks; an image cuts a bubble tail out of its picture;
 //! a panel fades in and out; a reaction landing on a shown bubble fades in; a transcript runs
 //! up under the toolbar and rests clear of it; a press on an avatar or a picture reaches
-//! the tap and double tap of the element around it. Prints
+//! the tap and double tap of the element around it, and a double click on a bubble's text is its
+//! row's double tap, not a word selection; a context menu that shows its icons keeps them on
+//! macOS 27, which hides menu images by default. Prints
 //! `ND_MSG_GAPS_OK`.
 
 mod harness;
@@ -53,6 +55,7 @@ mod gaps {
         glass_shapes(&rig, &mut c);
         under_toolbar(&rig, &mut c);
         presses_through_media(&rig, &mut c);
+        menu_icons(&mut c);
         if c.0 == 0 {
             println!("ND_MSG_GAPS_OK");
             std::process::exit(0);
@@ -506,6 +509,12 @@ mod gaps {
                             ),
                     ),
                 )
+                .child(
+                    v_flex()
+                        .id("message")
+                        .on_double_tap(record::<DoubleTapEvent>("message double", cx))
+                        .child(chat_bubble("Double click on these words", BubbleSide::Received).id("bubble")),
+                )
                 .child(div().id("plain").size(px(60.)).bg(hsla(0.6, 0.5, 0.5, 1.)).on_double_tap(record::<
                     DoubleTapEvent,
                 >(
@@ -556,6 +565,65 @@ mod gaps {
         hit_class
     }
 
+    use nd_gpui::gpui;
+    gpui::actions!(msg_gaps, [Photos]);
+
+    fn menu_icons(c: &mut Checks) {
+        use nd_backend_appkit::objc2::{msg_send, sel};
+        use nd_backend_appkit::objc2_foundation::NSObjectProtocol;
+        use nd_components::{ContextMenu, MenuItem};
+        let mtm = nd_backend_appkit::objc2_foundation::MainThreadMarker::new().expect("main thread");
+        let menu = |shown: bool| {
+            let menu = ContextMenu::default().entry(MenuItem::action("Photos", Photos).icon(Icon::Image));
+            let menu = if shown { menu.show_icons() } else { menu };
+            nd_backend_appkit::context_menu(mtm, menu, &[])
+        };
+        let (shown, plain) = (menu(true), menu(false));
+        let (shown, plain) = (shown.itemAtIndex(0).expect("a row"), plain.itemAtIndex(0).expect("a row"));
+        c.check(shown.image().is_some() && plain.image().is_some(), "menu icons: both rows carry their symbol");
+        if shown.respondsToSelector(sel!(preferredImageVisibility)) {
+            let visibility = |i: &nd_backend_appkit::objc2_app_kit::NSMenuItem| -> isize {
+                unsafe { msg_send![i, preferredImageVisibility] }
+            };
+            c.check(
+                visibility(&shown) == 1 && visibility(&plain) == 0,
+                &format!(
+                    "menu icons: shown asks for visible, plain stays automatic ({}, {})",
+                    visibility(&shown),
+                    visibility(&plain)
+                ),
+            );
+        }
+    }
+
+    /// Posts a click at the middle of `test_id` through the window's `sendEvent:`, which is where
+    /// a press on text decides between selection and a double tap. The release is queued first:
+    /// the field editor tracks the press until it dequeues one.
+    fn through_window(rig: &Rig, opened: &rig::Opened<Presses>, test_id: &str, count: isize) {
+        use nd_backend_appkit::objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+        use nd_backend_appkit::objc2_foundation::{NSPoint, NSProcessInfo};
+        let target = rig.view(opened.id(), test_id);
+        let b = target.bounds();
+        let in_window = target.convertPoint_toView(NSPoint::new(b.size.width / 2., b.size.height / 2.), None);
+        let event = |kind| {
+            NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind,
+                in_window,
+                NSEventModifierFlags::empty(),
+                NSProcessInfo::processInfo().systemUptime(),
+                opened.window.windowNumber(),
+                None,
+                0,
+                count,
+                1.,
+            )
+            .expect("mouse event")
+        };
+        opened.window.postEvent_atStart(&event(NSEventType::LeftMouseUp), false);
+        opened.window.sendEvent(&event(NSEventType::LeftMouseDown));
+        rig.pump();
+    }
+
     /// A press on a media view (an avatar, a picture) is the element's around it: a
     /// pinned tile's picture selects it, a double click on a photo opens it. A double click on
     /// a plain element fires its double tap too.
@@ -597,6 +665,21 @@ mod gaps {
         click(rig, &opened, "plain", 2);
         settle(rig);
         c.check(log(rig) == ["plain double"], &format!("press: a double click on a plain element ({:?})", log(rig)));
+        rig.update(&opened, |p, _| p.log.clear());
+
+        through_window(rig, &opened, "bubble", 1);
+        through_window(rig, &opened, "bubble", 2);
+        settle(rig);
+        let selected = opened.window.firstResponder().and_then(|r| {
+            r.downcast::<nd_backend_appkit::objc2_app_kit::NSTextView>().ok().map(|t| t.selectedRange().length)
+        });
+        c.check(
+            log(rig) == ["message double"] && selected.unwrap_or(0) == 0,
+            &format!(
+                "press: a double click on a bubble's text is its row's double tap and selects nothing ({:?}, {selected:?})",
+                log(rig)
+            ),
+        );
         rig.close(opened);
     }
 }
