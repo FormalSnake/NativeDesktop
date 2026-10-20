@@ -9,6 +9,7 @@ usage pause. Your own context must stay small: you coordinate, subagents do the 
 2. Check `git status`, `git log --oneline -15` and `git worktree list` in
    `~/Developer/ecosystem/nativedesktop`, then the lane branches in the handoff table. Message the
    user one short status line before starting work.
+3. Ports live on each app repo's `main` (2026-10-20 decision in PROMPT.md); `nd-port` branches are merged into it.
 3. Work order: land the finished lane branches (merge what passes its checks, `just clean-merged`,
    push main), then `port-gaps` into messages parity, `linux-webview` compile and gates, the
    Windows lane, the messages and youtubemusic Linux legs, then nativebrowser (M15). A port becomes
