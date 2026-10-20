@@ -294,10 +294,10 @@ pub mod window {
 
 /// The drawn chrome's file pickers: GPUI has none of its own, so they are the platform's (the
 /// portal on Linux, `IFileDialog` on Windows) through [`Dialogs`], and the rest is the chrome's.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(not(target_os = "macos"), feature = "gpui")))]
 pub(crate) struct PlatformFileDialogs(pub Rc<dyn nd_components::services::ChromeServices>);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(not(target_os = "macos"), feature = "gpui")))]
 impl nd_components::services::ChromeServices for PlatformFileDialogs {
     fn set_menus(&self, cx: &mut App, menus: Vec<nd_components::Menu>) {
         self.0.set_menus(cx, menus);
@@ -371,7 +371,7 @@ impl nd_components::services::ChromeServices for PlatformFileDialogs {
 }
 
 /// A picker that could not show answers as a cancel; the reason goes to stderr.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), any(not(target_os = "macos"), feature = "gpui")))]
 fn dialog_failed<T>(which: &str, error: Error) -> Option<T> {
     eprintln!("nd: the {which} dialog failed: {error}");
     None
