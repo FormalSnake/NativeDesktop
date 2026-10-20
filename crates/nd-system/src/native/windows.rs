@@ -21,8 +21,9 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RO_INIT_SINGLETHREADED, RoInitialize};
 use windows::Win32::UI::Shell::{
     ILCreateFromPathW, ILFree, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFY_ICON_MESSAGE,
-    NOTIFYICONDATAW, SHARD_PATHW, SHAddToRecentDocs, SHOpenFolderAndSelectItems,
-    SetCurrentProcessExplicitAppUserModelID, Shell_NotifyIconW, ShellExecuteW,
+    NOTIFYICONDATAW, OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OAIF_REGISTER_EXT, OPENASINFO, SHARD_PATHW, SHAddToRecentDocs,
+    SHOpenFolderAndSelectItems, SHOpenWithDialog, SetCurrentProcessExplicitAppUserModelID, Shell_NotifyIconW,
+    ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -151,7 +152,26 @@ impl Backend for WindowsBackend {
     }
 
     fn open_path(&self, path: PathBuf) -> Result<()> {
-        shell_open(&wide(&path.to_string_lossy()))
+        let target = wide(&path.to_string_lossy());
+        match shell_open(&target) {
+            // No default app, or one whose program is gone: Explorer asks which app to use.
+            Err(_) if path.is_file() => {
+                std::thread::spawn(move || {
+                    let info = OPENASINFO {
+                        pcszFile: PCWSTR(target.as_ptr()),
+                        pcszClass: PCWSTR::null(),
+                        oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_REGISTER_EXT | OAIF_EXEC,
+                    };
+                    // SAFETY: COM is initialised on this thread for the call; `target` outlives it.
+                    unsafe {
+                        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                        let _ = SHOpenWithDialog(None, &info);
+                    }
+                });
+                Ok(())
+            }
+            result => result,
+        }
     }
 
     fn reveal_path(&self, path: PathBuf) -> Result<()> {
