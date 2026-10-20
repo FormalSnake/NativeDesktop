@@ -58,6 +58,14 @@ jobs:
           retention-days: 3
       - name: nextest
         run: nix develop -c cargo nextest run --workspace --profile ci
+      - name: keep golden mismatches
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: goldens-${{ matrix.name }}
+          path: crates/*/tests/goldens/**/*.actual.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: doc tests
         run: nix develop -c cargo test --workspace --doc
 

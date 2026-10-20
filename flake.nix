@@ -111,6 +111,9 @@
                 # loads the nix glibc through LD_LIBRARY_PATH below and dies, so ship one that
                 # is linked against the same store.
                 git
+                # `nd publish` and its gate_m10 test run rsync, which the runner's copy fails the
+                # same way.
+                rsync
                 pkg-config
                 clang
                 mold
