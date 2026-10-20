@@ -438,7 +438,9 @@ fn colours_at(url: &str, work: &Path, name: &str) -> Result<usize> {
 
 fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {
     let work = repo.join("target/nd/docs-check");
-    std::fs::create_dir_all(&work)?;
+    // nd owns this folder; a run killed mid-build (or restored from a CI cache) leaves a bundle
+    // without index.html, which build_web would refuse to clear forever.
+    crate::project::fresh_dir(&work)?;
     let mut ok = true;
     let site_dir = build(repo, Some(work.join("site")), false)?;
     // Every fresh capture the app shows must be in the bundle it loads them from.

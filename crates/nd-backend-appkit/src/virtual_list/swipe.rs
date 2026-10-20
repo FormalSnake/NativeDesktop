@@ -16,8 +16,8 @@ use objc2::Message;
 use objc2::rc::{Retained, Weak};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSColor, NSEvent, NSEventPhase, NSFont, NSImageScaling, NSImageView, NSResponder, NSTableRowView, NSTableView,
-    NSTextAlignment, NSTextField, NSView,
+    NSColor, NSEvent, NSEventPhase, NSFont, NSFontWeightRegular, NSImageScaling, NSImageSymbolConfiguration,
+    NSImageView, NSResponder, NSTableRowView, NSTableView, NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::{MainThreadMarker, NSInteger, NSPoint, NSRect, NSSize, NSString};
 use objc2_quartz_core::CACurrentMediaTime;
@@ -436,16 +436,20 @@ fn slot(mtm: MainThreadMarker, spec: &RowActionSpec) -> Retained<NSView> {
     }
     let ink = if clear { NSColor::secondaryLabelColor() } else { NSColor::whiteColor() };
     let label = NSTextField::labelWithString(&NSString::from_str(&spec.title), mtm);
-    label.setFont(Some(&NSFont::systemFontOfSize(11.)));
+    label.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
     label.setTextColor(Some(&ink));
     label.setAlignment(NSTextAlignment::Center);
     label.sizeToFit();
     view.addSubview(&label);
     if let Some(image) = spec.icon.as_deref().and_then(crate::icons::symbol) {
+        let config = NSImageSymbolConfiguration::configurationWithPointSize_weight(NSFont::systemFontSize(), unsafe {
+            NSFontWeightRegular
+        });
+        let image = image.imageWithSymbolConfiguration(&config).unwrap_or(image);
         let icon = NSImageView::imageViewWithImage(&image, mtm);
-        icon.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+        icon.setImageScaling(NSImageScaling::ScaleNone);
         icon.setContentTintColor(Some(&ink));
-        icon.setFrameSize(NSSize::new(20., 20.));
+        icon.sizeToFit();
         view.addSubview(&icon);
     }
     view
