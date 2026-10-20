@@ -808,6 +808,17 @@ Engine coverage of the zig webview API (`docs/parity/zig.md` section 7), each ce
 | IME and accessibility | native | `AutomationProvider` (M8) | M8 | M9 (a11y last) | native |
 | Extensions, native messaging | no | no | no | Chrome-style only (M9) | no |
 
+### 8.1 Linux renders web views with CEF (decision, 2026-10-20)
+
+The M8 spike for WPE WebKit failed on availability, not on design: WPE is not in nixpkgs and not
+installed on g815 or e1504g, and the only WebKit there, webkitgtk 6.0, cannot embed in a GPUI
+Wayland window. So on Linux the web engine is CEF off-screen (`nd-cef`, `linux/`): `on_paint`
+BGRA frames are drawn by a GPUI element, and input, IME, cursor, `<select>` popups, context menus
+and alerts are forwarded or drawn by nd. `Engine::System` resolves to `Engine::Cef` there
+(`Engine::resolved`), so app code does not change. The WPE column above stays as the target if it
+becomes packageable; nothing else depends on it. A dmabuf import of `on_accelerated_paint` into
+gpui-wgpu replaces the CPU upload later. User-facing notes: `docs/content/guides/webview.md`.
+
 ## 9. Diagnostics, profiling, logging
 
 ### 9.1 Profiling

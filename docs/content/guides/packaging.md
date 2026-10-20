@@ -60,8 +60,8 @@ one, Velopack:
 The `.dmg` is signed, notarized, and stapled the same way. `notarize = true` needs both the
 profile and the identity, and the manifest fails validation without them.
 
-Chromium for `engine = "cef"` is bundled only on macOS. The Linux and Windows packers refuse a
-CEF app.
+Chromium for `engine = "cef"` is bundled on macOS and Linux (see
+[the Linux webview section](webview.md#linux)). The Windows packer refuses a CEF app.
 
 <!-- docs:snippet examples/notes/nativedesktop.toml#platforms -->
 
@@ -71,7 +71,8 @@ The packager stages an AppDir with the binary, a `.desktop` file that carries `M
 URL schemes, the shared-mime XML, and icons. Velopack turns it into an AppImage. A bare AppImage
 registers nothing with the desktop. An integrator such as AppImageLauncher installs the `.desktop`
 file and the MIME types. `formats` accepts only `appimage` for now. `deb` and `flatpak` are in the
-schema, but the packager fails on them.
+schema, but the packager fails on them. An app with web views also gets the Chromium runtime
+beside its executable; see [webview](webview.md#linux) for the system libraries it needs.
 
 ## Windows
 
