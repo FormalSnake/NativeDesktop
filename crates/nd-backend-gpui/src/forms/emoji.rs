@@ -1,7 +1,7 @@
 //! nd's own emoji picker, for a text area on a platform without a system one (Linux): every
 //! emoji the `emojis` crate carries in its CLDR groups, search by name and shortcode, a skin
-//! tone, and the emoji used last, kept across launches. It opens at the field's caret; the field
-//! keeps focus, so typing while it is open searches and the arrows, Return, Tab and Escape drive
+//! tone, and the emoji used last, kept across launches. It opens above the button that asked for
+//! it, or at the field's caret; the field keeps focus, so typing while it is open searches and the arrows, Return, Tab and Escape drive
 //! it, as GTK's emoji chooser does.
 
 use std::cell::RefCell;
@@ -382,13 +382,14 @@ pub(crate) struct Host {
     pub close: Close,
 }
 
-/// The open picker as a light-dismiss popover over the window, its bottom left corner at
-/// `caret` (window coordinates); the window's edges push it back on screen.
+/// The open picker as a light-dismiss popover over the window, its `corner` at `at` (window
+/// coordinates); the window's edges push it back on screen.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn popover(
     picker: &Picker,
     host: Host,
-    caret: Point<Pixels>,
+    at: Point<Pixels>,
+    corner: Anchor,
     look: FormLook,
     fluent: bool,
     priority: usize,
@@ -648,11 +649,7 @@ pub(crate) fn popover(
     } else {
         card.child(heading).child(grid).child(footer).child(tabs)
     };
-    let card = anchored()
-        .position(point(caret.x, caret.y - px(4.)))
-        .anchor(Anchor::BottomLeft)
-        .snap_to_window_with_margin(px(8.))
-        .child(card);
+    let card = anchored().position(at).anchor(corner).snap_to_window_with_margin(px(8.)).child(card);
     deferred(div().child(anchored().position(point(px(0.), px(0.))).child(backdrop)).child(card))
         .with_priority(priority)
         .into_any_element()

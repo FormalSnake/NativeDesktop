@@ -728,7 +728,8 @@ impl<'a> Build<'a> {
         d.style().refine(&style);
         let _ = window;
         d.window_control_area(WindowControlArea::Drag)
-            .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
+            .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
                 if event.click_count >= 2 {
                     // macOS follows AppleActionOnDoubleClick; elsewhere a double click maximizes.
                     if cfg!(target_os = "macos") { window.titlebar_double_click() } else { window.zoom_window() }
@@ -832,6 +833,7 @@ impl<'a> Build<'a> {
             window.request_animation_frame();
         }
         let (on_hover, on_down, on_up, on_up_out) = (fades.clone(), fades.clone(), fades.clone(), fades);
+        let (invoker, window_id) = (self.backend.invoker.clone(), self.window_id);
         button
             .bg(shown)
             .on_hover(move |hovered, window, _| {
@@ -851,6 +853,7 @@ impl<'a> Build<'a> {
                 window.refresh();
             })
             .on_click(move |_, _, cx| {
+                invoker.borrow_mut().insert(window_id, id);
                 emit.emit(ClickEvent);
                 wake(cx);
             })

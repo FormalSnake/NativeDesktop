@@ -9,7 +9,8 @@
 //!   native views and native surfaces (WKWebView, CEF, GPU surfaces) included.
 //! - A press outside a `LightDismiss` overlay closes it and is consumed, on every OS: the element
 //!   under the pointer sees nothing. `Modal` overlays consume outside presses and stay open.
-//!   `Passive` overlays (tooltips) take no input at all.
+//!   `Passive` overlays (tooltips) take no input at all. A cover fills the window, so its outside
+//!   is its scrim, where nothing it holds draws or takes input.
 //! - Every non-passive overlay is a focus scope (`crate::dispatch::FocusScope`): opening saves
 //!   focus, a modal one traps Tab inside, closing hands focus back, and an Escape no listener
 //!   took closes the innermost one (reported as [`DismissCause::Escape`]).
@@ -117,7 +118,9 @@ pub fn panel(id: impl Into<SharedString>) -> OverlayElement {
     overlay(Key::Id(id.into()), OverlayKind::Panel, Modality::Modal, Placement::Below)
 }
 
-/// A modal layer over the whole window, dimming it; its content fills the window.
+/// A modal layer over the whole window, dimming it; its content fills the window. With
+/// `.modality(Modality::LightDismiss)` a press on the dim closes it, as a media viewer does
+/// (GPUI; AppKit does not tell the dim from the content yet).
 pub fn cover(id: impl Into<SharedString>) -> OverlayElement {
     overlay(Key::Id(id.into()), OverlayKind::Cover, Modality::Modal, Placement::Below)
 }

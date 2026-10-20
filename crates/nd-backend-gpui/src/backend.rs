@@ -96,6 +96,9 @@ pub struct GpuiBackend {
     pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
     /// Focus the user gave a drawn control (a click), for the host to record in nd.
     pub(crate) platform_focus: PlatformFocus,
+    /// The button whose click the app is answering, by window, so a picker it asks for opens at
+    /// that button. The window's next press or key clears it.
+    pub(crate) invoker: Rc<RefCell<HashMap<WindowId, NodeId>>>,
     /// Pointer input each native surface received, written by its paint-time listeners.
     pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
     /// The app's menus, drawn above the windows of a single canvas.
@@ -167,6 +170,7 @@ impl GpuiBackend {
             form_drawn: Rc::default(),
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
+            invoker: Rc::default(),
             surface_counts: Rc::default(),
             deferred: Rc::default(),
             menu_bar: Rc::default(),
@@ -697,6 +701,9 @@ impl Backend for GpuiBackend {
             }
         }
         let press = |times: usize| {
+            if let Some(window) = self.window_of(node) {
+                self.invoker.borrow_mut().insert(window, node);
+            }
             let events = self.state.borrow().events.clone();
             for _ in 0..times {
                 events.emitter(node).emit(ClickEvent);

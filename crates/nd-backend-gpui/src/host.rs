@@ -1164,6 +1164,9 @@ impl Inner {
         let expose = self.debug.expose;
         let (backend, fresh) = (self.backend.clone(), self.backend.clone());
         let drops = self.backend.clone();
+        let (unclaimed, keyed, wake) = (self.backend.clone(), self.backend.clone(), self.wake());
+        let held = Rc::new(RefCell::new(None::<gpui::FocusHandle>));
+        let holding = held.clone();
         div()
             .size_full()
             .font(body_font)
@@ -1173,7 +1176,39 @@ impl Inner {
             })
             // A new press starts clean: a release owed to an earlier consumed press that never
             // arrived (the compositor dropped it) must not eat this press's release.
-            .capture_any_mouse_down(move |_, _, _| fresh.clear_swallow(id))
+            .capture_any_mouse_down(move |_, window, cx| {
+                fresh.clear_swallow(id);
+                fresh.invoker.borrow_mut().remove(&id);
+                *holding.borrow_mut() = window.focused(cx);
+            })
+            .capture_key_down(move |_, _, _| {
+                keyed.invoker.borrow_mut().remove(&id);
+            })
+            // Buttons, overlays and window drag areas occlude or stop their presses. One that gets
+            // here, moved no focus and fell outside the focused drawn control landed on content
+            // no control takes: it ends editing there, as a click outside an NSTextView does.
+            .on_any_mouse_down(move |event, window, cx| {
+                let Some(focused) = window.focused(cx) else { return };
+                if event.button != gpui::MouseButton::Left || held.borrow_mut().take().as_ref() != Some(&focused) {
+                    return;
+                }
+                let at = point_of(event.position);
+                let inside =
+                    unclaimed.form_drawn.borrow().iter().filter(|(_, d)| d.focus == focused).any(|(node, _)| {
+                        unclaimed.bounds(*node).is_some_and(|b| {
+                            at.x >= b.origin.x
+                                && at.y >= b.origin.y
+                                && at.x < b.origin.x + b.size.width
+                                && at.y < b.origin.y + b.size.height
+                        })
+                    });
+                if inside {
+                    return;
+                }
+                window.blur(cx);
+                unclaimed.platform_focus.borrow_mut().push((id, None));
+                wake(cx);
+            })
             .capture_any_mouse_up(move |_, _, cx| {
                 if backend.take_swallow(id) {
                     cx.stop_propagation();
