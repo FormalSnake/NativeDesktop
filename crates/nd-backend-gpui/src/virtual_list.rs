@@ -19,8 +19,8 @@ use std::sync::OnceLock;
 use nd_core::{NodeId, Rect};
 use nd_gpui::gpui::{
     self, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, Pixels, Refineable,
-    Style, fill, point, px, size,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    Pixels, Point, Refineable, Style, fill, point, px, size,
 };
 use nd_ui::events::Emit;
 use nd_virtual::{
@@ -84,6 +84,8 @@ pub(crate) struct VirtualList {
     pub gestures: crate::gestures::Gestures,
     pub window_id: nd_core::WindowId,
     pub selection_color: Hsla,
+    /// Under the row the pointer is over, in a list whose rows select or activate.
+    pub hover_color: Hsla,
     pub sidebar: SidebarSelection,
     pub disclosure_color: Hsla,
 }
@@ -333,6 +335,28 @@ impl gpui::Element for VirtualList {
         let selected = self.props.selected.clone();
         let tree = self.props.kind == ListKind::Tree;
         let hitbox = prepainted.hitbox.clone();
+        // The row under the pointer gets the hover fill, as GTK's navigation lists and boxed
+        // tables show it; a move onto another row repaints. A plain list of mixed rows (a page
+        // of headers and shelves) leaves hover to the rows themselves.
+        let hovers = selection != Selection::None
+            && (self.props.inset || matches!(self.props.kind, ListKind::Table(_) | ListKind::Tree));
+        let row_at = |rows: &[(RowId, Bounds<Pixels>)], at: Point<Pixels>| {
+            rows.iter().find(|(_, b)| b.contains(&at)).map(|(r, b)| (*r, *b))
+        };
+        let hovered = (hovers && hitbox.is_hovered(window)).then(|| row_at(&rows, window.mouse_position())).flatten();
+        if hovers {
+            let (rows, hitbox) = (rows.clone(), hitbox.clone());
+            let shown = hovered.map(|(r, _)| r);
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+                let now = hitbox.is_hovered(window).then(|| row_at(&rows, event.position)).flatten().map(|(r, _)| r);
+                if now != shown {
+                    window.refresh();
+                }
+            });
+        }
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || event.button != MouseButton::Left || !hitbox.is_hovered(window) {
                 return;
@@ -373,7 +397,21 @@ impl gpui::Element for VirtualList {
         let view = view.map_or(bounds, |v| {
             Bounds::new(point(px(v.origin.x), px(v.origin.y)), size(px(v.size.width), px(v.size.height)))
         });
+        let selected_rows: HashSet<RowId> = self.props.selected.iter().copied().collect();
         window.with_content_mask(Some(ContentMask { bounds: view }), |window| {
+            if let Some((_, b)) = hovered.filter(|(r, _)| !selected_rows.contains(r)) {
+                let full = Bounds::new(point(view.origin.x, b.origin.y), size(view.size.width, b.size.height));
+                if self.props.inset {
+                    let s = self.sidebar;
+                    let inner = Bounds::new(
+                        point(full.origin.x + px(s.inset), full.origin.y + px(1.)),
+                        size(full.size.width - px(s.inset * 2.), full.size.height - px(2.)),
+                    );
+                    window.paint_quad(fill(inner, self.hover_color).corner_radii(px(s.radius)));
+                } else {
+                    window.paint_quad(fill(full, self.hover_color));
+                }
+            }
             for b in &prepainted.selected {
                 if self.props.inset {
                     // A sidebar's selection: inset from the edges, rounded.
