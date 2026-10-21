@@ -66,6 +66,9 @@ struct NDFormBody: View {
                         LabeledContent {
                             if let slot = model.slots[row.id] {
                                 NDSlot(view: slot.view, size: slot.size).id(ObjectIdentifier(slot.view))
+                                    // SwiftUI hands its control size to a hosted control; Settings
+                                    // rows hold mini switches.
+                                    .controlSize(slot.view is NSSwitch ? .mini : .regular)
                             }
                         } label: {
                             Text(row.label)

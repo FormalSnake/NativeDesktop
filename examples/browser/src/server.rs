@@ -16,6 +16,33 @@ pub const LOGIN: &str = "<!doctype html><html><head><title>Login</title><script>
 window.ndFirstDocument = document.documentElement.dataset.ndExtension === '1';</script></head>\
 <body><form><input id=\"user\"><input id=\"password\" type=\"password\"></form></body></html>";
 
+/// The 0.5.11 app's adblock fixture (nativebrowser `scripts/adblock-drive.ts`), its network
+/// cases: each script or image is a real ad-network URL, and the title reports what survived.
+pub const ADBLOCK: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>adblock fixture</title>
+<script src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
+<script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<script src="https://www.google-analytics.com/analytics.js"></script>
+<script src="/js/prebid.js"></script>
+</head><body style="margin:0;font:16px system-ui">
+<img id="px" src="https://googleads.g.doubleclick.net/pagead/viewthroughconversion/1/?nb=1" width="1" height="1">
+<script>
+  addEventListener("load", function () {
+    setTimeout(function () {
+      document.title = "R" + JSON.stringify({
+        gptStub: typeof window.googletag === "object",
+        adsbygoogle: typeof window.adsbygoogle !== "undefined",
+        analytics: typeof window.ga === "function",
+        prebid: !!window.__prebid,
+        pixel: document.getElementById("px").naturalWidth > 0,
+      });
+    }, 1500);
+  });
+</script></body></html>"#;
+
+/// A page a `$csp=script-src 'none'` rule matches: its inline script must not run.
+pub const CSP_PROBE: &str = "<!doctype html><html><head><title>csp</title></head><body>\
+<script>window.ran = true;</script>csp probe</body></html>";
+
 pub const DOWNLOAD_BODY: &str = "hello download";
 
 /// Serves on an ephemeral port in a thread of its own; returns `http://127.0.0.1:<port>`.
@@ -42,6 +69,9 @@ pub fn start() -> String {
                 }
                 let (status, kind, extra, body): (&str, &str, &str, Vec<u8>) = match path {
                     "/" => ("200 OK", "text/html; charset=utf-8", "", INDEX.into()),
+                    "/adblock" => ("200 OK", "text/html; charset=utf-8", "", ADBLOCK.into()),
+                    "/nd-csp-probe" => ("200 OK", "text/html; charset=utf-8", "", CSP_PROBE.into()),
+                    "/js/prebid.js" => ("200 OK", "text/javascript", "", b"window.__prebid = 1".to_vec()),
                     "/login" => ("200 OK", "text/html; charset=utf-8", "", LOGIN.into()),
                     "/second" | "/slow" => ("200 OK", "text/html; charset=utf-8", "", SECOND.into()),
                     "/download" => (

@@ -298,6 +298,21 @@ impl Gestures {
         w.router.scroll_offset(node)
     }
 
+    /// A scroll view's offset and furthest offset, for a drawn scroll bar.
+    pub fn scroll_metrics(&self, window: WindowId, node: NodeId) -> Option<(Point, Point)> {
+        let windows = self.windows.borrow();
+        let s = windows.get(&window)?.router.scroller(node)?;
+        Some((s.offset(), s.max_offset()))
+    }
+
+    /// Moves a scroll view to `offset` (clamped), as a scroll bar drag or page does.
+    pub fn scroll_to(&self, window: WindowId, node: NodeId, offset: Point) {
+        let mut windows = self.windows.borrow_mut();
+        if let Some(s) = windows.get_mut(&window).and_then(|w| w.router.scroller_mut(node)) {
+            s.scroll_to(offset);
+        }
+    }
+
     /// A virtualized list's offset in the router as input and flings left it, `None` before the
     /// list is registered.
     pub fn list_offset(&self, window: WindowId, node: NodeId) -> Option<f32> {
@@ -571,6 +586,7 @@ mod tests {
             transform: Default::default(),
             hover: None,
             tracks_hover: false,
+            reports_size: false,
         };
         Node { kind: NodeKind::View, props: Rc::new(props), parent, children }
     }

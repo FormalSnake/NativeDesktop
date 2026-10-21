@@ -8,6 +8,7 @@ pub mod backend;
 pub mod canvas;
 mod container;
 pub mod dispatch;
+pub mod drag;
 mod element;
 pub mod events;
 mod layout;
@@ -27,9 +28,10 @@ pub use animation::{Animation, AnimationEnded, Curve, Pose, Transform};
 pub use app::{AnyView, App, Context, Entity, EntityId, Render, Subscription, WeakEntity};
 pub use canvas::{Canvas, CanvasPath, CanvasProps, CanvasRect, CanvasResized, PaintOp, Painter, PathStep, canvas};
 pub use container::ContainerElement;
+pub use drag::{DragEnded, DragItem, DragOutcome, DragOver, DragOverPhase, DragPoint, DragSource, DropSlot, Dropped};
 pub use element::{
     AnyElement, Bezel, Button, ButtonProps, ButtonVariant, ClickEvent, DispatchProps, Div, DivProps, HoverChanged,
-    InteractiveElement, IntoElement, Key, NativeElement, ParentElement, RootProps, Scope, Text, TextProps,
+    InteractiveElement, IntoElement, Key, NativeElement, ParentElement, Resized, RootProps, Scope, Text, TextProps,
     WindowControls, WindowControlsProps, button, deferred, div, drag_region, h_flex, rich_text, text, v_flex,
     window_controls,
 };
@@ -53,6 +55,7 @@ pub use window::{Titlebar, TitlebarInsets, Window, WindowHandle, WindowKind, Win
 
 /// What an app imports: the vocabulary plus GPUI's geometry and colour helpers.
 pub mod prelude {
+    pub use crate::drag::{DragEnded, DragItem, DragOutcome, DragOver, DragOverPhase, DropSlot, Dropped};
     pub use crate::overlay::{
         DismissCause, Dismissed, Modality, OverlayKind, Placement, cover, panel, popover, tooltip,
     };

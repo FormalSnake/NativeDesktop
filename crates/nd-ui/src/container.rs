@@ -111,6 +111,7 @@ impl<P: AnyProps> IntoElement for ContainerElement<P> {
             dispatch: self.dispatch,
             motion: None,
             paint: None,
+            drag: crate::drag::DragSpec::default(),
         })))
     }
 }

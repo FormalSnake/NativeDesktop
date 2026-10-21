@@ -19,7 +19,7 @@ Releases are git tags, not crates.io versions, because nd builds on a patched GP
 
 ```sh
 cargo install cargo-nextest --locked
-cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.1 --locked nd-cli
+cargo install --git https://github.com/FormalStudio/NativeDesktop --tag v0.6.1 --locked nd-cli
 ```
 
 Create an app, run it, check it and test it:

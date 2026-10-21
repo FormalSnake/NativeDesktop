@@ -34,7 +34,9 @@ use nd_ui::{
 };
 use objc2::Message;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSAppearanceCustomization, NSApplication, NSBox, NSView, NSWindowOrderingMode};
+use objc2_app_kit::{
+    NSAppearanceCustomization, NSApplication, NSBox, NSSplitViewController, NSView, NSWindowOrderingMode,
+};
 use objc2_foundation::{MainThreadMarker, NSAlignmentOptions};
 use objc2_quartz_core::CATransaction;
 
@@ -547,6 +549,22 @@ impl State {
         })
     }
 
+    fn reveal_hooks(&self, node: NodeId, window: WindowId) -> crate::reveal::RevealHooks {
+        let weak = self.weak.clone();
+        crate::reveal::RevealHooks {
+            emit: self.events.emitter(node),
+            wake: self.wake.clone(),
+            relayout: self.pane_hook(),
+            place_lights: Rc::new(move || {
+                if let Some(state) = weak.upgrade()
+                    && let Ok(state) = state.try_borrow()
+                {
+                    state.place_embedded_lights(window);
+                }
+            }),
+        }
+    }
+
     /// The list a node belongs to as a row (`parent` is the list) or a table cell (`parent` is a
     /// row of the list).
     fn list_of(&self, parent: NodeId) -> Option<NodeId> {
@@ -735,8 +753,11 @@ impl State {
                 self.mark_form(parent);
                 return;
             }
-            [Some(Native::FormRow(_, child)), Some(_)] => {
+            [Some(Native::FormRow(_, child)), Some(native)] => {
                 *child = Some(node);
+                if let Native::Control(control) = native {
+                    control.control.placed_in_form_row();
+                }
                 self.mark_form(parent);
                 return;
             }
@@ -1179,7 +1200,9 @@ impl Backend for AppKitBackend {
                 Native::Scaffold(scaffold)
             }
             NodeKind::Widget(w) if is::<Pane>(w) => {
-                Native::Pane(PaneNative::new(mtm, props::<PaneProps>(p, "Pane"), state.expose))
+                let pane = props::<PaneProps>(p, "Pane");
+                let reveal = (pane.role == PaneRole::Sidebar).then(|| state.reveal_hooks(node, window));
+                Native::Pane(PaneNative::new(mtm, pane, state.expose, reveal))
             }
             NodeKind::Widget(w) if is::<Toolbar>(w) => {
                 let id = format!("nd.toolbar.{}", window.0);
@@ -1773,6 +1796,27 @@ impl Backend for AppKitBackend {
         self.window_state_of(window)
     }
 
+    fn drop_slot(
+        &mut self,
+        node: NodeId,
+        at: Option<nd_core::Point>,
+        _item: &nd_ui::DragItem,
+    ) -> Option<nd_ui::DropSlot> {
+        let state = self.0.try_borrow().ok()?;
+        match state.nodes.get(&node) {
+            Some(Native::SourceTree(s)) => s.drop_slot(at),
+            _ => None,
+        }
+    }
+
+    fn drag_preview(&mut self, _window: WindowId, node: NodeId, screen: Option<nd_core::Point>) {
+        let Ok(state) = self.0.try_borrow() else { return };
+        let view = state.nodes.get(&node).and_then(Native::view).map(|v| v.retain());
+        let mtm = state.mtm;
+        drop(state);
+        crate::drag_preview::show(mtm, view.as_deref(), screen);
+    }
+
     fn perform(
         &mut self,
         node: NodeId,
@@ -1799,6 +1843,12 @@ impl Backend for AppKitBackend {
                 ns.makeKeyAndOrderFront(None);
             }
             nd_ui::backend::WindowCommand::ToggleTabOverview => ns.toggleTabOverview(None),
+            nd_ui::backend::WindowCommand::ToggleSidebar => {
+                if let Some(split) = ns.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok())
+                {
+                    unsafe { split.toggleSidebar(None) };
+                }
+            }
             _ => {}
         }
     }

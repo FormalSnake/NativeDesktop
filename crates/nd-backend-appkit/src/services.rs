@@ -33,7 +33,7 @@ use crate::AppKitBackend;
 use crate::app_host::{defer_with_app, key_window};
 
 pub struct TargetIvars {
-    actions: RefCell<Vec<Box<dyn Action>>>,
+    actions: RefCell<Vec<(Box<dyn Action>, bool)>>,
     /// The window a context menu belongs to; the key window for the menu bar.
     window: Cell<Option<WindowId>>,
 }
@@ -51,11 +51,18 @@ define_class!(
         #[unsafe(method(fire:))]
         fn fire(&self, sender: &NSMenuItem) {
             let Ok(index) = usize::try_from(sender.tag()) else { return };
-            let Some(action) = self.ivars().actions.borrow().get(index).map(|a| a.boxed_clone()) else { return };
+            let Some(action) = self.ivars().actions.borrow().get(index).map(|(a, _)| a.boxed_clone()) else { return };
             let Some(window) = self.ivars().window.get().or_else(key_window) else { return };
             defer_with_app(move |app| {
                 app.dispatch_action(window, &*action);
             });
+        }
+
+        /// Asked only in menus that autoenable, where a role item sits beside the app's own.
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> objc2::runtime::Bool {
+            let Ok(index) = usize::try_from(item.tag()) else { return objc2::runtime::Bool::YES };
+            objc2::runtime::Bool::new(self.ivars().actions.borrow().get(index).is_none_or(|(_, enabled)| *enabled))
         }
     }
 );
@@ -66,9 +73,9 @@ impl NdMenuTarget {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn add(&self, action: Box<dyn Action>) -> isize {
+    fn add(&self, action: Box<dyn Action>, enabled: bool) -> isize {
         let mut actions = self.ivars().actions.borrow_mut();
-        actions.push(action);
+        actions.push((action, enabled));
         actions.len() as isize - 1
     }
 }
@@ -162,6 +169,11 @@ fn role_item(mtm: MainThreadMarker, role: MenuRole, app_name: &str) -> Retained<
         MenuRole::ToggleFullScreen => {
             ("Enter Full Screen".into(), sel!(toggleFullScreen:), "f", cmd | NSEventModifierFlags::Control)
         }
+        // The window's NSSplitViewController validates the item, retitling it Show Sidebar or
+        // Hide Sidebar.
+        MenuRole::ToggleSidebar => {
+            ("Show Sidebar".into(), sel!(toggleSidebar:), "s", cmd | NSEventModifierFlags::Control)
+        }
     };
     let i = item(mtm, &title, Some(action), key);
     i.setKeyEquivalentModifierMask(mask);
@@ -202,7 +214,7 @@ impl Builder<'_> {
                             let _: () = unsafe { msg_send![&*i, setPreferredImageVisibility: 1isize] };
                         }
                     }
-                    i.setTag(self.target.add(action));
+                    i.setTag(self.target.add(action, enabled));
                     menu.addItem(&i);
                 }
             }
@@ -266,7 +278,14 @@ impl Builder<'_> {
                 NSApplication::sharedApplication(self.mtm).setHelpMenu(Some(&ns));
                 menu.items
             }
-            MenuKind::Normal => menu.items,
+            MenuKind::Normal => {
+                // A role item reaches its target through the responder chain, which only an
+                // autoenabling menu asks.
+                if menu.items.iter().any(|i| matches!(i, MenuItem::Role(_))) {
+                    ns.setAutoenablesItems(true);
+                }
+                menu.items
+            }
         };
         self.items(&ns, items);
         ns

@@ -44,6 +44,9 @@ pub struct WindowOptions {
     /// Opening it makes it key and activates the app. Off (`.background()`), it opens behind
     /// whatever has focus: a launch from a script or a test that must not steal it.
     pub activate: bool,
+    /// Where the window's top-left corner opens, in global points from the primary screen's
+    /// top-left. Centred when unset.
+    pub origin: Option<nd_core::Point>,
 }
 
 impl WindowOptions {
@@ -58,7 +61,15 @@ impl WindowOptions {
             kind: WindowKind::Normal,
             tab_group: None,
             activate: true,
+            origin: None,
         }
+    }
+
+    /// Opens with the window's top-left corner at `at` (global points), as a tab dragged out of
+    /// a window opens where it was dropped.
+    pub fn origin(mut self, at: nd_core::Point) -> Self {
+        self.origin = Some(at);
+        self
     }
 
     /// Opens without taking focus or activating the app.

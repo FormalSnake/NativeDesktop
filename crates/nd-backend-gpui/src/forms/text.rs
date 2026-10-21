@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use nd_components::forms::*;
 use nd_core::NodeId;
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, App, Bounds, ClipboardItem, CursorStyle, ElementId, FocusHandle, GlobalElementId, InspectorElementId,
     InteractiveElement, IntoElement, KeyDownEvent, Keystroke, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -673,6 +674,13 @@ impl gpui::Element for EditorElement {
             }
             None => vec![run(display.len(), false)],
         };
+        let runs = match look.selection_text {
+            Some(fg) if !e.selected.is_empty() => {
+                let (a, b) = (e.text_to_display(e.selected.start), e.text_to_display(e.selected.end));
+                recolor(runs, a..b, fg)
+            }
+            _ => runs,
+        };
         let text_system = window.text_system().clone();
         let placeholder = match (&self.placeholder, display.is_empty()) {
             (Some(p), true) => {
@@ -868,16 +876,40 @@ pub(crate) fn chrome(ctl: &Ctl, editor: &Rc<std::cell::RefCell<Editor>>, f: &Fie
         .gap(look.gap)
         .px(look.field_padding_x)
         .rounded(look.radius)
-        .bg(look.fill)
-        .border_2()
-        .border_color(if ctl.focused {
-            look.focus_ring
-        } else {
-            look.field_stroke.unwrap_or(gpui::transparent_black())
-        })
         .text_size(look.text_size)
         .line_height(look.line_height)
         .text_color(look.text);
+    chrome = match look.field_underline {
+        // WinUI's TextBox: a 1 px elevation border whose bottom edge is the strong stroke, and
+        // focused, a 2 px accent underline over the input-active fill, with no focus ring.
+        Some(underline) => {
+            let (fill, hover) =
+                if ctl.focused { (look.field_focus_fill, look.field_focus_fill) } else { (look.fill, look.fill_hover) };
+            let (edge, width) = if ctl.focused { (look.accent, px(2.)) } else { (underline, px(1.)) };
+            // Absolute insets start inside the border: -1 puts the underline on its bottom edge.
+            let bottom = div()
+                .absolute()
+                .top(px(-1.))
+                .left(px(-1.))
+                .right(px(-1.))
+                .bottom(px(-1.))
+                .rounded(look.radius)
+                .border_b(width)
+                .border_color(edge);
+            chrome
+                .relative()
+                .bg(fill)
+                .when(f.enabled, |c| c.hover(move |s| s.bg(hover)))
+                .border_1()
+                .border_color(look.field_stroke.unwrap_or(look.border))
+                .child(bottom)
+        }
+        None => chrome.bg(look.fill).border_2().border_color(if ctl.focused {
+            look.focus_ring
+        } else {
+            look.field_stroke.unwrap_or(gpui::transparent_black())
+        }),
+    };
     chrome = if f.multiline {
         chrome.flex_col().py(look.padding_y).overflow_hidden()
     } else {
@@ -994,7 +1026,7 @@ fn edge_button<E: Clone + 'static>(
     }
     button
         .occlude()
-        .cursor(CursorStyle::PointingHand)
+        .cursor(look.cursor)
         .hover(move |s| s.bg(look.fill_hover))
         .on_click(move |_, _, cx| sink.send(event.clone(), cx))
 }
@@ -1110,7 +1142,7 @@ pub(crate) fn text_area(
         .aria_value(p.text.clone())
         .min_w(look.field_min_width)
         .py(padding_y)
-        .h(text_height + padding_y * 2. + px(4.));
+        .h(text_height + padding_y * 2. + if look.field_underline.is_some() { px(2.) } else { px(4.) });
     if rounded && !ctl.focused {
         area = area.border_color(look.border);
     }
@@ -1370,7 +1402,7 @@ pub(crate) fn combo_box(
         .justify_center()
         .size(look.control_height - px(8.))
         .rounded(look.radius)
-        .child(glyph(Glyph::ChevronDown, look.icon_size, look.text, look.glyph_stroke));
+        .child(glyph(Glyph::ChevronDown, look.chevron_size, look.chevron_color, look.glyph_stroke));
     if p.enabled {
         button = button.occlude().hover(move |s| s.bg(look.fill_hover)).on_click(toggle);
     }
@@ -1390,7 +1422,7 @@ pub(crate) fn combo_box(
             menu_item(look, index, option.clone(), highlight == Some(index), false)
                 .on_click(move |_, window, cx| pick(index, window, cx))
         });
-        root = root.child(popover(b, id, window, look, close, items));
+        root = root.child(popover(b, id, window, look, close, items, px(0.), None));
     }
     root.into_any_element()
 }
@@ -1403,11 +1435,14 @@ pub(crate) fn menu_item(
     highlighted: bool,
     current: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    let item = div()
+    let (hover, active) =
+        if look.item_pill { (look.subtle_hover, look.subtle_active) } else { (look.fill_hover, look.fill_active) };
+    let mut item = div()
         .id(ElementId::Integer(index as u64))
         .role(gpui::Role::MenuItem)
         .aria_label(title.clone())
         .aria_selected(current)
+        .relative()
         .flex()
         .flex_row()
         .items_center()
@@ -1416,11 +1451,35 @@ pub(crate) fn menu_item(
         .px(look.padding_x)
         .rounded(look.radius)
         .whitespace_nowrap()
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |s| s.bg(look.fill_hover))
+        .cursor(look.cursor)
+        .hover(move |s| s.bg(hover))
         .child(div().flex_1().child(title));
+    if look.item_pill {
+        // WinUI's ComboBoxItem: the selected item is filled and marked by the 3x16 pill.
+        item = item.active(move |s| s.bg(active));
+        if current {
+            item = item.bg(hover).child(selection_pill(look.accent, px(16.)));
+        }
+        if highlighted {
+            item = item.bg(hover);
+        }
+        return item;
+    }
     let item = if highlighted { item.bg(look.fill_active) } else { item };
     if current { item.child(glyph(Glyph::Check, look.icon_size, look.text, look.glyph_stroke)) } else { item }
+}
+
+/// WinUI's selection indicator: a 3 px accent pill `height` tall, centred on its item's leading
+/// edge (ListViewItem, NavigationViewItem, ComboBoxItem). The item must be positioned.
+pub(crate) fn selection_pill(accent: gpui::Hsla, height: Pixels) -> gpui::Div {
+    div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .bottom_0()
+        .flex()
+        .items_center()
+        .child(div().w(px(3.)).h(height).rounded(px(1.5)).bg(accent))
 }
 
 /// A light-dismiss popover below its control, in the window's overlay layer: above every
@@ -1434,6 +1493,8 @@ pub(crate) fn popover(
     look: FormLook,
     close: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     items: impl IntoIterator<Item = impl IntoElement>,
+    lift: Pixels,
+    width: Option<Pixels>,
 ) -> impl IntoElement {
     let viewport = window.viewport_size();
     let (backend, window_id) = (b.backend.clone(), b.window_id);
@@ -1455,19 +1516,21 @@ pub(crate) fn popover(
             .id("popover")
             .occlude()
             .role(gpui::Role::MenuListPopup)
-            .mt(px(4.))
-            .min_w(px(160.))
-            .p(look.popover_inset)
+            .mt(px(4.) - lift)
+            .min_w(width.unwrap_or(px(160.)))
+            .px(look.popover_pad.0)
+            .py(look.popover_pad.1)
             .flex()
             .flex_col()
+            .gap(look.item_gap)
             .rounded(look.popover_radius)
             .bg(look.popover)
             .border_1()
-            .border_color(look.border)
+            .border_color(look.popover_stroke)
             .shadow(vec![gpui::BoxShadow {
-                color: gpui::hsla(0., 0., 0., 0.18),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(12.),
+                color: look.popover_shadow.0,
+                offset: point(px(0.), look.popover_shadow.1),
+                blur_radius: look.popover_shadow.2,
                 spread_radius: px(0.),
                 inset: false,
             }])
@@ -1502,4 +1565,49 @@ pub(crate) fn value_field(
     let (ctl, editor) = editor(b, id, &f, || Commit::Parse(Rc::new(parse)), window, cx);
     let field = line(&ctl, &editor, &f);
     (ctl, field)
+}
+
+/// `runs` with the bytes in `range` drawn in `color`, split at its ends.
+fn recolor(runs: Vec<TextRun>, range: Range<usize>, color: gpui::Hsla) -> Vec<TextRun> {
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut at = 0;
+    for run in runs {
+        let end = at + run.len;
+        let (a, b) = (range.start.clamp(at, end), range.end.clamp(at, end));
+        for (from, to, inside) in [(at, a, false), (a, b, true), (b, end, false)] {
+            if to > from {
+                let mut part = run.clone();
+                part.len = to - from;
+                if inside {
+                    part.color = color;
+                }
+                out.push(part);
+            }
+        }
+        at = end;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(len: usize) -> TextRun {
+        TextRun {
+            len,
+            font: gpui::font("Test"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    #[test]
+    fn recolor_splits_runs_at_the_selection() {
+        let out = recolor(vec![run(4), run(6)], 2..7, gpui::white());
+        let parts: Vec<(usize, bool)> = out.iter().map(|r| (r.len, r.color == gpui::white())).collect();
+        assert_eq!(parts, [(2, false), (2, true), (3, true), (3, false)]);
+    }
 }

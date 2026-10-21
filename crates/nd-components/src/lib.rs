@@ -28,6 +28,7 @@ pub mod source_list;
 pub mod split;
 pub mod status_page;
 pub mod tabs;
+pub mod tile_grid;
 pub mod titlebar;
 pub mod toast;
 pub mod toolbar;
@@ -49,7 +50,10 @@ pub use palette::{
     PaletteCancelled, PaletteEvent, PaletteItem, PaletteKey, PaletteMetrics, PaletteModel, PaletteQueryChanged,
     PaletteSubmitted, command_palette, emit_palette_event, palette_item,
 };
-pub use scaffold::{Pane, PaneCollapsed, PaneProps, PaneRole, Scaffold, ScaffoldProps, inspector, scaffold, sidebar};
+pub use scaffold::{
+    Pane, PaneCollapsed, PaneProps, PaneRole, REVEAL_EDGE, Scaffold, ScaffoldProps, SidebarRevealed, inspector,
+    scaffold, sidebar,
+};
 pub use services::{Chrome, ChromeServices};
 pub use source_list::{
     ActionVisibility, EmptyState, SourceAction, SourceActionClicked, SourceActivated, SourceCollapsed, SourceExpanded,
@@ -64,6 +68,7 @@ pub use tabs::{
     TabAddRequested, TabChanged, TabCloseRequested, TabPage, TabSpec, TabStrip, TabStripKind, TabStripProps, TabStyle,
     TabView, tab_page, tab_strip, tab_view,
 };
+pub use tile_grid::{TILE_SLIDE, Tile, TileGrid, TileMetrics, TileMoved, tile, tile_grid};
 pub use titlebar::{InsetEdge, Titlebar, TitlebarInset, TitlebarInsetProps, TitlebarProps, titlebar};
 pub use toast::{
     BANNER, Banner, BannerActionClicked, BannerKind, BannerMetrics, BannerProps, DEFAULT_TIMEOUT, DismissReason, TOAST,

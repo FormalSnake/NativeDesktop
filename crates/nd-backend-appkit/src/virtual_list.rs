@@ -557,6 +557,8 @@ impl TableNative {
         table.setIntercellSpacing(objc2_foundation::NSSize::new(0., 0.));
         table.setStyle(if props.inset { NSTableViewStyle::SourceList } else { NSTableViewStyle::FullWidth });
         table.setAllowsEmptySelection(true);
+        // Columns of data alternate row backgrounds, as Finder's list view does (HIG, Lists and tables).
+        table.setUsesAlternatingRowBackgroundColors(matches!(props.kind, ListKind::Table(_)) && !props.inset);
         table.setColumnAutoresizingStyle(match props.kind {
             ListKind::Table(_) => NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle,
             _ => NSTableViewColumnAutoresizingStyle::UniformColumnAutoresizingStyle,

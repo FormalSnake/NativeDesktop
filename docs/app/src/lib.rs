@@ -14,11 +14,11 @@ use nd::prelude::*;
 
 pub use content::Content;
 
-actions!(docs, [OpenPalette, ToggleSidebar]);
+actions!(docs, [OpenPalette]);
 
 pub const CONTEXT: &str = "Docs";
 
-pub const REPO_URL: &str = "https://github.com/FormalSnake/NativeDesktop";
+pub const REPO_URL: &str = "https://github.com/FormalStudio/NativeDesktop";
 
 /// A file or directory in the repository on GitHub.
 pub fn repo_url(path: &str) -> String {
@@ -37,7 +37,6 @@ pub struct Docs {
     content: Rc<Content>,
     load_error: Option<SharedString>,
     page: String,
-    sidebar_collapsed: bool,
     palette_open: bool,
     query: SharedString,
     /// The selected embed tab per example name.
@@ -56,7 +55,6 @@ impl Docs {
             content: Rc::new(content),
             load_error,
             page,
-            sidebar_collapsed: false,
             palette_open: false,
             query: SharedString::default(),
             tabs: HashMap::new(),
@@ -164,10 +162,6 @@ impl Render for Docs {
                 this.query = SharedString::default();
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
-                this.sidebar_collapsed = !this.sidebar_collapsed;
-                cx.notify();
-            }))
             .toolbar(
                 toolbar()
                     .title(title)
@@ -176,7 +170,7 @@ impl Render for Docs {
                     .item(icon_button("search", Icon::Search).tooltip("Search pages").dispatch(OpenPalette)),
             )
             .sidebar(
-                sidebar().collapsed(self.sidebar_collapsed).min_w(px(220.)).child(
+                sidebar().min_w(px(220.)).child(
                     source_tree("pages")
                         .nodes(self.nodes())
                         .selected(self.page.clone())
@@ -231,18 +225,13 @@ pub fn init(cx: &mut App) -> WindowHandle<Docs> {
 
 /// Binds the docs' keys and opens the window on `start`'s page.
 pub fn open(cx: &mut App, start: Start) -> WindowHandle<Docs> {
-    cx.bind_keys([
-        KeyBinding::new("secondary-k", OpenPalette, Some(CONTEXT)),
-        KeyBinding::new("secondary-alt-s", ToggleSidebar, Some(CONTEXT)),
-    ]);
+    cx.bind_keys([KeyBinding::new("secondary-k", OpenPalette, Some(CONTEXT))]);
     set_menus(
         cx,
         [
             Menu::app([]),
-            Menu::new("View").items([
-                MenuItem::action("Search Pages", OpenPalette),
-                MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            ]),
+            Menu::new("View")
+                .items([MenuItem::action("Search Pages", OpenPalette), MenuItem::role(MenuRole::ToggleSidebar)]),
         ],
     );
     cx.open_window(

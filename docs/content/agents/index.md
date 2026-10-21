@@ -19,7 +19,7 @@ against, and then scaffold the app:
 
 ```sh
 cargo install cargo-nextest --locked
-cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.1 --locked nd-cli
+cargo install --git https://github.com/FormalStudio/NativeDesktop --tag v0.6.1 --locked nd-cli
 nd new my-app
 cd my-app
 just dev

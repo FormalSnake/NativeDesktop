@@ -48,7 +48,20 @@ pub struct PaneProps {
     pub toolbar_extension: f32,
     /// The edge effect under the toolbar shows only while the pointer is over the toolbar.
     pub edge_on_hover: bool,
+    /// While the sidebar is collapsed, the pointer at the window's leading edge slides it in
+    /// over the content as a floating panel.
+    pub edge_reveal: bool,
     pub style: StyleRefinement,
+}
+
+/// How far from the window's leading edge the pointer reveals a collapsed sidebar: narrow
+/// enough that it never sits over anything the content draws.
+pub const REVEAL_EDGE: f32 = 6.;
+
+/// The collapsed sidebar slid in over the content (`revealed`) or away again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SidebarRevealed {
+    pub revealed: bool,
 }
 
 /// Reported when the user collapses or expands a pane (the toolbar's sidebar button, a
@@ -171,7 +184,10 @@ impl IntoElement for Scaffold {
         });
         self.root
             .children(self.toolbar)
-            .children(self.sidebar.filter(|s| !(s.is_collapsed() && cfg!(not(target_os = "macos")))))
+            .children(
+                self.sidebar
+                    .filter(|s| !(s.is_collapsed() && !s.0.props().edge_reveal && cfg!(not(target_os = "macos")))),
+            )
             .children(content)
             .children(self.inspector.filter(|s| !(s.is_collapsed() && cfg!(not(target_os = "macos")))))
             .children(overlay)
@@ -214,6 +230,19 @@ impl Pane {
     }
 
     pub fn on_collapse_change(self, handler: impl Fn(&PaneCollapsed, &mut Window, &mut App) + 'static) -> Self {
+        Pane(self.0.on(handler))
+    }
+
+    /// While collapsed, the sidebar slides in over the content as a floating panel when the
+    /// pointer touches the window's leading edge, and away again 250 ms after the pointer leaves
+    /// it (200 ms in, 150 ms out; a fade with reduce motion). The content is not resized, and
+    /// window controls in the sidebar ride along. Arc's hidden sidebar.
+    pub fn edge_reveal(mut self) -> Self {
+        self.0.props_mut().edge_reveal = true;
+        self
+    }
+
+    pub fn on_reveal_change(self, handler: impl Fn(&SidebarRevealed, &mut Window, &mut App) + 'static) -> Self {
         Pane(self.0.on(handler))
     }
 

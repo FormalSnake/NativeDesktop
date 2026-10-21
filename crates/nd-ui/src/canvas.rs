@@ -276,6 +276,7 @@ impl IntoElement for Canvas {
             dispatch: DispatchProps::default(),
             motion: None,
             paint: Some(self.paint),
+            drag: crate::drag::DragSpec::default(),
         })
     }
 }

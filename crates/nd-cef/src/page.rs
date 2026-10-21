@@ -820,7 +820,7 @@ impl CefPage {
                 }
             }
             Command::ExecuteJavaScript { code, world, done } => {
-                self.devtools.evaluate(&code, world.as_deref(), move |r| done(r.map_err(nd_webview::JsError)));
+                self.devtools.evaluate_as_user(&code, world.as_deref(), move |r| done(r.map_err(nd_webview::JsError)));
             }
             Command::AddUserScript(script) => {
                 let old = {

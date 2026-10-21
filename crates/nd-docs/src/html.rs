@@ -13,7 +13,7 @@ use crate::examples::Example;
 use crate::model::{Block, Inline, Link, Page, Site, SourceRef};
 
 pub const SITE_URL: &str = "https://native.formalsnake.dev";
-pub const REPO_URL: &str = "https://github.com/FormalSnake/NativeDesktop";
+pub const REPO_URL: &str = "https://github.com/FormalStudio/NativeDesktop";
 
 /// The path a page is served at.
 pub fn page_path(id: &str) -> String {

@@ -10,6 +10,13 @@
 //!   consumed, release included.
 //! - `real_chrome_pages_cef_chrome`: `chrome://extensions` and `chrome://settings` load and lay
 //!   out in a Chrome-style page.
+//! - `real_adblock_cef*`: uBlock Origin's default lists on the request filter block and redirect
+//!   the 0.5.11 adblock fixture's requests as that build did (CEF only; WebKit has no filter).
+//! - `real_private_*`: two tabs of a private window share a cookie, a normal window does not
+//!   see it, and a private window opened after the first closed starts empty.
+//! - `real_pip_cef_chrome`: a page's own `requestPictureInPicture` is refused for want of a
+//!   gesture; nativebrowser's floating video script through `execute_javascript` lifts the
+//!   playing video into Chromium's picture-in-picture window and back.
 //!
 //! Needs `browser` built with the `cef` feature for the CEF runs (`cargo build -p browser
 //! --features cef`); a build without it fails the CEF tests with the engine's own message.
@@ -81,6 +88,56 @@ mod gate_m8_webview {
             Ok(line) => panic!("{line}\n{tail}"),
             Err(e) => panic!("no chrome pages result: {e}\n{tail}"),
         }
+    }
+
+    /// A scene that prints `<prefix>OK` or `<prefix>FAILED`.
+    fn scene(engine: &str, scene: &str, prefix: &str) -> String {
+        let mut options = browser(engine, scene);
+        options.ready_timeout = Duration::from_secs(60);
+        let app = launch_app(options).expect("launch browser");
+        let result = app.wait_for_stderr(prefix, Duration::from_secs(150));
+        let tail = app.stderr_tail(40).join("\n");
+        match result {
+            Ok(line) if line.starts_with(&format!("{prefix}OK")) => line,
+            Ok(line) => panic!("{line}\n{tail}"),
+            Err(e) => panic!("no {prefix} result: {e}\n{tail}"),
+        }
+    }
+
+    #[test]
+    fn real_adblock_cef() {
+        let line = scene("cef", "adblock", "ND_ADBLOCK_");
+        println!("{line}; ND_M8_ADBLOCK_CEF_OK");
+    }
+
+    #[test]
+    fn real_adblock_cef_chrome() {
+        let line = scene("cef-chrome", "adblock", "ND_ADBLOCK_");
+        println!("{line}; ND_M8_ADBLOCK_CEF_CHROME_OK");
+    }
+
+    #[test]
+    fn real_private_wkwebview() {
+        let line = scene("system", "private", "ND_PRIVATE_");
+        println!("{line}; ND_M8_PRIVATE_WKWEBVIEW_OK");
+    }
+
+    #[test]
+    fn real_private_cef() {
+        let line = scene("cef", "private", "ND_PRIVATE_");
+        println!("{line}; ND_M8_PRIVATE_CEF_OK");
+    }
+
+    #[test]
+    fn real_private_cef_chrome() {
+        let line = scene("cef-chrome", "private", "ND_PRIVATE_");
+        println!("{line}; ND_M8_PRIVATE_CEF_CHROME_OK");
+    }
+
+    #[test]
+    fn real_pip_cef_chrome() {
+        let line = scene("cef-chrome", "pip", "ND_PIP_");
+        println!("{line}; ND_M8_PIP_CEF_CHROME_OK");
     }
 
     fn real_allowed(name: &str) -> bool {

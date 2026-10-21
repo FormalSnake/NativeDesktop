@@ -325,6 +325,13 @@ mod nav {
         let editor = field_editor(&view);
         c.check(editor.is_some(), "the field editor is the window's first responder");
         let Some(editor) = editor else { return };
+        // The window turning key as the palette opens (as on coming back to the app) leaves
+        // the keyboard with the palette.
+        let panel_key = view
+            .window()
+            .and_then(|w| w.childWindows())
+            .is_some_and(|c| c.to_vec().iter().any(|w| w.canBecomeKeyWindow() && w.isKeyWindow()));
+        c.check(panel_key, "the open palette's panel is the key window");
         for key in ["t", "r", "i"] {
             let typed = NSString::from_str(key);
             let at = NSRange::new(NSNotFound as usize, 0);

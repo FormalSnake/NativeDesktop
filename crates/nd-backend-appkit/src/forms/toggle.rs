@@ -12,13 +12,16 @@ use nd_ui::prelude::Hsla;
 use nd_ui::semantics::{ActionError, Probe, SemanticAction};
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSButton, NSButtonType, NSControl, NSControlStateValue, NSControlStateValueMixed, NSControlStateValueOff,
-    NSControlStateValueOn, NSLayoutAttribute, NSLayoutConstraint, NSStackView, NSStepper, NSSwitch, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView,
+    NSButton, NSButtonType, NSControl, NSControlSize, NSControlStateValue, NSControlStateValueMixed,
+    NSControlStateValueOff, NSControlStateValueOn, NSLayoutAttribute, NSLayoutConstraint, NSStackView, NSStepper,
+    NSSwitch, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSNumber, NSNumberFormatter, NSNumberFormatterStyle, NSString};
 
-use super::{Ctx, FormControl, NdControlTarget, apply_common, fitting, props, send_action, set_accessibility_label};
+use super::{
+    Ctx, FormControl, NdControlTarget, apply_common, fitting, fitting_in_window, props, send_action,
+    set_accessibility_label,
+};
 use crate::look::Color;
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -196,8 +199,13 @@ impl FormControl for SwitchControl {
         true
     }
 
+    // Settings rows hold mini switches (HIG, Toggles: a mini switch in a grouped form).
+    fn placed_in_form_row(&self) {
+        self.switch.setControlSize(NSControlSize::Mini);
+    }
+
     fn measure(&self, _width: Option<f32>) -> Size {
-        fitting(&self.switch)
+        fitting_in_window(&self.switch)
     }
 
     fn probe(&self, probe: &mut Probe) {

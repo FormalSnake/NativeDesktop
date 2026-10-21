@@ -11,7 +11,7 @@ use std::rc::Rc;
 use emojis::{Emoji, EmojiVersion, Group, SkinTone};
 use nd_components::Icon;
 use nd_gpui::gpui::{
-    self, Anchor, AnyElement, App, CursorStyle, ElementId, InteractiveElement, IntoElement, Keystroke, MouseDownEvent,
+    self, Anchor, AnyElement, App, ElementId, InteractiveElement, IntoElement, Keystroke, MouseDownEvent,
     ParentElement, Pixels, Point, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled,
     UniformListScrollHandle, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, uniform_list,
 };
@@ -463,7 +463,7 @@ pub(crate) fn popover(
             .justify_center()
             .rounded(look.radius)
             .text_size(px(18.))
-            .cursor(CursorStyle::PointingHand)
+            .cursor(look.cursor)
             .hover(move |s| s.bg(look.fill_hover))
             .when(picker.tones_open, |d| d.bg(look.fill_active))
             .role(gpui::Role::Button)
@@ -488,7 +488,7 @@ pub(crate) fn popover(
                     .justify_center()
                     .rounded(look.radius)
                     .text_size(px(20.))
-                    .cursor(CursorStyle::PointingHand)
+                    .cursor(look.cursor)
                     .hover(move |s| s.bg(look.fill_hover))
                     .when(tone == picker.tone, |d| d.bg(look.fill_active))
                     .role(gpui::Role::RadioButton)
@@ -521,7 +521,7 @@ pub(crate) fn popover(
                 .items_center()
                 .justify_center()
                 .rounded(look.radius)
-                .cursor(CursorStyle::PointingHand)
+                .cursor(look.cursor)
                 .hover(move |s| s.bg(look.fill_hover))
                 .when(active, |d| d.bg(look.fill_active))
                 .role(gpui::Role::Tab)
@@ -577,7 +577,7 @@ pub(crate) fn popover(
                                 .justify_center()
                                 .rounded(look.radius)
                                 .text_size(px(22.))
-                                .cursor(CursorStyle::PointingHand)
+                                .cursor(look.cursor)
                                 .when(highlight == Some(i), |d| d.bg(look.selection))
                                 .hover(move |s| s.bg(look.fill_hover))
                                 .role(gpui::Role::Button)

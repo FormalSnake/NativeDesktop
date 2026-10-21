@@ -417,15 +417,28 @@ fn new_configuration(mtm: MainThreadMarker, page: &Page) -> Retained<WKWebViewCo
 
 thread_local! {
     static STORES: RefCell<HashMap<String, Retained<WKWebsiteDataStore>>> = RefCell::default();
+    /// Private sessions' stores, by session id, until the session ends.
+    static PRIVATE: RefCell<HashMap<u64, Retained<WKWebsiteDataStore>>> = RefCell::default();
 }
 
-/// `Default` is WebKit's default store, `Private` a fresh non-persistent one, and a named
+/// `Default` is WebKit's default store, a private session one non-persistent store, and a named
 /// profile a persistent store whose identifier is derived from the name, so the same name finds
 /// the same cookies on every launch.
 fn data_store(mtm: MainThreadMarker, profile: &Profile) -> Retained<WKWebsiteDataStore> {
     match profile {
         Profile::Default => unsafe { WKWebsiteDataStore::defaultDataStore(mtm) },
-        Profile::Private => unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) },
+        Profile::Private(session) => PRIVATE.with(|p| {
+            if let Some(store) = p.borrow().get(&session.id()) {
+                return store.clone();
+            }
+            let store = unsafe { WKWebsiteDataStore::nonPersistentDataStore(mtm) };
+            p.borrow_mut().insert(session.id(), store.clone());
+            let id = session.id();
+            session.on_end(move || {
+                PRIVATE.with(|p| p.borrow_mut().remove(&id));
+            });
+            store
+        }),
         Profile::Named(name) => STORES.with(|s| {
             s.borrow_mut()
                 .entry(name.clone())

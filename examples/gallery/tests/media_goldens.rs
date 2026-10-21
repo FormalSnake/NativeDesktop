@@ -102,8 +102,9 @@ mod goldens {
             host.platform().show(window);
             host.platform().pump(Duration::from_millis(30), Duration::from_millis(150));
         }
-        // One more turn so the active-state redraw has landed.
-        host.platform().pump(Duration::from_millis(50), Duration::from_millis(150));
+        // Long enough for the active-state redraw to land and for the overlay scrollers AppKit
+        // flashes when a window with overflowing content becomes key to fade out again.
+        host.platform().pump(Duration::from_millis(1200), Duration::from_millis(1500));
         is_key(host, window)
     }
 

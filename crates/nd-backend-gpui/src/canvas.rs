@@ -149,7 +149,8 @@ pub struct MenuBar {
 
 impl MenuBar {
     /// Rows from `menus`: actions, separators as `None`, submenus inline after a separator. Items
-    /// the OS implements (`MenuRole`) have no meaning in a canvas and are left out.
+    /// the OS implements (`MenuRole`) have no meaning in a canvas and are left out, except the
+    /// sidebar toggle, which nd carries out itself.
     pub fn set(&mut self, menus: Vec<nd_components::Menu>) {
         fn rows(items: Vec<nd_components::MenuItem>, out: &mut Vec<Option<Entry>>) {
             for item in items {
@@ -163,6 +164,12 @@ impl MenuBar {
                         out.push(Some(Entry { label: menu.title, action: None, enabled: false, checked: false }));
                         rows(menu.items, out);
                     }
+                    nd_components::MenuItem::Role(nd_components::MenuRole::ToggleSidebar) => out.push(Some(Entry {
+                        label: "Show or Hide Sidebar".into(),
+                        action: Some(Box::new(nd_ui::actions::ToggleSidebar)),
+                        enabled: true,
+                        checked: false,
+                    })),
                     nd_components::MenuItem::Role(_) => {}
                 }
             }

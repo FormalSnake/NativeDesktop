@@ -87,6 +87,11 @@ harness = false
 name = "nav"
 harness = false
 
+# Row drags in the drawn source list and the edge-revealed sidebar.
+[[test]]
+name = "tab_drag"
+harness = false
+
 # Images, the seek bar, lyrics, the shelf, chat bubbles and avatars drawn on GPUI.
 [[test]]
 name = "media"

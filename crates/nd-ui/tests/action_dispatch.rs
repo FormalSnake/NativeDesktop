@@ -45,3 +45,20 @@ fn a_click_can_dispatch_an_action_that_needs_the_window_and_focus() {
     assert_eq!(ran.get(), 1, "the listener ran once the click handler returned");
     assert_eq!(cx.focused(window.id()), Some(node(&cx, "field")), "and its focus request landed");
 }
+
+struct Plain;
+
+impl Render for Plain {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+#[test]
+fn an_unhandled_sidebar_toggle_reaches_the_backend_as_a_window_command() {
+    let mut cx = TestApp::new();
+    let window = cx.open_window(Size { width: 300., height: 200. }, |_, cx| cx.new(|_| Plain));
+    let handled = cx.dispatch_action(window.id(), &actions::ToggleSidebar);
+    assert!(handled, "nd handles it when the app does not");
+    assert_eq!(cx.backend().window_commands(), [(window.id(), backend::WindowCommand::ToggleSidebar)]);
+}
