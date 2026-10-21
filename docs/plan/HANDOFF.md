@@ -1,40 +1,75 @@
-# Handoff, 2026-10-18
+# Handoff, 2026-10-21
 
-Work paused at the user's request to save Claude Code usage (weekly limit resets Tuesday
-2026-10-20). Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request plus every
-dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md` (machine rules).
+Parked at the user's request. Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request
+plus every dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md`
+(machine rules), and the platform guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
 
 ## Where things are
 
-`main` on GitHub (FormalStudio/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
-2026-10-16 to 18 is merged: msg-gaps, msg-linux, nd-emoji, nd-video, ci-fix, ci-fling, docs-prose.
-No lane branch holds unmerged nd work. The docs site runs v0.6.1
-(https://nativedesktop.formalsnake.dev, deployed by hand with wrangler on 2026-10-18).
+`main` on GitHub (FormalStudio/NativeDesktop, moved from FormalSnake on 2026-10-21) is at
+`ec44b91d`. Merged today: nd-tabs (tab drag across lists and windows, edge-revealed sidebar),
+windows-hig (Fluent look, field headers, selection), macos-hig (Show/Hide Sidebar menu role on
+control-command-S, F9 elsewhere, `nd::ToggleSidebar`; palette keeps the keyboard on refocus),
+cef-extensions-2 (Web Store installs by id, button and cancel; Origin fix; `docs/plan/upstream-cef.md`),
+msg-linux-2 (drawn submenus, colour emoji patch 0013, video release, scroll in popovers, pane
+slides), formalmusic-ui (player bar and shelf work), gate-hardening, cef-webview-more (print,
+print_to_pdf). The FormalStudio repoint of links, badges, CI and docs is done in nd and the app repos.
 
-CI on main: the macOS job is green. The Linux job fails one step, `nd docs check --web`: in the
-runner's headless Chrome every embed stays one flat colour, with a SwiftShader WebGPU adapter and
-no console errors. The same check renders all five embeds on the macbook (65 colours each). The
-check now polls for the first frame for 30 s and prints the GPU probe and page console on failure.
-Next idea: run that Chrome under `xvfb-run`, or check whether the WebGPU surface presents at all
-with SwiftShader. The site no longer deploys from CI: the Cloudflare Pages project `nativedesktop`
-builds every push to main through its GitHub integration, running `scripts/pages-build`.
+Known red on main: `cargo test -p nd-backend-gpui --test media` (macOS golden `media-light`,
+2.88% off). The new player bar squeezes the now-playing title and artist to "Pap..." and
+"The...". The FormalMusic lane owns the fix (centre block takes the free width, then re-record
+the media goldens on all three OSes).
 
-The Linux layout goldens (`gate_m6::gpui_layout_goldens`) differ 0.6% on e1504g, on main as well;
-they were recorded on g815. Not a regression.
+## Open lanes (each in its own worktree, branch named after the lane)
 
-## Ports
+- **FormalMusic UI** (`youtubemusic-nd`, nd worktree `nativedesktop-wt-fmui`): fix the media
+  golden squeeze above; match Apple Music on macOS (macOS 26 and 27 references, floating Liquid
+  Glass player pill as an nd capability, Linux keeps a docked GNOME bar, Windows a WinUI bar);
+  player bar: artwork and the title/artist block aligned as Music.app, and the whole centre block
+  (artwork, text, seek line) vertically centred in the pill (user, 2026-10-21: it sits low).
+  Report measured gaps and side-by-side crops. Then commit (fixes, then `chore: clippy`), point
+  FormalMusic's nd deps at `git = "https://github.com/FormalStudio/NativeDesktop", branch = "main"`
+  (local commit `build: take nativedesktop from github...` exists on nd-port, still on branch
+  `formalmusic-ui`; switch to main), check a fresh clone builds (macOS and g815), pin the flake,
+  push nd-port and main. Source URLs for the references go in `docs/parity.md`.
+- **Messages** (`messages-nd` macOS, `messages-nd-linux` Linux; nd `nativedesktop-wt-msg-linux-2`):
+  staged, uncommitted in `messages-nd`: nd deps and gpui patches on git main, `nix/package.nix`
+  fetching nd from the `Cargo.lock` rev. Next: `cargo update -p nd` and the gpui crates,
+  fresh-clone build on macOS and g815, flake pin, push nd-port and main. Local commit aa842f5 on
+  nd-port-linux drops `MESSAGES_ICON_PATH`. The tray "?" fix (nd looks the icon name up in the
+  icon themes including the app's nix share dir, else sends its own icon as pixmap; fixes every
+  nix-installed nd app) is uncommitted in both worktrees and needs one gate run (tray against
+  waybar, video test, cold start 597), then commit. Remaining parity: colour emoji stills,
+  drag-to-attach by hand, rustls, Linux CSD and app id.
+- **nativebrowser** (lynk-browser): local commit `ff4aaae` points nd and the 10 gpui patches at
+  NativeDesktop main (no tag, user 2026-10-21; `Cargo.lock` pins `108d728d`, newer via
+  `cargo update -p`). `dev.star` and `fspec.lock` unchanged. Fresh-clone build: macOS running in
+  `~/Developer/tmp-fresh/nb-mac2`, Linux under the gate on steamlib. Push main when both pass.
+- **linux-hig** (`nativedesktop-wt-linux-hig`): seven local commits (theme, variable-font weight
+  fix for Adwaita Sans in the vendored cosmic text system, window controls, GPUI controls,
+  ndshell, docs, goldens), rebased on 2180ccf4, needs a rebase on main and one gate (clippy,
+  re-record GPUI goldens, `nextest --workspace`), then push. Nautilus captures show g815's
+  "FormalDisk" volume and stay out of the commit.
+- **cef-extensions-2**: Linux extension popups (uncommitted, `crates/nd-cef/src/linux/chrome.rs`
+  reports the popup on placement) need one gate run, then commit
+  `feat(cef): extension popups on linux in views-hosted pages`. The 20-cold-start macOS gate needs
+  a rerun at low load. 1Password popup, desktop-app link and fill need the user to unlock
+  1Password and approve the browser (may need a Developer ID signed `nd package`).
+- **windows-hig**: Alt access keys (needs an nd-ui access-key property, key-tip overlay and
+  dispatch; plan in the tracker) and the window menu when title-bar setup fails (needs a VM run
+  forcing the failure). VM captures pending in `docs/parity/windows-hig.md`.
 
-- messages (`~/Developer/ecosystem/messages`): branch `nd-port` (worktree `messages-nd`, macOS) and
-  `nd-port-linux` (worktree `messages-nd-linux`, Linux and Windows); both merged with each other
-  and pushed. Their nd path deps point at `../nativedesktop-wt-msg-gaps`, which tracks main.
-  Builds run on the macbook (`target/release/messages`, real config), on e1504g (demo data,
-  `MESSAGES_LINUX_HOST=e1504g ND_DIR=<nd worktree> scripts/linux-gate`), and on the Windows PC
-  (`C:\nd\msg`, task `ndmsgrun`). Parity is tracked in `docs/nd-parity.md` there.
-  Open on macOS: a double-click on a bubble selects a word
-  (Messages does nothing); the header hover fade drives the private `NSScrollPocket`.
-  Open on Linux: a .MOV in the user's own session not yet seen playing (GStreamer now in the
-  app's dev shell and package); the "+" menu not yet clicked by hand.
-- youtubemusic (`youtubemusic-nd`, branch `nd-port`): must run on the Kopuz daemon, not `formalmusicd` (user, 2026-10-20: their changes are upstream). nativebrowser unchanged since 2026-10-16.
+## Queued, not started
+
+1. docs-captures lane: a Windows transport for `nd docs capture` (Unix socket only today,
+   `crates/nd-cli/src`), then recapture every example on macOS, Linux and Windows into
+   `docs/app/assets/captures/<example>/`.
+2. nd main stabilisation: fix broken tests (the media golden first), bring the 47-minute suite
+   under 10 minutes.
+3. Update STATUS.md to today; close draft PR #1.
+4. After the user's next Windows login: verify `messages-install.log`, install FormalMusic there.
+5. Deploy every modified app to every machine: flake update, rebuild the macbook, g815, e1504g
+   (from g815 with `--target-host`), and the real Windows install.
 
 ## Upstream GPUI PRs (zed-industries/zed, user's account)
 
@@ -44,6 +79,15 @@ Replies on these PRs are the user's to write.
 
 ## Machines
 
+- g815 build gate (2026-10-21): `scripts/linux-gate` keeps the lock, holder file and
+  `nix develop --profile` GC roots on root (`~/.cache/nd-build`), and puts targets and the CEF
+  cache on `/mnt/steamlib/nd-build` (`ND_LINUX_BUILD_ROOT`; NTFS via ntfs3, works for cargo).
+  Caps: 80 GB of targets and a 30 GB floor on steamlib (user: use it, clean up properly), a
+  5 GB floor on root, and a 30-minute hold per run (`ND_LINUX_GATE_TIMEOUT_MIN`, prints
+  `ND_GATE_TIMEOUT`). Waiters print the holder. Root is shared with FormalSpec work
+  (`~/fspec-*`, `~/build/formalspec-iso*`, the growing `~/fspec-bootc-vm/disk.raw`): never touch
+  it; when root runs out because of it, stop and tell the user. At parking: root 22 GB free,
+  steamlib 114 GB. The Windows VM starts only with 45 GB free on root.
 - Nights (user sleeps next to g815): both Linux hosts in FormalShell overnight mode and `power-saver` (`sudo -n powerprofilesctl set power-saver`; plain powerprofilesctl over ssh is refused), set 2026-10-20. Work continues as normal at nice 19, two cargo jobs.
 - Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -c utility` with `CARGO_BUILD_JOBS=2`, one at a time (user, 2026-10-21: `-b` starved builds to 1 min CPU per 38 min wall).
 - macbook: low priority, macOS crates only, `-p`, one heavy build at a time.
@@ -81,10 +125,3 @@ one heavy macbook build at a time; every merge pushed to GitHub main. Agents mus
 the real Messages.app or the port running on the user's real account: composer and send tests run
 only in a `MESSAGES_DEMO=1` instance. A dev shell's `LD_LIBRARY_PATH` must not reach system
 binaries (it broke git and Chrome on CI); wasm code uses `nd_core::time`, never `std::time`.
-
-## Scheduled resume
-
-A launchd job (`~/Library/LaunchAgents/dev.formalsnake.nd-resume.plist`, removes itself after it
-runs) fires 2026-10-20 14:00, or at the next wake after that: `scripts/resume-in-herdr` starts a fresh
-`claude` session in Herdr pane `w1F:p3` (a new workspace if that pane is gone) with
-`docs/plan/RESUME-PROMPT.md` as its first prompt. Log: `~/Library/Logs/nd-resume.log`.
