@@ -178,6 +178,9 @@ impl HostBuilder {
     /// Builds the app with `init` (which opens its windows) inside GPUI's app `cx` and opens
     /// them.
     pub fn start(self, cx: &mut gpui::App, init: impl FnOnce(&mut App)) -> GpuiHost {
+        // GPUI quits on Linux and Windows once its last window closes; the host decides instead,
+        // so an app with a tray item can outlive its windows.
+        cx.set_quit_mode(gpui::QuitMode::Explicit);
         self.hooks.app_started(cx);
         let backend = GpuiBackend::new();
         backend.set_platform_scheme(scheme_of(cx.window_appearance()));
