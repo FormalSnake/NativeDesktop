@@ -28,6 +28,8 @@ pub enum TextColor {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SpanStyle {
     pub bold: bool,
+    /// Between the text's weight and bold: a now-playing title, a list row's name.
+    pub semibold: bool,
     pub italic: bool,
     /// The theme's monospaced font.
     pub mono: bool,
@@ -48,7 +50,7 @@ impl SpanStyle {
     pub fn weight(&self, base: f32) -> f32 {
         if self.bold {
             base.max(700.)
-        } else if self.mention {
+        } else if self.mention || self.semibold {
             base.max(600.)
         } else {
             base
@@ -85,6 +87,11 @@ pub fn span(text: impl Into<SharedString>) -> Span {
 impl Span {
     pub fn bold(mut self) -> Self {
         self.style.bold = true;
+        self
+    }
+
+    pub fn semibold(mut self) -> Self {
+        self.style.semibold = true;
         self
     }
 
