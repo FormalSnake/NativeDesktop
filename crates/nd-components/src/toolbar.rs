@@ -198,6 +198,20 @@ impl Toolbar {
         self
     }
 
+    /// The primary menu at the trailing edge, holding the app's menus where the platform has
+    /// no menu bar (libadwaita's header bar menu, WinUI's "More" button). Nothing on macOS,
+    /// where the menu bar holds them.
+    pub fn primary_menu(self) -> Self {
+        if cfg!(target_os = "macos") {
+            return self;
+        }
+        let button = crate::controls::menu_button("nd-primary-menu", crate::icon::Icon::Menu, |mut menu, _, _| {
+            menu.items = crate::menu::primary_menu_items();
+            menu
+        });
+        self.item(crate::controls::ButtonExt::tooltip(button, "Main Menu"))
+    }
+
     #[track_caller]
     pub fn inspector_toggle(mut self) -> Self {
         self.root = self.root.child(system_item(SystemItem::ToggleInspector));

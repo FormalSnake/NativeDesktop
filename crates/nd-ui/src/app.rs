@@ -579,6 +579,12 @@ impl App {
     /// Moves the window's focus to the element given `.id(id)`, or to its first focusable
     /// descendant when it is not focusable itself. False when none is mounted or nothing there
     /// takes focus. Inside an action listener the tree is out, so the request waits for it.
+    /// The node keyed `id` (`.id(..)`, or a widget's id) in `window` and its laid-out frame,
+    /// for anchoring a menu or popover to it from a handler.
+    pub fn node_with_id(&self, window: WindowId, id: &str) -> Option<(NodeId, Option<nd_core::Rect>)> {
+        self.windows.get(&window)?.tree.as_ref()?.keyed(id)
+    }
+
     pub fn focus_id(&mut self, window: WindowId, id: &str) -> bool {
         if self.windows.get(&window).is_some_and(|w| w.tree.is_none()) {
             self.deferred_focus.push((window, id.to_owned()));

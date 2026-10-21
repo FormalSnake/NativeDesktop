@@ -31,7 +31,7 @@ pub mod titlebar;
 pub mod toast;
 pub mod toolbar;
 
-pub use controls::{ButtonExt, Mapping, Separator, SeparatorKind, SeparatorProps, icon_button, separator};
+pub use controls::{ButtonExt, Mapping, Separator, SeparatorKind, SeparatorProps, icon_button, menu_button, separator};
 pub use dialogs::{
     AboutPanel, Alert, AlertButton, AlertPresentation, AlertResponse, AlertStyle, ButtonRole, OpenDialog, SaveDialog,
 };
@@ -40,7 +40,7 @@ pub use forms::*;
 pub use glass::{Glass, GlassGroup, GlassGroupProps, GlassProps, glass, glass_group};
 pub use icon::{Icon, IconKind, IconProps, IconView, icon, register as register_icon};
 pub use media::*;
-pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, MenuRole};
+pub use menu::{ContextMenu, ContextMenuRequested, Menu, MenuItem, MenuKind, MenuRole, primary_menu_items};
 pub use overrides::{HasScope, OnPlatform, Pattern, Patterns, ScopedContainer, SubtreeOverrides, SubtreeScope};
 pub use palette::{
     CommandPalette, CommandPaletteKind, CommandPaletteProps, FieldSelection, PALETTE, PaletteActivated,

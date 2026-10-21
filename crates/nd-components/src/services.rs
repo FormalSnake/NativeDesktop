@@ -43,8 +43,10 @@ fn services(cx: &App) -> Option<Rc<dyn ChromeServices>> {
 }
 
 pub fn set_menus(cx: &mut App, menus: impl IntoIterator<Item = Menu>) {
+    let menus: Vec<Menu> = menus.into_iter().collect();
+    crate::menu::remember_app_menus(&menus);
     if let Some(s) = services(cx) {
-        s.set_menus(cx, menus.into_iter().collect());
+        s.set_menus(cx, menus);
     }
 }
 
