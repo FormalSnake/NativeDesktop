@@ -40,6 +40,30 @@ fn props<T: 'static>(node: &Node) -> Option<&T> {
     node.props.downcast_ref::<T>()
 }
 
+pub(crate) type PaneSlides = std::rc::Rc<std::cell::RefCell<std::collections::HashMap<NodeId, PaneSlide>>>;
+
+/// A sidebar or inspector opening or shutting: the share shown when it last turned, eased to
+/// all or nothing.
+pub(crate) struct PaneSlide {
+    open: bool,
+    from: f32,
+    since: nd_core::time::Instant,
+    /// Its width when last drawn open, which it slides at.
+    width: Option<f32>,
+}
+
+impl PaneSlide {
+    fn target(&self) -> f32 {
+        if self.open { 1. } else { 0. }
+    }
+
+    fn shown(&self, now: nd_core::time::Instant, duration: f32) -> f32 {
+        let t = (now.duration_since(self.since).as_secs_f32() / duration.max(f32::EPSILON)).min(1.);
+        let eased = 1. - (1. - t).powi(3);
+        self.from + (self.target() - self.from) * eased
+    }
+}
+
 impl Build<'_> {
     /// The drawn element for an `nd-components` intent, or `None` when `kind` is none of them.
     pub(crate) fn intent(
@@ -86,15 +110,18 @@ impl Build<'_> {
         } else if is::<Pane>(kind) {
             let p = props::<PaneProps>(node)?;
             let fluent = theme.preset == nd_theme::Preset::Fluent;
-            if p.role != PaneRole::Content && p.collapsed {
-                return Some(div().into_any_element());
-            }
             // Hidden by the toolbar toggle: WinUI's navigation pane folds to an icon rail,
             // elsewhere the sidebar goes.
             let rail = p.role == PaneRole::Sidebar && self.sidebar_hidden(node);
-            if rail && !fluent {
+            let gone = p.role != PaneRole::Content && (p.collapsed || (rail && !fluent));
+            let slide = (p.role != PaneRole::Content).then(|| self.pane_slide(id, !gone, &theme)).flatten();
+            if gone && slide.is_none() {
+                // Its subtree stays in the tree, undrawn: bounds from when it showed would make
+                // it look on screen to hit tests and automation.
+                self.forget_bounds(node);
                 return Some(div().into_any_element());
             }
+            let rail = rail && !gone;
             let pane = styled(&p.style);
             let pane = if rail { pane.w(px(48.)).min_w(px(48.)).flex_none() } else { pane };
             let sidebar = theme.surface.sidebar;
@@ -111,7 +138,25 @@ impl Build<'_> {
                 }
                 PaneRole::Content | PaneRole::Overlay => (pane, None),
             };
-            self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element())
+            let pane = self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element());
+            match slide {
+                // Clipped to the share of its width shown, the pane held at full width against
+                // the edge that meets the content, so it slides in from the window's edge.
+                Some((shown, width)) => {
+                    window.request_animation_frame();
+                    let held = div().flex_none().h_full().w(px(width)).flex().child(pane);
+                    div()
+                        .flex_none()
+                        .h_full()
+                        .w(px(width * shown))
+                        .overflow_hidden()
+                        .flex()
+                        .when(p.role == PaneRole::Sidebar, |d| d.justify_end())
+                        .child(held)
+                        .into_any_element()
+                }
+                None => pane,
+            }
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
             // The window's title row: it moves the window and keeps clear of the OS controls.
             // Defaults, then the app's style, then the OS insets added on top of both: the
@@ -371,6 +416,43 @@ impl Build<'_> {
     }
 
     /// Whether the drawn toolbar toggle hid the sidebar of the scaffold `pane` sits in.
+    /// While the pane slides open or shut, the share of it shown and its width. `None` once it
+    /// rests, and on the first draw: a pane the window opens with is simply there.
+    fn pane_slide(&self, id: NodeId, open: bool, theme: &nd_theme::Theme) -> Option<(f32, f32)> {
+        let now = nd_core::time::Instant::now();
+        let mut slides = self.backend.pane_slides.borrow_mut();
+        let slide =
+            slides.entry(id).or_insert(PaneSlide { open, from: if open { 1. } else { 0. }, since: now, width: None });
+        let duration = theme.motion.normal.as_secs_f32();
+        let reduce = self.backend.platform_reduce_motion() == Some(true);
+        if slide.open != open {
+            slide.from = if reduce { slide.target() } else { slide.shown(now, duration) };
+            (slide.open, slide.since) = (open, now);
+        }
+        if reduce {
+            slide.from = slide.target();
+        }
+        let shown = slide.shown(now, duration);
+        if shown == slide.target() {
+            // At rest open, the tracked bounds are the pane's own (sliding, they are the clip's).
+            if open && let Some(b) = self.backend.bounds(id).filter(|b| b.size.width > 0.) {
+                slide.width = Some(b.size.width);
+            }
+            return None;
+        }
+        let width = slide.width.or(self.nodes.get(&id).and_then(|n| props::<PaneProps>(n)).and_then(|p| p.width));
+        width.map(|w| (shown, w))
+    }
+
+    fn forget_bounds(&self, node: &Node) {
+        for c in &node.children {
+            self.backend.bounds.borrow_mut().remove(c);
+            if let Some(n) = self.nodes.get(c) {
+                self.forget_bounds(n);
+            }
+        }
+    }
+
     fn sidebar_hidden(&self, pane: &Node) -> bool {
         pane.parent.is_some_and(|scaffold| self.backend.hidden_sidebars.borrow().contains(&scaffold))
     }

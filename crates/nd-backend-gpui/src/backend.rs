@@ -118,6 +118,8 @@ pub struct GpuiBackend {
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
     /// it without the app's state changing.
     pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
+    /// Sidebars and inspectors sliding open or shut, by pane.
+    pub(crate) pane_slides: crate::drawn::PaneSlides,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -180,6 +182,7 @@ impl GpuiBackend {
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
+            pane_slides: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
@@ -569,6 +572,7 @@ impl Backend for GpuiBackend {
             crate::media::video_released(&drawn.state);
         }
         self.splits.borrow_mut().remove(&node);
+        self.pane_slides.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
             Some(NodeKind::Widget(w)) => crate::custom::lookup(w.type_id),
