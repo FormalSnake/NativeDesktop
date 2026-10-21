@@ -45,7 +45,7 @@ Replies on these PRs are the user's to write.
 ## Machines
 
 - Nights (user sleeps next to g815): both Linux hosts in FormalShell overnight mode and `power-saver` (`sudo -n powerprofilesctl set power-saver`; plain powerprofilesctl over ssh is refused), set 2026-10-20. Work continues as normal at nice 19, two cargo jobs.
-- Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -b` with `CARGO_BUILD_JOBS=2`, one at a time.
+- Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -c utility` with `CARGO_BUILD_JOBS=2`, one at a time (user, 2026-10-21: `-b` starved builds to 1 min CPU per 38 min wall).
 - macbook: low priority, macOS crates only, `-p`, one heavy build at a time.
 - g815: NixOS when on Linux; builds only through `scripts/linux-gate`. It was booted into Windows
   most of 2026-10-17 and is off now.
