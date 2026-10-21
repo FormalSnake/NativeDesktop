@@ -833,6 +833,9 @@ pub struct ButtonProps {
     pub tooltip: Option<SharedString>,
     /// Greyed out and takes no clicks.
     pub enabled: bool,
+    /// A toggle button's state: `Some(true)` draws it pressed in (an on repeat or shuffle
+    /// button), `None` is a plain push button.
+    pub checked: Option<bool>,
     /// The element's style: a background becomes the bezel colour, a text colour and font
     /// the title's, where the native control can express them.
     pub style: StyleRefinement,
@@ -847,6 +850,7 @@ impl ButtonProps {
             bezel: Bezel::Automatic,
             tooltip: None,
             enabled: true,
+            checked: None,
             style: StyleRefinement::default(),
         }
     }
@@ -889,6 +893,13 @@ impl Button {
     /// Greys the button out; it takes no clicks and automation reports it disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.0.props_mut().enabled = !disabled;
+        self
+    }
+
+    /// Makes it a toggle button showing `checked`. Controlled: the click handler flips the
+    /// app's state, and the next render passes it back.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.0.props_mut().checked = Some(checked);
         self
     }
 }
