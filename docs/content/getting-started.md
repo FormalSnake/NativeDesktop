@@ -9,7 +9,7 @@ This page takes you from installing the `nd` CLI to a running, tested app.
 
 ## Install
 
-nd releases are git tags on [github.com/FormalSnake/NativeDesktop](https://github.com/FormalSnake/NativeDesktop),
+nd releases are git tags on [github.com/FormalStudio/NativeDesktop](https://github.com/FormalStudio/NativeDesktop),
 not crates.io versions. nd builds on a patched GPUI, and crates.io doesn't accept git or patched
 dependencies.
 
@@ -22,7 +22,7 @@ dependencies.
 
 ```sh
 cargo install cargo-nextest --locked
-cargo install --git https://github.com/FormalSnake/NativeDesktop --tag v0.6.1 --locked nd-cli
+cargo install --git https://github.com/FormalStudio/NativeDesktop --tag v0.6.1 --locked nd-cli
 ```
 
 `--locked` builds with the versions that nd was tested with. Without it, cargo takes the newest
@@ -112,7 +112,7 @@ nd upgrade
 ```
 
 This moves the `nd` dependencies and the GPUI patch block to the newest release tag, updates
-`Cargo.lock`, and prints the [changelog](https://github.com/FormalSnake/NativeDesktop/blob/main/CHANGELOG.md)
+`Cargo.lock`, and prints the [changelog](https://github.com/FormalStudio/NativeDesktop/blob/main/CHANGELOG.md)
 entries between the two versions. To pick a tag, add `--to v0.7.0`. Then install the matching CLI
 with the same `cargo install --git ... --tag <tag> --locked nd-cli` command.
 

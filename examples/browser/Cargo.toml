@@ -15,6 +15,12 @@ gpui = ["nd/gpui"]
 [dependencies]
 nd = { path = "../../crates/nd", features = ["webview"] }
 serde_json.workspace = true
+# The adblock scene: uBlock Origin's lists on the request filter. Without `single-thread` an
+# engine is Sync, as the filter Chromium calls on its IO thread must be.
+adblock = { version = "=0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "resource-assembler"] }
+base64 = "0.22.1"
+sha2 = "0.10.9"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }

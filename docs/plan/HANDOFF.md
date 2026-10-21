@@ -6,7 +6,7 @@ dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md`
 
 ## Where things are
 
-`main` on GitHub (FormalSnake/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
+`main` on GitHub (FormalStudio/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
 2026-10-16 to 18 is merged: msg-gaps, msg-linux, nd-emoji, nd-video, ci-fix, ci-fling, docs-prose.
 No lane branch holds unmerged nd work. The docs site runs v0.6.1
 (https://nativedesktop.formalsnake.dev, deployed by hand with wrangler on 2026-10-18).
@@ -45,7 +45,7 @@ Replies on these PRs are the user's to write.
 ## Machines
 
 - Nights (user sleeps next to g815): both Linux hosts in FormalShell overnight mode and `power-saver` (`sudo -n powerprofilesctl set power-saver`; plain powerprofilesctl over ssh is refused), set 2026-10-20. Work continues as normal at nice 19, two cargo jobs.
-- Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -b` with `CARGO_BUILD_JOBS=2`, one at a time.
+- Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -c utility` with `CARGO_BUILD_JOBS=2`, one at a time (user, 2026-10-21: `-b` starved builds to 1 min CPU per 38 min wall).
 - macbook: low priority, macOS crates only, `-p`, one heavy build at a time.
 - g815: NixOS when on Linux; builds only through `scripts/linux-gate`. It was booted into Windows
   most of 2026-10-17 and is off now.

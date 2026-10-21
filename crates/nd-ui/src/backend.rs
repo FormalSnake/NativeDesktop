@@ -173,6 +173,9 @@ pub enum WindowCommand {
     Activate,
     /// Shows or hides the overview of the window's tab group (macOS "Show All Tabs").
     ToggleTabOverview,
+    /// Shows or hides the window's sidebar, as the toolbar's sidebar toggle does: outside the
+    /// app's state, which hears of it as the pane's collapse.
+    ToggleSidebar,
 }
 
 /// Where an op runs inside a transaction. Ordered: a transaction never sends an op of an
@@ -280,6 +283,23 @@ pub trait Backend: Any {
     /// Plays `haptic` on the trackpad, timed to the next drawn frame. A no-op where the OS has no
     /// haptics (everything but macOS).
     fn haptic(&mut self, _haptic: nd_gesture::Haptic) {}
+
+    /// A drag is over `node`, a widget that places drops itself (a source list), at `at` in
+    /// window coordinates: it shows where the drop would land and returns that slot. `None`
+    /// clears what it showed. Other nodes return `None`.
+    fn drop_slot(
+        &mut self,
+        _node: NodeId,
+        _at: Option<nd_core::Point>,
+        _item: &crate::DragItem,
+    ) -> Option<crate::DropSlot> {
+        None
+    }
+
+    /// Shows `node` of `window` as a picture under the pointer at `screen` (global points), for
+    /// a drag outside its window; `None` takes it away. A no-op where a window cannot draw
+    /// outside itself.
+    fn drag_preview(&mut self, _window: WindowId, _node: NodeId, _screen: Option<nd_core::Point>) {}
 
     /// Renders the window's content to a PNG.
     fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {

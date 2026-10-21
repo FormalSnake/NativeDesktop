@@ -19,10 +19,77 @@ pub enum Profile {
     /// The app's shared persistent store.
     #[default]
     Default,
-    /// Kept in memory and gone when the last page using it closes.
-    Private,
+    /// An in-memory store every page of the session shares (a private window's tabs), gone
+    /// when the session and its last page are dropped.
+    Private(PrivateSession),
     /// A persistent store of its own, the same one for the same name across launches.
     Named(String),
+}
+
+/// One private browsing session: hand a clone to every page of a private window. The store
+/// lives while the app holds the session or any page made with it, and is thrown away after.
+/// Clones are the same session; compare with `==`.
+#[derive(Clone)]
+pub struct PrivateSession(Rc<SessionInner>);
+
+struct SessionInner {
+    id: u64,
+    ended: RefCell<Vec<Box<dyn FnOnce()>>>,
+}
+
+impl Drop for SessionInner {
+    fn drop(&mut self) {
+        for f in self.ended.take() {
+            f();
+        }
+    }
+}
+
+impl PrivateSession {
+    pub fn new() -> Self {
+        thread_local! {
+            static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+        }
+        let id = NEXT.with(|n| n.replace(n.get() + 1));
+        Self(Rc::new(SessionInner { id, ended: RefCell::default() }))
+    }
+
+    /// Unique per session for the life of the process.
+    pub fn id(&self) -> u64 {
+        self.0.id
+    }
+
+    /// Runs `f` when the session ends, for engines to drop the store they made for it. Engines
+    /// keep the session only by id, or it never ends.
+    pub fn on_end(&self, f: impl FnOnce() + 'static) {
+        self.0.ended.borrow_mut().push(Box::new(f));
+    }
+}
+
+impl Default for PrivateSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for PrivateSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
+}
+
+impl Eq for PrivateSession {}
+
+impl std::hash::Hash for PrivateSession {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id.hash(state);
+    }
+}
+
+impl std::fmt::Debug for PrivateSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PrivateSession({})", self.0.id)
+    }
 }
 
 /// Fixed when the page is created.
@@ -291,7 +358,11 @@ impl WebView {
     }
 
     /// Runs `code` in the page's main frame and hands its completion value, as JSON, to `done`.
-    /// A thrown exception is `Err` with its message; a returned promise is awaited.
+    /// A thrown exception is `Err` with its message; a returned promise is not awaited, so have
+    /// it report through the page (a title, a script message) instead. The code runs with a user
+    /// gesture: the app acts for the user, so it may open a popup, enter fullscreen or lift a
+    /// video into picture-in-picture (on Chromium only in Chrome style; off-screen pages have
+    /// no picture-in-picture window).
     pub fn execute_javascript(
         &self,
         code: impl Into<String>,

@@ -44,6 +44,8 @@ mod devtools;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod extensions;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod filter;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod keys;
 #[cfg(target_os = "linux")]
 mod linux;

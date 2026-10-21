@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use nd::prelude::*;
 
-actions!(gallery, [OpenPalette, ToggleSidebar]);
+actions!(gallery, [OpenPalette]);
 
 pub const CONTEXT: &str = "Gallery";
 
@@ -124,7 +124,6 @@ impl Default for Start {
 
 pub struct Gallery {
     page: Page,
-    sidebar_collapsed: bool,
     palette_open: bool,
     query: SharedString,
     /// Folders the source list page adds; the sidebar shows them under "Folders".
@@ -154,7 +153,6 @@ impl Gallery {
             dialogs: cx.new(layout::DialogsDemo::new),
             media: cx.new(|cx| media::MediaPage::new(start.audio, cx)),
             page: start.page,
-            sidebar_collapsed: false,
             palette_open: start.palette.is_some(),
             query: start.palette.clone().unwrap_or_default(),
             folders: vec!["Drafts".into(), "Ideas".into()],
@@ -235,7 +233,6 @@ impl Gallery {
         match id {
             "cmd:toast" => self.show_toast("Saved to Drafts", |t| t),
             "cmd:banner" => self.banner = !self.banner,
-            "cmd:sidebar" => self.sidebar_collapsed = !self.sidebar_collapsed,
             other => {
                 if let Some(page) = other.strip_prefix("page:").and_then(Page::by_id) {
                     self.page = page;
@@ -356,10 +353,6 @@ impl Render for Gallery {
                 this.query = SharedString::default();
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
-                this.sidebar_collapsed = !this.sidebar_collapsed;
-                cx.notify();
-            }))
             .toolbar(
                 toolbar()
                     .title("Gallery")
@@ -368,7 +361,7 @@ impl Render for Gallery {
                     .item(icon_button("palette-button", Icon::Search).tooltip("Command palette").dispatch(OpenPalette)),
             )
             .sidebar(
-                sidebar().collapsed(self.sidebar_collapsed).min_w(px(200.)).child(
+                sidebar().min_w(px(200.)).child(
                     source_tree("pages")
                         .nodes(self.nodes())
                         .actions([source_action("remove", Icon::Trash).tooltip("Remove folder").destructive()])
@@ -451,7 +444,10 @@ impl Render for Gallery {
                         this.query = e.text.clone();
                         cx.notify();
                     }))
-                    .on_activate(cx.listener(|this, e: &PaletteActivated, _, cx| {
+                    .on_activate(cx.listener(|this, e: &PaletteActivated, window, cx| {
+                        if e.id.as_ref() == "cmd:sidebar" {
+                            cx.window_command(window.id(), nd::backend::WindowCommand::ToggleSidebar);
+                        }
                         this.activate(&e.id);
                         cx.notify();
                     }))
@@ -478,18 +474,13 @@ pub fn init(cx: &mut App) -> WindowHandle<Gallery> {
 
 /// Binds the gallery's keys and opens its window in `start`'s state.
 pub fn open(cx: &mut App, start: Start) -> WindowHandle<Gallery> {
-    cx.bind_keys([
-        KeyBinding::new("secondary-k", OpenPalette, Some(CONTEXT)),
-        KeyBinding::new("secondary-alt-s", ToggleSidebar, Some(CONTEXT)),
-    ]);
+    cx.bind_keys([KeyBinding::new("secondary-k", OpenPalette, Some(CONTEXT))]);
     set_menus(
         cx,
         [
             Menu::app([]),
-            Menu::new("View").items([
-                MenuItem::action("Command Palette", OpenPalette),
-                MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            ]),
+            Menu::new("View")
+                .items([MenuItem::action("Command Palette", OpenPalette), MenuItem::role(MenuRole::ToggleSidebar)]),
         ],
     );
     cx.open_window(WindowOptions::main("gallery").title("Gallery").size(size(px(960.), px(620.))), move |window, cx| {

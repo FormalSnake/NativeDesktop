@@ -25,6 +25,9 @@ pub enum MenuRole {
     Zoom,
     BringAllToFront,
     ToggleFullScreen,
+    /// Show Sidebar or Hide Sidebar, whichever applies, for a View menu. AppKit titles it from
+    /// the window's split view; elsewhere it dispatches `nd::ToggleSidebar`.
+    ToggleSidebar,
 }
 
 pub enum MenuItem {

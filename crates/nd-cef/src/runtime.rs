@@ -19,6 +19,8 @@ thread_local! {
     static APP_NAME: RefCell<String> = RefCell::default();
     static STARTED: Cell<Option<bool>> = const { Cell::new(None) };
     static CONTEXTS: RefCell<HashMap<Profile, RequestContext>> = RefCell::default();
+    /// Private sessions' in-memory contexts, by session id, until the session ends.
+    static PRIVATE: RefCell<HashMap<u64, RequestContext>> = RefCell::default();
     /// Kept alive for as long as Chromium runs.
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
@@ -125,15 +127,24 @@ pub(crate) fn root_cache() -> PathBuf {
 }
 
 /// The request context a profile's pages share: the global one for `Default`, an in-memory one
-/// for `Private` (each private page its own), and a persistent one per name under the root.
+/// per private session, and a persistent one per name under the root.
 pub(crate) fn context(profile: &Profile) -> Option<RequestContext> {
     match profile {
         Profile::Default => request_context_get_global_context(),
-        Profile::Private => {
+        Profile::Private(session) => PRIVATE.with(|p| {
+            if let Some(ctx) = p.borrow().get(&session.id()) {
+                return Some(ctx.clone());
+            }
+            // No cache path: Chromium keeps the context's cookies and storage in memory.
             let ctx = request_context_create_context(Some(&RequestContextSettings::default()), None)?;
             crate::scheme::register_on(&ctx);
+            p.borrow_mut().insert(session.id(), ctx.clone());
+            let id = session.id();
+            session.on_end(move || {
+                PRIVATE.with(|p| p.borrow_mut().remove(&id));
+            });
             Some(ctx)
-        }
+        }),
         Profile::Named(name) => CONTEXTS.with(|c| {
             if let Some(ctx) = c.borrow().get(profile) {
                 return Some(ctx.clone());

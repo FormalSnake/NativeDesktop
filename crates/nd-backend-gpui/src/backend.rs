@@ -91,6 +91,8 @@ pub struct GpuiBackend {
     /// What a drawn forms control keeps between frames (a text field's caret and selection, a
     /// slider mid-drag), by node; dropped when the node is released.
     pub(crate) form_drawn: Rc<RefCell<HashMap<NodeId, crate::forms::Drawn>>>,
+    /// The size each `.on_resize()` div last reported.
+    pub(crate) reported_sizes: Rc<RefCell<HashMap<NodeId, (f32, f32)>>>,
     /// nd focus moves the drawn controls have yet to follow, by window. The window's next draw
     /// gives the target GPUI focus, or blurs when nd focus left the drawn controls.
     pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
@@ -111,6 +113,10 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Controls' fills fading between rest, hover and pressed.
     pub(crate) fades: crate::fade::Fades,
+    /// Drawn scroll bars' state, by scroll view.
+    pub(crate) scrollbars: crate::scrollbar::Scrollbars,
+    /// Windows with a timed redraw pending, so a frame's timers do not pile up.
+    refresh_timers: Rc<RefCell<std::collections::HashSet<WindowId>>>,
     /// Each open overlay's subtree as last drawn, and the closed ones still animating out.
     pub(crate) overlay_exits: crate::overlay::Exits,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
@@ -120,6 +126,8 @@ pub struct GpuiBackend {
     pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
     /// Sidebars and inspectors sliding open or shut, by pane.
     pub(crate) pane_slides: crate::drawn::PaneSlides,
+    /// Collapsed `edge_reveal()` sidebars sliding in and out over the content, by pane.
+    pub(crate) reveals: Rc<RefCell<HashMap<NodeId, crate::reveal::Reveal>>>,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -170,6 +178,7 @@ impl GpuiBackend {
             })),
             bounds: Rc::default(),
             form_drawn: Rc::default(),
+            reported_sizes: Rc::default(),
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
             invoker: Rc::default(),
@@ -179,14 +188,35 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             fades: crate::fade::Fades::default(),
+            scrollbars: crate::scrollbar::Scrollbars::default(),
+            refresh_timers: Rc::default(),
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
             pane_slides: Rc::default(),
+            reveals: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
         }
+    }
+
+    /// Redraws `window` once `after` has passed, for drawn state that changes on a timer (a
+    /// scroll bar fading out). One timer per window at a time; a later frame asks again.
+    pub(crate) fn refresh_after(&self, window: WindowId, after: std::time::Duration) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        if !self.refresh_timers.borrow_mut().insert(window) {
+            return;
+        }
+        let (timers, handle) = (self.refresh_timers.clone(), self.window_handle(window));
+        app.spawn(async move |cx| {
+            cx.background_executor().timer(after).await;
+            timers.borrow_mut().remove(&window);
+            if let Some(handle) = handle {
+                let _ = handle.update(cx, |_, window, _| window.refresh());
+            }
+        })
+        .detach();
     }
 
     /// Runs `f` on the app at the host's next pump, outside every entity lease and GPUI update.
@@ -197,6 +227,42 @@ impl GpuiBackend {
             let state = self.state.borrow();
             (state.app.clone(), state.wake.clone())
         };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
+    }
+
+    /// Hides or shows the sidebar of the window's outermost scaffold that has one, as its
+    /// toolbar toggle does.
+    fn toggle_sidebar(&self, window: WindowId) {
+        let mut state = self.state.borrow_mut();
+        let is = |kind: NodeKind, ty: TypeId| matches!(kind, NodeKind::Widget(w) if w.type_id == ty);
+        let mut queue: std::collections::VecDeque<NodeId> =
+            state.windows.get(&window).and_then(|w| w.root).into_iter().collect();
+        while let Some(id) = queue.pop_front() {
+            let Some(node) = state.nodes.get(&id) else { continue };
+            let sidebar = is(node.kind, TypeId::of::<nd_components::Scaffold>())
+                && node.children.iter().any(|c| {
+                    state.nodes.get(c).is_some_and(|pane| {
+                        is(pane.kind, TypeId::of::<nd_components::Pane>())
+                            && pane
+                                .props
+                                .downcast_ref::<nd_components::PaneProps>()
+                                .is_some_and(|p| p.role == nd_components::PaneRole::Sidebar)
+                    })
+                });
+            if sidebar {
+                let mut hidden = self.hidden_sidebars.borrow_mut();
+                if !hidden.remove(&id) {
+                    hidden.insert(id);
+                }
+                state.dirty.insert(window);
+                break;
+            }
+            queue.extend(node.children.iter().copied());
+        }
+        let (app, wake) = (state.app.clone(), state.wake.clone());
+        drop(state);
         if let (Some(app), Some(wake)) = (app, wake) {
             app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
         }
@@ -571,6 +637,8 @@ impl Backend for GpuiBackend {
         if let Some(drawn) = drawn {
             crate::media::video_released(&drawn.state);
         }
+        self.reported_sizes.borrow_mut().remove(&node);
+        self.reveals.borrow_mut().remove(&node);
         self.splits.borrow_mut().remove(&node);
         self.pane_slides.borrow_mut().remove(&node);
         self.gestures.forget(node);
@@ -626,6 +694,28 @@ impl Backend for GpuiBackend {
         false
     }
 
+    fn drop_slot(
+        &mut self,
+        node: NodeId,
+        at: Option<nd_core::Point>,
+        _item: &nd_ui::DragItem,
+    ) -> Option<nd_ui::DropSlot> {
+        let drawn = self.drawn_of(node)?;
+        let mut state = self.state.borrow_mut();
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        let props = state.nodes.get(&node)?.props.downcast_ref::<nd_components::SourceTreeProps>()?;
+        let mut drawn = drawn.borrow_mut();
+        let crate::nav::Drawn::Tree(tree) = &mut *drawn else { return None };
+        match at {
+            Some(at) => Some(tree.drop_slot(props, at)),
+            None => {
+                tree.slot = None;
+                None
+            }
+        }
+    }
+
     fn probe(&self, node: NodeId) -> Probe {
         let mut probe = Probe { bounds: self.bounds(node), ..Probe::default() };
         if let Ok(state) = self.state.try_borrow()
@@ -663,6 +753,10 @@ impl Backend for GpuiBackend {
 
     /// Recorded for the host, which carries it out on its next pump with the app free.
     fn window_command(&mut self, window: WindowId, command: nd_ui::backend::WindowCommand) {
+        if command == nd_ui::backend::WindowCommand::ToggleSidebar {
+            self.toggle_sidebar(window);
+            return;
+        }
         self.tab_seam.borrow_mut().commands.push((window, command));
         let (app, wake) = {
             let state = self.state.borrow();

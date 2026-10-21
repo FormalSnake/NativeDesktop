@@ -15,7 +15,7 @@ use std::rc::Rc;
 use nd_core::NodeId;
 use nd_gpui::gpui::{Action, KeyBinding, KeyContext, Keymap, Keystroke};
 
-use crate::actions::{Cancel, Confirm, FocusNext, FocusPrevious};
+use crate::actions::{Cancel, Confirm, FocusNext, FocusPrevious, ToggleSidebar};
 
 type Listener<C> = Rc<dyn Fn(&dyn Action, &mut ActionCx<'_, C>)>;
 
@@ -164,6 +164,8 @@ pub struct DispatchTree<C> {
     activate: Option<NodeId>,
     /// A scope Escape dismissed, for the app to tell.
     dismiss: Option<NodeId>,
+    /// An unhandled `ToggleSidebar`, for the app to pass to the backend.
+    toggle_sidebar: bool,
 }
 
 impl<C: 'static> DispatchTree<C> {
@@ -183,6 +185,7 @@ impl<C: 'static> DispatchTree<C> {
             scopes: Vec::new(),
             activate: None,
             dismiss: None,
+            toggle_sidebar: false,
         }
     }
 
@@ -351,6 +354,10 @@ impl<C: 'static> DispatchTree<C> {
     /// The focus scope Escape dismissed in the last dispatch, once.
     pub fn take_dismissal(&mut self) -> Option<NodeId> {
         self.dismiss.take()
+    }
+
+    pub fn take_sidebar_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.toggle_sidebar)
     }
 
     fn is_within(&self, node: NodeId, ancestor: NodeId) -> bool {
@@ -605,6 +612,9 @@ impl<C: 'static> DispatchTree<C> {
             } else if type_id == TypeId::of::<Cancel>() {
                 self.dismiss = self.scopes.iter().rev().find(|s| s.scope.dismiss_on_escape).map(|s| s.node);
                 handled = self.dismiss.is_some();
+            } else if type_id == TypeId::of::<ToggleSidebar>() {
+                self.toggle_sidebar = true;
+                handled = true;
             }
         }
         match focus {

@@ -3,7 +3,7 @@
 //! [`FormLook::of`] picks by the theme's preset; the controls draw unchanged.
 
 use nd_components::forms::TextStyle;
-use nd_gpui::gpui::{FontWeight, Hsla, Pixels, px};
+use nd_gpui::gpui::{self, FontWeight, Hsla, Pixels, px};
 use nd_theme::color::with_alpha;
 use nd_theme::{TextStyles, Theme};
 
@@ -56,8 +56,10 @@ pub struct FormLook {
     pub on_accent: Hsla,
     /// Accent as text on the window background (links).
     pub accent_text: Hsla,
-    /// Text selection behind the selected run.
+    /// Text selection behind the selected run, and the selected run's colour when the look
+    /// redraws it (WinUI: solid accent under white text).
     pub selection: Hsla,
+    pub selection_text: Option<Hsla>,
     /// Keyboard focus ring, drawn 2 px wide.
     pub focus_ring: Hsla,
     /// Errors and destructive consequences (danger labels).
@@ -115,6 +117,72 @@ pub struct FormLook {
     /// WinUI's toggle switch. libadwaita fills the track instead.
     pub switch_outline: Option<Hsla>,
     pub knob_off: Hsla,
+    /// WinUI's two-ring focus visual: `focus_ring` is the outer 2 px ring and this the 2 px
+    /// ring inside it, drawn around the control without taking layout space. libadwaita
+    /// has one ring in the layout instead.
+    pub focus_inner: Option<Hsla>,
+    /// The bottom edge of a control's elevation border (WinUI's ControlElevationBorderBrush:
+    /// ControlStrokeColorSecondary under ControlStrokeColorDefault).
+    pub stroke_bottom: Option<Hsla>,
+    /// A field's bottom edge at rest (TextControlElevationBorderBrush); focused it is a 2 px
+    /// accent underline over `field_focus_fill`.
+    pub field_underline: Option<Hsla>,
+    pub field_focus_fill: Hsla,
+    /// Box of an unchecked checkbox or radio button at rest, hovered and pressed
+    /// (ControlAltFillColorSecondary, Tertiary, Quarternary), outlined in `check_stroke`.
+    pub check_fill: [Hsla; 3],
+    pub check_stroke: Hsla,
+    pub check_stroke_width: Pixels,
+    /// Side of the check mark in a checked box (WinUI's CheckBoxGlyphSize).
+    pub check_glyph: Pixels,
+    /// The drop-down chevron of pop-up buttons (WinUI: E70D at 12 px in the secondary text).
+    pub chevron_size: Pixels,
+    pub chevron_color: Hsla,
+    /// Fills of list and menu items hovered and pressed (SubtleFillColorSecondary, Tertiary).
+    pub subtle_hover: Hsla,
+    pub subtle_active: Hsla,
+    /// The current item of a pop-up's menu shows WinUI's 3x16 accent pill at its leading edge
+    /// instead of a trailing check mark.
+    pub item_pill: bool,
+    /// Space between a pop-up's edge and its items across and along, and between items
+    /// (WinUI's ComboBox: 5 and 6, 4 between its 32 px items).
+    pub popover_pad: (Pixels, Pixels),
+    pub item_gap: Pixels,
+    /// A pop-up button's menu opens over the button with the current item on it, as WinUI's
+    /// ComboBox does, instead of below it.
+    pub menu_over: bool,
+    /// The pointer over a clickable control: Windows keeps the arrow (only links take the hand).
+    pub cursor: gpui::CursorStyle,
+    /// A link draws WinUI's HyperlinkButton: button padding, a subtle fill under the pointer
+    /// and no underline.
+    pub link_button: bool,
+    /// A stepper draws WinUI's NumberBox: up and down chevrons inside the field.
+    pub spin_inline: bool,
+    /// A checkbox's and a radio button's least height (WinUI: 32), and a radio group's spacing
+    /// between rows and between columns (RadioButtonsRowSpacing 8, ColumnSpacing 7).
+    pub toggle_row: Pixels,
+    pub radio_spacing: (Pixels, Pixels),
+    /// Flyout outline (SurfaceStrokeColorFlyout), and its drop shadow's colour, y offset and blur.
+    pub popover_stroke: Hsla,
+    pub popover_shadow: (Hsla, Pixels, Pixels),
+    /// Accent fills hovered and pressed (AccentFillColorSecondary and Tertiary).
+    pub accent_hover: Hsla,
+    pub accent_active: Hsla,
+    /// Diameter of the accent dot in a slider thumb (and in a checked radio button) at rest,
+    /// hovered and pressed: WinUI's thumb grows its inner dot under the pointer. `None` draws a
+    /// plain knob.
+    pub thumb_dot: Option<[Pixels; 3]>,
+    /// The slider thumb around the dot (ControlSolidFillColorDefault).
+    pub thumb_fill: Hsla,
+    /// The switch knob grows by this under the pointer, and stretches by `knob_press` along the
+    /// track while pressed.
+    pub knob_hover_grow: Pixels,
+    pub knob_press: Pixels,
+    /// A progress bar's rail and bar thickness when the rail is thinner than the bar (WinUI's
+    /// 1 px rail under a 3 px bar); `None` draws both `track_thickness` thick.
+    pub progress_rail: Option<(Pixels, Pixels)>,
+    /// Whether the spinner draws a track ring under its arc.
+    pub spinner_track: bool,
 }
 
 impl FormLook {
@@ -150,6 +218,7 @@ impl FormLook {
             on_accent: theme.text.on_accent,
             accent_text: theme.accent,
             selection: theme.selection,
+            selection_text: None,
             focus_ring: theme.focus_ring,
             danger: theme.text.danger,
             track: theme.border.strong,
@@ -179,6 +248,37 @@ impl FormLook {
             field_stroke: None,
             switch_outline: None,
             knob_off: theme.text.on_accent,
+            focus_inner: None,
+            stroke_bottom: None,
+            field_underline: None,
+            field_focus_fill: tint(0.1),
+            check_fill: [gpui::transparent_black(); 3],
+            check_stroke: theme.border.strong,
+            check_stroke_width: px(2.),
+            check_glyph: px(14.),
+            chevron_size: px(16.),
+            chevron_color: theme.text.primary,
+            subtle_hover: tint(0.15),
+            subtle_active: tint(0.3),
+            item_pill: false,
+            popover_pad: (px(6.), px(6.)),
+            item_gap: px(0.),
+            menu_over: false,
+            cursor: gpui::CursorStyle::PointingHand,
+            link_button: false,
+            spin_inline: false,
+            toggle_row: px(0.),
+            radio_spacing: (px(4.), px(16.)),
+            popover_stroke: theme.border.subtle,
+            popover_shadow: (gpui::hsla(0., 0., 0., 0.18), px(4.), px(12.)),
+            accent_hover: theme.accent,
+            accent_active: theme.accent,
+            thumb_dot: None,
+            thumb_fill: theme.text.on_accent,
+            knob_hover_grow: px(0.),
+            knob_press: px(0.),
+            progress_rail: None,
+            spinner_track: true,
         }
     }
 
@@ -187,44 +287,106 @@ impl FormLook {
         if theme.preset == nd_theme::Preset::Fluent { Self::fluent(theme) } else { Self::adwaita(theme) }
     }
 
-    /// WinUI 3's controls: 32 px tall at the 4 px control radius, 8 px flyouts, fills a few
-    /// percent of white over the layer (ControlFillColorDefault, Secondary, Tertiary) with a
-    /// hairline stroke, a 40x20 toggle switch with a 12 px knob, 20 px check boxes.
+    /// WinUI 3's controls, from its theme resources (microsoft-ui-xaml `CommonStyles`): 32 px
+    /// tall at the 4 px control radius, 8 px flyouts, fills a few percent of white over the
+    /// layer (ControlFillColorDefault, Secondary, Tertiary) inside an elevation border, a 40x20
+    /// toggle switch with a 12 px knob, 20 px check boxes outlined in the strong stroke, an 18 px
+    /// slider thumb (20 px with its border) around a 12 px accent dot, a 1 px progress rail under a 3 px bar.
     pub fn fluent(theme: &Theme) -> Self {
         // From tokens, so the appearance audit can trace them: the card's white over a light
         // layer, the text's white thinly over a dark one.
         let dark = theme.is_dark();
         let (ink, card, base) = (theme.text.primary, theme.surface.raised, theme.surface.base);
+        let black = gpui::black();
         let (fill, fill_hover, fill_active) = if dark {
             (with_alpha(ink, 0.06), with_alpha(ink, 0.08), with_alpha(ink, 0.03))
         } else {
             (with_alpha(card, 0.7), with_alpha(base, 0.5), with_alpha(base, 0.3))
         };
+        // ControlStrongStrokeColorDefault: #72000000 light, #8BFFFFFF dark.
+        let strong = if dark { with_alpha(ink, 0.545) } else { with_alpha(black, 0.447) };
+        // ControlAltFillColorSecondary, Tertiary, Quarternary.
+        let check_fill = if dark {
+            [with_alpha(black, 0.1), with_alpha(ink, 0.043), with_alpha(ink, 0.07)]
+        } else {
+            [with_alpha(black, 0.024), with_alpha(black, 0.059), with_alpha(black, 0.094)]
+        };
+        let accent = theme.accent;
         Self {
             control_height: px(32.),
             radius: theme.radius.md,
             popover_radius: theme.radius.lg,
             popover_inset: px(4.),
             padding_x: px(11.),
-            field_padding_x: px(9.),
+            field_padding_x: px(10.),
             padding_y: px(5.),
             fill,
             fill_hover,
             fill_active,
-            border: with_alpha(theme.text.primary, if dark { 0.07 } else { 0.06 }),
+            // ControlStrokeColorDefault.
+            border: if dark { with_alpha(ink, 0.07) } else { with_alpha(black, 0.059) },
             check_size: px(20.),
             check_radius: theme.radius.md,
             switch_width: px(40.),
             switch_height: px(20.),
             switch_inset: px(4.),
+            // The 18 px thumb inside its 1 px elevation border.
             slider_knob: px(20.),
+            tick_length: px(4.),
+            spinner_size: px(32.),
+            spinner_stroke: px(4.),
+            // TextFillColorDisabled is 40% of the primary text.
+            disabled_opacity: 0.4,
             // ControlFastAnimationDuration on Fluent's "fast out, slow in" curve.
             toggle_seconds: 0.167,
             toggle_ease: [0., 0., 0., 1.],
-            field_stroke: Some(with_alpha(theme.text.primary, 0.07)),
-            switch_outline: Some(theme.text.secondary),
+            spinner_seconds: 2.,
+            field_stroke: Some(if dark { with_alpha(ink, 0.07) } else { with_alpha(black, 0.059) }),
+            switch_outline: Some(strong),
             knob_off: theme.text.secondary,
-            knob_edge: nd_gpui::gpui::transparent_black(),
+            knob_edge: gpui::transparent_black(),
+            track: strong,
+            // FocusStrokeColorOuter and Inner.
+            focus_ring: if dark { gpui::white() } else { with_alpha(black, 0.894) },
+            focus_inner: Some(if dark { with_alpha(black, 0.7) } else { with_alpha(gpui::white(), 0.7) }),
+            // ControlStrokeColorSecondary.
+            stroke_bottom: Some(if dark { with_alpha(ink, 0.094) } else { with_alpha(black, 0.16) }),
+            field_underline: Some(strong),
+            // ControlFillColorInputActive.
+            field_focus_fill: if dark { gpui::rgba(0x1e1e1eb3).into() } else { gpui::white() },
+            check_fill,
+            check_stroke: strong,
+            check_stroke_width: px(1.),
+            check_glyph: px(12.),
+            chevron_size: px(12.),
+            chevron_color: theme.text.secondary,
+            subtle_hover: if dark { with_alpha(ink, 0.059) } else { with_alpha(black, 0.035) },
+            subtle_active: if dark { with_alpha(ink, 0.039) } else { with_alpha(black, 0.024) },
+            item_pill: true,
+            popover_pad: (px(5.), px(6.)),
+            item_gap: px(4.),
+            menu_over: true,
+            cursor: gpui::CursorStyle::Arrow,
+            link_button: true,
+            spin_inline: true,
+            // AccentFillColorSelectedTextBackground under white; in dark the accent container,
+            // since the dark accent is too light to carry white.
+            selection: if dark { theme.accent_container.bg } else { theme.accent },
+            selection_text: Some(gpui::white()),
+            toggle_row: px(32.),
+            radio_spacing: (px(8.), px(7.)),
+            popover_stroke: if dark { with_alpha(black, 0.2) } else { with_alpha(black, 0.059) },
+            // The flyout's ThemeShadow, as one blur.
+            popover_shadow: (gpui::hsla(0., 0., 0., if dark { 0.26 } else { 0.14 }), px(8.), px(16.)),
+            accent_hover: with_alpha(accent, accent.a * 0.9),
+            accent_active: with_alpha(accent, accent.a * 0.8),
+            thumb_dot: Some([px(12.), px(14.), px(10.)]),
+            thumb_fill: if dark { gpui::rgb(0x454545).into() } else { gpui::white() },
+            knob_hover_grow: px(2.),
+            knob_press: px(3.),
+            progress_rail: Some((px(1.), px(3.))),
+            track_thickness: px(4.),
+            spinner_track: false,
             ..Self::adwaita(theme)
         }
     }

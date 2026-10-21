@@ -51,7 +51,7 @@ const FILES: &[(&str, &str)] = &[
 ];
 
 /// Where releases are tagged. nd depends on a patched GPUI, so it is not on crates.io.
-pub const REPO: &str = "https://github.com/FormalSnake/NativeDesktop";
+pub const REPO: &str = "https://github.com/FormalStudio/NativeDesktop";
 
 /// nd's workspace manifest and lockfile at the commit this CLI was built from.
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");

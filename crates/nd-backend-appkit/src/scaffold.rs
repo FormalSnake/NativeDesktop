@@ -140,10 +140,17 @@ pub(crate) struct PaneNative {
     pub collapsed: Cell<bool>,
     /// `ND_DEBUG_EXPOSE`: the content paints the window background so uncovered area shows.
     expose: bool,
+    /// A sidebar's `edge_reveal()`.
+    reveal: Option<Rc<crate::reveal::Reveal>>,
 }
 
 impl PaneNative {
-    pub fn new(mtm: MainThreadMarker, props: &PaneProps, expose: bool) -> Self {
+    pub fn new(
+        mtm: MainThreadMarker,
+        props: &PaneProps,
+        expose: bool,
+        reveal: Option<crate::reveal::RevealHooks>,
+    ) -> Self {
         let content = NdLayerView::new(mtm, &ViewLook::from_style(&props.style, expose));
         let host = NdPaneView::new(mtm, &content);
         if props.role == PaneRole::Content && props.edge_on_hover {
@@ -157,6 +164,16 @@ impl PaneNative {
             PaneRole::Content => Some(NSSplitViewItem::splitViewItemWithViewController(&controller)),
             PaneRole::Overlay => None,
         };
+        let reveal = reveal.zip(item.clone()).map(|(hooks, item)| {
+            crate::reveal::Reveal::new(
+                mtm,
+                item,
+                controller.clone(),
+                Retained::into_super(host.clone()),
+                Retained::into_super(content.clone()),
+                hooks,
+            )
+        });
         let this = Self {
             role: props.role,
             controller,
@@ -166,8 +183,14 @@ impl PaneNative {
             props: props.clone(),
             collapsed: Cell::new(false),
             expose,
+            reveal,
         };
         this.apply(props, true);
+        // The split view is installed on the next turn; the edge strip goes in once it is.
+        if let Some(reveal) = this.reveal.clone() {
+            let props = props.clone();
+            crate::events::defer(move || reveal.update(props.edge_reveal, props.width, props.min_width));
+        }
         if props.role != PaneRole::Overlay
             && props.toolbar_extension > 0.
             && let Some(item) = &this.item
@@ -243,6 +266,13 @@ impl PaneNative {
                 item.setCollapsed(props.collapsed);
             }
         }
+        self.update_reveal(props);
+    }
+
+    fn update_reveal(&self, props: &PaneProps) {
+        if let Some(reveal) = &self.reveal {
+            reveal.update(props.edge_reveal, props.width, props.min_width);
+        }
     }
 
     pub fn update(&mut self, props: &PaneProps) {
@@ -252,13 +282,16 @@ impl PaneNative {
 
     /// The size the split view gives the pane: nd lays the content out across all of it.
     pub fn boundary(&self) -> Size {
-        let s = self.host.bounds().size;
+        let s = self.reveal.as_ref().and_then(|r| r.boundary()).unwrap_or_else(|| self.host.bounds().size);
         Size { width: s.width.max(0.) as f32, height: s.height.max(0.) as f32 }
     }
 
     /// The pane's safe area insets (the toolbar above it, a floating sidebar beside it), which
     /// nd adds to the content's padding so the background still reaches under them.
     pub fn insets(&self) -> nd_ui::backend::BoundaryInsets {
+        if self.reveal.as_ref().is_some_and(|r| r.boundary().is_some()) {
+            return nd_ui::backend::BoundaryInsets::default();
+        }
         let i = self.host.safeAreaInsets();
         nd_ui::backend::BoundaryInsets {
             top: i.top as f32,
@@ -271,6 +304,7 @@ impl PaneNative {
     /// Reports a collapse the user made (toolbar button, divider drag). `None` when nothing
     /// changed since the last apply or report.
     pub fn take_collapse(&self) -> Option<PaneCollapsed> {
+        self.update_reveal(&self.props);
         let collapsed = self.item.as_ref()?.isCollapsed();
         (self.collapsed.replace(collapsed) != collapsed).then_some(PaneCollapsed { collapsed })
     }

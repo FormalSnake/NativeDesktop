@@ -194,7 +194,20 @@ impl Build<'_> {
             // WinUI's ToolTip takes the control radius, its flyouts the overlay radius.
             let fluent_tip = props.kind == OverlayKind::Tooltip && theme.preset == nd_theme::Preset::Fluent;
             let radius = if fluent_tip { theme.radius.md } else { theme.radius.lg };
-            content = content.bg(fill).border_1().border_color(theme.border.subtle).rounded(radius).shadow_md();
+            content = content.bg(fill).border_1().rounded(radius);
+            content = if theme.preset == nd_theme::Preset::Fluent {
+                // SurfaceStrokeColorFlyout and the flyout shadow, as the drawn menus.
+                let look = crate::forms::look::FormLook::fluent(&theme);
+                content.border_color(look.popover_stroke).shadow(vec![gpui::BoxShadow {
+                    color: look.popover_shadow.0,
+                    offset: point(px(0.), look.popover_shadow.1),
+                    blur_radius: look.popover_shadow.2,
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+            } else {
+                content.border_color(theme.border.subtle).shadow_md()
+            };
         }
         let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(theme.text.primary), "overlay", || {
             node.children.iter().map(|c| self.node(*c, window, cx)).collect()
@@ -437,32 +450,51 @@ impl Build<'_> {
         marks.fill("context menu", surface, &[]);
         let viewport = window.viewport_size();
         let window_id = self.window_id;
+        // WinUI's MenuFlyout: the overlay radius, SurfaceStrokeColorFlyout and the flyout shadow,
+        // 32 px items inset 4 across and 2 along with padding 11, subtle fills, a 28 px check
+        // column (MenuFlyout_themeresources.xaml).
+        let fluent = (theme.preset == nd_theme::Preset::Fluent).then(|| crate::forms::look::FormLook::fluent(&theme));
         let list = |id: &'static str| {
-            div()
-                .id(id)
-                .flex()
-                .flex_col()
-                .min_w(px(180.))
-                .py(px(4.))
-                .bg(surface)
-                .border_1()
-                .border_color(theme.border.subtle)
-                .rounded(theme.radius.md)
-                .text_color(theme.text.primary)
-                .shadow_md()
-                .occlude()
-                .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+            let list =
+                div().id(id).flex().flex_col().min_w(px(180.)).bg(surface).border_1().text_color(theme.text.primary);
+            let list = match fluent {
+                Some(look) => list.py(px(2.)).rounded(theme.radius.lg).border_color(look.popover_stroke).shadow(vec![
+                    gpui::BoxShadow {
+                        color: look.popover_shadow.0,
+                        offset: point(px(0.), look.popover_shadow.1),
+                        blur_radius: look.popover_shadow.2,
+                        spread_radius: px(0.),
+                        inset: false,
+                    },
+                ]),
+                None => list.py(px(4.)).rounded(theme.radius.md).border_color(theme.border.subtle).shadow_md(),
+            };
+            list.occlude().on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+        };
+        let entry = || match fluent {
+            Some(look) => {
+                div().mx(px(4.)).my(px(2.)).px(look.padding_x).min_h(px(32.)).flex().items_center().rounded(look.radius)
+            }
+            None => div().px(px(12.)).py(px(4.)),
+        };
+        let hovered = match fluent {
+            Some(look) => look.subtle_hover,
+            None => theme.hover(surface),
         };
         let row = |i: usize, marked: bool, label: &SharedString, enabled: bool, checked: bool| {
-            let mut row = div().id(ElementId::Integer(i as u64)).px(px(12.)).py(px(4.));
+            let mut row = entry().id(ElementId::Integer(i as u64));
             if marked {
-                row = row.flex().child(div().w(px(16.)).child(if checked { "\u{2713}" } else { "" }));
+                let column = if fluent.is_some() { px(28.) } else { px(16.) };
+                row = row.flex().child(div().w(column).child(if checked { "\u{2713}" } else { "" }));
             }
             let row = row.child(label.clone());
             if enabled {
                 marks.text(label, theme.text.primary, &[surface], body, regular);
-                let hover = theme.hover(surface);
-                row.hover(move |s| s.bg(hover))
+                let pressed = match fluent {
+                    Some(look) => look.subtle_active,
+                    None => theme.hover(surface),
+                };
+                row.hover(move |s| s.bg(hovered)).active(move |s| s.bg(pressed))
             } else {
                 marks.text(label, theme.text.tertiary, &[surface], body, regular);
                 row.text_color(theme.text.tertiary)
@@ -470,7 +502,12 @@ impl Build<'_> {
         };
         let separator = || {
             marks.fill("menu separator", theme.separator, &[surface]);
-            div().h(px(1.)).my(px(4.)).bg(theme.separator).into_any_element()
+            let line = div().h(px(1.)).bg(theme.separator);
+            match fluent {
+                // MenuFlyoutSeparator: full width, 1 px clear of the items' own 2 px margins.
+                Some(_) => line.my(px(1.)).into_any_element(),
+                None => line.my(px(4.)).into_any_element(),
+            }
         };
         let list = match &menu.content {
             MenuContent::Actions(items) => {
@@ -530,7 +567,7 @@ impl Build<'_> {
                                     .child("\u{203a}")
                                     .on_hover(hover(Some(i)));
                                 if shown {
-                                    row = row.bg(theme.hover(surface));
+                                    row = row.bg(hovered);
                                     if let Some(sub) = child.take() {
                                         // The submenu's top row lines up with this one.
                                         row = row.child(

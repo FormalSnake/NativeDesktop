@@ -11,6 +11,7 @@
 //! each key means. The AppKit mapping and the drawn one only draw it and feed it input.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use nd_core::semantic::Role;
 use nd_ui::prelude::*;
@@ -57,6 +58,9 @@ pub struct PaletteMetrics {
     pub title_share: f32,
     pub shadow_radius: f32,
     pub shadow_opacity: f32,
+    /// The fade in on present and out on dismiss, as Spotlight's panel fades.
+    pub enter: Duration,
+    pub exit: Duration,
 }
 
 pub const PALETTE: PaletteMetrics = PaletteMetrics {
@@ -84,6 +88,8 @@ pub const PALETTE: PaletteMetrics = PaletteMetrics {
     title_share: 0.62,
     shadow_radius: 28.,
     shadow_opacity: 0.32,
+    enter: Duration::from_millis(200),
+    exit: Duration::from_millis(150),
 };
 
 /// One result row, drawn on one line: icon, title, subtitle in secondary text after it, and a

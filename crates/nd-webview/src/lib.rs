@@ -21,6 +21,7 @@ pub mod element;
 pub mod engine;
 pub mod events;
 pub mod extensions;
+pub mod filter;
 mod handle;
 pub mod menu;
 mod platform;
@@ -36,7 +37,10 @@ pub use engine::{
     register_engine, set_default_cef_style, set_default_engine,
 };
 pub use events::*;
-pub use handle::{Profile, WebView, WebViewOptions};
+pub use filter::{
+    FilterRequest, FilterResponse, RequestFilter, ResourceKind, Verdict, clear_request_filter, set_request_filter,
+};
+pub use handle::{PrivateSession, Profile, WebView, WebViewOptions};
 pub use menu::{ContextMenuMode, Contexts, Hit, MenuItem, MenuItemKind};
 pub use script::{Injection, UserScript};
 

@@ -11,6 +11,7 @@ use nd_components::{
     TitlebarInset, TitlebarProps, Toolbar, ToolbarItem, ToolbarItemProps, ToolbarProps, ToolbarSystemItem, ToolbarTab,
     ToolbarTabProps,
 };
+use nd_components::{REVEAL_EDGE, SidebarRevealed};
 use nd_core::NodeId;
 use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
@@ -110,6 +111,9 @@ impl Build<'_> {
         } else if is::<Pane>(kind) {
             let p = props::<PaneProps>(node)?;
             let fluent = theme.preset == nd_theme::Preset::Fluent;
+            if p.role == PaneRole::Sidebar && p.collapsed && p.edge_reveal {
+                return Some(self.revealed_sidebar(id, node, p, window, cx));
+            }
             // Hidden by the toolbar toggle: WinUI's navigation pane folds to an icon rail,
             // elsewhere the sidebar goes.
             let rail = p.role == PaneRole::Sidebar && self.sidebar_hidden(node);
@@ -321,14 +325,20 @@ impl Build<'_> {
             });
             let rows = div().id(ElementId::Integer(id.0)).overflow_y_scroll().flex().flex_col().gap(s.xl).p(s.md);
             match (title, p.title_pinned) {
-                (Some(title), true) => div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .child(title.px(s.md).pt(s.md))
-                    .child(rows.flex_1().min_h_0().children(children(window, cx)))
-                    .into_any_element(),
-                (title, _) => rows.size_full().children(title).children(children(window, cx)).into_any_element(),
+                (Some(title), true) => {
+                    let rows = rows.children(children(window, cx));
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(title.px(s.md).pt(s.md))
+                        .child(self.scrolled(id, rows, crate::scrollbar::Fit::Flex, window))
+                        .into_any_element()
+                }
+                (title, _) => {
+                    let rows = rows.children(title).children(children(window, cx));
+                    self.scrolled(id, rows, crate::scrollbar::Fit::Fill, window)
+                }
             }
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
@@ -387,6 +397,115 @@ impl Build<'_> {
 }
 
 impl Build<'_> {
+    /// A collapsed `edge_reveal()` sidebar: a strip along the leading edge that slides the
+    /// sidebar in as a floating panel over the content while the pointer is on it or the panel.
+    /// Takes no room in the row; both paint above the panes after it.
+    fn revealed_sidebar(
+        &self,
+        id: NodeId,
+        node: &Node,
+        p: &PaneProps,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> AnyElement {
+        use crate::reveal::{INSET, RADIUS};
+        let now = std::time::Instant::now();
+        let emit = self.backend.state.borrow().events.emitter(id);
+        let wake = self.wake.clone();
+        let (progress, moving, shown) = {
+            let mut reveals = self.backend.reveals.borrow_mut();
+            let reveal = reveals.entry(id).or_default();
+            let pointer = window.mouse_position();
+            if reveal.settle(now, nd_core::Point { x: pointer.x.as_f32(), y: pointer.y.as_f32() }) {
+                emit.emit(SidebarRevealed { revealed: false });
+                wake(cx);
+            }
+            (reveal.progress(now), reveal.moving(now), reveal.shown())
+        };
+        if moving {
+            window.request_animation_frame();
+        }
+        let (reveals, edge_emit, edge_wake) = (self.backend.reveals.clone(), emit.clone(), wake.clone());
+        let edge = div()
+            .id(ElementId::NamedInteger("nd-reveal-edge".into(), id.0))
+            .absolute()
+            .top_0()
+            .left_0()
+            .h_full()
+            .w(px(REVEAL_EDGE))
+            .on_hover(move |inside: &bool, window, cx| {
+                let now = std::time::Instant::now();
+                let mut reveals = reveals.borrow_mut();
+                let reveal = reveals.entry(id).or_default();
+                // Off the strip without reaching the panel hides it as leaving the panel does.
+                if !*inside {
+                    reveal.pointer_left(Some(now));
+                } else if reveal.set(true, now) {
+                    edge_emit.emit(SidebarRevealed { revealed: true });
+                    edge_wake(cx);
+                }
+                window.refresh();
+            });
+        let mut slot = div().relative().flex_none().w(px(0.)).h_full().child(gpui::deferred(edge));
+        if progress > 0. || shown {
+            let width = p.width.unwrap_or(240.).max(p.min_width.unwrap_or(0.));
+            let reduce = cx.reduce_motion();
+            let x = if reduce { INSET } else { INSET + (progress - 1.) * (width + INSET) };
+            let theme = self.theme();
+            let (reveals, painted) = (self.backend.reveals.clone(), self.backend.reveals.clone());
+            let content = styled(&p.style)
+                .size_full()
+                .children(node.children.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>());
+            let panel = div()
+                .id(ElementId::NamedInteger("nd-reveal-panel".into(), id.0))
+                .absolute()
+                .top(px(INSET))
+                .bottom(px(INSET))
+                .left(px(x))
+                .w(px(width))
+                .rounded(px(RADIUS))
+                .overflow_hidden()
+                .bg(theme.surface.sidebar)
+                .border_1()
+                .border_color(self.look().border)
+                .shadow(vec![gpui::BoxShadow {
+                    color: gpui::black().opacity(0.28),
+                    offset: gpui::point(px(0.), px(0.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(0.),
+                    inset: false,
+                }])
+                .opacity(if reduce { progress } else { 1. })
+                .occlude()
+                .on_hover(move |inside: &bool, window, _| {
+                    let left = (!*inside).then(std::time::Instant::now);
+                    reveals.borrow_mut().entry(id).or_default().pointer_left(left);
+                    window.refresh();
+                })
+                .child(content)
+                .child(
+                    gpui::canvas(
+                        move |b, _, _| {
+                            let area = nd_core::Rect::new(
+                                b.origin.x.as_f32(),
+                                b.origin.y.as_f32(),
+                                b.size.width.as_f32(),
+                                b.size.height.as_f32(),
+                            );
+                            painted.borrow_mut().entry(id).or_default().area = Some(area);
+                        },
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
+            slot = slot.child(gpui::deferred(panel).with_priority(1));
+        }
+        slot.into_any_element()
+    }
+
     /// Whether a surface of `material` shows the window's OS backdrop (Mica) through.
     fn backdrop_shows(&self, material: Material) -> bool {
         material != Material::Opaque && self.hooks.backdrop(self.window_id)
@@ -537,12 +656,3 @@ impl Build<'_> {
 fn is_kind<W: 'static>(node: &Node) -> bool {
     matches!(node.kind, nd_ui::backend::NodeKind::Widget(w) if is::<W>(w))
 }
-
-/// A background only when `on`, for selected rows and segments.
-pub(crate) trait WhenBg: Styled + Sized {
-    fn when_bg(self, on: bool, color: gpui::Hsla) -> Self {
-        if on { self.bg(color) } else { self }
-    }
-}
-
-impl<T: Styled> WhenBg for T {}

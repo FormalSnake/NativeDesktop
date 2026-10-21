@@ -705,6 +705,20 @@ wrap_request_handler! {
     }
 
     impl RequestHandler {
+        /// IO thread: the app's request filter, never the page's state on the main thread.
+        fn resource_request_handler(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _is_navigation: c_int,
+            _is_download: c_int,
+            request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut c_int>,
+        ) -> Option<ResourceRequestHandler> {
+            crate::filter::handler(browser, request, request_initiator)
+        }
+
         fn on_open_urlfrom_tab(
             &self,
             _browser: Option<&mut Browser>,

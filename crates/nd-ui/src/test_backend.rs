@@ -46,6 +46,9 @@ pub struct TestBackend {
     probes: HashMap<NodeId, Probe>,
     performed: Vec<(NodeId, SemanticAction)>,
     haptics: Vec<nd_gesture::Haptic>,
+    commands: Vec<(WindowId, crate::backend::WindowCommand)>,
+    windows: HashMap<WindowId, Rect>,
+    previews: Vec<(NodeId, Option<nd_core::Point>)>,
 }
 
 impl Default for TestBackend {
@@ -68,7 +71,36 @@ impl TestBackend {
             probes: HashMap::new(),
             performed: Vec::new(),
             haptics: Vec::new(),
+            commands: Vec::new(),
+            windows: HashMap::new(),
+            previews: Vec::new(),
         }
+    }
+
+    /// Puts `window` on screen at `frame` (global points), for drags across windows.
+    pub fn set_window_frame(&mut self, window: WindowId, frame: Rect) {
+        self.windows.insert(window, frame);
+    }
+
+    /// Drag previews asked for so far: the source and where on screen, `None` to take it away.
+    pub fn previews(&self) -> &[(NodeId, Option<nd_core::Point>)] {
+        &self.previews
+    }
+
+    /// The node's frame from the window's top-left, from the frames layout gave it and its
+    /// ancestors.
+    pub fn window_frame_of(&self, node: NodeId) -> Option<Rect> {
+        let mut frame = self.nodes.get(&node)?.frame?;
+        let mut at = self.nodes.get(&node)?.parent;
+        while let Some(p) = at {
+            let n = self.nodes.get(&p)?;
+            if let Some(f) = n.frame {
+                frame.origin.x += f.origin.x;
+                frame.origin.y += f.origin.y;
+            }
+            at = n.parent;
+        }
+        Some(frame)
     }
 
     /// What [`Backend::probe`] answers for `node`, standing in for a native control's state.
@@ -84,6 +116,11 @@ impl TestBackend {
     /// Haptics played so far, in order.
     pub fn haptics(&self) -> &[nd_gesture::Haptic] {
         &self.haptics
+    }
+
+    /// Window commands received, oldest first.
+    pub fn window_commands(&self) -> &[(WindowId, crate::backend::WindowCommand)] {
+        &self.commands
     }
 
     /// Behaves like the GPUI backend, which lays out itself and never receives frames.
@@ -380,13 +417,29 @@ impl Backend for TestBackend {
     }
 
     fn probe(&self, node: NodeId) -> Probe {
-        self.probes.get(&node).cloned().unwrap_or_default()
+        self.probes
+            .get(&node)
+            .cloned()
+            .unwrap_or_else(|| Probe { bounds: self.window_frame_of(node), ..Probe::default() })
+    }
+
+    fn window_state(&self, window: WindowId) -> Option<crate::semantics::WindowState> {
+        let frame = *self.windows.get(&window)?;
+        Some(crate::semantics::WindowState { key: false, main: false, visible: true, frame: Some(frame) })
+    }
+
+    fn drag_preview(&mut self, _window: WindowId, node: NodeId, screen: Option<nd_core::Point>) {
+        self.previews.push((node, screen));
     }
 
     /// A button answers clicks the way its native control would, by emitting [`ClickEvent`].
     /// Focus is nd's own; everything else is unsupported here.
     fn haptic(&mut self, haptic: nd_gesture::Haptic) {
         self.haptics.push(haptic);
+    }
+
+    fn window_command(&mut self, window: WindowId, command: crate::backend::WindowCommand) {
+        self.commands.push((window, command));
     }
 
     fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {

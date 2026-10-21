@@ -17,8 +17,8 @@ mod emoji;
 pub(crate) mod glyph;
 pub(crate) mod look;
 mod pickers;
-mod text;
-mod toggle;
+pub(crate) mod text;
+pub(crate) mod toggle;
 mod value;
 
 use std::any::{Any, TypeId};

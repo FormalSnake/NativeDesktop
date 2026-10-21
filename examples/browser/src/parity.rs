@@ -448,7 +448,9 @@ pub fn open(cx: &mut App) {
         }
     });
     let download = std::env::temp_dir().join(format!("nd-parity-{}.txt", std::process::id()));
-    let page = WebView::with_options(WebViewOptions::default().adopt_popups().profile(Profile::Private));
+    let page = WebView::with_options(
+        WebViewOptions::default().adopt_popups().profile(Profile::Private(PrivateSession::new())),
+    );
     eprintln!("ND_PARITY engine={}", page.engine().name());
     let options = WindowOptions::main("main").title("Parity").size(size(px(800.), px(600.)));
     cx.open_window(options, move |_window, cx| {

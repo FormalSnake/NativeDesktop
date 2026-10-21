@@ -97,7 +97,16 @@ impl Host {
                     self.show(&ns_window, &options);
                 }
                 (None, _) => {
-                    ns_window.center();
+                    match options.origin {
+                        Some(at) => {
+                            let primary = objc2_app_kit::NSScreen::screens(MainThreadMarker::from(&*ns_window))
+                                .firstObject()
+                                .map_or(0., |s| s.frame().size.height);
+                            let top_left = objc2_foundation::NSPoint::new(f64::from(at.x), primary - f64::from(at.y));
+                            ns_window.setFrameTopLeftPoint(top_left);
+                        }
+                        None => ns_window.center(),
+                    }
                     self.show(&ns_window, &options);
                 }
             }
@@ -185,6 +194,28 @@ struct AppRouter {
     window: WindowId,
 }
 
+impl AppRouter {
+    /// Runs a step of a drag AppKit's dragging session drives, with what the session queued
+    /// before it (its start) delivered first, and draws the frame it changed: the session's
+    /// tracking loop keeps the display clock from ticking the app.
+    fn drag(&self, f: impl FnOnce(&mut App, WindowId) -> bool) -> bool {
+        let Some(host) = self.host.upgrade() else { return false };
+        let Ok(mut app) = host.app.try_borrow_mut() else { return false };
+        app.drain_events();
+        let result = f(&mut app, self.window);
+        app.drain_events();
+        drop(app);
+        host.sync_windows();
+        if let Ok(mut app) = host.app.try_borrow_mut()
+            && app.needs_frame()
+        {
+            app.frame();
+        }
+        host.after_frame();
+        result
+    }
+}
+
 impl KeyRouter for AppRouter {
     fn key_down(&self, keystroke: &Keystroke) -> KeyDispatch {
         let Some(host) = self.host.upgrade() else { return KeyDispatch::Unhandled };
@@ -218,6 +249,20 @@ impl KeyRouter for AppRouter {
         if let Some(listener) = FILE_DROP.with(|l| l.borrow().clone()) {
             listener(self.window, paths, at);
         }
+    }
+
+    fn drag_over(&self, at: Option<(f32, f32)>) -> bool {
+        self.drag(|app, window| {
+            match at {
+                Some((x, y)) => app.drag_moved(window, nd_core::Point { x, y }),
+                None => app.drag_exited(),
+            }
+            app.drag_has_target()
+        })
+    }
+
+    fn drag_drop(&self, at: (f32, f32)) -> bool {
+        self.drag(|app, window| app.drag_released(window, nd_core::Point { x: at.0, y: at.1 }))
     }
 
     fn responder_changed(&self, window: &NdWindow) {
