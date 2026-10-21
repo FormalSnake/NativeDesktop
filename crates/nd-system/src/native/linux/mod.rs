@@ -160,7 +160,7 @@ impl Backend for LinuxBackend {
     }
 
     fn tray_set(&self, tray: Tray, reply: Reply<()>) {
-        reply.send(self.trays.set(tray, self.emitter()))
+        reply.send(self.trays.set(tray, &self.app.id, self.emitter()))
     }
 
     fn tray_remove(&self, id: TrayId, reply: Reply<()>) {
