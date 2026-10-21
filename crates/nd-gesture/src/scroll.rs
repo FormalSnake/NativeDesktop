@@ -183,13 +183,15 @@ impl AxisState {
     fn wheel(&mut self, delta: f32, time: f64, glide: f64) {
         // Notches that come while one glides add to where it is heading.
         let from_target = match self.motion {
-            Motion::Glide { to, .. } => to,
+            Motion::Glide { to, .. } => self.edge(to),
             _ => self.offset,
         };
-        let to = self.edge(from_target + delta);
-        if glide <= 0. || to == self.offset {
+        // Unclamped: a glide past the end follows the end as the content grows under it (a
+        // virtual list measuring the rows it reveals). Each frame clamps.
+        let to = from_target + delta;
+        if glide <= 0. || self.edge(to) == self.offset {
             self.motion = Motion::Idle;
-            self.offset = to;
+            self.offset = self.edge(to);
             return;
         }
         self.motion = Motion::Glide { from: self.offset, to, t0: time, duration: glide };
@@ -456,5 +458,19 @@ mod tests {
         assert_eq!(s.offset().y, 50.);
         s.wheel(Point { x: 0., y: -20. }, 2., 0.);
         assert_eq!(s.offset().y, 30., "with no glide the step lands at once");
+    }
+
+    #[test]
+    fn a_glide_past_the_end_lands_on_the_end_the_content_grew_to() {
+        let mut s = Scroller::new(Axes { horizontal: false, vertical: true });
+        s.set_extent(Size { width: 100., height: 100. }, Size { width: 100., height: 150. });
+        s.wheel(Point { x: 0., y: 1e6 }, 0., 0.12);
+        s.step(0.06);
+        s.set_extent(Size { width: 100., height: 100. }, Size { width: 100., height: 400. });
+        s.step(1.);
+        assert_eq!(s.offset().y, 300.);
+        s.wheel(Point { x: 0., y: -20. }, 2., 0.12);
+        s.step(3.);
+        assert_eq!(s.offset().y, 280., "notches after the end count from the end");
     }
 }

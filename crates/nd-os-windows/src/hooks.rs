@@ -27,11 +27,13 @@ use crate::caption::{CaptionButton, CaptionLayout, CaptionState, FLUENT_BUTTON_W
 use crate::chrome::{Chrome, ChromeEvent};
 use crate::pointer::PointerPhase;
 
+type ColorsChanged = Rc<dyn Fn(&mut gpui::App)>;
+
 pub struct WindowsHooks {
     expose: bool,
     diag: bool,
     chrome: RefCell<HashMap<WindowId, Rc<Chrome>>>,
-    colors_changed: RefCell<Option<Rc<dyn Fn(&mut gpui::App)>>>,
+    colors_changed: RefCell<Option<ColorsChanged>>,
 }
 
 impl Default for WindowsHooks {

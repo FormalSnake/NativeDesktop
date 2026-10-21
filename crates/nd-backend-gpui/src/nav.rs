@@ -348,10 +348,7 @@ pub fn source_tree_view(
     // WinUI's NavigationView: an icon per item, a subtle fill with an accent pill on the selected
     // one, and an icon-only rail when the pane is compact.
     let fluent = theme.preset == Preset::Fluent;
-    let subtle = with_alpha(
-        if theme.is_dark() { gpui::white() } else { gpui::black() },
-        if theme.is_dark() { 0.06 } else { 0.04 },
-    );
+    let subtle = with_alpha(theme.text.primary, if theme.is_dark() { 0.06 } else { 0.04 });
     let (regular, semibold) = (FontWeight::NORMAL, FontWeight::SEMIBOLD);
     let mut list = div()
         .id(ElementId::Integer(id.0))

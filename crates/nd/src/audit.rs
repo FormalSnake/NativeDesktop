@@ -302,9 +302,9 @@ impl Audit {
     fn is_token(&self, theme: &Theme, paint: &Paint) -> bool {
         let color = paint.color;
         tokens(theme).into_iter().chain(self.allowed.iter().copied()).any(|t| close(t, color))
-            // Text faded with its element (opacity) keeps its token's colour.
-            || (matches!(paint.kind, PaintKind::Text { .. })
-                && tokens(theme).into_iter().any(|t| close(nd_theme::color::with_alpha(t, color.a), color)))
+            // Text faded with its element (opacity) keeps its token's colour, and WinUI's subtle
+            // fills are the text colour at a few percent.
+            || tokens(theme).into_iter().any(|t| close(nd_theme::color::with_alpha(t, color.a), color))
     }
 
     fn label(&self, window: &str, kind: Kind, variant: Variant) -> String {
