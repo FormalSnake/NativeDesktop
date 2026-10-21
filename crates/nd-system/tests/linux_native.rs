@@ -114,11 +114,25 @@ mod linux {
             .collect()
     }
 
+    /// A solid `side` px RGBA PNG at `path`.
+    fn write_png(path: &std::path::Path, side: u32) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut encoder = png::Encoder::new(std::fs::File::create(path).unwrap(), side, side);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&vec![200; (side * side * 4) as usize]).unwrap();
+    }
+
     pub fn run() {
         let bus = Connection::session().expect("a session bus: run under dbus-run-session");
         let data = tempfile::tempdir().unwrap();
         // SAFETY: set before any thread reads them; this binary runs one test.
         unsafe { std::env::set_var("XDG_DATA_HOME", data.path()) };
+        // A theme holding one action icon and the app's own icon, as a package installs them.
+        let icons = data.path().join("icons");
+        write_png(&icons.join("hicolor/16x16/actions/nd-test-play.png"), 16);
+        write_png(&icons.join("hicolor/32x32/apps").join(format!("{APP_ID}.png")), 32);
         nd_system::set_app_identity(AppIdentity {
             id: APP_ID.into(),
             name: "systemtest".into(),
@@ -177,7 +191,7 @@ mod linux {
 
         check("status notifier item", || {
             let tray = Tray::new("nd-test")
-                .icon(TrayIcon::Named("media-playback-start".into()))
+                .icon(TrayIcon::Named("nd-test-play".into()))
                 .tooltip("ND test")
                 .item(TrayMenuItem::item("play", "Play"))
                 .item(TrayMenuItem::Separator)
@@ -195,7 +209,10 @@ mod linux {
             };
             let item = Proxy::new(&bus, name.clone(), "/StatusNotifierItem", "org.kde.StatusNotifierItem").unwrap();
             assert_eq!(item.get_property::<String>("Id").unwrap(), "nd-test");
-            assert_eq!(item.get_property::<String>("IconName").unwrap(), "media-playback-start");
+            assert_eq!(item.get_property::<String>("IconName").unwrap(), "nd-test-play");
+            assert_eq!(item.get_property::<String>("IconThemePath").unwrap(), icons.to_string_lossy());
+            let pixmap: Vec<(i32, i32, Vec<u8>)> = item.get_property("IconPixmap").unwrap();
+            assert_eq!((pixmap[0].0, pixmap[0].1), (16, 16), "the themed file goes out as the pixmap too");
             let _: () = item.call("Activate", &(0i32, 0i32)).unwrap();
             let clicked = next_event(&mut events, "tray activate", |e| matches!(e, SystemEvent::Tray { .. }));
             assert_eq!(clicked, SystemEvent::Tray { tray: TrayId("nd-test".into()), item: None });
@@ -208,6 +225,21 @@ mod linux {
             let _: () = menu.call("Event", &(shuffle, "clicked", zbus::zvariant::Value::from(0i32), 0u32)).unwrap();
             let chosen = next_event(&mut events, "tray menu", |e| matches!(e, SystemEvent::Tray { .. }));
             assert_eq!(chosen, SystemEvent::Tray { tray: TrayId("nd-test".into()), item: Some("shuffle".into()) });
+
+            // A name no theme has (an SF Symbol name, say): the app's own icon instead of a
+            // missing-icon placeholder.
+            let tray = Tray::new("nd-test").icon(TrayIcon::Named("message.badge".into()));
+            block_on(sys.tray().set(tray)).map_err(|e| e.to_string())?;
+            // A fresh proxy per read: a proxy caches properties, and an item announces a new icon
+            // with NewIcon rather than PropertiesChanged.
+            let fresh = || Proxy::new(&bus, name.clone(), "/StatusNotifierItem", "org.kde.StatusNotifierItem").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while fresh().get_property::<String>("IconName").unwrap() != APP_ID {
+                assert!(Instant::now() < deadline, "the item never fell back to the app icon");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let pixmap: Vec<(i32, i32, Vec<u8>)> = fresh().get_property("IconPixmap").unwrap();
+            assert_eq!((pixmap[0].0, pixmap[0].1), (32, 32));
 
             block_on(sys.tray().remove(TrayId("nd-test".into()))).unwrap();
             Ok(())
