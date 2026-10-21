@@ -232,6 +232,8 @@ pub fn launch_app(options: LaunchOptions) -> Result<AppHandle> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| Error::Launch(format!("{}: {e}", options.bin.display())))?;
+    #[cfg(windows)]
+    kill_with_us(&child);
     let stderr = Arc::new(Mutex::new(Vec::new()));
     let pipe = child.stderr.take().expect("piped stderr");
     let sink = stderr.clone();
@@ -273,6 +275,42 @@ pub fn launch_app(options: LaunchOptions) -> Result<AppHandle> {
         }
     };
     Ok(AppHandle { session: Session::new(Rc::new(driver)), child, dir, socket: path, stderr, lock })
+}
+
+/// Puts `child` in a job object this process holds open with kill-on-close. Windows has no
+/// parent-death signal: an [`AppHandle`] a test leaks (or a panic that skips its drop) would
+/// otherwise leave the app and the crash handler it starts running, holding its `.exe` so the
+/// next build cannot replace it. The job ends them all when this process exits.
+#[cfg(windows)]
+fn kill_with_us(child: &Child) {
+    use std::os::windows::io::AsRawHandle;
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+
+    /// The job's handle, as an integer so the static is `Sync`; never closed before exit.
+    static JOB: OnceLock<Option<isize>> = OnceLock::new();
+    let job = JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectW(None, None).ok()?;
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .ok()?;
+        Some(job.0 as isize)
+    });
+    if let Some(job) = *job {
+        // A failure (the test runner already put us in a job that forbids nesting) leaves the
+        // child as before: killed by its handle's drop.
+        let _ = unsafe { AssignProcessToJobObject(HANDLE(job as _), HANDLE(child.as_raw_handle())) };
+    }
 }
 
 /// Attaches to an app someone else launched, by its socket path (`ND_AUTOMATION_SOCKET`).
