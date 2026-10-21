@@ -45,13 +45,23 @@ impl Render for Scene {
                 cx.notify();
             }))
             .child(div().id("anchor").w(px(300.)).h(px(30.)).when(self.popover, |d| {
-                d.child(popover("pop").w(px(280.)).h(px(160.)).child(text("inside")).on_dismiss(cx.listener(
-                    |this, e: &Dismissed, _, cx| {
-                        this.log.borrow_mut().push(format!("popover {:?}", e.reason));
-                        this.popover = false;
-                        cx.notify();
-                    },
-                )))
+                d.child(
+                    popover("pop")
+                        .w(px(280.))
+                        .h(px(160.))
+                        .child(
+                            v_flex().id("pop-list").size_full().overflow_y_scroll().child(text("inside")).children(
+                                (0..20).map(|i| {
+                                    div().id(format!("pop-row-{i}")).h(px(20.)).child(text(format!("row {i}")))
+                                }),
+                            ),
+                        )
+                        .on_dismiss(cx.listener(|this, e: &Dismissed, _, cx| {
+                            this.log.borrow_mut().push(format!("popover {:?}", e.reason));
+                            this.popover = false;
+                            cx.notify();
+                        })),
+                )
             }))
             .child(
                 h_flex()
@@ -465,6 +475,23 @@ mod gate_m4_overlays {
         settle(&mut o.cx, &o.host);
         assert!(!o.host.backend().holds_control_state(field), "nor after its exit");
     }
+
+    /// A wheel over a scroll view inside a popover scrolls it: the popover's surface hides the
+    /// window root, which feeds the wheel everywhere else.
+    pub fn gpui_a_scroll_view_in_a_popover_scrolls() {
+        let mut o = open();
+        set(&mut o, |s| s.popover = true);
+        let pop = by_test_id(&o.host, o.window, "pop").and_then(|n| n.bounds).expect("popover bounds");
+        let row = |o: &Opened| by_test_id(&o.host, o.window, "pop-row-19").and_then(|n| n.bounds).expect("row bounds");
+        let before = row(&o);
+        let at = nd_ui::Point { x: pop.origin.x + pop.size.width / 2., y: pop.origin.y + pop.size.height / 2. };
+        post(&mut o, wiggle_and_scroll(at));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        let after = row(&o);
+        assert!(after.origin.y < before.origin.y - 20., "the list scrolled: {before:?} to {after:?}");
+        assert!(log(&o).is_empty(), "the wheel closed the popover: {:?}", log(&o));
+    }
 }
 
 fn main() {
@@ -473,6 +500,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface",
             gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_scroll_view_in_a_popover_scrolls",
+            gate_m4_overlays::gpui_a_scroll_view_in_a_popover_scrolls,
         ),
         (
             "gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone",

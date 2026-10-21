@@ -221,7 +221,15 @@ impl Build<'_> {
                         wake(cx);
                     }
                 })
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation());
+                // The root's wheel handler cannot see through the occluding surface either, so a
+                // scroll view inside the overlay is fed from here.
+                .on_scroll_wheel({
+                    let (backend, wake, window_id) = (self.backend.clone(), self.wake.clone(), self.window_id);
+                    move |event, window, cx| {
+                        cx.stop_propagation();
+                        backend.gesture_input(window_id, window, cx, &wake, |g, tree| g.scroll(window_id, event, tree));
+                    }
+                });
         }
         // Popovers, menus and panels come in with the look's entrance: a short rise and a fade
         // over its normal duration (WinUI's "fast out, slow in", 167 ms; the panel takes the slow

@@ -802,8 +802,10 @@ impl<'a> Build<'a> {
             // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 6.
             .rounded(theme.radius.md)
             .text_color(ink)
-            // Inside a drag region the button keeps its clicks and never starts a window move.
-            .occlude();
+            // Inside a drag region the button keeps its clicks and never starts a window move. A
+            // wheel passes on to the window root's router, so a scroll view full of buttons
+            // still scrolls.
+            .block_mouse_except_scroll();
         button = match glyph {
             Some(g) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
             None => button.px(px(12.)).py(px(4.)).child(label),
