@@ -19,7 +19,7 @@ use std::rc::Rc;
 use nd_core::time::{Duration, Instant};
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Response, SemanticAction, Semantics, WidgetSemantics};
-use nd_ui::{Key, RichText, Role, StyleRefinement, span};
+use nd_ui::{Bezel, Key, RichText, Role, StyleRefinement, span};
 
 use super::clock::{PlaybackClock, format_clock, parse_clock};
 use super::image::image;
@@ -60,11 +60,13 @@ pub struct PillMetrics {
     pub line_gap: f32,
     /// Between the art and the seek bar's track.
     pub seek_gap: f32,
-    /// The widest the block grows: about half the capsule in Music.
-    pub song_width: f32,
+    /// The side of a shuffle or repeat toggle, whose on state fills it as a circle.
+    pub toggle: f32,
     /// The point sizes of the play and skip glyphs; AppKit sizes a button's symbol from its font.
     pub play_glyph: f32,
     pub skip_glyph: f32,
+    /// The point size of the other controls' glyphs: volume, and the app's More, lyrics, queue.
+    pub control_glyph: f32,
 }
 
 pub const PILL: PillMetrics = PillMetrics {
@@ -74,9 +76,10 @@ pub const PILL: PillMetrics = PillMetrics {
     art_gap: 5.,
     line_gap: 2.,
     seek_gap: 4.,
-    song_width: 368.,
-    play_glyph: 22.,
-    skip_glyph: 17.,
+    toggle: 20.,
+    play_glyph: 23.,
+    skip_glyph: 15.,
+    control_glyph: 16.,
 };
 
 pub const SEEK: SeekMetrics = SeekMetrics {
@@ -504,8 +507,8 @@ impl PlayerBar {
         self
     }
 
-    /// A control after the titles that acts on the playing item: rating, its menu. Full layout
-    /// only.
+    /// A control after the titles that acts on the playing item: rating, its menu. The pill puts
+    /// it at the end of the title row, over the progress line, where Music keeps More.
     pub fn accessory(mut self, element: impl IntoElement) -> Self {
         self.accessories.push(element.into_any_element());
         self
@@ -648,7 +651,8 @@ impl IntoElement for PlayerBar {
                 let idle = now.title.is_empty() && now.artwork.is_none();
                 // Music's mini player, measured against Music.app: 34 pt art, the two lines 8 pt
                 // after it and centred against it, the title semibold, the progress line 4 pt
-                // under both from the art's leading edge.
+                // under both from the art's leading edge to the end of the song's own buttons,
+                // the block taking the width between transport and the trailing controls.
                 let song =
                     v_flex()
                         .flex_1()
@@ -686,6 +690,9 @@ impl IntoElement for PlayerBar {
                                 .when_some(on_open, |row, open| {
                                     row.role(Role::Button, format!("{}, open player", now.title))
                                         .on_tap(move |_, w, cx| open(w, cx))
+                                })
+                                .when(!accessories.is_empty(), |row| {
+                                    row.child(h_flex().flex_none().gap_1().items_center().children(accessories))
                                 }),
                         )
                         // The seek bar's hit area is taller than its track; the block counts the track
@@ -693,10 +700,11 @@ impl IntoElement for PlayerBar {
                         .child(div().relative().w_full().h(px(SEEK.track)).child(
                             div().absolute().left_0().right_0().top(px((SEEK.track - SEEK.hit) / 2.)).child(seek),
                         ));
-                // Music draws play larger than skip and skip larger than its other controls.
-                let play = play.text_size(px(PILL.play_glyph));
-                let previous = previous.text_size(px(PILL.skip_glyph));
-                let next = next.text_size(px(PILL.skip_glyph));
+                // Music draws play larger than skip, and the transport in the label colour.
+                let play = play.text_size(px(PILL.play_glyph)).bezel(Bezel::Plain);
+                let previous = previous.text_size(px(PILL.skip_glyph)).bezel(Bezel::Plain);
+                let next = next.text_size(px(PILL.skip_glyph)).bezel(Bezel::Plain);
+                let mute = mute.text_size(px(PILL.control_glyph)).bezel(Bezel::Plain);
                 // Transport and the trailing controls keep their size; the song truncates first.
                 h_flex()
                     .id(id.clone())
@@ -714,23 +722,8 @@ impl IntoElement for PlayerBar {
                             .child(next.disabled(!now.can_next))
                             .children(after_transport),
                     )
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .justify_center()
-                            .when(!idle, |row| row.child(song.max_w(px(PILL.song_width)))),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_none()
-                            .gap_1()
-                            .items_center()
-                            .children(accessories)
-                            .children(trailing)
-                            .child(mute)
-                            .child(volume),
-                    )
+                    .child(h_flex().flex_1().min_w_0().when(!idle, |row| row.child(song)))
+                    .child(h_flex().flex_none().gap_1().items_center().children(trailing).child(mute).child(volume))
             }
             TransportLayout::Full => {
                 let previous = icon_button(child("previous"), Icon::SkipBack)
