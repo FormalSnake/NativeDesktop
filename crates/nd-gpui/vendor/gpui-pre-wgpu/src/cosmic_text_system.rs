@@ -54,6 +54,9 @@ struct CosmicTextSystemState {
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     loaded_font_ids_by_key: HashMap<LoadedFontKey, FontId>,
+    /// A variable face at a weight other than its default instance, keyed by that face's
+    /// `FontId` and the weight.
+    weighted_font_ids: HashMap<(FontId, u16), FontId>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
     /// for every font face in a family.
     font_ids_by_family_cache: HashMap<FontKey, SmallVec<[FontId; 4]>>,
@@ -72,6 +75,8 @@ struct LoadedFont {
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
+    /// The `wght` a variable face is shaped and drawn at; `None` is its default instance.
+    weight: Option<Weight>,
 }
 
 struct FontMatchProperties {
@@ -142,6 +147,7 @@ impl CosmicTextSystem {
             pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
+            weighted_font_ids: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
             missing_glyph_sink: None,
@@ -162,6 +168,7 @@ impl CosmicTextSystem {
             pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
+            weighted_font_ids: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
             missing_glyph_sink: None,
@@ -210,8 +217,8 @@ impl PlatformTextSystem for CosmicTextSystem {
         };
 
         let ix = find_best_match(font, candidates, &state)?;
-
-        Ok(candidates[ix])
+        let font_id = candidates[ix];
+        Ok(state.weighted(font_id, font.weight))
     }
 
     fn prewarm_fonts(&self, font_ids: &[FontId]) {
@@ -294,6 +301,49 @@ impl CosmicTextSystemState {
         &self.loaded_fonts[font_id.0]
     }
 
+    /// `font_id` at `weight`. A family shipped as one variable file (Adwaita Sans, Inter,
+    /// Cantarell) has a single face in the database at its default instance, so without this
+    /// every weight would shape and draw as that instance.
+    fn weighted(&mut self, font_id: FontId, weight: gpui::FontWeight) -> FontId {
+        let loaded = &self.loaded_fonts[font_id.0];
+        let Some(axis) = loaded
+            .font
+            .as_swash()
+            .variations()
+            .find_by_tag(swash::Tag::from_be_bytes(*b"wght"))
+        else {
+            return font_id;
+        };
+        let wght = weight.0.clamp(axis.min_value(), axis.max_value()).round() as u16;
+        let database_id = loaded.font.id();
+        let at_default = self
+            .font_system
+            .db()
+            .face(database_id)
+            .is_some_and(|face| face.weight.0 == wght);
+        if at_default {
+            return font_id;
+        }
+        if let Some(&id) = self.weighted_font_ids.get(&(font_id, wght)) {
+            return id;
+        }
+        let Some(font) = self.font_system.get_font(database_id, Weight(wght)) else {
+            return font_id;
+        };
+        let loaded = &self.loaded_fonts[font_id.0];
+        let weighted = LoadedFont {
+            font,
+            features: loaded.features.clone(),
+            is_known_emoji_font: loaded.is_known_emoji_font,
+            user_fallback_chain: Arc::clone(&loaded.user_fallback_chain),
+            weight: Some(Weight(wght)),
+        };
+        let id = FontId(self.loaded_fonts.len());
+        self.loaded_fonts.push(weighted);
+        self.weighted_font_ids.insert((font_id, wght), id);
+        id
+    }
+
     fn font_match_properties(&self, font_id: FontId) -> Option<FontMatchProperties> {
         let loaded_font = self.loaded_font(font_id);
         let Some(face) = self.font_system.db().face(loaded_font.font.id()) else {
@@ -309,7 +359,7 @@ impl CosmicTextSystemState {
             primary_family_name: first_family.0.clone().into(),
             stretch: face.stretch,
             style: face.style,
-            weight: face.weight,
+            weight: loaded_font.weight.unwrap_or(face.weight),
             features: loaded_font.features.clone(),
             fallback_chain: Arc::clone(&loaded_font.user_fallback_chain),
         })
@@ -448,6 +498,7 @@ impl CosmicTextSystemState {
                 features: cosmic_features.clone(),
                 is_known_emoji_font,
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
+                weight: None,
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
         }
@@ -532,11 +583,21 @@ impl CosmicTextSystemState {
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
 
+        // Always set the coordinates: the scale context keeps the last glyph's otherwise, so a
+        // default-instance glyph drawn after a bold one would come out bold.
+        let coords: SmallVec<[swash::NormalizedCoord; 4]> = match loaded_font.weight {
+            Some(weight) => font_ref
+                .variations()
+                .normalized_coords([(swash::Tag::from_be_bytes(*b"wght"), f32::from(weight.0))])
+                .collect(),
+            None => SmallVec::new(),
+        };
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
             .hint(true)
+            .normalized_coords(&coords)
             .build();
 
         let sources: &[Source] = if params.is_emoji {
@@ -599,6 +660,7 @@ impl CosmicTextSystemState {
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font,
                 user_fallback_chain: Arc::from(Vec::new()),
+                weight: None,
             });
 
             Ok(font_id)
