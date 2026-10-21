@@ -571,6 +571,7 @@ mod tests {
             transform: Default::default(),
             hover: None,
             tracks_hover: false,
+            reports_size: false,
         };
         Node { kind: NodeKind::View, props: Rc::new(props), parent, children }
     }

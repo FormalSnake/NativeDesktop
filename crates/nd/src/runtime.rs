@@ -42,6 +42,7 @@ pub mod prelude {
         icon, icon_button, inspector, open_settings, select, separator, set_menus, sidebar, slider, source_item,
         source_list, system_item, titlebar, toolbar_sidebar_toggle,
     };
+    pub use crate::chrome::{SidebarRevealed, Tile, TileGrid, TileMoved, tile, tile_grid};
     pub use crate::chrome::{
         Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
         ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,

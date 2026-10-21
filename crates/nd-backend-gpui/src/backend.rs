@@ -91,6 +91,8 @@ pub struct GpuiBackend {
     /// What a drawn forms control keeps between frames (a text field's caret and selection, a
     /// slider mid-drag), by node; dropped when the node is released.
     pub(crate) form_drawn: Rc<RefCell<HashMap<NodeId, crate::forms::Drawn>>>,
+    /// The size each `.on_resize()` div last reported.
+    pub(crate) reported_sizes: Rc<RefCell<HashMap<NodeId, (f32, f32)>>>,
     /// nd focus moves the drawn controls have yet to follow, by window. The window's next draw
     /// gives the target GPUI focus, or blurs when nd focus left the drawn controls.
     pub(crate) focus_requests: Rc<RefCell<HashMap<WindowId, Option<NodeId>>>>,
@@ -118,6 +120,8 @@ pub struct GpuiBackend {
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
     /// it without the app's state changing.
     pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
+    /// Collapsed `edge_reveal()` sidebars sliding in and out over the content, by pane.
+    pub(crate) reveals: Rc<RefCell<HashMap<NodeId, crate::reveal::Reveal>>>,
     /// Split divider drags in progress, by split node.
     pub(crate) splits: crate::split::SplitDrags,
     /// The drawn alerts and about panels showing ([`crate::dialogs`]).
@@ -168,6 +172,7 @@ impl GpuiBackend {
             })),
             bounds: Rc::default(),
             form_drawn: Rc::default(),
+            reported_sizes: Rc::default(),
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
             invoker: Rc::default(),
@@ -180,6 +185,7 @@ impl GpuiBackend {
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
+            reveals: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
@@ -565,6 +571,8 @@ impl Backend for GpuiBackend {
 
     fn release(&mut self, node: NodeId) {
         self.form_drawn.borrow_mut().remove(&node);
+        self.reported_sizes.borrow_mut().remove(&node);
+        self.reveals.borrow_mut().remove(&node);
         self.splits.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
@@ -617,6 +625,28 @@ impl Backend for GpuiBackend {
 
     fn retains_frames(&self) -> bool {
         false
+    }
+
+    fn drop_slot(
+        &mut self,
+        node: NodeId,
+        at: Option<nd_core::Point>,
+        _item: &nd_ui::DragItem,
+    ) -> Option<nd_ui::DropSlot> {
+        let drawn = self.drawn_of(node)?;
+        let mut state = self.state.borrow_mut();
+        let windows: Vec<WindowId> = state.windows.keys().copied().collect();
+        state.dirty.extend(windows);
+        let props = state.nodes.get(&node)?.props.downcast_ref::<nd_components::SourceTreeProps>()?;
+        let mut drawn = drawn.borrow_mut();
+        let crate::nav::Drawn::Tree(tree) = &mut *drawn else { return None };
+        match at {
+            Some(at) => Some(tree.drop_slot(props, at)),
+            None => {
+                tree.slot = None;
+                None
+            }
+        }
     }
 
     fn probe(&self, node: NodeId) -> Probe {

@@ -259,6 +259,8 @@ fn golden_tree() -> SourceTreeProps {
         selected: Some("q3".into()),
         action_visibility: ActionVisibility::Always,
         empty: None,
+        drag_kind: None,
+        accepts: Vec::new(),
         style: Default::default(),
     }
 }

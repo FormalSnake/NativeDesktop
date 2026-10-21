@@ -72,6 +72,7 @@ struct RNode {
     motion: Option<Animated>,
     /// A canvas's paint closure; its props hold what it painted, for the size they name.
     paint: Option<PaintFn>,
+    drag: crate::drag::DragSpec,
 }
 
 /// The size a canvas lays out at before its first frame: its style's, when given in points.
@@ -153,6 +154,8 @@ pub(crate) struct Tree {
     animating: HashSet<NodeId>,
     /// The motion [`Tree::animate`] built for the node being mounted or reconciled.
     pending_motion: Option<Animated>,
+    /// Nodes that report their size, laid out at a new one this frame.
+    resized: Vec<(NodeId, Size)>,
 }
 
 fn idents(elements: &[AnyElement]) -> Vec<Ident> {
@@ -274,6 +277,7 @@ impl Tree {
                 boundary: None,
                 motion: None,
                 paint: None,
+                drag: crate::drag::DragSpec::default(),
             },
         );
         let mut dispatch = DispatchTree::new(bindings);
@@ -298,11 +302,21 @@ impl Tree {
             overlays: Vec::new(),
             animating: HashSet::new(),
             pending_motion: None,
+            resized: Vec::new(),
         }
     }
 
     pub(crate) fn contains(&self, node: NodeId) -> bool {
         self.nodes.contains_key(&node)
+    }
+
+    /// Nodes that take drags of `kind`, in no particular order.
+    pub(crate) fn drop_targets(&self, kind: &str) -> Vec<NodeId> {
+        self.nodes.iter().filter(|(_, n)| n.drag.accepts.iter().any(|k| k == kind)).map(|(id, _)| *id).collect()
+    }
+
+    pub(crate) fn drag_item(&self, node: NodeId) -> Option<crate::DragItem> {
+        self.nodes.get(&node)?.drag.item.clone()
     }
 
     pub(crate) fn handler(&self, node: NodeId, event: TypeId) -> Option<Handler> {
@@ -584,6 +598,7 @@ impl Tree {
                 boundary: None,
                 motion,
                 paint: el.paint,
+                drag: el.drag,
             },
         );
         let children: Vec<AnyElement> = el.children.into_iter().map(|c| c.resolve(window, app)).collect();
@@ -827,6 +842,7 @@ impl Tree {
         let node = self.nodes.get_mut(&n).expect("node");
         node.handlers = el.handlers;
         node.dispatch = el.dispatch;
+        node.drag = el.drag;
         self.bind_dispatch(n);
         self.reconcile_children(n, el.children, depth, window, app);
     }
@@ -1104,6 +1120,11 @@ impl Tree {
             let l = self.taffy.layout(node.taffy).expect("taffy layout");
             let frame = Rect::new(l.location.x, l.location.y, l.size.width, l.size.height);
             if node.frame != Some(frame) {
+                if node.frame.is_none_or(|f| f.size != frame.size)
+                    && node.props.downcast_ref::<DivProps>().is_some_and(|p| p.reports_size)
+                {
+                    self.resized.push((n, frame.size));
+                }
                 node.frame = Some(frame);
                 ops.push(Op::SetFrame { node: n, frame });
             }
@@ -1192,6 +1213,9 @@ impl App {
         // again, and the next frame sends what they painted.
         for (node, width, height) in tree.stale_canvases() {
             tree.repaint_canvas(node, width, height, self);
+        }
+        for (node, size) in tree.resized.drain(..) {
+            self.events().emitter(node).emit(crate::Resized { width: size.width, height: size.height });
         }
         self.current_window = outer;
         let slot = self.windows.get_mut(&id).expect("window");

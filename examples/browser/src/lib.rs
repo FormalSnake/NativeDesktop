@@ -7,12 +7,14 @@
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
 //! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
 //! page that scrolls), `chrome-pages` (`chrome://extensions` and `chrome://settings` in a
-//! Chrome-style page) or `parity` (every event and command against a local test page, printing
-//! `ND_WEBVIEW_PARITY_OK`).
+//! Chrome-style page), `parity` (every event and command against a local test page, printing
+//! `ND_WEBVIEW_PARITY_OK`), `tabdrag` (two windows of tabs that drag between them, carrying live
+//! pages) or `reveal` (a hidden sidebar that slides in from the leading edge).
 
 mod parity;
 mod scenes;
 mod server;
+mod tabdrag;
 
 use nd::prelude::*;
 use nd::webview::{
@@ -321,6 +323,8 @@ pub fn init(cx: &mut App) {
         Ok("input") => scenes::input(cx),
         Ok("chrome-pages") => scenes::chrome_pages(cx),
         Ok("parity") => parity::open(cx),
+        Ok("tabdrag") => tabdrag::tabdrag(cx),
+        Ok("reveal") => tabdrag::reveal(cx),
         _ => {
             bind_keys(cx);
             let url = std::env::var("BROWSER_URL").unwrap_or_else(|_| HOME.into());

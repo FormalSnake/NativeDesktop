@@ -151,6 +151,7 @@ pub(crate) struct NodeElement {
     pub motion: Option<MotionSpec>,
     /// A canvas's paint closure, which the tree runs for its laid-out size.
     pub paint: Option<crate::canvas::PaintFn>,
+    pub drag: crate::drag::DragSpec,
 }
 
 pub(crate) type Deferred = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
@@ -265,6 +266,15 @@ pub struct DivProps {
     pub hover: Option<StyleRefinement>,
     /// Pointer enter and exit are reported as [`HoverChanged`].
     pub tracks_hover: bool,
+    /// Size changes are reported as [`Resized`].
+    pub reports_size: bool,
+}
+
+/// The node was laid out at a new size (`.on_resize`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Resized {
+    pub width: f32,
+    pub height: f32,
 }
 
 /// The pointer entered (`hovered`) or left a node that listens with `.on_hover`.
@@ -311,7 +321,9 @@ pub struct Div {
     transform: Transform,
     hover: Option<StyleRefinement>,
     tracks_hover: bool,
+    reports_size: bool,
     motion: Option<MotionSpec>,
+    drag: crate::drag::DragSpec,
 }
 
 #[track_caller]
@@ -357,7 +369,9 @@ impl Div {
             transform: Transform::default(),
             hover: None,
             tracks_hover: false,
+            reports_size: false,
             motion: None,
+            drag: crate::drag::DragSpec::default(),
         }
     }
 
@@ -449,6 +463,13 @@ impl Div {
         let animation = self.motion.map_or(Animation::ease_out(std::time::Duration::from_millis(250)), |m| m.animation);
         self.motion = Some(MotionSpec { animation, enter: Some(f(Pose::default())) });
         self
+    }
+
+    /// Called with the element's laid-out size when it changes, after the frame that laid it
+    /// out: for content that depends on the room it is given (a grid choosing its columns).
+    pub fn on_resize(mut self, handler: impl Fn(&Resized, &mut Window, &mut App) + 'static) -> Self {
+        self.reports_size = true;
+        self.on(handler)
     }
 
     /// Called when every value the element animates has come to rest.
@@ -550,6 +571,40 @@ impl Div {
     }
 }
 
+/// Drag and drop (see [`crate::drag`]).
+impl Div {
+    /// The element drags as `item`: a press that moves starts a drag that targets taking
+    /// `item.kind` see, in this window or another of the app's. Its own `.on_drag` still sees
+    /// the gesture, for a source that follows the pointer itself.
+    pub fn draggable(mut self, item: crate::DragItem) -> Self {
+        self.drag.item = Some(item);
+        if self.gestures.drag.is_none() {
+            self.gestures.drag = Some(None);
+        }
+        self
+    }
+
+    /// The drag this element started is over: dropped, cancelled or released outside the app.
+    pub fn on_drag_end(self, handler: impl Fn(&crate::DragEnded, &mut Window, &mut App) + 'static) -> Self {
+        self.on(handler)
+    }
+
+    /// The element takes drags of these kinds.
+    pub fn accepts_drops(mut self, kinds: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
+        self.drag.accepts = kinds.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// A drag it takes entered, moved over or left the element.
+    pub fn on_drag_over(self, handler: impl Fn(&crate::DragOver, &mut Window, &mut App) + 'static) -> Self {
+        self.on(handler)
+    }
+
+    pub fn on_drop(self, handler: impl Fn(&crate::Dropped, &mut Window, &mut App) + 'static) -> Self {
+        self.on(handler)
+    }
+}
+
 impl Styled for Div {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
@@ -588,6 +643,7 @@ impl IntoElement for Div {
                 transform: self.transform,
                 hover: self.hover,
                 tracks_hover: self.tracks_hover,
+                reports_size: self.reports_size,
             }),
             layout: self.style,
             measured: false,
@@ -596,6 +652,7 @@ impl IntoElement for Div {
             dispatch: self.dispatch,
             motion: self.motion,
             paint: None,
+            drag: self.drag,
         })
     }
 }
@@ -697,6 +754,7 @@ impl IntoElement for Text {
             dispatch: DispatchProps::default(),
             motion: None,
             paint: None,
+            drag: crate::drag::DragSpec::default(),
         })
     }
 }
@@ -710,6 +768,7 @@ pub struct NativeElement<P> {
     style: StyleRefinement,
     handlers: Vec<(TypeId, Handler)>,
     dispatch: DispatchProps,
+    drag: crate::drag::DragSpec,
 }
 
 impl<P: AnyProps> NativeElement<P> {
@@ -721,6 +780,7 @@ impl<P: AnyProps> NativeElement<P> {
             style: StyleRefinement::default(),
             handlers: Vec::new(),
             dispatch: DispatchProps::default(),
+            drag: crate::drag::DragSpec::default(),
         }
     }
 
@@ -743,6 +803,13 @@ impl<P: AnyProps> NativeElement<P> {
 
     pub fn key_mut(&mut self) -> &mut Key {
         &mut self.key
+    }
+
+    /// The widget takes drags of these kinds; where in it they land is the backend's
+    /// [`drop_slot`](crate::backend::Backend::drop_slot).
+    pub fn accepts_drops(mut self, kinds: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
+        self.drag.accepts = kinds.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Handles events of type `E` the widget emits. Replaces an earlier handler for `E`.
@@ -785,6 +852,7 @@ impl<P: AnyProps> IntoElement for NativeElement<P> {
             dispatch: self.dispatch,
             motion: None,
             paint: None,
+            drag: self.drag,
         })
     }
 }

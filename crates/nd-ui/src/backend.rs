@@ -281,6 +281,23 @@ pub trait Backend: Any {
     /// haptics (everything but macOS).
     fn haptic(&mut self, _haptic: nd_gesture::Haptic) {}
 
+    /// A drag is over `node`, a widget that places drops itself (a source list), at `at` in
+    /// window coordinates: it shows where the drop would land and returns that slot. `None`
+    /// clears what it showed. Other nodes return `None`.
+    fn drop_slot(
+        &mut self,
+        _node: NodeId,
+        _at: Option<nd_core::Point>,
+        _item: &crate::DragItem,
+    ) -> Option<crate::DropSlot> {
+        None
+    }
+
+    /// Shows `node` of `window` as a picture under the pointer at `screen` (global points), for
+    /// a drag outside its window; `None` takes it away. A no-op where a window cannot draw
+    /// outside itself.
+    fn drag_preview(&mut self, _window: WindowId, _node: NodeId, _screen: Option<nd_core::Point>) {}
+
     /// Renders the window's content to a PNG.
     fn capture(&mut self, _window: WindowId) -> Result<crate::semantics::Capture, crate::semantics::ActionError> {
         Err(crate::semantics::ActionError::Unsupported("capture".into()))

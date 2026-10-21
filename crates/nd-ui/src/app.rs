@@ -232,6 +232,8 @@ pub struct App {
     retitled: HashMap<WindowId, SharedString>,
     /// The user asked for less motion: element animations jump instead of moving.
     pub(crate) reduce_motion: bool,
+    /// The drag and drop running now.
+    pub(crate) drag: Option<crate::drag::Session>,
 }
 
 impl App {
@@ -264,6 +266,7 @@ impl App {
             frames: 0,
             retitled: HashMap::new(),
             reduce_motion: false,
+            drag: None,
         }
     }
 
@@ -505,6 +508,10 @@ impl App {
     /// Matches `keystroke` in the window's focused context and dispatches the bound action to
     /// the elements' `on_action` listeners. Platforms call it before their own text handling.
     pub fn dispatch_keystroke(&mut self, window: WindowId, keystroke: &Keystroke) -> KeyDispatch {
+        if keystroke.key == "escape" && self.drag_escapes() {
+            self.cancel_drag();
+            return KeyDispatch::Handled;
+        }
         self.with_dispatch(window, KeyDispatch::Unhandled, |tree, app| tree.dispatch_key(keystroke, app))
     }
 
@@ -818,6 +825,9 @@ impl App {
             let any: &dyn Any = &*event.event;
             if let Some(resized) = any.downcast_ref::<crate::canvas::CanvasResized>() {
                 self.repaint_canvas(event.node, resized.width, resized.height);
+                continue;
+            }
+            if self.drag_event(event.node, any) {
                 continue;
             }
             let type_id = any.type_id();

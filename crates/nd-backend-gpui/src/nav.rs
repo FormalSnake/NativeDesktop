@@ -331,6 +331,10 @@ pub enum TreeInput {
     Toggle(SharedString, bool),
     Action(SharedString, SharedString),
     Hover(Option<SharedString>),
+    /// A press on a row that drags, with its title and where in the window it landed.
+    Press(nd_ui::DragItem, SharedString, gpui::Point<Pixels>),
+    /// A row's bounds in the window, as just laid out, by its id.
+    Row(SharedString, gpui::Bounds<Pixels>),
 }
 
 /// The drawn source tree: section headers, rows indented by depth with a disclosure, the
@@ -384,6 +388,22 @@ pub fn source_tree_view(
     let actions: HashMap<&SharedString, _> = props.actions.iter().map(|a| (&a.id, a)).collect();
     let hover_only = props.action_visibility == nd_components::ActionVisibility::Hover;
     let indent = theme.spacing.lg.as_f32();
+    // Rows report where they are laid out, which a drag over the list places its slot by.
+    let drags = props.drag_kind.is_some() || !props.accepts.is_empty();
+    let report = |id: &SharedString| {
+        let on_input = on_input.clone().filter(|_| drags)?;
+        let id = id.clone();
+        Some(
+            gpui::canvas(
+                move |bounds, window, cx| on_input(TreeInput::Row(id.clone(), bounds), window, cx),
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+    };
     for (i, depth) in index.visible(&props.nodes) {
         let node = &props.nodes[i];
         if node.section && compact {
@@ -399,7 +419,9 @@ pub fn source_tree_view(
                     .text_size(theme.type_scale.footnote)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.text.secondary)
-                    .child(node.title.clone()),
+                    .relative()
+                    .child(node.title.clone())
+                    .children(report(&node.id)),
             );
             continue;
         }
@@ -559,15 +581,84 @@ pub fn source_tree_view(
                     on_click(TreeInput::Select(click_key.clone()), window, cx);
                 }
             });
+            if let Some(item) = props.drag_item(i) {
+                let (on_press, title) = (on_input.clone(), node.title.clone());
+                row = row.on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                    on_press(TreeInput::Press(item.clone(), title.clone(), event.position), window, cx);
+                });
+            }
             if hover_only {
                 row = row.on_hover(move |inside, window, cx| {
                     on_input(TreeInput::Hover(inside.then(|| key.clone())), window, cx);
                 });
             }
         }
-        list = list.child(row);
+        list = list.child(row.children(report(&node.id)));
     }
     list.into_any_element()
+}
+
+/// Window-wide pointer listeners for a press on a row of a tree whose rows drag: past
+/// [`DRAG_START`] the press becomes an nd drag ([`nd_ui::DragSource`]), which follows the pointer
+/// out of the list and the window and ends on the release.
+fn row_drag_listener(drawn: &Rc<RefCell<Drawn>>, emit: &Emit, wake: &crate::backend::Wake) -> AnyElement {
+    let (moved, released) = (drawn.clone(), drawn.clone());
+    let (emit_move, emit_up) = (emit.clone(), emit.clone());
+    let (wake_move, wake_up) = (wake.clone(), wake.clone());
+    gpui::canvas(
+        |_, _, _| (),
+        move |_, (), window, _| {
+            let (drawn, emit, wake) = (moved.clone(), emit_move.clone(), wake_move.clone());
+            window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+                if phase != gpui::DispatchPhase::Capture {
+                    return;
+                }
+                let Drawn::Tree(t) = &mut *drawn.borrow_mut() else { return };
+                let Some(press) = t.press.as_mut() else { return };
+                if event.pressed_button != Some(MouseButton::Left) {
+                    if press.dragging {
+                        emit.emit(drag_source(&press.item, nd_ui::GesturePhase::Ended, press.at));
+                        wake(cx);
+                    }
+                    t.press = None;
+                    t.slot = None;
+                    window.refresh();
+                    return;
+                }
+                press.at = event.position;
+                let moved = press.at - press.start;
+                if !press.dragging && moved.x.as_f32().hypot(moved.y.as_f32()) < DRAG_START {
+                    return;
+                }
+                if !press.dragging {
+                    press.dragging = true;
+                    emit.emit(drag_source(&press.item, nd_ui::GesturePhase::Began, press.start));
+                }
+                emit.emit(drag_source(&press.item, nd_ui::GesturePhase::Changed, press.at));
+                wake(cx);
+                window.refresh();
+            });
+            let (drawn, emit, wake) = (released.clone(), emit_up.clone(), wake_up.clone());
+            window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
+                if phase != gpui::DispatchPhase::Capture || event.button != MouseButton::Left {
+                    return;
+                }
+                let Drawn::Tree(t) = &mut *drawn.borrow_mut() else { return };
+                let Some(press) = t.press.take() else { return };
+                t.slot = None;
+                if press.dragging {
+                    emit.emit(drag_source(&press.item, nd_ui::GesturePhase::Ended, event.position));
+                    wake(cx);
+                    // The release ends the drag, not a click on the row under it.
+                    cx.stop_propagation();
+                    window.refresh();
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
+    .into_any_element()
 }
 
 /// Input on a drawn toast.
@@ -749,6 +840,60 @@ pub(crate) struct ToastsDrawn {
 #[derive(Default)]
 pub(crate) struct TreeDrawn {
     pub hovered: Option<SharedString>,
+    /// A press on a row, which turns into a drag once the pointer moves [`DRAG_START`].
+    pub press: Option<RowPress>,
+    /// Each row's bounds in the window as last laid out, by id.
+    pub rows: HashMap<SharedString, gpui::Bounds<Pixels>>,
+    /// The line marking where a drag over the list lands: its left end and width.
+    pub slot: Option<(gpui::Point<Pixels>, Pixels)>,
+}
+
+pub(crate) struct RowPress {
+    item: nd_ui::DragItem,
+    title: SharedString,
+    start: gpui::Point<Pixels>,
+    at: gpui::Point<Pixels>,
+    /// The press point's offset into its row, and the row's width.
+    grab: gpui::Point<Pixels>,
+    width: Pixels,
+    dragging: bool,
+}
+
+/// How far a press moves before it drags, as a window tab's does.
+const DRAG_START: f32 = 4.;
+
+fn drag_source(item: &nd_ui::DragItem, phase: nd_ui::GesturePhase, at: gpui::Point<Pixels>) -> nd_ui::DragSource {
+    let at = nd_ui::DragPoint::Window(nd_core::Point { x: at.x.as_f32(), y: at.y.as_f32() });
+    nd_ui::DragSource { item: item.clone(), phase, at, native: false }
+}
+
+impl TreeDrawn {
+    /// Where a drag at `at` (window coordinates) lands among `props`' rows, with the slot line
+    /// placed there.
+    pub(crate) fn drop_slot(&mut self, props: &SourceTreeProps, at: nd_core::Point) -> nd_ui::DropSlot {
+        let index = SourceIndex::new(&props.nodes);
+        let visible = index.visible(&props.nodes);
+        let y = px(at.y);
+        let rows: Vec<(usize, gpui::Bounds<Pixels>)> =
+            visible.iter().filter_map(|(i, _)| Some((*i, *self.rows.get(&props.nodes[*i].id)?))).collect();
+        let over = rows.iter().find(|(_, b)| y >= b.top() && y < b.bottom());
+        let (row, upper, line) = match over {
+            Some((i, b)) => {
+                let upper = y < b.center().y;
+                let below = !upper || props.nodes[*i].section;
+                let line_y = if below { b.bottom() } else { b.top() };
+                (visible.iter().position(|(v, _)| v == i), upper, Some((point(b.left(), line_y), b.size.width)))
+            }
+            None => match rows.first() {
+                Some((_, first)) if y < first.top() => {
+                    (Some(0), true, Some((point(first.left(), first.top()), first.size.width)))
+                }
+                _ => (None, false, rows.last().map(|(_, b)| (point(b.left(), b.bottom()), b.size.width))),
+            },
+        };
+        self.slot = line;
+        index.drop_slot(&props.nodes, &visible, row, upper)
+    }
 }
 
 pub(crate) type DrawnMap = Rc<RefCell<HashMap<NodeId, Rc<RefCell<Drawn>>>>>;
@@ -836,7 +981,7 @@ impl GpuiBackend {
         })
     }
 
-    fn drawn_of(&self, id: NodeId) -> Option<Rc<RefCell<Drawn>>> {
+    pub(crate) fn drawn_of(&self, id: NodeId) -> Option<Rc<RefCell<Drawn>>> {
         self.drawn.borrow().get(&id).cloned()
     }
 
@@ -1059,12 +1204,40 @@ impl Build<'_> {
                 .entry(id)
                 .or_insert_with(|| Rc::new(RefCell::new(Drawn::Tree(TreeDrawn::default()))))
                 .clone();
-            let hovered = match &*drawn.borrow() {
-                Drawn::Tree(t) => t.hovered.clone(),
-                _ => None,
+            let (hovered, slot, preview) = match &*drawn.borrow() {
+                Drawn::Tree(t) => (
+                    t.hovered.clone(),
+                    t.slot,
+                    t.press.as_ref().filter(|p| p.dragging).map(|p| (p.title.clone(), p.at - p.grab, p.width)),
+                ),
+                _ => (None, None, None),
             };
+            let listener = props.drag_kind.is_some().then(|| row_drag_listener(&drawn, &emit, &wake));
+            let tree = drawn.clone();
             let on_input: OnInput<TreeInput> = Rc::new(move |input, window, cx| {
                 match input {
+                    TreeInput::Press(item, title, at) => {
+                        if let Drawn::Tree(t) = &mut *tree.borrow_mut() {
+                            let row = t.rows.values().copied().find(|b| b.contains(&at));
+                            let origin = row.map_or(at, |b| b.origin);
+                            t.press = Some(RowPress {
+                                item,
+                                title,
+                                start: at,
+                                at,
+                                grab: at - origin,
+                                width: row.map_or(px(200.), |b| b.size.width),
+                                dragging: false,
+                            });
+                        }
+                        return;
+                    }
+                    TreeInput::Row(id, bounds) => {
+                        if let Drawn::Tree(t) = &mut *tree.borrow_mut() {
+                            t.rows.insert(id, bounds);
+                        }
+                        return;
+                    }
                     TreeInput::Select(id) => emit.emit(SourceSelected { id }),
                     TreeInput::Activate(id) => emit.emit(SourceActivated { id }),
                     TreeInput::Toggle(id, true) => emit.emit(SourceExpanded { id }),
@@ -1093,6 +1266,16 @@ impl Build<'_> {
                         Some(on_input),
                         marks,
                     ))
+                    .children(slot.map(|(at, width)| {
+                        let line = div().w(width).h(px(2.)).rounded(px(1.)).bg(theme.accent);
+                        deferred(anchored().position(point(at.x, at.y - px(1.))).child(line))
+                            .with_priority(crate::overlay::PANEL_PRIORITY)
+                    }))
+                    .children(
+                        preview
+                            .map(|(title, at, width)| crate::tab_bar::drag_preview(&title, theme, at, width.as_f32())),
+                    )
+                    .children(listener)
                     .into_any_element(),
             );
         }

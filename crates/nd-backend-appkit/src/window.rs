@@ -10,10 +10,17 @@ use objc2_app_kit::{
     NSBackingStoreType, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSPasteboardTypeFileURL, NSResponder,
     NSView, NSWindow, NSWindowStyleMask,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSRect, NSURL};
+use objc2_foundation::{MainThreadMarker, NSArray, NSRect, NSString, NSURL};
 
 fn drag_operation(info: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
     if dropped_files(info).is_empty() { NSDragOperation::None } else { NSDragOperation::Copy }
+}
+
+/// An nd drag from this process (a source list row): its pasteboard carries the nd type.
+fn nd_drag(info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
+    let kind = NSString::from_str(crate::source_list::DRAG_TYPE);
+    info.draggingPasteboard().availableTypeFromArray(&NSArray::from_slice(&[&*kind])).is_some()
+        && info.draggingSource().is_some()
 }
 
 /// The file paths on a drag's pasteboard.
@@ -44,6 +51,15 @@ pub trait KeyRouter {
     fn pointer_down(&self) {}
     /// Files dropped onto the window, at `at` in window points from the top left.
     fn files_dropped(&self, _paths: Vec<std::path::PathBuf>, _at: (f32, f32)) {}
+    /// An nd drag is over the window at `at` (window points from the top left), or left it.
+    /// Returns whether a target there takes it.
+    fn drag_over(&self, _at: Option<(f32, f32)>) -> bool {
+        false
+    }
+    /// An nd drag was released over the window. Returns whether a target took it.
+    fn drag_drop(&self, _at: (f32, f32)) -> bool {
+        false
+    }
 }
 
 #[derive(Default)]
@@ -110,17 +126,31 @@ define_class!(
 
         #[unsafe(method(draggingEntered:))]
         fn dragging_entered(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
-            drag_operation(sender)
+            if nd_drag(sender) { self.nd_drag_over(sender) } else { drag_operation(sender) }
         }
 
         #[unsafe(method(draggingUpdated:))]
         fn dragging_updated(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
-            drag_operation(sender)
+            if nd_drag(sender) { self.nd_drag_over(sender) } else { drag_operation(sender) }
+        }
+
+        #[unsafe(method(draggingExited:))]
+        fn dragging_exited(&self, sender: Option<&ProtocolObject<dyn NSDraggingInfo>>) {
+            if sender.is_some_and(nd_drag)
+                && let Some(router) = self.router()
+            {
+                router.drag_over(None);
+            }
         }
 
         #[unsafe(method(performDragOperation:))]
         fn perform_drag_operation(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
-            self.drop_files(sender)
+            if nd_drag(sender) {
+                let at = self.drag_point(sender);
+                self.router().is_some_and(|r| r.drag_drop(at))
+            } else {
+                self.drop_files(sender)
+            }
         }
 
         #[unsafe(method(update))]
@@ -149,7 +179,8 @@ impl NdWindow {
         unsafe { this.setReleasedWhenClosed(false) };
         // Files dropped anywhere no view claims reach `files_dropped`.
         // SAFETY: a framework constant.
-        this.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }]));
+        let nd = NSString::from_str(crate::source_list::DRAG_TYPE);
+        this.registerForDraggedTypes(&NSArray::from_slice(&[unsafe { NSPasteboardTypeFileURL }, &*nd]));
         this
     }
 
@@ -182,10 +213,20 @@ impl NdWindow {
     fn drop_files(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
         let paths = dropped_files(sender);
         let Some(router) = self.router().filter(|_| !paths.is_empty()) else { return false };
+        router.files_dropped(paths, self.drag_point(sender));
+        true
+    }
+
+    /// Where the drag is, in window points from the top left.
+    fn drag_point(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> (f32, f32) {
         let at = sender.draggingLocation();
         let height = self.contentView().map_or(0., |v| v.frame().size.height);
-        router.files_dropped(paths, (at.x as f32, (height - at.y) as f32));
-        true
+        (at.x as f32, (height - at.y) as f32)
+    }
+
+    fn nd_drag_over(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+        let at = self.drag_point(sender);
+        if self.router().is_some_and(|r| r.drag_over(Some(at))) { NSDragOperation::Move } else { NSDragOperation::None }
     }
 
     fn router(&self) -> Option<Rc<dyn KeyRouter>> {
