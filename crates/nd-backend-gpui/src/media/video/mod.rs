@@ -324,6 +324,16 @@ impl Playback {
     }
 }
 
+/// A released video node's playback stops now, sound included, even while something still
+/// holds its state.
+pub(crate) fn released(state: &Rc<dyn std::any::Any>) {
+    if let Ok(playback) = state.clone().downcast::<RefCell<Playback>>()
+        && let Ok(mut p) = playback.try_borrow_mut()
+    {
+        (p.commands, p.shared, p.listen) = (None, None, None);
+    }
+}
+
 pub(super) fn video(
     b: &Build,
     id: NodeId,
@@ -340,7 +350,7 @@ pub(super) fn video(
             s.app = b.backend.state.borrow().app.clone();
         }
     }
-    if state.borrow().source != p.source {
+    if state.borrow().source != p.source && !b.ghost {
         state.borrow_mut().close(window, cx);
         state.borrow_mut().source = p.source.clone();
         if let Some(source) = p.source.clone() {

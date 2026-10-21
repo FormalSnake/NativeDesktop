@@ -684,6 +684,11 @@ impl GpuiBackend {
         true
     }
 
+    /// Whether `node` has a drawn control's state, for tests: a released node keeps none.
+    pub fn holds_control_state(&self, node: NodeId) -> bool {
+        self.form_drawn.borrow().contains_key(&node)
+    }
+
     /// Whether the window shows a context menu, for tests and Esc.
     pub fn menu_open(&self, window: WindowId) -> bool {
         self.state.borrow().menus.contains_key(&window)

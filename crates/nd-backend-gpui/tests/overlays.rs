@@ -26,6 +26,7 @@ struct Scene {
     panel: bool,
     cover: bool,
     cover_light: bool,
+    cover_field: bool,
     cover_taps: u32,
     under: u32,
     chosen: u32,
@@ -86,6 +87,7 @@ impl Render for Scene {
             .child(text(format!("under={} chosen={}", self.under, self.chosen)).id("status"))
             .when(self.cover, |d| {
                 let light = self.cover_light;
+                let field = self.cover_field;
                 d.child(
                     cover("cover")
                         .when(light, |c| c.modality(Modality::LightDismiss))
@@ -94,12 +96,18 @@ impl Render for Scene {
                             this.cover = false;
                             cx.notify();
                         }))
-                        .child(v_flex().size_full().p(px(40.)).child(div().id("cover-zone").size_full().on_tap(
-                            cx.listener(|this, _: &TapEvent, _, cx| {
-                                this.cover_taps += 1;
-                                cx.notify();
-                            }),
-                        ))),
+                        .child(
+                            v_flex()
+                                .size_full()
+                                .p(px(40.))
+                                .child(div().id("cover-zone").size_full().on_tap(cx.listener(
+                                    |this, _: &TapEvent, _, cx| {
+                                        this.cover_taps += 1;
+                                        cx.notify();
+                                    },
+                                )))
+                                .when(field, |v| v.child(nd_components::forms::text_field("cover-field").w(px(100.)))),
+                        ),
                 )
             })
             .when(self.panel, |d| {
@@ -438,6 +446,25 @@ mod gate_m4_overlays {
         post(&mut o, wiggle(nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 14. }));
         assert!(!drawn(&o, "Deeper"), "hovering another row shuts the submenu");
     }
+
+    /// A closed cover still draws its controls while it animates out, but keeps no state for
+    /// them once their nodes are released: a control drawn then must not start anything that
+    /// outlives the exit (a video would play on unheard).
+    pub fn gpui_a_closed_cover_keeps_no_control_state() {
+        let mut o = open();
+        set(&mut o, |s| {
+            s.cover = true;
+            s.cover_field = true;
+        });
+        let field = by_test_id(&o.host, o.window, "cover-field").expect("the field is drawn").id;
+        assert!(o.host.backend().holds_control_state(field), "the open cover's field keeps its state");
+        set(&mut o, |s| s.cover = false);
+        settle(&mut o.cx, &o.host);
+        assert!(!o.host.backend().holds_control_state(field), "the leaving cover's field keeps none");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        assert!(!o.host.backend().holds_control_state(field), "nor after its exit");
+    }
 }
 
 fn main() {
@@ -470,6 +497,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_context_submenu_opens_on_hover",
             gate_m4_overlays::gpui_context_submenu_opens_on_hover,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_closed_cover_keeps_no_control_state",
+            gate_m4_overlays::gpui_a_closed_cover_keeps_no_control_state,
         ),
     ];
     let has = |flag: &str| args.iter().any(|a| a == flag);

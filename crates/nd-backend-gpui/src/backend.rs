@@ -564,7 +564,10 @@ impl Backend for GpuiBackend {
     }
 
     fn release(&mut self, node: NodeId) {
-        self.form_drawn.borrow_mut().remove(&node);
+        let drawn = self.form_drawn.borrow_mut().remove(&node);
+        if let Some(drawn) = drawn {
+            crate::media::video_released(&drawn.state);
+        }
         self.splits.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
