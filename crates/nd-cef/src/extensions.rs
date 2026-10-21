@@ -480,7 +480,7 @@ impl ExtensionEngine for Engine {
                         .and_then(|v| v["product"].as_str().and_then(|p| p.split('/').nth(1)).map(str::to_owned))
                         .unwrap_or_else(|| "154.0.0.0".into());
                     store_manifest(id.clone(), version, move |r| match r {
-                        Ok(manifest) => install_in_hidden_store(id, manifest, Box::new(f2)),
+                        Ok(manifest) => install_queued(id, manifest, Box::new(f2)),
                         Err(e) => f2(Err(e)),
                     });
                 });
@@ -601,6 +601,49 @@ fn open_store_browser(then: impl FnOnce(Result<(cef::Browser, String), String>) 
             });
         }),
     );
+}
+
+/// Whether an install by id is running, and the ones waiting for it.
+type StoreQueue = (bool, std::collections::VecDeque<Box<dyn FnOnce()>>);
+
+thread_local! {
+    static STORE_QUEUE: RefCell<StoreQueue> = RefCell::default();
+}
+
+/// Installs by id run one at a time: each raises Chrome's prompt, and the prompt watch
+/// (`install_prompt`) answers one.
+fn install_queued(id: String, manifest: String, done: Then<String>) {
+    let run: Box<dyn FnOnce()> = Box::new(move || {
+        install_in_hidden_store(
+            id,
+            manifest,
+            Box::new(move |r| {
+                done(r);
+                let next = STORE_QUEUE.with(|q| {
+                    let mut q = q.borrow_mut();
+                    let next = q.1.pop_front();
+                    q.0 = next.is_some();
+                    next
+                });
+                if let Some(next) = next {
+                    next();
+                }
+            }),
+        )
+    });
+    let now = STORE_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.0 {
+            q.1.push_back(run);
+            None
+        } else {
+            q.0 = true;
+            Some(run)
+        }
+    });
+    if let Some(run) = now {
+        run();
+    }
 }
 
 fn install_in_hidden_store(id: String, manifest: String, done: Then<String>) {
