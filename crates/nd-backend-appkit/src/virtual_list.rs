@@ -26,18 +26,20 @@ use nd_virtual::{
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSCollectionView, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewFlowLayout,
-    NSCollectionViewItem, NSControlTextEditingDelegate, NSIndexPathNSCollectionViewAdditions, NSOutlineView,
-    NSOutlineViewDataSource, NSOutlineViewDelegate, NSScrollView, NSTableColumn, NSTableColumnResizingOptions,
-    NSTableView, NSTableViewAnimationOptions, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource,
-    NSTableViewDelegate, NSTableViewStyle, NSView, NSViewBoundsDidChangeNotification,
+    NSBezierPath, NSCollectionView, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewFlowLayout,
+    NSCollectionViewItem, NSColor, NSControlTextEditingDelegate, NSEvent, NSIndexPathNSCollectionViewAdditions,
+    NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSResponder, NSScrollView, NSTableColumn,
+    NSTableColumnResizingOptions, NSTableRowView, NSTableView, NSTableViewAnimationOptions,
+    NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTrackingArea,
+    NSTrackingAreaOptions, NSView, NSViewBoundsDidChangeNotification,
 };
 use objc2_core_foundation::CGFloat;
 use objc2_foundation::{
     MainThreadMarker, NSDictionary, NSEdgeInsets, NSIndexPath, NSIndexSet, NSInteger, NSMutableIndexSet,
-    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSString, NSUserDefaults,
+    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSRect, NSString,
+    NSUserDefaults,
 };
 
 use crate::events::Wake;
@@ -206,6 +208,84 @@ impl Shared {
     }
 }
 
+#[derive(Default)]
+pub struct HoverRowIvars {
+    hovered: Cell<bool>,
+    area: RefCell<Option<Retained<NSTrackingArea>>>,
+}
+
+define_class!(
+    // SAFETY: NSTableRowView has no subclassing requirements and this type does not implement Drop.
+    #[unsafe(super(NSTableRowView, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = HoverRowIvars]
+    pub struct NdHoverRowView;
+
+    impl NdHoverRowView {
+        #[unsafe(method(updateTrackingAreas))]
+        fn update_tracking_areas(&self) {
+            let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
+            if let Some(old) = self.ivars().area.take() {
+                self.removeTrackingArea(&old);
+            }
+            let options = NSTrackingAreaOptions::MouseEnteredAndExited
+                | NSTrackingAreaOptions::ActiveInKeyWindow
+                | NSTrackingAreaOptions::InVisibleRect;
+            let area = unsafe {
+                NSTrackingArea::initWithRect_options_owner_userInfo(
+                    NSTrackingArea::alloc(),
+                    NSRect::ZERO,
+                    options,
+                    Some(self),
+                    None,
+                )
+            };
+            self.addTrackingArea(&area);
+            self.ivars().area.replace(Some(area));
+        }
+
+        #[unsafe(method(mouseEntered:))]
+        fn mouse_entered(&self, _event: &NSEvent) {
+            self.set_hovered(true);
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            self.set_hovered(false);
+        }
+
+        #[unsafe(method(prepareForReuse))]
+        fn prepare_for_reuse(&self) {
+            let _: () = unsafe { msg_send![super(self), prepareForReuse] };
+            self.ivars().hovered.set(false);
+        }
+
+        #[unsafe(method(drawBackgroundInRect:))]
+        fn draw_background(&self, rect: NSRect) {
+            let _: () = unsafe { msg_send![super(self), drawBackgroundInRect: rect] };
+            if !self.ivars().hovered.get() || self.isSelected() {
+                return;
+            }
+            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(), 6., 6.);
+            NSColor::quaternarySystemFillColor().setFill();
+            path.fill();
+        }
+    }
+);
+
+impl NdHoverRowView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(HoverRowIvars::default());
+        unsafe { msg_send![super(this), init] }
+    }
+
+    fn set_hovered(&self, hovered: bool) {
+        if self.ivars().hovered.replace(hovered) != hovered {
+            self.setNeedsDisplay(true);
+        }
+    }
+}
+
 pub struct ListIvars {
     shared: Rc<Shared>,
 }
@@ -244,6 +324,17 @@ define_class!(
             let id = shared.snap.borrow().ids.get(row as usize).copied();
             let col = column.map_or(0, |c| table.columnWithIdentifier(&c.identifier()).max(0) as usize);
             id.map(|id| Retained::into_super(shared.container(id, col)))
+        }
+
+        /// A table's rows get the hover fill Music's song tables have; a source list and a plain
+        /// list of mixed rows keep AppKit's own row view.
+        #[unsafe(method_id(tableView:rowViewForRow:))]
+        fn row_view_for(&self, table: &NSTableView, _row: NSInteger) -> Option<Retained<NSTableRowView>> {
+            let shared = &self.ivars().shared;
+            let hovers = matches!(*shared.kind.borrow(), ListKind::Table(_))
+                && shared.selection.get() != Selection::None
+                && table.style() != NSTableViewStyle::SourceList;
+            hovers.then(|| Retained::into_super(NdHoverRowView::new(MainThreadMarker::from(self))))
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]

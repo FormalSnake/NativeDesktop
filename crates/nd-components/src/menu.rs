@@ -209,3 +209,65 @@ pub struct ContextMenuRequested {
     pub x: f32,
     pub y: f32,
 }
+
+impl MenuItem {
+    /// A copy of the item; the action is cloned through `boxed_clone`.
+    pub fn duplicate(&self) -> MenuItem {
+        match self {
+            MenuItem::Action { label, action, icon, destructive, enabled, checked } => MenuItem::Action {
+                label: label.clone(),
+                action: action.boxed_clone(),
+                icon: *icon,
+                destructive: *destructive,
+                enabled: *enabled,
+                checked: *checked,
+            },
+            MenuItem::Submenu(menu) => MenuItem::Submenu(menu.duplicate()),
+            MenuItem::Separator => MenuItem::Separator,
+            MenuItem::Role(role) => MenuItem::Role(*role),
+        }
+    }
+}
+
+impl Menu {
+    pub fn duplicate(&self) -> Menu {
+        Menu { title: self.title.clone(), kind: self.kind, items: self.items.iter().map(MenuItem::duplicate).collect() }
+    }
+}
+
+thread_local! {
+    static APP_MENUS: std::cell::RefCell<Vec<Menu>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn remember_app_menus(menus: &[Menu]) {
+    APP_MENUS.with(|m| *m.borrow_mut() = menus.iter().map(Menu::duplicate).collect());
+}
+
+/// The app's menu bar folded into one primary menu, for platforms without a menu bar: the
+/// app menu's items first, then each menu as a submenu under its title, then Help's items.
+/// System roles (Edit, Window, Quit) are left out; the window and its controls cover them.
+pub fn primary_menu_items() -> Vec<MenuItem> {
+    APP_MENUS.with(|menus| {
+        let menus = menus.borrow();
+        let own = |m: &Menu| -> Vec<MenuItem> {
+            m.items.iter().filter(|i| !matches!(i, MenuItem::Role(_))).map(MenuItem::duplicate).collect()
+        };
+        let mut sections: Vec<Vec<MenuItem>> = Vec::new();
+        let submenus: Vec<MenuItem> = menus
+            .iter()
+            .filter(|m| m.kind == MenuKind::Normal && !own(m).is_empty())
+            .map(|m| MenuItem::Submenu(Menu { title: m.title.clone(), kind: MenuKind::Normal, items: own(m) }))
+            .collect();
+        sections.extend(menus.iter().filter(|m| m.kind == MenuKind::App).map(own));
+        sections.push(submenus);
+        sections.extend(menus.iter().filter(|m| m.kind == MenuKind::Help).map(own));
+        let mut items = Vec::new();
+        for section in sections.into_iter().filter(|s| !s.is_empty()) {
+            if !items.is_empty() {
+                items.push(MenuItem::Separator);
+            }
+            items.extend(section);
+        }
+        items
+    })
+}

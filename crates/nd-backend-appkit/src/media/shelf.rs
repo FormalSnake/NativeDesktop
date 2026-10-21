@@ -1,6 +1,12 @@
 //! `shelf` on AppKit: an `NSScrollView` that scrolls sideways only, its document holding the
 //! node's children at the frames nd lays them out at, with circular system buttons over the
-//! edges to page it. A scroll that settles off a card's edge glides to the nearest one.
+//! edges to page it. A scroll that settles off a card's edge glides to the nearest one, once the
+//! fingers and their momentum are done.
+//!
+//! A shelf sits in a page that scrolls the other way. AppKit latches a trackpad gesture to the
+//! scroll view under the pointer when it starts, and a sideways-only scroll view keeps a vertical
+//! gesture, so the page stalls and stutters whenever a shelf passes under the pointer. A gesture
+//! that starts mostly vertical goes to the enclosing scroll view whole, momentum included.
 
 use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
@@ -14,17 +20,83 @@ use nd_ui::events::Emit;
 use nd_ui::semantics::{ActionError, SemanticAction};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAnimatablePropertyContainer, NSAnimationContext, NSBezelStyle, NSButton, NSScrollElasticity, NSScrollView,
-    NSView, NSViewBoundsDidChangeNotification,
+    NSAnimatablePropertyContainer, NSAnimationContext, NSBezelStyle, NSButton, NSEvent, NSEventPhase, NSResponder,
+    NSScrollElasticity, NSScrollView, NSScrollViewDidEndLiveScrollNotification,
+    NSScrollViewWillStartLiveScrollNotification, NSView, NSViewBoundsDidChangeNotification,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize, NSTimer};
+use objc2_foundation::{
+    MainThreadMarker, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSTimer,
+};
 
 use super::{Input, NdMediaView, reduce_motion};
 use crate::custom::{CustomCx, CustomNative, CustomWidget, Waker};
 
-/// How long a scroll must be still before it snaps.
+/// How long a mouse wheel scroll must be still before it snaps. A trackpad scroll snaps when its
+/// live scroll ends.
 const SETTLE: f64 = 0.18;
+
+#[derive(Default)]
+pub struct ShelfScrollIvars {
+    /// The gesture under way started vertical and belongs to the page.
+    passing: Cell<bool>,
+}
+
+define_class!(
+    // SAFETY: NSScrollView has no subclassing requirements beyond calling super, and this type
+    // does not implement Drop.
+    #[unsafe(super(NSScrollView, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ShelfScrollIvars]
+    pub struct NdShelfScrollView;
+
+    impl NdShelfScrollView {
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            if self.passes(event) {
+                if let Some(next) = unsafe { self.nextResponder() } {
+                    let _: () = unsafe { msg_send![&*next, scrollWheel: event] };
+                }
+            } else {
+                let _: () = unsafe { msg_send![super(self), scrollWheel: event] };
+            }
+        }
+    }
+);
+
+impl NdShelfScrollView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(ShelfScrollIvars::default());
+        unsafe { msg_send![super(this), init] }
+    }
+
+    /// Whether `event` belongs to the page: every event of a gesture that began mostly vertical,
+    /// through its momentum, and a mouse wheel turned without a sideways component.
+    fn passes(&self, event: &NSEvent) -> bool {
+        let passing = &self.ivars().passing;
+        let (phase, momentum) = (event.phase(), event.momentumPhase());
+        let (dx, dy) = (event.scrollingDeltaX().abs(), event.scrollingDeltaY().abs());
+        if phase.contains(NSEventPhase::MayBegin) || phase.contains(NSEventPhase::Began) {
+            passing.set(dy > dx);
+            if phase.contains(NSEventPhase::MayBegin) && dx == 0. && dy == 0. {
+                // Fingers resting, direction unknown: the first moving event decides.
+                passing.set(false);
+                return false;
+            }
+            return passing.get();
+        }
+        if phase.is_empty() && momentum.is_empty() {
+            return dx == 0. && dy > 0.;
+        }
+        let pass = passing.get();
+        if momentum.contains(NSEventPhase::Ended) || momentum.contains(NSEventPhase::Cancelled) {
+            passing.set(false);
+        }
+        pass
+    }
+}
 
 pub(crate) struct ShelfWidget;
 
@@ -33,7 +105,7 @@ impl CustomWidget for ShelfWidget {
         let mtm = cx.mtm();
         let props = props(cx).clone();
         let view = NdMediaView::new(mtm);
-        let scroll = NSScrollView::new(mtm);
+        let scroll = Retained::into_super(NdShelfScrollView::new(mtm));
         scroll.setDrawsBackground(false);
         scroll.setHasHorizontalScroller(true);
         scroll.setHasVerticalScroller(false);
@@ -66,7 +138,8 @@ impl CustomWidget for ShelfWidget {
             programmatic: Rc::new(Cell::new(false)),
             flags: Cell::new(None),
             settle: RefCell::new(None),
-            observer: RefCell::new(None),
+            live: Cell::new(false),
+            observer: RefCell::new(Vec::new()),
             targets: RefCell::new(Vec::new()),
             emit: cx.emitter(),
             wake: cx.waker(),
@@ -93,7 +166,9 @@ struct ShelfInner {
     /// The paging flags last reported, so `ShelfScrolled` fires only when they change.
     flags: Cell<Option<(bool, bool)>>,
     settle: RefCell<Option<Retained<NSTimer>>>,
-    observer: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
+    /// The user's fingers or their momentum are moving the shelf.
+    live: Cell<bool>,
+    observer: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
     targets: RefCell<Vec<Retained<crate::forms::NdControlTarget>>>,
     emit: Emit,
     wake: Waker,
@@ -101,7 +176,7 @@ struct ShelfInner {
 
 impl Drop for ShelfInner {
     fn drop(&mut self) {
-        if let Some(o) = self.observer.get_mut().take() {
+        for o in self.observer.get_mut().drain(..) {
             unsafe { NSNotificationCenter::defaultCenter().removeObserver(o.as_ref()) };
         }
         if let Some(t) = self.settle.get_mut().take() {
@@ -129,7 +204,45 @@ impl ShelfInner {
                 &moved,
             )
         };
-        *self.observer.borrow_mut() = Some(observer);
+        let scroll_obj: &AnyObject = &self.scroll;
+        let me = Rc::downgrade(self);
+        let started = RcBlock::new(move |_n: NonNull<NSNotification>| {
+            if let Some(me) = me.upgrade() {
+                me.live.set(true);
+                if let Some(t) = me.settle.borrow_mut().take() {
+                    t.invalidate();
+                }
+            }
+        });
+        let me = Rc::downgrade(self);
+        let ended = RcBlock::new(move |_n: NonNull<NSNotification>| {
+            if let Some(me) = me.upgrade() {
+                me.live.set(false);
+                if me.props.borrow().snap {
+                    me.snap();
+                }
+            }
+        });
+        let center = NSNotificationCenter::defaultCenter();
+        let live = unsafe {
+            [
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(NSScrollViewWillStartLiveScrollNotification),
+                    Some(scroll_obj),
+                    None,
+                    &started,
+                ),
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(NSScrollViewDidEndLiveScrollNotification),
+                    Some(scroll_obj),
+                    None,
+                    &ended,
+                ),
+            ]
+        };
+        let mut observers = self.observer.borrow_mut();
+        observers.push(observer);
+        observers.extend(live);
         let mut targets = Vec::new();
         for (button, direction) in [(&self.back, -1), (&self.forward, 1)] {
             let me = Rc::downgrade(self);
@@ -173,7 +286,7 @@ impl ShelfInner {
     /// The clip view moved: report it, show the arrows that can page, and snap once it settles.
     fn moved(self: &Rc<Self>) {
         self.report();
-        if self.programmatic.get() || !self.props.borrow().snap {
+        if self.programmatic.get() || self.live.get() || !self.props.borrow().snap {
             return;
         }
         if let Some(t) = self.settle.borrow_mut().take() {

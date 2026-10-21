@@ -641,6 +641,10 @@ impl<'a> Build<'a> {
             }
             _ => None,
         };
+        // Half the selection's step: libadwaita lists hover at a twenty-fifth of the text
+        // colour against the tenth they select at.
+        let hover_color =
+            if props.inset { selection.opacity(0.5) } else { theme.hover(self.top().background).opacity(0.6) };
         crate::virtual_list::VirtualList {
             node: id,
             props,
@@ -652,6 +656,7 @@ impl<'a> Build<'a> {
             gestures: self.backend.gestures.clone(),
             window_id: self.window_id,
             selection_color: selection,
+            hover_color,
             sidebar,
             disclosure_color: self.top().text,
         }
@@ -833,6 +838,10 @@ impl<'a> Build<'a> {
             None if accent => (theme.accent, theme.text.on_accent),
             None => (look.control, look.text),
         };
+        // A toggle that is on sits pressed in with an accent glyph, as libadwaita's flat
+        // toggle buttons and WinUI's toggle states draw it.
+        let checked = props.checked == Some(true) && !accent;
+        let (fill, ink) = if checked { (theme.pressed(fill), theme.accent) } else { (fill, ink) };
         let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
         // WinUI's Button: ControlFillColorDefault, Secondary and Tertiary inside an elevation
         // border, its accent button AccentFillColorDefault at 100, 90 and 80%.
@@ -843,7 +852,7 @@ impl<'a> Build<'a> {
         };
         // Borderless: no bezel until the pointer is over it.
         let bezel = props.bezel != Bezel::Borderless || accent;
-        let rest = bezel.then_some(fill);
+        let rest = (bezel || checked).then_some(fill);
         self.painted(id, rest, None, "button", || {
             if glyph.is_some() {
                 self.record_marks(
@@ -868,11 +877,21 @@ impl<'a> Build<'a> {
             // wheel passes on to the window root's router, so a scroll view full of buttons
             // still scrolls.
             .block_mouse_except_scroll();
-        button = match glyph {
-            Some(g) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
+        // A labelled button with an icon leads with it, as libadwaita's button content does.
+        let leading = (!props.label.is_empty()).then(|| props.icon.as_deref().and_then(Glyph::named)).flatten();
+        button = match (glyph, leading) {
+            (Some(g), _) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
+            (None, Some(g)) => button
+                .gap(px(6.))
+                .pl(px(10.))
+                .pr(px(12.))
+                .py(px(4.))
+                .min_h(px(if fluent.is_some() { 32. } else { 0. }))
+                .child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75)))
+                .child(label),
             // WinUI's ButtonPadding (11, 5, 11, 6) inside a 1 px border, 32 px tall.
-            None if fluent.is_some() => button.px(px(11.)).min_h(px(32.)).child(label),
-            None => button.px(px(12.)).py(px(4.)).child(label),
+            (None, None) if fluent.is_some() => button.px(px(11.)).min_h(px(32.)).child(label),
+            (None, None) => button.px(px(12.)).py(px(4.)).child(label),
         };
         if bezel {
             button = match &fluent {
@@ -895,6 +914,8 @@ impl<'a> Build<'a> {
                     .children(crate::forms::toggle::elevation_edge(*f, theme.radius.md)),
                 None => button.border_1().border_color(look.border).bg(fill),
             };
+        } else if checked {
+            button = button.bg(fill);
         }
         if props.bezel == Bezel::Circle || filled_circle {
             button = button.rounded_full();
@@ -914,7 +935,7 @@ impl<'a> Build<'a> {
             if self.backend.platform_reduce_motion() == Some(true) { 0. } else { theme.motion.fast.as_secs_f64() };
         let fades = self.backend.fades.clone();
         let pointer = fades.pointer(id);
-        let rest = if bezel { fill } else { with_alpha(fill, 0.) };
+        let rest = if bezel || checked { fill } else { with_alpha(fill, 0.) };
         let target = if pointer.pressed {
             active
         } else if pointer.hovered {

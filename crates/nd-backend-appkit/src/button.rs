@@ -150,6 +150,11 @@ impl NativeButtonView {
                 }
             }
         }
+        if old.is_none_or(|o| o.checked != new.checked) {
+            // NSControlStateValueOn/Off: VoiceOver reads a toggle's state from it.
+            let state: isize = if new.checked == Some(true) { 1 } else { 0 };
+            let _: () = unsafe { msg_send![&**b, setState: state] };
+        }
         if old.is_none_or(|o| o.variant != new.variant) {
             let key = if new.variant == ButtonVariant::Primary { "\r" } else { "" };
             b.setKeyEquivalent(&NSString::from_str(key));
@@ -182,11 +187,17 @@ impl NativeButtonView {
         // A borderless button draws no bezel, so its colour goes to the icon instead: a prominent
         // borderless icon button is the accent glyph (Messages' send arrow).
         let borderless = props.bezel == Bezel::Borderless && props.label.is_empty();
+        // A toggle that is on draws its glyph in the accent, as Music's repeat and shuffle do.
+        let on = (props.checked == Some(true)).then(|| match self.accent.get() {
+            Some(c) => Color::from(c).ns_color(),
+            None => NSColor::controlAccentColor(),
+        });
         let tint = props
             .style
             .text
             .color
             .map(|c| Color::from(c).ns_color())
+            .or(on)
             .or_else(|| if borderless { bezel.clone() } else { None });
         self.button.setContentTintColor(tint.as_deref());
         // A push button's title ignores the content tint; its attributed title carries the colour.

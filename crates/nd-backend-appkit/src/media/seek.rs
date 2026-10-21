@@ -149,9 +149,14 @@ impl SeekInner {
         });
     }
 
+    /// The track's rect: the full width, or inset from both sides past the times beside it,
+    /// centred on the row.
     fn track_rect(&self) -> NSRect {
-        let width = self.view.bounds().size.width;
-        NSRect::new(NSPoint::new(0., 0.), NSSize::new(width, f64::from(SEEK.hit)))
+        let props = self.props.borrow();
+        let bounds = self.view.bounds().size;
+        let inset = f64::from(props.track_inset());
+        let y = if props.times_beside { ((bounds.height - f64::from(SEEK.hit)) / 2.).max(0.) } else { 0. };
+        NSRect::new(NSPoint::new(inset, y), NSSize::new((bounds.width - 2. * inset).max(0.), f64::from(SEEK.hit)))
     }
 
     fn fraction_at(&self, at: NSPoint) -> f32 {
@@ -167,19 +172,24 @@ impl SeekInner {
         let played = f64::from(props.fraction(shown));
         let buffered = f64::from(props.buffered_fraction(props.fraction(shown)));
         let active = model.active() && props.seekable();
+        drop(props);
         let r = self.track_rect();
+        let props = self.props.borrow();
         let thick = f64::from(if active { SEEK.track_active } else { SEEK.track });
-        let y = ((r.size.height - thick) / 2.).round();
-        let w = r.size.width;
+        let y = (r.origin.y + (r.size.height - thick) / 2.).round();
+        let (x0, w) = (r.origin.x, r.size.width);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for (layer, fraction) in [(&self.track, 1.), (&self.buffered, buffered), (&self.played, played)] {
-            layer.setFrame(NSRect::new(NSPoint::new(0., y), NSSize::new((w * fraction).max(0.), thick)));
+            layer.setFrame(NSRect::new(NSPoint::new(x0, y), NSSize::new((w * fraction).max(0.), thick)));
             layer.setCornerRadius(thick / 2.);
         }
         let t = f64::from(SEEK.thumb);
         self.thumb.setFrame(NSRect::new(
-            NSPoint::new((w * played - t / 2.).clamp(0., (w - t).max(0.)), ((r.size.height - t) / 2.).round()),
+            NSPoint::new(
+                x0 + (w * played - t / 2.).clamp(0., (w - t).max(0.)),
+                (r.origin.y + (r.size.height - t) / 2.).round(),
+            ),
             NSSize::new(t, t),
         ));
         self.thumb.setCornerRadius(t / 2.);
@@ -187,15 +197,29 @@ impl SeekInner {
         let scale = scale_of(&self.view);
         let show_times = props.show_times;
         let (elapsed, remaining) = model.times(&props, now);
-        for (layer, text) in [(&self.elapsed, elapsed), (&self.remaining, remaining)] {
+        let bounds = self.view.bounds().size;
+        let line_height = {
+            let font = times_font(&self.theme.borrow());
+            (font.ascender() - font.descender() + font.leading()).ceil()
+        };
+        let label = f64::from(props.beside_width());
+        for (layer, text, end) in [(&self.elapsed, elapsed, false), (&self.remaining, remaining, true)] {
             layer.setHidden(!show_times);
             layer.setContentsScale(scale);
             set_string(layer, &text);
-            let line = self.view.bounds().size.height - r.size.height - f64::from(SEEK.label_gap);
-            layer.setFrame(NSRect::new(
-                NSPoint::new(0., r.size.height + f64::from(SEEK.label_gap)),
-                NSSize::new(w, line.max(0.)),
-            ));
+            let frame = if props.times_beside {
+                // Elapsed hugs the track from the left, the length starts right after it.
+                unsafe { layer.setAlignmentMode(if end { kCAAlignmentLeft } else { kCAAlignmentRight }) };
+                let x = if end { bounds.width - label } else { 0. };
+                NSRect::new(
+                    NSPoint::new(x, ((bounds.height - line_height) / 2.).round()),
+                    NSSize::new(label, line_height),
+                )
+            } else {
+                let line = bounds.height - r.size.height - f64::from(SEEK.label_gap);
+                NSRect::new(NSPoint::new(0., r.size.height + f64::from(SEEK.label_gap)), NSSize::new(w, line.max(0.)))
+            };
+            layer.setFrame(frame);
         }
         CATransaction::commit();
     }
@@ -281,7 +305,8 @@ impl CustomNative for SeekNative {
 
     fn measure(&self, width: Option<f32>) -> Size {
         let mut height = SEEK.hit;
-        if self.inner.props.borrow().show_times {
+        let props = self.inner.props.borrow();
+        if props.show_times && !props.times_beside {
             let font = times_font(&self.inner.theme.borrow());
             height += SEEK.label_gap + (font.ascender() - font.descender() + font.leading()).ceil() as f32;
         }

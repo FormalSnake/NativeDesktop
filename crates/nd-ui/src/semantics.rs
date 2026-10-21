@@ -303,7 +303,14 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
         NodeKind::Canvas => (Role::Canvas, "canvas".to_owned(), String::new()),
         NodeKind::Image => (Role::Image, "image".to_owned(), String::new()),
         NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<Button>() => {
-            let label = props.downcast_ref::<ButtonProps>().map(|p| p.label.to_string()).unwrap_or_default();
+            // An icon-only button is named by its tooltip, as VoiceOver and Orca read it.
+            let label = props
+                .downcast_ref::<ButtonProps>()
+                .map(|p| match (&p.label, &p.tooltip) {
+                    (label, Some(tip)) if label.is_empty() => tip.to_string(),
+                    (label, _) => label.to_string(),
+                })
+                .unwrap_or_default();
             (Role::Button, "Button".to_owned(), label)
         }
         NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
@@ -319,6 +326,7 @@ pub(crate) fn describe(kind: NodeKind, props: &Props) -> Described {
     let mut extra = Semantics::default();
     if let Some(button) = props.downcast_ref::<ButtonProps>() {
         extra.enabled = Some(button.enabled);
+        extra.checked = button.checked;
     }
     Described { role, kind: kind_name, name, extra }
 }

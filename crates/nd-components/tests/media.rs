@@ -306,6 +306,7 @@ fn seek_props(position: u64) -> SeekBarProps {
         duration: Some(Duration::from_secs(200)),
         buffered: Some(Duration::from_secs(120)),
         show_times: true,
+        times_beside: false,
         step: Duration::from_secs(5),
         label: "Playback position".into(),
         enabled: true,
@@ -352,6 +353,17 @@ fn arrow_keys_step_and_an_unknown_length_takes_no_seek() {
     assert_eq!(m.step(&live, 1, now), None);
     let (elapsed, remaining) = SeekModel::default().times(&props, now);
     assert_eq!((elapsed.as_str(), remaining.as_str()), ("0:10", "-3:10"));
+}
+
+#[test]
+fn times_beside_show_the_length_and_a_placeholder_without_one() {
+    let props = SeekBarProps { times_beside: true, ..seek_props(10) };
+    let now = props.clock.at;
+    let (elapsed, end) = SeekModel::default().times(&props, now);
+    assert_eq!((elapsed.as_str(), end.as_str()), ("0:10", "3:20"));
+    let live = SeekBarProps { duration: None, ..props };
+    let (_, end) = SeekModel::default().times(&live, now);
+    assert_eq!(end, "--:--");
 }
 
 #[derive(Default)]
@@ -425,7 +437,7 @@ fn player_bar_disables_what_the_player_cannot_do() {
     assert!(refused(rig.perform("player.next", SemanticAction::Click)));
     assert!(!rig.sem("player.seek").enabled, "a live stream takes no seeks");
     assert!(refused(rig.set_value("player.seek", "0:10")));
-    assert_eq!(rig.sem("player.play").name, "", "icon only");
+    assert_eq!(rig.sem("player.play").name, "Pause", "an icon-only button is named by its tooltip");
     assert!(rig.state().commands.is_empty());
 }
 

@@ -334,6 +334,19 @@ impl Tree {
 
     /// The node `window.focus(id)` lands on: the first node keyed `id` in tree order that is
     /// focusable or has a focusable descendant, which is then the one focused.
+    /// The node keyed `id` and its laid-out frame, when it has one.
+    pub(crate) fn keyed(&self, id: &str) -> Option<(NodeId, Option<nd_core::Rect>)> {
+        let mut stack = vec![self.root];
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[&n];
+            if matches!(&node.ident.key, Key::Id(k) if k.as_ref() == id) {
+                return Some((n, node.frame));
+            }
+            stack.extend(node.native.iter().rev().copied());
+        }
+        None
+    }
+
     pub(crate) fn focus_target(&self, id: &str) -> Option<NodeId> {
         fn first_focusable(tree: &Tree, node: NodeId) -> Option<NodeId> {
             if tree.dispatch.is_focusable(node) {

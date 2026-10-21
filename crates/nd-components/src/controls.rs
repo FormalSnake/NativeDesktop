@@ -84,6 +84,23 @@ pub fn icon_button(id: impl Into<SharedString>, icon: Icon) -> Button {
     button(id, "").icon(icon).bezel(Bezel::Borderless)
 }
 
+/// An icon button that opens a menu under itself: a header bar's primary menu, a row's
+/// "More" button. `build` runs each time it opens.
+pub fn menu_button(
+    id: impl Into<SharedString>,
+    icon: Icon,
+    build: impl Fn(crate::menu::ContextMenu, &mut Window, &mut App) -> crate::menu::ContextMenu + 'static,
+) -> Button {
+    let id: SharedString = id.into();
+    let key = id.clone();
+    icon_button(id, icon).on_click(move |_: &ClickEvent, window, cx| {
+        let menu = build(crate::menu::ContextMenu::default(), window, cx);
+        let Some((node, frame)) = cx.node_with_id(window.id(), &key) else { return };
+        let below = frame.map_or(0., |f| f.size.height);
+        crate::services::show_context_menu(cx, window.id(), node, 0., below, menu);
+    })
+}
+
 /// How a control is presented, where the platform has more than one control for it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Mapping {

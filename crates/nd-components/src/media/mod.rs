@@ -39,7 +39,7 @@ pub use shelf::{
     snap_offset,
 };
 pub use transport::{
-    NowPlaying, PlayerBar, SEEK, SeekBar, SeekBarKind, SeekBarProps, SeekMetrics, SeekModel, SeekPhase, Seeked,
-    TransportCommand, TransportLayout, player_bar, seek_bar, volume_icon,
+    NowPlaying, PILL, PillMetrics, PlayerBar, SEEK, SeekBar, SeekBarKind, SeekBarProps, SeekMetrics, SeekModel,
+    SeekPhase, Seeked, TransportCommand, TransportLayout, player_bar, seek_bar, volume_icon,
 };
 pub use video::{Video, VideoEnded, VideoFailed, VideoKind, VideoProgress, VideoProps, VideoReady, video};
