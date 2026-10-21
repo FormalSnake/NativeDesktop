@@ -6,13 +6,15 @@ use nd_components::Mapping;
 use nd_components::forms::*;
 use nd_core::NodeId;
 use nd_gpui::gpui::{
-    self, App, CursorStyle, ElementId, InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement,
+    self, App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 
+use nd_gpui::gpui::prelude::FluentBuilder as _;
+
 use super::glyph::{Glyph, glyph};
 use super::text::{menu_item, popover};
-use super::toggle::{pressable, ring};
+use super::toggle::{elevation_edge, focus_visual, pressable, ring};
 use super::{Sink, with_style};
 use crate::render::Build;
 
@@ -78,14 +80,21 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
         .px(look.padding_x)
         .rounded(look.radius)
         .bg(look.fill)
-        .border_2()
-        .border_color(if ctl.ring() { look.focus_ring } else { gpui::transparent_black() })
         .text_size(look.text_size)
         .line_height(look.line_height)
         .text_color(look.text)
         .whitespace_nowrap()
         .child(div().flex_1().child(title))
-        .child(glyph(Glyph::ChevronDown, look.icon_size, look.text, look.glyph_stroke));
+        .child(glyph(Glyph::ChevronDown, look.chevron_size, look.chevron_color, look.glyph_stroke));
+    button = match elevation_edge(look, look.radius) {
+        Some(edge) => button
+            .relative()
+            .border_1()
+            .border_color(look.border)
+            .child(edge)
+            .when(ctl.ring(), |b| b.child(focus_visual(look, look.radius))),
+        None => button.border_2().border_color(if ctl.ring() { look.focus_ring } else { gpui::transparent_black() }),
+    };
     if !p.enabled {
         return with_style(button.opacity(look.disabled_opacity), &p.style).into_any_element();
     }
@@ -154,7 +163,7 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
     };
     button = button
         .track_focus(ctl.focus())
-        .cursor(CursorStyle::PointingHand)
+        .cursor(look.cursor)
         .hover(move |s| s.bg(look.fill_hover))
         .active(move |s| s.bg(look.fill_active))
         .on_key_down(keys)
@@ -174,7 +183,15 @@ fn popup(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
             menu_item(look, index, option.clone(), highlight == Some(index), index == p.selected)
                 .on_click(move |_, window, cx| pick(index, window, cx))
         });
-        root = root.child(popover(b, id, window, look, close, items));
+        // Over the button with the current item on it (WinUI), or below it.
+        let (lift, width) = if look.menu_over {
+            let row = look.control_height + look.item_gap;
+            let lift = look.control_height + px(4.) + px(1.) + look.popover_pad.1 + row * p.selected as f32;
+            (lift, ctl.bounds.borrow().get(&id).map(|r| px(r.size.width)))
+        } else {
+            (px(0.), None)
+        };
+        root = root.child(popover(b, id, window, look, close, items, lift, width));
     }
     root.into_any_element()
 }
@@ -224,12 +241,11 @@ fn segmented(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &m
         }
         if p.enabled {
             let sink = ctl.sink.clone();
-            segment = segment.cursor(CursorStyle::PointingHand).when_hover_bg(!selected, look.fill_hover).on_click(
-                move |_, window, cx| {
+            segment =
+                segment.cursor(look.cursor).when_hover_bg(!selected, look.fill_hover).on_click(move |_, window, cx| {
                     sink.take_focus(window, cx);
                     sink.send(SelectChanged { index }, cx);
-                },
-            );
+                });
         }
         group = group.child(segment);
     }
@@ -249,37 +265,66 @@ fn radio(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &mut A
         .role(gpui::Role::RadioGroup)
         .aria_label(name(p))
         .flex()
-        .gap(if p.horizontal { look.gap * 2. } else { look.gap / 2. })
+        .gap(if p.horizontal { look.radio_spacing.1 } else { look.radio_spacing.0 })
         .text_size(look.text_size)
         .line_height(look.line_height)
         .text_color(look.text);
     group = if p.horizontal { group.flex_row().flex_wrap() } else { group.flex_col() };
     for (index, option) in p.options.iter().enumerate() {
         let selected = index == p.selected;
-        let dot = div()
+        let hover_group = format!("nd-radio-{index}");
+        let [rest, hover, pressed] = look.thumb_dot.unwrap_or([px(6.); 3]);
+        let (fill, fill_hover, fill_active) = if selected {
+            (look.accent, look.accent_hover, look.accent_active)
+        } else {
+            (look.check_fill[0], look.check_fill[1], look.check_fill[2])
+        };
+        let mut mark = div().id("mark").size(rest).rounded_full().bg(look.on_accent);
+        let mut dot = div()
+            .id("dot")
             .size(look.check_size)
             .flex()
             .items_center()
             .justify_center()
             .rounded_full()
-            .border_2()
-            .border_color(if selected { look.accent } else { look.track })
-            .bg(if selected { look.accent } else { gpui::transparent_black() })
-            .children(selected.then(|| div().size(px(6.)).rounded_full().bg(look.on_accent)));
+            .border(look.check_stroke_width)
+            .border_color(if selected { look.accent } else { look.check_stroke })
+            .bg(fill);
+        if p.enabled && look.thumb_dot.is_some() {
+            // WinUI's mark grows under the pointer and shrinks while pressed; an unselected
+            // button shows only its fill under the pointer, and the accent with the pressed
+            // mark while pressed.
+            let (on_accent, accent) = (look.on_accent, look.accent);
+            dot = dot.group_hover(hover_group.clone(), move |s| s.bg(fill_hover));
+            if selected {
+                mark = mark
+                    .group_hover(hover_group.clone(), move |s| s.size(hover))
+                    .group_active(hover_group.clone(), move |s| s.size(pressed));
+                dot = dot.group_active(hover_group.clone(), move |s| s.bg(fill_active));
+            } else {
+                mark = mark
+                    .bg(gpui::transparent_black())
+                    .group_active(hover_group.clone(), move |s| s.size(pressed).bg(on_accent));
+                dot = dot.group_active(hover_group.clone(), move |s| s.bg(accent).border_color(accent));
+            }
+        }
+        let dot = dot.children((selected || look.thumb_dot.is_some()).then_some(mark));
         let mut item = div()
             .id(ElementId::Integer(index as u64))
+            .group(hover_group)
             .role(gpui::Role::RadioButton)
             .aria_label(option.clone())
             .aria_toggled(if selected { gpui::Toggled::True } else { gpui::Toggled::False })
             .flex()
             .flex_row()
             .items_center()
+            .min_h(look.toggle_row)
             .gap(look.gap)
             .child(ring(look, selected && ctl.ring(), look.check_size / 2., dot))
             .child(option.clone());
         if p.enabled {
             let sink = ctl.sink.clone();
-            item = item.cursor(CursorStyle::PointingHand).on_click(move |_, window, cx| {
+            item = item.cursor(look.cursor).on_click(move |_, window, cx| {
                 sink.take_focus(window, cx);
                 sink.send(SelectChanged { index }, cx);
             });

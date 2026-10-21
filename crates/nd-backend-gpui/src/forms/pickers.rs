@@ -126,7 +126,7 @@ pub(crate) fn date_picker(
                 .child(glyph(g, look.icon_size - px(4.), look.text, look.glyph_stroke));
             if p.enabled {
                 let (sink, p) = (ctl.sink.clone(), p.clone());
-                a = a.occlude().cursor(CursorStyle::PointingHand).hover(move |s| s.bg(look.fill_hover)).on_click(
+                a = a.occlude().cursor(look.cursor).hover(move |s| s.bg(look.fill_hover)).on_click(
                     move |_, window, cx| {
                         sink.take_focus(window, cx);
                         changed(&sink, &p, step(&p, n), cx);
@@ -207,15 +207,13 @@ fn calendar(b: &Build, id: NodeId, p: &DatePickerProps, window: &mut Window, cx:
             .child(glyph(g, look.icon_size, look.text, look.glyph_stroke));
         if p.enabled {
             let month = month.clone();
-            button = button.cursor(CursorStyle::PointingHand).hover(move |s| s.bg(look.fill_hover)).on_click(
-                move |_, window, _| {
-                    let mut s = month.borrow_mut();
-                    let (y, m) = s.shown.unwrap_or((year, m));
-                    let index = y * 12 + i32::from(m) - 1 + delta;
-                    s.shown = Some((index.div_euclid(12), (index.rem_euclid(12) + 1) as u8));
-                    window.refresh();
-                },
-            );
+            button = button.cursor(look.cursor).hover(move |s| s.bg(look.fill_hover)).on_click(move |_, window, _| {
+                let mut s = month.borrow_mut();
+                let (y, m) = s.shown.unwrap_or((year, m));
+                let index = y * 12 + i32::from(m) - 1 + delta;
+                s.shown = Some((index.div_euclid(12), (index.rem_euclid(12) + 1) as u8));
+                window.refresh();
+            });
         }
         button
     };
@@ -279,12 +277,10 @@ fn calendar(b: &Build, id: NodeId, p: &DatePickerProps, window: &mut Window, cx:
             };
             if p.enabled && allowed && !selected {
                 let (sink, p) = (ctl.sink.clone(), p.clone());
-                d = d.cursor(CursorStyle::PointingHand).hover(move |s| s.bg(look.fill_hover)).on_click(
-                    move |_, window, cx| {
-                        sink.take_focus(window, cx);
-                        changed(&sink, &p, date, cx);
-                    },
-                );
+                d = d.cursor(look.cursor).hover(move |s| s.bg(look.fill_hover)).on_click(move |_, window, cx| {
+                    sink.take_focus(window, cx);
+                    changed(&sink, &p, date, cx);
+                });
             }
             row = row.child(d);
         }
@@ -491,7 +487,7 @@ pub(crate) fn color_well(
                     look.swatch_size / 2.,
                     div().size(look.swatch_size).rounded_full().bg(color).border_1().border_color(look.knob_edge),
                 ))
-                .cursor(CursorStyle::PointingHand)
+                .cursor(look.cursor)
                 .on_click(move |_, window, cx| {
                     well.borrow_mut().open = false;
                     sink.send(ColorChanged { color }, cx);
@@ -507,6 +503,8 @@ pub(crate) fn color_well(
             look,
             close,
             [palette.into_any_element(), hex_field.mt(px(6.)).into_any_element()],
+            px(0.),
+            None,
         ));
     }
     root.into_any_element()

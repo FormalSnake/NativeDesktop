@@ -687,13 +687,42 @@ impl<'a> Build<'a> {
                     *axis = Some(gpui::Overflow::Hidden);
                 }
             }
-            children.into_iter().map(|c| gestures.shifted(id, offset, c)).collect()
+            let mut shifted: Vec<AnyElement> = children.into_iter().map(|c| gestures.shifted(id, offset, c)).collect();
+            if props.gestures.scroll.vertical
+                && let (Some(look), Some(bounds)) = (crate::scrollbar::ScrollbarLook::of(&self.theme()), last_bounds)
+            {
+                let frame = crate::scrollbar::Frame {
+                    backend: self.backend,
+                    source: crate::scrollbar::Source::Gestures,
+                    window: self.window_id,
+                    node: id,
+                    time: self.time,
+                    height: bounds.size.height,
+                    reduce_motion: self.backend.platform_reduce_motion() == Some(true),
+                };
+                if style.position.is_none() {
+                    style.position = Some(gpui::Position::Relative);
+                }
+                shifted.extend(crate::scrollbar::vertical(look, frame, window));
+            }
+            shifted
         } else {
             children
         };
+        // A drawn scroll bar shows while the pointer moves over its view.
+        let bar_activity = (props.gestures.scroll.vertical
+            && crate::scrollbar::ScrollbarLook::of(&self.theme()).is_some())
+        .then(|| self.backend.scrollbars.clone());
         if !props.drag_region {
             let mut d = div();
             d.style().refine(&style);
+            if let Some(bars) = bar_activity {
+                d = d.on_mouse_move(move |_: &gpui::MouseMoveEvent, window, _| {
+                    if bars.pointer_moved(id) {
+                        window.refresh();
+                    }
+                });
+            }
             if let Some(hover) = props.hover.clone() {
                 d = d.hover(move |mut s| {
                     s.refine(&hover);
@@ -775,6 +804,13 @@ impl<'a> Build<'a> {
             None => (look.control, look.text),
         };
         let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
+        // WinUI's Button: ControlFillColorDefault, Secondary and Tertiary inside an elevation
+        // border, its accent button AccentFillColorDefault at 100, 90 and 80%.
+        let fluent = (theme.preset == nd_theme::Preset::Fluent).then(|| crate::forms::FormLook::fluent(&theme));
+        let fill = match &fluent {
+            Some(f) if explicit.is_none() && !accent && props.enabled => f.fill,
+            _ => fill,
+        };
         // Borderless: no bezel until the pointer is over it.
         let bezel = props.bezel != Bezel::Borderless || accent;
         let rest = bezel.then_some(fill);
@@ -802,10 +838,31 @@ impl<'a> Build<'a> {
             .occlude();
         button = match glyph {
             Some(g) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
+            // WinUI's ButtonPadding (11, 5, 11, 6) inside a 1 px border, 32 px tall.
+            None if fluent.is_some() => button.px(px(11.)).min_h(px(32.)).child(label),
             None => button.px(px(12.)).py(px(4.)).child(label),
         };
         if bezel {
-            button = button.border_1().border_color(look.border).bg(fill);
+            button = match &fluent {
+                Some(f) if accent => {
+                    let dark = theme.is_dark();
+                    // ControlStrokeColorOnAccentDefault over ControlStrokeColorOnAccentSecondary.
+                    let edge = with_alpha(gpui::black(), if dark { 0.137 } else { 0.4 });
+                    button.relative().border_1().border_color(with_alpha(gpui::white(), 0.078)).bg(fill).children(
+                        crate::forms::toggle::elevation_edge(
+                            crate::forms::FormLook { stroke_bottom: Some(edge), ..*f },
+                            theme.radius.md,
+                        ),
+                    )
+                }
+                Some(f) => button
+                    .relative()
+                    .border_1()
+                    .border_color(f.border)
+                    .bg(fill)
+                    .children(crate::forms::toggle::elevation_edge(*f, theme.radius.md)),
+                None => button.border_1().border_color(look.border).bg(fill),
+            };
         }
         if props.bezel == Bezel::Circle || filled_circle {
             button = button.rounded_full();
@@ -816,7 +873,11 @@ impl<'a> Build<'a> {
         }
         // Rest, hover and pressed fills fade into each other at the look's own speed (WinUI's
         // 83 ms), or switch at once when the OS has animations off.
-        let (hover, active) = (theme.hover(fill), theme.pressed(fill));
+        let (hover, active) = match &fluent {
+            Some(f) if explicit.is_none() && accent => (f.accent_hover, f.accent_active),
+            Some(f) if explicit.is_none() => (f.fill_hover, f.fill_active),
+            _ => (theme.hover(fill), theme.pressed(fill)),
+        };
         let duration =
             if self.backend.platform_reduce_motion() == Some(true) { 0. } else { theme.motion.fast.as_secs_f64() };
         let fades = self.backend.fades.clone();

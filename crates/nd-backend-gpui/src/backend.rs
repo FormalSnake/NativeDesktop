@@ -111,6 +111,10 @@ pub struct GpuiBackend {
     pub(crate) gestures: crate::gestures::Gestures,
     /// Controls' fills fading between rest, hover and pressed.
     pub(crate) fades: crate::fade::Fades,
+    /// Drawn scroll bars' state, by scroll view.
+    pub(crate) scrollbars: crate::scrollbar::Scrollbars,
+    /// Windows with a timed redraw pending, so a frame's timers do not pile up.
+    refresh_timers: Rc<RefCell<std::collections::HashSet<WindowId>>>,
     /// Each open overlay's subtree as last drawn, and the closed ones still animating out.
     pub(crate) overlay_exits: crate::overlay::Exits,
     /// Per-node state of the drawn navigation widgets ([`crate::nav`]).
@@ -177,6 +181,8 @@ impl GpuiBackend {
             lists: Rc::default(),
             gestures: crate::gestures::Gestures::default(),
             fades: crate::fade::Fades::default(),
+            scrollbars: crate::scrollbar::Scrollbars::default(),
+            refresh_timers: Rc::default(),
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
@@ -184,6 +190,24 @@ impl GpuiBackend {
             dialogs: Rc::default(),
             tab_seam: Rc::default(),
         }
+    }
+
+    /// Redraws `window` once `after` has passed, for drawn state that changes on a timer (a
+    /// scroll bar fading out). One timer per window at a time; a later frame asks again.
+    pub(crate) fn refresh_after(&self, window: WindowId, after: std::time::Duration) {
+        let Some(app) = self.state.borrow().app.clone() else { return };
+        if !self.refresh_timers.borrow_mut().insert(window) {
+            return;
+        }
+        let (timers, handle) = (self.refresh_timers.clone(), self.window_handle(window));
+        app.spawn(async move |cx| {
+            cx.background_executor().timer(after).await;
+            timers.borrow_mut().remove(&window);
+            if let Some(handle) = handle {
+                let _ = handle.update(cx, |_, window, _| window.refresh());
+            }
+        })
+        .detach();
     }
 
     /// Runs `f` on the app at the host's next pump, outside every entity lease and GPUI update.

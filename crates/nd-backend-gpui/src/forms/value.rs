@@ -9,9 +9,11 @@ use nd_components::forms::*;
 use nd_core::NodeId;
 use nd_gpui::gpui::{
     self, App, CursorStyle, DispatchPhase, ElementId, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, StatefulInteractiveElement, Styled,
-    Window, canvas, div, px, relative,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, SharedString,
+    StatefulInteractiveElement, Styled, Window, canvas, div, px, relative,
 };
+
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 
 use super::glyph::{Glyph, glyph};
 use super::text::value_field;
@@ -63,6 +65,9 @@ fn report(sink: &Sink, drag: &RefCell<Drag>, shown: f32, value: f32, cx: &mut Ap
     sink.send(SliderChanged { value }, cx);
 }
 
+/// The slider, whose hover and press its thumb shows.
+const SLIDER_GROUP: &str = "nd-slider";
+
 pub(crate) fn slider(b: &Build, id: NodeId, p: &SliderProps, window: &mut Window, cx: &mut App) -> gpui::AnyElement {
     let (ctl, drag) = b.ctl(id, p.enabled, window, cx, Drag::default);
     let look = ctl.look;
@@ -104,12 +109,36 @@ pub(crate) fn slider(b: &Build, id: NodeId, p: &SliderProps, window: &mut Window
             rail = rail.child(tick);
         }
     }
-    let thumb = div().absolute().size(knob + px(6.)).child(ring(
-        look,
-        ctl.ring(),
-        knob / 2.,
-        div().size(knob - px(2.)).rounded_full().bg(look.knob).border_1().border_color(look.knob_edge),
-    ));
+    let face = match look.thumb_dot {
+        // WinUI's thumb: a solid disc in an elevation border around an accent dot that grows
+        // under the pointer and shrinks while pressed.
+        Some([rest, hover, pressed]) => {
+            let mut dot = div().id("dot").size(rest).rounded_full().bg(look.accent);
+            if p.enabled {
+                dot = dot
+                    .group_hover(SLIDER_GROUP, move |s| s.size(hover))
+                    .group_active(SLIDER_GROUP, move |s| s.size(pressed));
+            }
+            div()
+                .size(knob)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .relative()
+                .bg(look.thumb_fill)
+                .border_1()
+                .border_color(look.border)
+                .children(super::toggle::elevation_edge(look, knob / 2.))
+                .child(dot)
+        }
+        None => div().size(knob - px(2.)).rounded_full().bg(look.knob).border_1().border_color(look.knob_edge),
+    };
+    let thumb = div()
+        .absolute()
+        .size(knob + px(6.))
+        .when(look.thumb_dot.is_some(), |t| t.flex().items_center().justify_center())
+        .child(ring(look, ctl.ring(), knob / 2., face));
     let thumb = if p.vertical {
         thumb.left(px(-3.)).bottom(relative(fraction)).mb(-(knob / 2.) - px(3.))
     } else {
@@ -120,6 +149,7 @@ pub(crate) fn slider(b: &Build, id: NodeId, p: &SliderProps, window: &mut Window
     let name = p.label.clone().or_else(|| p.tooltip.clone()).unwrap_or_default();
     let mut slider = div()
         .id(ElementId::Integer(id.0))
+        .group(SLIDER_GROUP)
         .role(gpui::Role::Slider)
         .aria_label(name)
         .aria_numeric_value(p.value.into())
@@ -219,7 +249,12 @@ pub(crate) fn stepper(b: &Build, id: NodeId, p: &StepperProps, window: &mut Wind
             let text = number_text(p.value, Some(digits)).into();
             let (ctl, field) = value_field(b, id, text, p.enabled, parse, window, cx);
             let width = ctl.look.field_min_width / 2.;
-            (ctl, Some(field.min_w(width).rounded_r(px(0.))))
+            let field = match ctl.look.spin_inline {
+                // NumberBoxMinWidth, its text clear of the two 32 px buttons inside it.
+                true => field.min_w(px(120.)).pr(px(4. + 64.)),
+                false => field.min_w(width).rounded_r(px(0.)),
+            };
+            (ctl, Some(field))
         }
         None => (b.ctl(id, p.enabled, window, cx, || ()).0, None),
     };
@@ -246,7 +281,7 @@ pub(crate) fn stepper(b: &Build, id: NodeId, p: &StepperProps, window: &mut Wind
         if available {
             let (sink, value) = (ctl.sink.clone(), p.normalise(next));
             b = b
-                .cursor(CursorStyle::PointingHand)
+                .cursor(look.cursor)
                 .hover(move |s| s.bg(look.fill_hover))
                 .active(move |s| s.bg(look.fill_active))
                 .on_click(move |_, window, cx| {
@@ -258,6 +293,9 @@ pub(crate) fn stepper(b: &Build, id: NodeId, p: &StepperProps, window: &mut Wind
     };
     let name = p.label.clone().or_else(|| p.tooltip.clone()).unwrap_or_default();
     let has_field = field.is_some();
+    if look.spin_inline {
+        return number_box(&ctl, id, p, field, name);
+    }
     let mut group = div()
         .id(ElementId::Integer(id.0))
         .role(gpui::Role::SpinButton)
@@ -302,4 +340,109 @@ pub(crate) fn stepper(b: &Build, id: NodeId, p: &StepperProps, window: &mut Wind
     };
     group = if has_field { group.on_key_down(keys) } else { pressable(group, &ctl).on_key_down(keys) };
     with_style(group, &p.style).into_any_element()
+}
+
+/// The stepper as WinUI's NumberBox with inline spin buttons (NumberBox.xaml): the value field
+/// with up and down RepeatButtons inside its right edge, 32 px wide with a 4 px margin, their
+/// E70E and E70D chevrons at 12 px, subtle until hovered. Without a field the buttons sit in an
+/// empty field's chrome, so the control still reads as one.
+fn number_box(
+    ctl: &super::Ctl,
+    id: NodeId,
+    p: &StepperProps,
+    field: Option<gpui::Stateful<gpui::Div>>,
+    name: SharedString,
+) -> gpui::AnyElement {
+    let look = ctl.look;
+    let button = |key: &'static str, up: bool| {
+        let next = if up { p.value + p.step } else { p.value - p.step };
+        let available = p.enabled && p.normalise(next) != p.value;
+        let color = if available { look.text } else { look.secondary_text };
+        let mut b = div()
+            .id(key)
+            .role(gpui::Role::Button)
+            .aria_label(if up { "Increment" } else { "Decrement" })
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .w(px(32.))
+            .h(look.control_height - px(8.))
+            .rounded(look.radius)
+            .child(glyph(if up { Glyph::ChevronUp } else { Glyph::ChevronDown }, px(12.), color, look.glyph_stroke));
+        if available {
+            let (sink, value) = (ctl.sink.clone(), p.normalise(next));
+            b = b.hover(move |s| s.bg(look.subtle_hover)).active(move |s| s.bg(look.subtle_active)).on_click(
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    sink.take_focus(window, cx);
+                    sink.send(StepperChanged { value }, cx);
+                },
+            );
+        }
+        b
+    };
+    let buttons = div()
+        .absolute()
+        .top(px(4.))
+        .right(px(4.))
+        .flex()
+        .flex_row()
+        .child(button("up", true))
+        .child(button("down", false));
+    let has_field = field.is_some();
+    let body = match field {
+        Some(field) => field.into_any_element(),
+        None => {
+            let edge = super::toggle::elevation_edge(look, look.radius);
+            div()
+                .relative()
+                .w(px(4. + 64. + 4.))
+                .h(look.control_height)
+                .rounded(look.radius)
+                .bg(look.fill)
+                .border_1()
+                .border_color(look.border)
+                .children(edge)
+                .into_any_element()
+        }
+    };
+    let mut group = div()
+        .id(ElementId::Integer(id.0))
+        .role(gpui::Role::SpinButton)
+        .aria_label(name)
+        .aria_numeric_value(p.value)
+        .aria_min_numeric_value(p.min)
+        .aria_max_numeric_value(p.max)
+        .aria_numeric_value_step(p.step)
+        .relative()
+        .flex_none()
+        .text_color(look.text)
+        .child(body)
+        .child(buttons);
+    if !p.enabled {
+        return with_style(group.opacity(look.disabled_opacity), &p.style).into_any_element();
+    }
+    let keys = {
+        let (sink, props) = (ctl.sink.clone(), p.clone());
+        move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+            sink.keyboard();
+            window.refresh();
+            let next = match event.keystroke.key.as_str() {
+                "up" => props.value + props.step,
+                "down" => props.value - props.step,
+                _ => return,
+            };
+            cx.stop_propagation();
+            let next = props.normalise(next);
+            if next != props.value {
+                sink.send(StepperChanged { value: next }, cx);
+            }
+        }
+    };
+    if !has_field {
+        group = div().id(ElementId::Integer(id.0)).child(ring(look, ctl.ring(), look.radius, group)).flex_none();
+        group = pressable(group, ctl);
+    }
+    with_style(group.on_key_down(keys), &p.style).into_any_element()
 }

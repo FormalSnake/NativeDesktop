@@ -8,8 +8,10 @@ use nd_components::forms::*;
 use nd_core::NodeId;
 use nd_gpui::gpui::{
     self, App, CursorStyle, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
-    Styled, Window, div, relative,
+    Styled, Window, div, px, relative,
 };
+
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 
 use super::glyph::arc;
 use super::toggle::{pressable, ring};
@@ -39,19 +41,35 @@ pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Wi
                     fill.left(relative(at)).w(relative(segment))
                 }
             };
-            div()
-                .relative()
-                .overflow_hidden()
-                .h(look.track_thickness)
-                .min_w(look.slider_min_length)
-                .rounded_full()
-                .bg(look.track)
-                .child(fill)
-                .into_any_element()
+            match look.progress_rail {
+                // WinUI: a thin rail centred under a thicker bar; an indeterminate bar runs
+                // with no rail.
+                Some((rail, bar)) => div()
+                    .relative()
+                    .overflow_hidden()
+                    .h(bar)
+                    .min_w(look.slider_min_length)
+                    .when(value.is_some(), |d| {
+                        d.child(div().absolute().left_0().right_0().top((bar - rail) / 2.).h(rail).bg(look.track))
+                    })
+                    .child(fill)
+                    .into_any_element(),
+                None => div()
+                    .relative()
+                    .overflow_hidden()
+                    .h(look.track_thickness)
+                    .min_w(look.slider_min_length)
+                    .rounded_full()
+                    .bg(look.track)
+                    .child(fill)
+                    .into_any_element(),
+            }
         }
         ProgressStyle::Spinner => {
             let start = phase(b.time, look.spinner_seconds) * 2. * PI;
-            arc(look.spinner_size, start, 1.5 * PI, look.secondary_text, look.spinner_stroke).into_any_element()
+            // WinUI's ProgressRing is the accent arc alone; libadwaita's spinner is grey.
+            let color = if look.spinner_track { look.secondary_text } else { look.accent };
+            arc(look.spinner_size, start, 1.5 * PI, color, look.spinner_stroke).into_any_element()
         }
         ProgressStyle::Circular => {
             let size = look.spinner_size;
@@ -62,7 +80,9 @@ pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Wi
             div()
                 .relative()
                 .size(size)
-                .child(div().absolute().child(arc(size, 0., 2. * PI, look.track, look.spinner_stroke)))
+                .when(look.spinner_track, |d| {
+                    d.child(div().absolute().child(arc(size, 0., 2. * PI, look.track, look.spinner_stroke)))
+                })
                 .child(div().absolute().child(arc(size, start, sweep, look.accent, look.spinner_stroke)))
                 .into_any_element()
         }
@@ -142,22 +162,32 @@ pub(crate) fn link(b: &Build, id: NodeId, p: &LinkProps, window: &mut Window, cx
     if let Some(url) = &p.url {
         text = text.aria_value(url.clone());
     }
+    // HyperlinkButton's padding (11,5,11,6).
+    if look.link_button {
+        text = text.px(look.padding_x).pt(px(5.)).pb(px(6.)).rounded(look.radius);
+    }
     if !p.enabled {
         return with_style(text.opacity(look.disabled_opacity), &p.style).into_any_element();
     }
     let (sink, url, external) = (ctl.sink.clone(), p.url.clone(), p.open_external);
-    text = pressable(text, &ctl)
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |s| s.underline().text_decoration_color(look.accent_text))
-        .on_click(move |event, window, cx| {
-            if !matches!(event, gpui::ClickEvent::Keyboard(_)) {
-                sink.take_focus(window, cx);
-            }
-            sink.send(LinkActivated { url: url.clone() }, cx);
-            if external && let Some(url) = &url {
-                cx.open_url(url);
-            }
-        });
+    text = pressable(text, &ctl).cursor(CursorStyle::PointingHand);
+    text = if look.link_button {
+        // HyperlinkButton: SubtleFillColorSecondary under the pointer, Tertiary and
+        // AccentTextFillColorTertiary while pressed.
+        let pressed = look.accent_text.opacity(0.8);
+        text.hover(move |s| s.bg(look.subtle_hover)).active(move |s| s.bg(look.subtle_active).text_color(pressed))
+    } else {
+        text.hover(move |s| s.underline().text_decoration_color(look.accent_text))
+    };
+    text = text.on_click(move |event, window, cx| {
+        if !matches!(event, gpui::ClickEvent::Keyboard(_)) {
+            sink.take_focus(window, cx);
+        }
+        sink.send(LinkActivated { url: url.clone() }, cx);
+        if external && let Some(url) = &url {
+            cx.open_url(url);
+        }
+    });
     let link = div().flex_none().child(ring(look, ctl.ring(), look.radius, with_style(text, &p.style)));
     link.into_any_element()
 }
