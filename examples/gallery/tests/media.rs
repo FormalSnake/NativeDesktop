@@ -70,8 +70,13 @@ fn seeking_the_player_moves_the_lyrics() {
     assert_eq!(rig.sem("player.seek").value.as_deref(), Some("0:55 of 4:03"));
     assert_eq!(rig.sem("mini.seek").value.as_deref(), Some("0:55 of 4:03"), "both bars share the clock");
     assert_eq!(rig.sem("lyrics").value.as_deref(), Some("Carry all our words away"));
+    // Icon-only buttons are named by their tooltip, so the full bar's play button names what the
+    // mini bar's press did to the shared state.
+    let before = rig.sem("player.play").name.clone();
     rig.act("mini.play", SemanticAction::Click);
-    assert_eq!(rig.sem("player.play").name, "", "icon only");
+    let after = rig.sem("player.play").name.clone();
+    assert_ne!(before, after, "both bars share the play state");
+    assert!(["Play", "Pause"].contains(&after.as_str()), "named by its tooltip: {after}");
 }
 
 #[test]
