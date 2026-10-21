@@ -18,7 +18,7 @@ actions!(docs, [OpenPalette, ToggleSidebar]);
 
 pub const CONTEXT: &str = "Docs";
 
-pub const REPO_URL: &str = "https://github.com/FormalSnake/NativeDesktop";
+pub const REPO_URL: &str = "https://github.com/FormalStudio/NativeDesktop";
 
 /// A file or directory in the repository on GitHub.
 pub fn repo_url(path: &str) -> String {

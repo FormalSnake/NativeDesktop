@@ -6,7 +6,7 @@ dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md`
 
 ## Where things are
 
-`main` on GitHub (FormalSnake/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
+`main` on GitHub (FormalStudio/NativeDesktop) is tagged `v0.6.1` (e319443e). Every lane from
 2026-10-16 to 18 is merged: msg-gaps, msg-linux, nd-emoji, nd-video, ci-fix, ci-fling, docs-prose.
 No lane branch holds unmerged nd work. The docs site runs v0.6.1
 (https://nativedesktop.formalsnake.dev, deployed by hand with wrangler on 2026-10-18).

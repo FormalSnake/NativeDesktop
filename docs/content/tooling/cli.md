@@ -32,7 +32,7 @@ that isn't empty and a name that isn't a lowercase package name.
 - `--nd-path <path>` (env `ND_PATH`): depend on a local checkout of the `nd` crate (`crates/nd`)
   instead of the CLI's release tag.
 - `--nd-git <url>` (env `ND_GIT`): the repository to fetch nd from, for a mirror or a fork. The
-  default is `https://github.com/FormalSnake/NativeDesktop`.
+  default is `https://github.com/FormalStudio/NativeDesktop`.
 - `--standalone`: add an empty `[workspace]` so the app builds on its own inside another workspace.
 
 ```sh
