@@ -13,22 +13,35 @@
 #
 # The host is `ssh g815` ($ND_LINUX_HOST). The checkout lands in ~/Developer/nativedesktop-<branch>
 # there, never in another checkout. Each lane builds into its own target dir
-# (~/.cache/nd-build/targets/<branch>, or $ND_LINUX_TARGET) and builds quietly: nice, idle IO class,
+# ($ND_LINUX_BUILD_ROOT/targets/<branch>, or $ND_LINUX_TARGET; the root defaults to
+# /mnt/steamlib/nd-build, off the small root disk) and builds quietly: nice, idle IO class,
 # two jobs, two test threads. A shared target is unsafe: cargo's metadata hash for path crates
 # ignores the checkout path and rsync keeps the macbook's older mtimes, so one lane reused another
-# lane's stale nd crates. While all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 80) or the disk
-# has less than $ND_LINUX_FREE_FLOOR_GB free (default 25), the least recently used ones are dropped,
-# under the build lock so no running build loses its target.
+# lane's stale nd crates. While all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 80) or the build
+# root's disk has less than $ND_LINUX_FREE_FLOOR_GB free (default 30, so Steam is not squeezed), the
+# least recently used ones are dropped, under the build lock so no running build loses its target.
+# A dropped lane's dev shell profile (~/.cache/nd-build/profiles/<lane>, a GC root) goes with it.
+# The lock, holder file and profiles stay in ~/.cache/nd-build: nix roots must live on the root disk,
+# and a run refuses to start with under $ND_LINUX_ROOT_FLOOR_GB (default 5) free there.
+#
+# One run holds the lock for at most $ND_LINUX_GATE_TIMEOUT_MIN minutes (default 30): the command
+# runs under `timeout`, which kills its whole process group, and the gate prints ND_GATE_TIMEOUT and
+# fails. The holder (lane, command, start) is kept in ~/.cache/nd-build/build.holder and shown to
+# runs that have to wait.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 host=${ND_LINUX_HOST:-g815}
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
 dir="Developer/nativedesktop-$branch"
-targets='$HOME/.cache/nd-build/targets'
+buildroot=${ND_LINUX_BUILD_ROOT:-/mnt/steamlib/nd-build}
+targets="$buildroot/targets"
 target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
 cap=${ND_LINUX_TARGET_CAP_GB:-80}
-floor=${ND_LINUX_FREE_FLOOR_GB:-25}
+floor=${ND_LINUX_FREE_FLOOR_GB:-30}
+rootfloor=${ND_LINUX_ROOT_FLOOR_GB:-5}
+limit=${ND_LINUX_GATE_TIMEOUT_MIN:-30}
+profiles='$HOME/.cache/nd-build/profiles'
 
 # Exits with the remote command's status, so a failing gate fails the caller. The status is the
 # last command's: end `run` commands with the cargo call, or `set -o pipefail` before a pipe.
@@ -42,20 +55,30 @@ remote() {
 # g815's small root disk: one run at a time (the flock queues the rest), and no incremental cache,
 # which was a third of the target. The CEF distribution nd-cef builds against stays outside the
 # targets, so an eviction does not download it again. The lock fd is closed for the command (`flock -o`) so a leaked
-# child, such as a nested compositor, cannot hold the lock after the run.
+# child, such as a nested compositor, cannot hold the lock after the run. The dev shell is recorded
+# with `nix develop --profile`, which roots it so a nix GC does not force a refetch.
 in_shell() {
-  local evict body
-  evict="t=\"$target\"; mkdir -p \"$targets\" \"\$t\" && touch \"\$t\"
-while gb=\$(du -s --block-size=1G \"$targets\" | cut -f1); free=\$(df --output=avail -BG / | tail -1 | tr -dc 0-9); [ \"\$gb\" -gt $cap ] || [ \"\$free\" -lt $floor ]; do
+  local evict body desc
+  desc=$(printf '%s' "$1" | tr '\n' ' ' | cut -c1-120)
+  evict="rfree=\$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+[ \"\$rfree\" -ge $rootfloor ] || { echo \"linux-gate: root disk has \$rfree GB free (floor $rootfloor), refusing to build\"; exit 1; }
+t=\"$target\"; mkdir -p \"$targets\" \"$profiles\" \"\$t\" && touch \"\$t\"
+while gb=\$(du -s --block-size=1G \"$targets\" | cut -f1); free=\$(df --output=avail -BG \"$buildroot\" | tail -1 | tr -dc 0-9); [ \"\$gb\" -gt $cap ] || [ \"\$free\" -lt $floor ]; do
   old=\$(ls -1dt \"$targets\"/*/ | grep -vxF \"\$t/\" | tail -n 1)
   [ -n \"\$old\" ] || break
   echo \"linux-gate: targets at \$gb GB (cap $cap), \$free GB free (floor $floor), dropping \$old\"
   rm -rf -- \"\${old:?}\"
+  n=\$(basename \"\$old\"); rm -f -- \"$profiles/\$n\" \"$profiles/\$n\"-*-link
 done
-echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / | tail -1"
-  body="$evict
-nice -n 19 ionice -c3 nix develop \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"\$HOME/.cache/nd-build/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")"
-  printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && flock -o ~/.cache/nd-build/build.lock bash -c %q' "$dir" "$body"
+echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / \"$buildroot\" | tail -2"
+  body="printf '%s | %s | since %s\\n' $branch $(printf %q "$desc") \"\$(date +%T)\" > ~/.cache/nd-build/build.holder
+$evict
+timeout --kill-after=30 ${limit}m nice -n 19 ionice -c3 nix develop --profile \"$profiles/${branch//\//-}\" \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"$buildroot/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")
+rc=\$?
+rm -f ~/.cache/nd-build/build.holder
+if [ \$rc = 124 ] || [ \$rc = 137 ]; then echo \"ND_GATE_TIMEOUT after $limit min\"; fi
+exit \$rc"
+  printf 'mkdir -p ~/.cache/nd-build && cd ~/%s && { flock -n -o ~/.cache/nd-build/build.lock true || echo "linux-gate: waiting for the build lock, held by: $(cat ~/.cache/nd-build/build.holder 2>/dev/null)"; } && flock -o ~/.cache/nd-build/build.lock bash -c %q' "$dir" "$body"
 }
 
 cmd_sync() {
