@@ -40,7 +40,7 @@ pub use events::*;
 pub use filter::{
     FilterRequest, FilterResponse, RequestFilter, ResourceKind, Verdict, clear_request_filter, set_request_filter,
 };
-pub use handle::{Profile, WebView, WebViewOptions};
+pub use handle::{PrivateSession, Profile, WebView, WebViewOptions};
 pub use menu::{ContextMenuMode, Contexts, Hit, MenuItem, MenuItemKind};
 pub use script::{Injection, UserScript};
 

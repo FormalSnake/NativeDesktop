@@ -27,6 +27,9 @@
 //! - `real_adblock_cef`: `BROWSER_SCENE=adblock`, uBlock Origin's default lists on the request
 //!   filter: the 0.5.11 adblock fixture's requests blocked and redirected as that build did, a
 //!   `$csp=` rule's policy in the document, and the filter never on the main thread.
+//! - `real_private_cef`: `BROWSER_SCENE=private`: two tabs of a private window share a cookie,
+//!   a normal window does not see it, and a private window opened after the first closed
+//!   starts empty.
 //!
 //! Needs `browser` built next to this test (`cargo build -p browser`) or `ND_BROWSER_BIN`.
 
@@ -157,6 +160,16 @@ mod gate_m8_webview {
     #[test]
     fn real_adblock_cef_chrome() {
         scene("chrome", "adblock", "ND_ADBLOCK_", "ADBLOCK");
+    }
+
+    #[test]
+    fn real_private_cef() {
+        scene("osr", "private", "ND_PRIVATE_", "PRIVATE");
+    }
+
+    #[test]
+    fn real_private_cef_chrome() {
+        scene("chrome", "private", "ND_PRIVATE_", "PRIVATE");
     }
 
     #[test]

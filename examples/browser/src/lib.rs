@@ -9,12 +9,14 @@
 //! page that scrolls), `chrome-pages` (`chrome://extensions` and `chrome://settings` in a
 //! Chrome-style page), `extensions` (a Chrome extension's popup, native messaging and fill right
 //! after launch, printing `ND_EXTENSIONS_OK`), `adblock` (uBlock Origin's default lists through the
-//! request filter, printing `ND_ADBLOCK_OK`) or `parity` (every event and command against a local test page, printing
+//! request filter, printing `ND_ADBLOCK_OK`), `private` (a private window's tabs share one
+//! in-memory profile, printing `ND_PRIVATE_OK`) or `parity` (every event and command against a local test page, printing
 //! `ND_WEBVIEW_PARITY_OK`).
 
 mod adblock;
 mod extensions;
 mod parity;
+mod private;
 mod scenes;
 mod server;
 
@@ -327,6 +329,7 @@ pub fn init(cx: &mut App) {
         Ok("parity") => parity::open(cx),
         Ok("extensions") => extensions::open(cx),
         Ok("adblock") => adblock::open(cx),
+        Ok("private") => private::open(cx),
         _ => {
             bind_keys(cx);
             let url = std::env::var("BROWSER_URL").unwrap_or_else(|_| HOME.into());
