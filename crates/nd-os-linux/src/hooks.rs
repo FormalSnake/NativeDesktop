@@ -16,12 +16,14 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use nd_backend_gpui::{ChromeContext, FrameRequest, OsHooks};
+use nd_backend_gpui::{ChromeContext, FrameRequest, OsHooks, icon_glyph};
 use nd_core::{FrameTime, WindowId};
 use nd_gpui::gpui::{
     self, AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement, StatefulInteractiveElement, Styled,
     div, px,
 };
+use nd_icons::Icon;
+use nd_theme::color::with_alpha;
 use nd_ui::TitlebarInsets;
 
 use crate::chrome::{self, ButtonLayout, Control, ControlMetrics};
@@ -76,16 +78,17 @@ impl OsHooks for LinuxHooks {
     /// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), which
     /// libadwaita honours; a desktop without the schema gives no answer.
     fn reduce_motion(&self) -> Option<bool> {
-        let out = std::process::Command::new("gsettings")
-            .args(["get", "org.gnome.desktop.interface", "enable-animations"])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        match String::from_utf8_lossy(&out.stdout).trim() {
+        match interface_setting("enable-animations")?.as_str() {
             "false" => Some(true),
             "true" => Some(false),
             _ => None,
         }
+    }
+
+    /// GNOME's accent colour (`org.gnome.desktop.interface accent-color`), which libadwaita
+    /// apps take; a matugen palette or `theme.toml` above it in the chain still wins.
+    fn os_palettes(&self) -> nd_theme::SchemePalettes {
+        interface_setting("accent-color").and_then(|name| accent_palettes(&name)).unwrap_or_default()
     }
 
     fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
@@ -107,12 +110,16 @@ impl OsHooks for LinuxHooks {
         }
         let m = self.metrics;
         let look = cx.look;
+        // libadwaita's window buttons: a circle of the text colour at 10% (15% hovered, 30%
+        // pressed) behind a 16 px symbolic icon, close included.
+        let tint = move |share: f32| with_alpha(look.text, look.text.a * share);
         let button = move |control: Control| {
-            let (glyph, hover) = match control {
-                Control::Minimize => ("\u{2212}", look.control_hover),
-                Control::Maximize => ("\u{25a1}", look.control_hover),
-                Control::Close => ("\u{00d7}", look.close_hover),
+            let icon = match control {
+                Control::Minimize => Icon::Minus,
+                Control::Maximize => Icon::Square,
+                Control::Close => Icon::X,
             };
+            let (hover, active) = (tint(0.15), tint(0.3));
             div()
                 .id(control.name())
                 .size(px(m.size))
@@ -120,13 +127,13 @@ impl OsHooks for LinuxHooks {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(look.control)
-                .text_color(look.text)
+                .bg(tint(0.1))
                 .hover(move |s| s.bg(hover))
+                .active(move |s| s.bg(active))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, window, _| perform(control, window))
-                .child(glyph)
+                .child(icon_glyph(icon, px(12.), look.text, px(2.)))
         };
         let row = |controls: &[Control]| {
             div()
@@ -173,9 +180,63 @@ impl OsHooks for LinuxHooks {
     }
 }
 
+/// One key of `org.gnome.desktop.interface`, unquoted; `None` without the schema.
+fn interface_setting(key: &str) -> Option<String> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", key])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let value = String::from_utf8_lossy(&out.stdout).trim().trim_matches('\'').to_owned();
+    (out.status.success() && !value.is_empty()).then_some(value)
+}
+
+/// libadwaita's accent for GNOME's accent name (`_colors.scss`), as the accent fill with white
+/// on it, and its 25% over the view as the selection and the container (40% on dark).
+fn accent_palettes(name: &str) -> Option<nd_theme::SchemePalettes> {
+    use nd_theme::color::{over, parse_hex};
+    let hex = match name {
+        "blue" => "#3584e4",
+        "teal" => "#2190a4",
+        "green" => "#3a944a",
+        "yellow" => "#c88800",
+        "orange" => "#ed5b00",
+        "red" => "#e62d42",
+        "pink" => "#d56199",
+        "purple" => "#9141ac",
+        "slate" => "#6f8396",
+        _ => return None,
+    };
+    let accent = parse_hex(hex)?;
+    let scheme = |view: &str, share: f32, ink: &str| {
+        let tint = with_alpha(accent, share);
+        nd_theme::PaletteRefinement {
+            accent: Some(accent),
+            on_accent: parse_hex("#ffffff"),
+            selection: Some(tint),
+            accent_container: parse_hex(view).map(|v| over(tint, v)),
+            on_accent_container: parse_hex(ink),
+            ..Default::default()
+        }
+    };
+    Some(nd_theme::SchemePalettes {
+        light: scheme("#ffffff", 0.25, "#000006cc"),
+        dark: scheme("#1d1d20", 0.4, "#ffffff"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gnome_accent_names_map_to_libadwaitas_colours() {
+        let teal = accent_palettes("teal").expect("teal");
+        assert_eq!(teal.light.accent, nd_theme::color::parse_hex("#2190a4"));
+        assert_eq!(teal.dark.accent, teal.light.accent);
+        assert!(teal.light.accent_container.is_some_and(|c| c.a > 0.99), "the container is opaque");
+        assert!(accent_palettes("chartreuse").is_none());
+    }
 
     #[test]
     fn windows_carry_the_hooks_app_id() {

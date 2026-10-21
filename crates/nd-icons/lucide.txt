@@ -67,6 +67,7 @@ shuffle
 skip-back
 skip-forward
 smile
+square
 square-pen
 star
 thumbs-down

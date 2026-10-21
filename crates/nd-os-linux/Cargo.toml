@@ -14,6 +14,8 @@ cef = ["dep:nd-cef"]
 nd-core.workspace = true
 nd-ui.workspace = true
 nd-gpui.workspace = true
+nd-icons.workspace = true
+nd-theme.workspace = true
 nd-backend-gpui.workspace = true
 nd-cef = { workspace = true, optional = true }
 

@@ -154,6 +154,7 @@ icons! {
     SkipBack "skip-back" ["backward.fill"] '\u{E892}';
     SkipForward "skip-forward" ["forward.fill"] '\u{E893}';
     Smile "smile" ["face.smiling", "smiley"] '\u{E76E}';
+    Square "square" ["square"] '\u{E922}';
     SquarePen "square-pen" ["square.and.pencil"] '\u{E70F}';
     Star "star" ["star"] '\u{E734}';
     ThumbsDown "thumbs-down" ["hand.thumbsdown"] '\u{E8E0}';
