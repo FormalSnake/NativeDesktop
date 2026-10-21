@@ -8,6 +8,7 @@
 //! avatars). Each is a widget
 //! kind every backend maps (ARCHITECTURE.md 3.6); this crate holds no platform code.
 
+pub mod accessory;
 pub mod controls;
 pub mod dialogs;
 pub mod form;
@@ -31,6 +32,7 @@ pub mod titlebar;
 pub mod toast;
 pub mod toolbar;
 
+pub use accessory::{BottomAccessory, bottom_accessory, bottom_accessory_clearance};
 pub use controls::{ButtonExt, Mapping, Separator, SeparatorKind, SeparatorProps, icon_button, menu_button, separator};
 pub use dialogs::{
     AboutPanel, Alert, AlertButton, AlertPresentation, AlertResponse, AlertStyle, ButtonRole, OpenDialog, SaveDialog,

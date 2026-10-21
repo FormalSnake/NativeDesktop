@@ -19,7 +19,7 @@ use std::rc::Rc;
 use nd_core::time::{Duration, Instant};
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Response, SemanticAction, Semantics, WidgetSemantics};
-use nd_ui::{Key, Role, StyleRefinement};
+use nd_ui::{Key, RichText, Role, StyleRefinement, span};
 
 use super::clock::{PlaybackClock, format_clock, parse_clock};
 use super::image::image;
@@ -46,6 +46,34 @@ pub struct SeekMetrics {
     /// How close the clock must come to a committed seek to count as caught up.
     pub caught_up: Duration,
 }
+
+/// The pill layout's now-playing block, from Music.app on macOS 26 and 27.
+pub struct PillMetrics {
+    /// The capsule's height.
+    pub height: f32,
+    pub art: f32,
+    pub art_radius: f32,
+    /// Between the art and the two lines.
+    pub art_gap: f32,
+    /// Between the art and the seek bar's track.
+    pub seek_gap: f32,
+    /// The widest the block grows: about half the capsule in Music.
+    pub song_width: f32,
+    /// The point sizes of the play and skip glyphs; AppKit sizes a button's symbol from its font.
+    pub play_glyph: f32,
+    pub skip_glyph: f32,
+}
+
+pub const PILL: PillMetrics = PillMetrics {
+    height: 52.,
+    art: 34.,
+    art_radius: 4.,
+    art_gap: 8.,
+    seek_gap: 4.,
+    song_width: 368.,
+    play_glyph: 22.,
+    skip_glyph: 17.,
+};
 
 pub const SEEK: SeekMetrics = SeekMetrics {
     track: 4.,
@@ -406,6 +434,17 @@ pub enum TransportLayout {
     Full,
     /// Art, title and play and next with a thin seek bar under: a sidebar or mini player.
     Compact,
+    /// One row for a capsule, as macOS Music floats it over its content: transport at the leading
+    /// end, the song on two lines over a thin seek bar in the middle, the item's controls and
+    /// volume at the trailing end. Sits in a [`crate::bottom_accessory`].
+    Pill,
+}
+
+impl TransportLayout {
+    /// The bar the platform's music players use: the pill on macOS, the bottom bar elsewhere.
+    pub fn platform() -> Self {
+        if cfg!(target_os = "macos") { Self::Pill } else { Self::Full }
+    }
 }
 
 type OnCommand = Rc<dyn Fn(&TransportCommand, &mut Window, &mut App)>;
@@ -420,6 +459,8 @@ pub struct PlayerBar {
     on_open: Option<OnOpen>,
     accessories: Vec<AnyElement>,
     trailing: Vec<AnyElement>,
+    before_transport: Vec<AnyElement>,
+    after_transport: Vec<AnyElement>,
     style: StyleRefinement,
 }
 
@@ -432,6 +473,8 @@ pub fn player_bar(id: impl Into<SharedString>, now: NowPlaying) -> PlayerBar {
         on_open: None,
         accessories: Vec::new(),
         trailing: Vec::new(),
+        before_transport: Vec::new(),
+        after_transport: Vec::new(),
         style: StyleRefinement::default(),
     }
 }
@@ -464,9 +507,21 @@ impl PlayerBar {
         self
     }
 
-    /// A control after the volume: repeat, shuffle, the queue. Full layout only.
+    /// A control after the volume: repeat, shuffle, the queue. Full and pill layouts.
     pub fn trailing(mut self, element: impl IntoElement) -> Self {
         self.trailing.push(element.into_any_element());
+        self
+    }
+
+    /// A control before previous, where Music keeps shuffle. Full and pill layouts.
+    pub fn before_transport(mut self, element: impl IntoElement) -> Self {
+        self.before_transport.push(element.into_any_element());
+        self
+    }
+
+    /// A control after next, where Music keeps repeat. Full and pill layouts.
+    pub fn after_transport(mut self, element: impl IntoElement) -> Self {
+        self.after_transport.push(element.into_any_element());
         self
     }
 }
@@ -492,7 +547,18 @@ pub fn volume_icon(volume: f32, muted: bool) -> Icon {
 
 impl IntoElement for PlayerBar {
     fn into_any_element(self) -> AnyElement {
-        let PlayerBar { id, now, layout, on_command, on_open, accessories, trailing, style } = self;
+        let PlayerBar {
+            id,
+            now,
+            layout,
+            on_command,
+            on_open,
+            accessories,
+            trailing,
+            before_transport,
+            after_transport,
+            style,
+        } = self;
         let send = move |command: TransportCommand| {
             let on = on_command.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -554,6 +620,113 @@ impl IntoElement for PlayerBar {
                         .child(next.disabled(!now.can_next)),
                 )
                 .child(seek),
+            TransportLayout::Pill => {
+                let previous = icon_button(child("previous"), Icon::SkipBack)
+                    .tooltip("Previous")
+                    .disabled(!now.can_previous)
+                    .on_click({
+                        let f = send(TransportCommand::Previous);
+                        move |_, w, cx| f(w, cx)
+                    });
+                let mute = icon_button(child("mute"), volume_icon(now.volume, now.muted))
+                    .tooltip(if now.muted { "Unmute" } else { "Mute" })
+                    .on_click({
+                        let f = send(TransportCommand::ToggleMute);
+                        move |_, w, cx| f(w, cx)
+                    });
+                let volume = {
+                    let on = on_command_of(&send);
+                    slider(child("volume"), if now.muted { 0. } else { now.volume })
+                        .label("Volume")
+                        .w(px(72.))
+                        .on_change(move |e: &SliderChanged, w, cx| on(TransportCommand::SetVolume(e.value))(w, cx))
+                };
+                let idle = now.title.is_empty() && now.artwork.is_none();
+                // Music's mini player, measured against Music.app: 34 pt art, the two lines 8 pt
+                // after it and centred against it, the title semibold, the progress line 4 pt
+                // under both from the art's leading edge.
+                let song =
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .justify_center()
+                        .gap(px(PILL.seek_gap))
+                        .child(
+                            h_flex()
+                                .id(child("now"))
+                                .w_full()
+                                .min_w_0()
+                                .gap(px(PILL.art_gap))
+                                .items_center()
+                                .child(art(PILL.art).rounded(px(PILL.art_radius)))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(
+                                            label(now.title.clone())
+                                                .rich(RichText::new([span(now.title.clone()).semibold()]))
+                                                .text_style(TextStyle::Subheadline)
+                                                .truncate(),
+                                        )
+                                        .when_some(now.subtitle.clone(), |el, s| {
+                                            el.child(
+                                                label(s)
+                                                    .text_style(TextStyle::Subheadline)
+                                                    .tone(LabelTone::Secondary)
+                                                    .truncate(),
+                                            )
+                                        }),
+                                )
+                                .when_some(on_open, |row, open| {
+                                    row.role(Role::Button, format!("{}, open player", now.title))
+                                        .on_tap(move |_, w, cx| open(w, cx))
+                                }),
+                        )
+                        // The seek bar's hit area is taller than its track; the block counts the track
+                        // only, so art, titles and track centre as one unit in the capsule.
+                        .child(div().relative().w_full().h(px(SEEK.track)).child(
+                            div().absolute().left_0().right_0().top(px((SEEK.track - SEEK.hit) / 2.)).child(seek),
+                        ));
+                // Music draws play larger than skip and skip larger than its other controls.
+                let play = play.text_size(px(PILL.play_glyph));
+                let previous = previous.text_size(px(PILL.skip_glyph));
+                let next = next.text_size(px(PILL.skip_glyph));
+                // Transport and the trailing controls keep their size; the song truncates first.
+                h_flex()
+                    .id(id.clone())
+                    .w_full()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .items_center()
+                            .children(before_transport)
+                            .child(previous)
+                            .child(play)
+                            .child(next.disabled(!now.can_next))
+                            .children(after_transport),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .justify_center()
+                            .when(!idle, |row| row.child(song.max_w(px(PILL.song_width)))),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .items_center()
+                            .children(accessories)
+                            .children(trailing)
+                            .child(mute)
+                            .child(volume),
+                    )
+            }
             TransportLayout::Full => {
                 let previous = icon_button(child("previous"), Icon::SkipBack)
                     .tooltip("Previous")
@@ -601,7 +774,14 @@ impl IntoElement for PlayerBar {
                         .w_full()
                         .gap_4()
                         .items_center()
-                        .child(side().child(previous).child(play).child(next.disabled(!now.can_next)))
+                        .child(
+                            side()
+                                .children(before_transport)
+                                .child(previous)
+                                .child(play)
+                                .child(next.disabled(!now.can_next))
+                                .children(after_transport),
+                        )
                         .child(center)
                         .child(side().justify_end().child(mute).child(volume).children(trailing)),
                 )
