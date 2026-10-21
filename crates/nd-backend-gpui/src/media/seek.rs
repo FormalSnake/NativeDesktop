@@ -35,10 +35,12 @@ pub(crate) fn describe(props: &SeekBarProps, model: &mut SeekModel, now: Instant
 fn fraction_at(
     bounds: &std::cell::RefCell<std::collections::HashMap<NodeId, nd_core::Rect>>,
     node: NodeId,
+    inset: f32,
     at: Point<Pixels>,
 ) -> Option<f32> {
     let b = *bounds.borrow().get(&node)?;
-    Some(((at.x.as_f32() - b.origin.x) / b.size.width.max(1.)).clamp(0., 1.))
+    let width = (b.size.width - 2. * inset).max(1.);
+    Some(((at.x.as_f32() - b.origin.x - inset) / width).clamp(0., 1.))
 }
 
 pub(super) fn seek_bar(
@@ -78,7 +80,8 @@ pub(super) fn seek_bar(
     let bar_fill = |fraction: f32, color| {
         div().absolute().left_0().top_0().bottom_0().w(relative(fraction)).rounded_full().bg(color)
     };
-    let mut bar = div().id("track").relative().w_full().h(px(SEEK.hit)).child(
+    let inset = p.track_inset();
+    let mut bar = div().id("track").relative().flex_1().min_w_0().h(px(SEEK.hit)).child(
         div()
             .absolute()
             .left_0()
@@ -109,7 +112,8 @@ pub(super) fn seek_bar(
         .role(gpui::Role::Slider)
         .aria_label(p.label.clone())
         .flex()
-        .flex_col()
+        .when(p.times_beside, |r| r.flex_row().items_center().gap(px(SEEK.beside_gap)))
+        .when(!p.times_beside, |r| r.flex_col())
         .w_full();
     if seekable {
         let props = Arc::new(p.clone());
@@ -123,7 +127,7 @@ pub(super) fn seek_bar(
             let (sink, state, props, bounds) = (ctl.sink.clone(), state.clone(), props.clone(), ctl.bounds.clone());
             move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                 sink.take_focus(window, cx);
-                let Some(f) = fraction_at(&bounds, id, event.position) else { return };
+                let Some(f) = fraction_at(&bounds, id, inset, event.position) else { return };
                 let seeked = state.borrow_mut().model.press(&props, f);
                 send(&sink, seeked, window, cx);
             }
@@ -147,7 +151,7 @@ pub(super) fn seek_bar(
                         if phase != DispatchPhase::Bubble || !state2.borrow().model.dragging() {
                             return;
                         }
-                        let Some(f) = fraction_at(&bounds2, id, event.position) else { return };
+                        let Some(f) = fraction_at(&bounds2, id, inset, event.position) else { return };
                         let seeked = state2.borrow_mut().model.moved(&props2, f);
                         send(&sink2, seeked, window, cx);
                     });
@@ -186,24 +190,45 @@ pub(super) fn seek_bar(
         };
         root = root.track_focus(ctl.focus()).on_key_down(keys);
     }
-    root = root.child(bar);
-    if let Some((elapsed, remaining)) = times {
-        let (size, weight, line) = ctl.look.type_of(TextStyle::Caption1);
-        let ink = theme.text.secondary;
-        marks.text(&elapsed, ink, &[], size, weight);
-        marks.text(&remaining, ink, &[], size, weight);
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .justify_between()
-            .mt(px(SEEK.label_gap))
-            .text_size(size)
-            .line_height(line)
-            .text_color(ink)
-            .child(elapsed)
-            .child(remaining);
-        row.style().text.font_features = Some(FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
-        root = root.child(row);
+    match times {
+        Some((elapsed, end)) => {
+            let (size, weight, line) = ctl.look.type_of(TextStyle::Caption1);
+            let ink = theme.text.secondary;
+            marks.text(&elapsed, ink, &[], size, weight);
+            marks.text(&end, ink, &[], size, weight);
+            let tabular = || FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
+            if p.times_beside {
+                let label = |text: String, trailing: bool| {
+                    let mut l = div()
+                        .flex_none()
+                        .w(px(p.beside_width()))
+                        .flex()
+                        .when(trailing, |l| l.justify_start())
+                        .when(!trailing, |l| l.justify_end())
+                        .text_size(size)
+                        .line_height(line)
+                        .text_color(ink)
+                        .child(text);
+                    l.style().text.font_features = Some(tabular());
+                    l
+                };
+                root = root.child(label(elapsed, false)).child(bar).child(label(end, true));
+            } else {
+                let mut row = div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .mt(px(SEEK.label_gap))
+                    .text_size(size)
+                    .line_height(line)
+                    .text_color(ink)
+                    .child(elapsed)
+                    .child(end);
+                row.style().text.font_features = Some(tabular());
+                root = root.child(bar).child(row);
+            }
+        }
+        None => root = root.child(bar),
     }
     with_style(root, &p.style).into_any_element()
 }

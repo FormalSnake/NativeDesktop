@@ -39,6 +39,8 @@ pub struct SeekMetrics {
     pub hit: f32,
     /// Space between the track and the time labels.
     pub label_gap: f32,
+    /// Space between the track and the time labels beside it.
+    pub beside_gap: f32,
     /// How long a committed seek is shown while the app's clock has not caught up.
     pub settle: Duration,
     /// How close the clock must come to a committed seek to count as caught up.
@@ -51,6 +53,7 @@ pub const SEEK: SeekMetrics = SeekMetrics {
     thumb: 12.,
     hit: 16.,
     label_gap: 2.,
+    beside_gap: 8.,
     settle: Duration::from_millis(1500),
     caught_up: Duration::from_millis(750),
 };
@@ -81,6 +84,9 @@ pub struct SeekBarProps {
     pub buffered: Option<Duration>,
     /// Elapsed and remaining time under the track.
     pub show_times: bool,
+    /// The times sit on the track's row instead, elapsed before it and the length after it:
+    /// a player bar's seek row, as GNOME Music and Music's mini player lay it out.
+    pub times_beside: bool,
     /// What one arrow key moves.
     pub step: Duration,
     /// Accessible name.
@@ -105,6 +111,17 @@ impl SeekBarProps {
 
     pub fn position_of(&self, fraction: f32) -> Duration {
         self.duration.map_or(Duration::ZERO, |d| d.mul_f32(fraction.clamp(0., 1.)))
+    }
+
+    /// The width each time label beside the track takes, in points: room for `m:ss`, or
+    /// `h:mm:ss` once the track runs an hour, in caption-sized tabular digits.
+    pub fn beside_width(&self) -> f32 {
+        if self.duration.is_some_and(|d| d.as_secs() >= 3600) { 52. } else { 40. }
+    }
+
+    /// How far in from each side the track starts when the times sit beside it.
+    pub fn track_inset(&self) -> f32 {
+        if self.times_beside { self.beside_width() + SEEK.beside_gap } else { 0. }
     }
 
     /// The buffered fraction, never behind `played`.
@@ -225,12 +242,17 @@ impl SeekModel {
         Some(Seeked { position, phase: SeekPhase::Committed })
     }
 
-    /// Elapsed and remaining labels for the shown position.
+    /// Elapsed and remaining labels for the shown position; elapsed and the length when the
+    /// times sit beside the track.
     pub fn times(&mut self, props: &SeekBarProps, now: Instant) -> (String, String) {
         let shown = self.shown(props, now);
-        let remaining =
-            props.duration.map_or_else(String::new, |d| format!("-{}", format_clock(d.saturating_sub(shown))));
-        (format_clock(shown), remaining)
+        let end = match props.duration {
+            Some(d) if props.times_beside => format_clock(d),
+            Some(d) => format!("-{}", format_clock(d.saturating_sub(shown))),
+            None if props.times_beside => "--:--".to_owned(),
+            None => String::new(),
+        };
+        (format_clock(shown), end)
     }
 }
 
@@ -243,6 +265,7 @@ pub fn seek_bar(id: impl Into<SharedString>, clock: PlaybackClock) -> SeekBar {
         duration: None,
         buffered: None,
         show_times: false,
+        times_beside: false,
         step: Duration::from_secs(5),
         label: "Playback position".into(),
         enabled: true,
@@ -265,6 +288,14 @@ impl SeekBar {
 
     pub fn show_times(mut self) -> Self {
         self.0.props_mut().show_times = true;
+        self
+    }
+
+    /// Elapsed time before the track and the length after it, on one row.
+    pub fn times_beside(mut self) -> Self {
+        let props = self.0.props_mut();
+        props.show_times = true;
+        props.times_beside = true;
         self
     }
 
@@ -368,8 +399,9 @@ pub enum TransportCommand {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TransportLayout {
-    /// Buttons, now playing, volume in one row with the seek bar and times above: a window's
-    /// bottom bar.
+    /// A window's bottom bar: the seek bar with its times across the top, then transport at
+    /// the leading edge, what is playing in the middle and volume at the trailing edge, as
+    /// GNOME Music and YouTube Music lay it out.
     #[default]
     Full,
     /// Art, title and play and next with a thin seek bar under: a sidebar or mini player.
@@ -377,6 +409,7 @@ pub enum TransportLayout {
 }
 
 type OnCommand = Rc<dyn Fn(&TransportCommand, &mut Window, &mut App)>;
+type OnOpen = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// A now-playing bar built from the platform's controls and a [`seek_bar`].
 pub struct PlayerBar {
@@ -384,11 +417,23 @@ pub struct PlayerBar {
     now: NowPlaying,
     layout: TransportLayout,
     on_command: Option<OnCommand>,
+    on_open: Option<OnOpen>,
+    accessories: Vec<AnyElement>,
+    trailing: Vec<AnyElement>,
     style: StyleRefinement,
 }
 
 pub fn player_bar(id: impl Into<SharedString>, now: NowPlaying) -> PlayerBar {
-    PlayerBar { id: id.into(), now, layout: TransportLayout::Full, on_command: None, style: StyleRefinement::default() }
+    PlayerBar {
+        id: id.into(),
+        now,
+        layout: TransportLayout::Full,
+        on_command: None,
+        on_open: None,
+        accessories: Vec::new(),
+        trailing: Vec::new(),
+        style: StyleRefinement::default(),
+    }
 }
 
 impl PlayerBar {
@@ -403,6 +448,25 @@ impl PlayerBar {
 
     pub fn on_command(mut self, f: impl Fn(&TransportCommand, &mut Window, &mut App) + 'static) -> Self {
         self.on_command = Some(Rc::new(f));
+        self
+    }
+
+    /// A tap on the artwork and titles opens the app's now-playing view (the expanded player).
+    pub fn on_open(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_open = Some(Rc::new(f));
+        self
+    }
+
+    /// A control after the titles that acts on the playing item: rating, its menu. Full layout
+    /// only.
+    pub fn accessory(mut self, element: impl IntoElement) -> Self {
+        self.accessories.push(element.into_any_element());
+        self
+    }
+
+    /// A control after the volume: repeat, shuffle, the queue. Full layout only.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing.push(element.into_any_element());
         self
     }
 }
@@ -428,7 +492,7 @@ pub fn volume_icon(volume: f32, muted: bool) -> Icon {
 
 impl IntoElement for PlayerBar {
     fn into_any_element(self) -> AnyElement {
-        let PlayerBar { id, now, layout, on_command, style } = self;
+        let PlayerBar { id, now, layout, on_command, on_open, accessories, trailing, style } = self;
         let send = move |command: TransportCommand| {
             let on = on_command.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -511,20 +575,35 @@ impl IntoElement for PlayerBar {
                         .w(px(96.))
                         .on_change(move |e: &SliderChanged, w, cx| on(TransportCommand::SetVolume(e.value))(w, cx))
                 };
-                v_flex().id(id.clone()).w_full().gap_1().child(seek.show_times()).child(
+                let idle = now.title.is_empty() && now.artwork.is_none();
+                let playing_now = h_flex()
+                    .id(child("now"))
+                    .min_w_0()
+                    .gap_3()
+                    .when(!idle, |row| row.child(art(48.)).child(titles))
+                    .when_some(on_open.filter(|_| !idle), |row, open| {
+                        row.role(Role::Button, format!("{}, open player", now.title))
+                            .on_tap(move |_, w, cx| open(w, cx))
+                    });
+                let center = h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .gap_2()
+                    .justify_center()
+                    .child(playing_now)
+                    .when(!idle, |row| row.child(h_flex().flex_none().gap_1().children(accessories)));
+                // The sides share what the song leaves but never shrink under their controls; the
+                // song truncates first.
+                let side = || h_flex().flex_1().gap_1().items_center();
+                v_flex().id(id.clone()).w_full().gap_1().child(seek.times_beside()).child(
                     h_flex()
                         .w_full()
-                        .gap_3()
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .flex_none()
-                                .child(previous)
-                                .child(play)
-                                .child(next.disabled(!now.can_next)),
-                        )
-                        .child(h_flex().flex_1().min_w_0().gap_2().child(art(44.)).child(titles))
-                        .child(h_flex().flex_none().gap_1().child(mute).child(volume)),
+                        .gap_4()
+                        .items_center()
+                        .child(side().child(previous).child(play).child(next.disabled(!now.can_next)))
+                        .child(center)
+                        .child(side().justify_end().child(mute).child(volume).children(trailing)),
                 )
             }
         };
