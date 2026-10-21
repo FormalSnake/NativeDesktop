@@ -16,7 +16,7 @@
 # (~/.cache/nd-build/targets/<branch>, or $ND_LINUX_TARGET) and builds quietly: nice, idle IO class,
 # two jobs, two test threads. A shared target is unsafe: cargo's metadata hash for path crates
 # ignores the checkout path and rsync keeps the macbook's older mtimes, so one lane reused another
-# lane's stale nd crates. While all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 40) or the disk
+# lane's stale nd crates. While all lane targets pass $ND_LINUX_TARGET_CAP_GB (default 80) or the disk
 # has less than $ND_LINUX_FREE_FLOOR_GB free (default 25), the least recently used ones are dropped,
 # under the build lock so no running build loses its target.
 set -euo pipefail
@@ -27,7 +27,7 @@ branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
 dir="Developer/nativedesktop-$branch"
 targets='$HOME/.cache/nd-build/targets'
 target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
-cap=${ND_LINUX_TARGET_CAP_GB:-40}
+cap=${ND_LINUX_TARGET_CAP_GB:-80}
 floor=${ND_LINUX_FREE_FLOOR_GB:-25}
 
 # Exits with the remote command's status, so a failing gate fails the caller. The status is the
