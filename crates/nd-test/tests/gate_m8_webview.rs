@@ -17,6 +17,8 @@
 //! - `real_pip_cef_chrome`: a page's own `requestPictureInPicture` is refused for want of a
 //!   gesture; nativebrowser's floating video script through `execute_javascript` lifts the
 //!   playing video into Chromium's picture-in-picture window and back.
+//! - `real_print_*`: `print_to_pdf` writes a PDF, and `print` opens the system print panel
+//!   (WebKit and Chrome style; an off-screen page has no window for the panel).
 //!
 //! Needs `browser` built with the `cef` feature for the CEF runs (`cargo build -p browser
 //! --features cef`); a build without it fails the CEF tests with the engine's own message.
@@ -138,6 +140,38 @@ mod gate_m8_webview {
     fn real_pip_cef_chrome() {
         let line = scene("cef-chrome", "pip", "ND_PIP_");
         println!("{line}; ND_M8_PIP_CEF_CHROME_OK");
+    }
+
+    /// `BROWSER_SCENE=print`: the PDF checks out, then the print panel opens as a window of the
+    /// app's own beside its main one.
+    fn print(engine: &str) -> String {
+        let mut options = browser(engine, "print");
+        options.ready_timeout = Duration::from_secs(60);
+        let app = launch_app(options).expect("launch browser");
+        let tail = |app: &AppHandle| app.stderr_tail(40).join("\n");
+        let pdf = app.wait_for_stderr("ND_PRINT ", Duration::from_secs(60));
+        let pdf = pdf.unwrap_or_else(|e| panic!("no PDF: {e}\n{}", tail(&app)));
+        app.wait_for_stderr("ND_PRINT_REQUESTED", Duration::from_secs(30))
+            .unwrap_or_else(|e| panic!("print was never asked for: {e}\n{}", tail(&app)));
+        let end = Instant::now() + Duration::from_secs(15);
+        loop {
+            let windows = ndshell::window_list::of_pid(app.pid()).len();
+            if windows > 1 {
+                return format!("{pdf}; {windows} windows with the print panel");
+            }
+            assert!(Instant::now() < end, "no print panel opened\n{}", tail(&app));
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    #[test]
+    fn real_print_wkwebview() {
+        println!("{}; ND_M8_PRINT_WKWEBVIEW_OK", print("system"));
+    }
+
+    #[test]
+    fn real_print_cef_chrome() {
+        println!("{}; ND_M8_PRINT_CEF_CHROME_OK", print("cef-chrome"));
     }
 
     fn real_allowed(name: &str) -> bool {

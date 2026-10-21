@@ -179,13 +179,23 @@ pub(crate) fn chrome_switches(line: &mut CommandLine) {
     for switch in ["no-first-run", "no-default-browser-check", "hide-crash-restore-bubble"] {
         line.append_switch(Some(&CefString::from(switch)));
     }
-    #[cfg(target_os = "macos")]
+    // Printing goes to the OS dialog: the print panel on macOS, the portal's on Linux
+    // (`linux/print.rs`). Chromium's print preview is browser UI.
     line.append_switch(Some(&CefString::from("disable-print-preview")));
     // Glic's actor UI looks up every attached WebContents as a tab, and a Chrome-style page's
     // is attached before it is one: Chromium crashes in `TabInterface::GetFromContents`.
-    let features =
-        "MediaRouter,OptimizationHints,AutofillServerCommunication,Translate,DownloadBubble,Glic,GlicActor,GlicActorUi";
-    line.append_switch_with_value(Some(&CefString::from("disable-features")), Some(&CefString::from(features)));
+    let mut features =
+        "MediaRouter,OptimizationHints,AutofillServerCommunication,Translate,DownloadBubble,Glic,GlicActor,GlicActorUi"
+            .to_owned();
+    // The print service renders jobs for a CUPS printer by name, and the portal's is none: the
+    // job has to stay in the browser process, where the print handler gets its PDF.
+    if cfg!(target_os = "linux") {
+        features.push_str(",EnableOopPrintDrivers");
+    }
+    line.append_switch_with_value(
+        Some(&CefString::from("disable-features")),
+        Some(&CefString::from(features.as_str())),
+    );
 }
 
 /// Chrome-style pages show Chrome's bubbles (save password, translate, the download bubble)

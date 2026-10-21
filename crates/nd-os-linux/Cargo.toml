@@ -20,3 +20,5 @@ nd-cef = { workspace = true, optional = true }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ndshell.workspace = true
 nd-test.workspace = true
+# A fake print portal on the run's private bus (real_webview::real_print_cef).
+zbus = "5.19"

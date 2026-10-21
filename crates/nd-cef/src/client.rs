@@ -108,6 +108,7 @@ pub(crate) fn client(id: u64, style: nd_webview::CefStyle) -> Client {
         focus: NdFocus::new(id),
         drag: NdDrag::new(id),
         keyboard: NdKeyboard::new(id),
+        print: crate::platform::print_handler(),
     })
 }
 
@@ -129,6 +130,7 @@ struct Handlers {
     focus: FocusHandler,
     drag: DragHandler,
     keyboard: KeyboardHandler,
+    print: Option<PrintHandler>,
 }
 
 wrap_client! {
@@ -195,6 +197,10 @@ wrap_client! {
 
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
             Some(self.h.keyboard.clone())
+        }
+
+        fn print_handler(&self) -> Option<PrintHandler> {
+            self.h.print.clone()
         }
     }
 }

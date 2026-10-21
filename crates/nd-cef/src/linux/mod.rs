@@ -5,6 +5,7 @@ pub(crate) mod chrome;
 pub(crate) mod dialogs;
 pub(crate) mod install_prompt;
 mod keys;
+mod print;
 pub(crate) mod pump;
 pub(crate) mod view;
 
@@ -85,6 +86,11 @@ pub(crate) fn command_line(line: &mut CommandLine) {
 /// Runs `f` on a later turn of the main loop, outside whatever CEF callback is on the stack.
 pub(crate) fn run_later(f: impl FnOnce() + 'static) {
     pump::later(Box::new(f));
+}
+
+/// Printing through the desktop portal: Chromium has no print dialog of its own on Linux.
+pub(crate) fn print_handler() -> Option<PrintHandler> {
+    Some(print::handler())
 }
 
 /// Runs `f` on the main thread, from any thread.

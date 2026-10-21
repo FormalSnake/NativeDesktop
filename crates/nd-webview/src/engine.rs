@@ -238,6 +238,14 @@ pub enum Command {
         done: Box<dyn FnOnce(Result<ActionOutcome, String>)>,
     },
     CloseExtensionPopup,
+    /// The OS print dialog for the page: the print panel on macOS, the desktop portal's on
+    /// Linux.
+    Print,
+    /// Renders the page to a PDF file at `path`.
+    PrintToPdf {
+        path: PathBuf,
+        done: Box<dyn FnOnce(Result<(), String>)>,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -278,6 +286,8 @@ impl std::fmt::Debug for Command {
             Command::ExtensionAction { .. } => "ExtensionAction",
             Command::RunExtensionAction { .. } => "RunExtensionAction",
             Command::CloseExtensionPopup => "CloseExtensionPopup",
+            Command::Print => "Print",
+            Command::PrintToPdf { .. } => "PrintToPdf",
         };
         f.write_str(name)
     }

@@ -526,6 +526,27 @@ impl WebView {
         self.send(Command::CloseExtensionPopup);
     }
 
+    /// Opens the OS print dialog for the page (what Cmd-P or Ctrl-P does in a browser): the
+    /// print panel on macOS, the desktop portal's dialog on Linux, which also offers saving
+    /// as PDF. An off-screen Chromium page on macOS has no window to show the panel on and
+    /// prints nothing; save it with [`Self::print_to_pdf`] instead.
+    pub fn print(&self) {
+        self.send(Command::Print);
+    }
+
+    /// Writes the page to a PDF at `path` without a dialog: on Chromium laid out on pages as for
+    /// print, on WebKit as one page the height of the document.
+    pub fn print_to_pdf(
+        &self,
+        path: impl Into<std::path::PathBuf>,
+        done: impl FnOnce(Result<(), String>, &mut App) + 'static,
+    ) {
+        self.send(Command::PrintToPdf {
+            path: path.into(),
+            done: Box::new(move |result| Page::defer(move |cx| done(result, cx))),
+        });
+    }
+
     pub(crate) fn forward_key(&self) {
         self.send(Command::ForwardKey);
     }
@@ -565,6 +586,7 @@ pub(crate) fn fail(command: Command, error: &str) {
         Command::SaveSession(done) => done(None),
         Command::ExtensionAction { done, .. } => done(Err(error.to_owned())),
         Command::RunExtensionAction { done, .. } => done(Err(error.to_owned())),
+        Command::PrintToPdf { done, .. } => done(Err(error.to_owned())),
         _ => {}
     }
 }

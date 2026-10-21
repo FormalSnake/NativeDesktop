@@ -193,6 +193,11 @@ impl Hyprland {
         ]
     }
 
+    /// The run's private session bus, which clients only get when they ask for it.
+    pub fn bus_address(&self) -> &str {
+        self.bus.address()
+    }
+
     /// `program` set up to run as a client of this instance.
     pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
         let mut command = Command::new(program);

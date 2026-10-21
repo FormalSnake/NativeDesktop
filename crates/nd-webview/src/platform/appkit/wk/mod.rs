@@ -20,7 +20,7 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSApplication, NSEvent, NSEventType, NSMenu, NSResponder, NSView};
+use objc2_app_kit::{NSApplication, NSEvent, NSEventType, NSMenu, NSPrintInfo, NSResponder, NSView};
 use objc2_foundation::{
     MainThreadMarker, NSData, NSError, NSHTTPCookie, NSKeyValueObservingOptions, NSObject,
     NSObjectNSKeyValueObserverRegistration, NSRect, NSString, NSURLRequest, NSUUID,
@@ -700,6 +700,40 @@ impl EngineView for WkPage {
                 );
             }
             Command::CloseExtensionPopup => {}
+            Command::Print => {
+                let operation = unsafe { web.printOperationWithPrintInfo(&NSPrintInfo::sharedPrintInfo()) };
+                // WebKit lays out nothing for an operation whose view has an empty frame.
+                if let Some(view) = operation.view() {
+                    view.setFrame(web.bounds());
+                }
+                match web.window() {
+                    Some(window) => unsafe {
+                        operation.runOperationModalForWindow_delegate_didRunSelector_contextInfo(
+                            &window,
+                            None,
+                            None,
+                            std::ptr::null_mut(),
+                        )
+                    },
+                    None => tracing::warn!("web view: print needs the page in a window"),
+                }
+            }
+            Command::PrintToPdf { path, done } => {
+                let done = Cell::new(Some(done));
+                let block = RcBlock::new(move |data: *mut NSData, error: *mut objc2_foundation::NSError| {
+                    let Some(done) = done.take() else { return };
+                    let result = match unsafe { data.as_ref() } {
+                        Some(data) => {
+                            std::fs::write(&path, data.to_vec()).map_err(|e| format!("{}: {e}", path.display()))
+                        }
+                        None => Err(unsafe { error.as_ref() }
+                            .map(|e| e.localizedDescription().to_string())
+                            .unwrap_or_else(|| "WebKit made no PDF".into())),
+                    };
+                    done(result);
+                });
+                unsafe { web.createPDFWithConfiguration_completionHandler(None, &block) };
+            }
         }
     }
 

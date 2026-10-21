@@ -16,15 +16,17 @@
 //! store's button and cancelled, printing `ND_WEBSTORE_OK`), `adblock` (uBlock Origin's default
 //! lists through the request filter, printing `ND_ADBLOCK_OK`), `private` (a private window's tabs
 //! share one in-memory profile, printing `ND_PRIVATE_OK`), `pip` (the floating video chord's script
-//! lifts a playing video into picture-in-picture and back, printing `ND_PIP_OK`), `parity` (every
-//! event and command against a local test page, printing `ND_WEBVIEW_PARITY_OK`), `tabdrag` (two
-//! windows of tabs that drag between them, carrying live pages) or `reveal` (a hidden sidebar that
-//! slides in from the leading edge).
+//! lifts a playing video into picture-in-picture and back, printing `ND_PIP_OK`), `print` (a page
+//! saved as PDF, then the OS print dialog, printing `ND_PRINT_REQUESTED`), `parity` (every event
+//! and command against a local test page, printing `ND_WEBVIEW_PARITY_OK`), `tabdrag` (two windows
+//! of tabs that drag between them, carrying live pages) or `reveal` (a hidden sidebar that slides
+//! in from the leading edge).
 
 mod adblock;
 mod extensions;
 mod parity;
 mod pip;
+mod print;
 mod private;
 mod scenes;
 mod server;
@@ -34,12 +36,12 @@ mod webstore;
 use nd::prelude::*;
 use nd::webview::extensions::{self as webext, Anchor, Extension};
 use nd::webview::{
-    ContextMenuItemClicked, Contexts, DownloadRequested, DownloadState, DownloadUpdated, LoadFailed, LoadProgress,
-    LoadingChanged, MenuItem, Navigate, NewWindow, TitleChanged, WebView, WebViewOptions, WindowClosed,
-    resolve_address, webview,
+    BrowserCommand, ChromeCommand, ContextMenuItemClicked, Contexts, DownloadRequested, DownloadState, DownloadUpdated,
+    LoadFailed, LoadProgress, LoadingChanged, MenuItem, Navigate, NewWindow, TitleChanged, WebView, WebViewOptions,
+    WindowClosed, resolve_address, webview,
 };
 
-actions!(browser, [NewTab, CloseTab, Reload, Back, Forward, DevTools, NextTab]);
+actions!(browser, [NewTab, CloseTab, Reload, Back, Forward, DevTools, NextTab, Print]);
 
 const HOME: &str = "https://example.com";
 const SEARCH: &str = "https://duckduckgo.com/?q={}";
@@ -217,6 +219,14 @@ impl Browser {
             .on_load_progress(cx.listener(move |this, e: &LoadProgress, _, cx| {
                 update(cx, this, &|t| t.progress = e.progress);
             }))
+            // A Chrome-style page's own print shortcut on Linux.
+            .on_chrome_command(cx.listener(move |this, e: &ChromeCommand, _, _| {
+                if e.command == BrowserCommand::Print
+                    && let Some(tab) = this.tab(id)
+                {
+                    tab.page.print();
+                }
+            }))
             .on_load_failed(cx.listener(|this, e: &LoadFailed, _, cx| {
                 this.status = format!("Could not load {}: {}", e.url, e.error).into();
                 cx.notify();
@@ -372,6 +382,11 @@ impl Render for Browser {
                     page.open_dev_tools();
                 }
             }))
+            .on_action(cx.listener(|this, _: &Print, _, _| {
+                if let Some(page) = this.current() {
+                    page.print();
+                }
+            }))
             // docs:end commands
             .toolbar(bar)
             .sidebar(sidebar().min_w(px(200.)).child(
@@ -402,6 +417,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{m}-]"), Forward, Some("Browser")),
         KeyBinding::new(&format!("{m}-alt-i"), DevTools, Some("Browser")),
         KeyBinding::new("ctrl-tab", NextTab, Some("Browser")),
+        KeyBinding::new(&format!("{m}-p"), Print, Some("Browser")),
     ]);
 }
 
@@ -416,6 +432,7 @@ pub fn init(cx: &mut App) {
         Ok("adblock") => adblock::open(cx),
         Ok("private") => private::open(cx),
         Ok("pip") => pip::open(cx),
+        Ok("print") => print::open(cx),
         Ok("tabdrag") => tabdrag::tabdrag(cx),
         Ok("reveal") => tabdrag::reveal(cx),
         Ok("webstore") => webstore::open(cx),

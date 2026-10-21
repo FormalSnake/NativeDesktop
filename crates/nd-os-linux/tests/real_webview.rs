@@ -36,6 +36,10 @@
 //!   `execute_javascript` lifts the playing video into Chromium's picture-in-picture window and
 //!   back. Chrome style only: an off-screen page has no picture-in-picture window.
 //!
+//! - `real_print_cef`: `BROWSER_SCENE=print` with the run's private bus and a fake print portal
+//!   on it: `print_to_pdf` writes a PDF, and `print` shows the portal's dialog and hands it the
+//!   page as a PDF with the dialog's token.
+//!
 //! Needs `browser` built next to this test (`cargo build -p browser`) or `ND_BROWSER_BIN`.
 
 #![cfg(target_os = "linux")]
@@ -43,6 +47,7 @@
 mod common;
 
 mod gate_m8_webview {
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::process::Stdio;
     use std::sync::{Arc, Mutex};
@@ -53,6 +58,7 @@ mod gate_m8_webview {
     use nd_ui::InputCounts;
     use ndshell::hyprland::{Client, Hyprland, Options};
     use ndshell::wayland::{Capture, Modifier, VirtualInput, keys};
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
     use crate::common::probe::Probe;
     use crate::common::resize::{analyze, edge_drags, near};
@@ -180,6 +186,115 @@ mod gate_m8_webview {
     #[test]
     fn real_pip_cef_chrome() {
         scene("chrome", "pip", "ND_PIP_", "PIP");
+    }
+
+    #[test]
+    fn real_print_cef() {
+        print("osr");
+    }
+
+    #[test]
+    fn real_print_cef_chrome() {
+        print("chrome");
+    }
+
+    /// What the fake portal was asked.
+    #[derive(Default)]
+    struct Printed {
+        prepared: Vec<String>,
+        /// Each `Print`: the title, the file's bytes and the token it carried.
+        jobs: Vec<(String, Vec<u8>, u32)>,
+    }
+
+    /// `org.freedesktop.portal.Print` on the run's private bus: the dialog answers A4 at once,
+    /// with token 7, and the job is read back.
+    struct FakePortal {
+        printed: Arc<Mutex<Printed>>,
+    }
+
+    fn request_path(header: &zbus::message::Header<'_>, options: &HashMap<String, OwnedValue>) -> String {
+        let sender = header.sender().map(|s| s.trim_start_matches(':').replace('.', "_")).unwrap_or_default();
+        let token = options.get("handle_token").and_then(|v| String::try_from(v.try_clone().ok()?).ok());
+        format!("/org/freedesktop/portal/desktop/request/{sender}/{}", token.unwrap_or_default())
+    }
+
+    async fn respond(conn: &zbus::Connection, path: &str, results: HashMap<&str, Value<'_>>) -> zbus::fdo::Result<()> {
+        conn.emit_signal(None::<()>, path, "org.freedesktop.portal.Request", "Response", &(0u32, results))
+            .await
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    #[zbus::interface(name = "org.freedesktop.portal.Print")]
+    impl FakePortal {
+        #[allow(clippy::too_many_arguments)]
+        async fn prepare_print(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+            #[zbus(connection)] conn: &zbus::Connection,
+            _parent: String,
+            title: String,
+            _settings: HashMap<String, OwnedValue>,
+            _page_setup: HashMap<String, OwnedValue>,
+            options: HashMap<String, OwnedValue>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            let path = request_path(&header, &options);
+            self.printed.lock().unwrap().prepared.push(title);
+            let a4 = HashMap::from([("Width", Value::from(210.0)), ("Height", Value::from(297.0))]);
+            respond(conn, &path, HashMap::from([("page-setup", Value::from(a4)), ("token", Value::from(7u32))]))
+                .await?;
+            OwnedObjectPath::try_from(path).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+        }
+
+        async fn print(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+            #[zbus(connection)] conn: &zbus::Connection,
+            _parent: String,
+            title: String,
+            fd: zbus::zvariant::OwnedFd,
+            options: HashMap<String, OwnedValue>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            let path = request_path(&header, &options);
+            let mut bytes = Vec::new();
+            let mut file = std::fs::File::from(std::os::fd::OwnedFd::from(fd));
+            std::io::Read::read_to_end(&mut file, &mut bytes).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            let token = options.get("token").and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+            self.printed.lock().unwrap().jobs.push((title, bytes, token));
+            respond(conn, &path, HashMap::new()).await?;
+            OwnedObjectPath::try_from(path).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+        }
+    }
+
+    /// `BROWSER_SCENE=print`: the PDF, then the print dialog through a fake portal, whose job
+    /// must be the page as a PDF on the paper the dialog chose.
+    fn print(style: &'static str) {
+        let run = Run::start(style);
+        let printed = Arc::new(Mutex::new(Printed::default()));
+        let _portal = zbus::blocking::connection::Builder::address(run.hyprland.bus_address())
+            .and_then(|b| b.name("org.freedesktop.portal.Desktop"))
+            .and_then(|b| b.serve_at("/org/freedesktop/portal/desktop", FakePortal { printed: printed.clone() }))
+            .and_then(|b| b.build())
+            .unwrap_or_else(|e| panic!("fake portal: {e}"));
+        let mut command = run.command();
+        command.env("DBUS_SESSION_BUS_ADDRESS", run.hyprland.bus_address());
+        let mut probe = Probe::launch(command, &[("BROWSER_SCENE", "print"), ("ND_WEBVIEW_ENGINE", "cef")]);
+        let pdf = result_line(&mut probe, "ND_PRINT ", Duration::from_secs(60));
+        assert!(probe.last("ND_PRINT_FAILED").is_none(), "{}", probe.log());
+        result_line(&mut probe, "ND_PRINT_REQUESTED", Duration::from_secs(30));
+        let end = Instant::now() + Duration::from_secs(30);
+        while printed.lock().unwrap().jobs.is_empty() {
+            let prepared = printed.lock().unwrap().prepared.clone();
+            assert!(Instant::now() < end, "no print job reached the portal (dialogs {prepared:?}):\n{}", probe.log());
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let printed = printed.lock().unwrap();
+        assert_eq!(printed.prepared, ["Print me"], "{}", probe.log());
+        let (title, bytes, token) = &printed.jobs[0];
+        assert!(bytes.starts_with(b"%PDF-"), "the job is not a PDF ({} bytes)", bytes.len());
+        assert_eq!(*token, 7, "the job did not carry the dialog's token");
+        assert_chrome_style(&run, &probe);
+        let _ = probe.child.kill();
+        println!("{pdf}; job {title:?} {} bytes; {}", bytes.len(), run.marker("PRINT"));
     }
 
     #[test]

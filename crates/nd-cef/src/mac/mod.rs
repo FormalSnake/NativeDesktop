@@ -117,6 +117,11 @@ pub(crate) fn run_later(f: impl FnOnce() + 'static) {
     unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
 }
 
+/// None: Chromium prints through the system print panel.
+pub(crate) fn print_handler() -> Option<cef::PrintHandler> {
+    None
+}
+
 /// Runs `f` on the main thread, from any thread.
 pub(crate) fn on_main(f: impl FnOnce() + Send + 'static) {
     dispatch2::DispatchQueue::main().exec_async(f);

@@ -1057,6 +1057,22 @@ impl CefPage {
                 CefStyle::Osr => done(Err(NOT_CHROME.into())),
             },
             Command::CloseExtensionPopup => crate::extensions::close_popup(self.id),
+            // Chromium's print panel on macOS is a sheet on the page's own window, which an
+            // off-screen page does not have.
+            Command::Print if cfg!(target_os = "macos") && self.style == CefStyle::Osr => {
+                tracing::warn!(
+                    "nd-cef: an off-screen page has no print panel on macOS; use print_to_pdf or Chrome style"
+                );
+            }
+            Command::Print => {
+                if let Some(host) = host {
+                    host.print();
+                }
+            }
+            Command::PrintToPdf { path, done } => match host {
+                Some(host) => crate::pdf::print_to_pdf(&host, &path, done),
+                None => done(Err("the page has no browser yet".into())),
+            },
         }
     }
 

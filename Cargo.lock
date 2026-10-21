@@ -4740,11 +4740,13 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tracing",
  "ureq",
  "x11rb",
+ "zbus",
  "zip",
 ]
 
@@ -4954,6 +4956,7 @@ dependencies = [
  "nd-test",
  "nd-ui",
  "ndshell",
+ "zbus",
 ]
 
 [[package]]

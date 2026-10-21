@@ -43,8 +43,8 @@ const ALLOWED: &[&str] = &[
     "IDC_DEV_TOOLS_TOGGLE",
 ];
 
-/// macOS prints through the system panel (`disable-print-preview`); Chromium's print preview
-/// elsewhere is browser UI.
+/// macOS's Chromium shows the system print panel itself. On Linux the shortcut reaches the app,
+/// which prints with `WebView::print` on whichever page it means.
 #[cfg(target_os = "macos")]
 const PRINT: Route = Route::Allow;
 #[cfg(not(target_os = "macos"))]

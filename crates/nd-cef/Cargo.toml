@@ -38,6 +38,9 @@ image = { version = "0.25.10", default-features = false }
 # A Chrome-style page's X11 container window, shaped around overlays (linux/chrome.rs).
 x11rb = { version = "0.13.2", features = ["shape"] }
 raw-window-handle = "0.6.2"
+# Printing through the desktop portal (linux/print.rs).
+zbus = "5.19"
+serde.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nd-backend-appkit.workspace = true
