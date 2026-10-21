@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn chain_order_user_matugen_os_baked() {
         let mut r = ThemeRegistry::new(Preset::Adwaita);
-        let baked = Palette::baked(Scheme::Light);
+        let baked = Palette::baked_for(Preset::Adwaita, Scheme::Light);
         assert_eq!(r.app_theme().accent, baked.accent);
 
         let mut os = OsTheme { scheme: Some(Scheme::Light), ..Default::default() };

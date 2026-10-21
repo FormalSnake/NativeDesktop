@@ -150,6 +150,46 @@ impl Palette {
                 success: hex("#6ccb5f"),
                 warning: hex("#fce100"),
             },
+            // libadwaita's own named colours (`_colors.scss`): window, sidebar, card and popover
+            // backgrounds, the window foreground and its 55% dimmed label, the default blue
+            // accent, the selection's 25% of it, and the destructive, success and warning fills.
+            (crate::Preset::Adwaita, Scheme::Light) => Palette {
+                surface: hex("#fafafb"),
+                surface_sidebar: hex("#ebebed"),
+                surface_raised: hex("#ffffff"),
+                surface_overlay: hex("#ffffff"),
+                text_primary: hex("#000006cc"),
+                text_secondary: hex("#00000670"),
+                text_tertiary: hex("#0000064d"),
+                accent: hex("#3584e4"),
+                on_accent: hex("#ffffff"),
+                accent_container: hex("#cce0f8"),
+                on_accent_container: hex("#000006cc"),
+                separator: hex("#00000626"),
+                selection: hex("#3584e440"),
+                danger: hex("#e01b24"),
+                success: hex("#2ec27e"),
+                warning: hex("#e5a50a"),
+            },
+            (crate::Preset::Adwaita, Scheme::Dark) => Palette {
+                surface: hex("#222226"),
+                surface_sidebar: hex("#2e2e32"),
+                // A card is 8% white over the window.
+                surface_raised: hex("#343438"),
+                surface_overlay: hex("#36363a"),
+                text_primary: hex("#ffffff"),
+                text_secondary: hex("#ffffff8c"),
+                text_tertiary: hex("#ffffff4d"),
+                accent: hex("#3584e4"),
+                on_accent: hex("#ffffff"),
+                accent_container: hex("#233751"),
+                on_accent_container: hex("#ffffff"),
+                separator: hex("#ffffff26"),
+                selection: hex("#3584e466"),
+                danger: hex("#c01c28"),
+                success: hex("#26a269"),
+                warning: hex("#cd9309"),
+            },
             _ => Palette::baked(scheme),
         }
     }

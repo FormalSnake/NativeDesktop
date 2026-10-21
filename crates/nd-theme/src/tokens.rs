@@ -22,6 +22,9 @@ pub struct SurfaceTokens {
     /// see-through sidebar and title row, as Windows' own apps do (measured: `#191919` dark on
     /// Task Manager, `#f9f9f9` light on Notepad).
     pub layer: Hsla,
+    /// Toasts and tooltips: libadwaita's dark grey (`#505053`) under white text in both
+    /// schemes; the overlay surface on the other looks.
+    pub osd: Hsla,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -36,6 +39,8 @@ pub struct TextTokens {
     pub secondary: Hsla,
     pub tertiary: Hsla,
     pub on_accent: Hsla,
+    /// Text on `surface.osd`.
+    pub on_osd: Hsla,
     /// Error text: `danger`, darkened or lightened until it reads at 4.5:1 on every surface.
     pub danger: Hsla,
     /// Links and mentions: the accent, made legible on every surface the same way.
@@ -136,6 +141,19 @@ impl Theme {
         let surfaces = [p.surface, p.surface_sidebar, p.surface_raised];
         let text_primary = legible(p.text_primary, &surfaces, 4.5);
         let text_secondary = legible(p.text_secondary, &surfaces, 4.5);
+        // Coloured text: libadwaita's standalone colours on its own look (lightened or darkened
+        // only as far as 4.5:1 on a 15% tint of themselves, the destructive button), elsewhere
+        // the colour made legible on every surface.
+        let role_text = |c: Hsla| {
+            if preset == Preset::Adwaita {
+                let ink = crate::color::standalone(c, scheme.is_dark());
+                let tint = with_alpha(ink, 0.15);
+                let tinted = [p.surface, p.surface_sidebar, p.surface_raised, p.surface_overlay].map(|s| over(tint, s));
+                legible(ink, &tinted, 4.5)
+            } else {
+                legible(c, &surfaces, 4.5)
+            }
+        };
         // libadwaita draws borders and separators as 15% of the text colour over what is under
         // them (`--border-color`). A source that gives an opaque line (matugen's outline_variant)
         // would read as a hard grey rule on the Linux look, so it takes libadwaita's instead.
@@ -151,6 +169,7 @@ impl Theme {
                 raised_hover,
                 overlay: p.surface_overlay,
                 layer: nd_gpui::gpui::rgb(if scheme.is_dark() { 0x191919 } else { 0xf9f9f9 }).into(),
+                osd: if preset == Preset::Adwaita { nd_gpui::gpui::rgb(0x505053).into() } else { p.surface_overlay },
             },
             border: BorderTokens { subtle: separator, strong },
             separator,
@@ -159,10 +178,11 @@ impl Theme {
                 secondary: text_secondary,
                 tertiary: p.text_tertiary,
                 on_accent: p.on_accent,
-                danger: legible(p.danger, &surfaces, 4.5),
-                accent: legible(p.accent, &surfaces, 4.5),
-                success: legible(p.success, &surfaces, 4.5),
-                warning: legible(p.warning, &surfaces, 4.5),
+                on_osd: if preset == Preset::Adwaita { nd_gpui::gpui::white() } else { text_primary },
+                danger: role_text(p.danger),
+                accent: role_text(p.accent),
+                success: role_text(p.success),
+                warning: role_text(p.warning),
             },
             accent: p.accent,
             accent_fill: fill_under(p.accent, p.on_accent, 4.5),
@@ -177,7 +197,15 @@ impl Theme {
             success: p.success,
             warning: p.warning,
             focus_ring: with_alpha(p.accent, 0.5),
-            scrim: with_alpha(nd_gpui::gpui::black(), if scheme.is_dark() { 0.4 } else { 0.15 }),
+            // libadwaita doubles a dialog's dimming on a dark window.
+            scrim: with_alpha(
+                nd_gpui::gpui::black(),
+                match (preset, scheme.is_dark()) {
+                    (Preset::Adwaita, true) => 0.5,
+                    (_, true) => 0.4,
+                    (_, false) => 0.15,
+                },
+            ),
             spacing: metrics.spacing,
             radius: metrics.radius.scaled(radius_scale),
             radius_scale,

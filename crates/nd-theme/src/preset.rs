@@ -389,16 +389,21 @@ impl Metrics {
             },
             Preset::Adwaita => Metrics {
                 spacing: spacing(3., 6., 12., 18., 24., 12., 600.),
-                radius: radii(4., 6., 12., 16.),
+                // libadwaita's `$button_radius` (buttons, entries, rows, menu items), `$card_radius`
+                // (boxed lists, cards) and `$popover_radius` (popovers, dialogs); checks round at 6.
+                radius: radii(6., 9., 12., 15.),
                 control: controls(24., 34., 42., 50.),
                 type_scale: scale(11., 12., 14., 14., 20., 26.),
                 text_styles: adwaita_text_styles(),
                 fonts: Fonts { body: font("Adwaita Sans"), rounded: font("Adwaita Sans"), mono: font("Adwaita Mono") },
+                // libadwaita's state transitions (buttons, rows, focus rings: 200 ms), GtkRevealer
+                // and the bottom bar (250 ms), the tab overview (400 ms), and AdwNavigationView's
+                // spring (damping ratio 1, mass 1, stiffness 1000: a 0.2 s period).
                 motion: Motion {
-                    fast: ms(150),
+                    fast: ms(200),
                     normal: ms(250),
                     slow: ms(400),
-                    spring: Spring { response: 0.35, damping: 0.9 },
+                    spring: Spring { response: 0.2, damping: 1. },
                 },
                 materials: Materials {
                     sidebar: Material::Opaque,
