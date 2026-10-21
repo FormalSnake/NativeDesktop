@@ -34,11 +34,15 @@ The rules and values are in [docs/dev/hig/windows.md](../dev/hig/windows.md).
 - [x] Banner was an accent-container strip. Now the informational InfoBar (attention
   background, card stroke, accent badge, standard button). VM capture beside the InfoBar page.
 - [x] Disabled opacity 0.5. Now 0.4.
-- [ ] TextBox header (form field label) is semibold; WinUI's is regular 14 with 8 px below.
+- [x] TextBox header (form field label) was semibold. Now Body (14 regular) with 8 px to the
+  control under the Fluent look (`form_field`, nd-components). Built; not yet captured.
 - [ ] Segmented control: WinUI has none built in; nd's selected segment lacks the toolkit
   Segmented's accent indicator. Decide whether to match the toolkit or SelectorBar.
 - [ ] Time field draws a small stepper; WinUI's TimePicker opens a looping flyout.
-- [ ] Text selection colour (WinUI: accent fill, white text).
+- [x] Text selection was a pale accent tint under unchanged text. Now solid accent under white
+  text (the accent container in dark, where the accent is too light for white), the selected
+  run recoloured (`FormLook::selection_text`, `recolor` with a unit test). Built; not yet
+  captured.
 
 ## Navigation and chrome
 
@@ -54,13 +58,23 @@ The rules and values are in [docs/dev/hig/windows.md](../dev/hig/windows.md).
   selection (subtle fill, accent pill, text unchanged). Built; not yet captured.
 - [ ] ListView: hover and selection pill against the ListView page.
 - [ ] ToolTip, ContentDialog, TabView, Expander: compare against their pages.
-- [ ] Dark theme: repeat every capture above.
+- [ ] Pending VM captures (the VM needs 45 GB free on g815 to start): dark theme for every
+  control above; context menu, popover, palette, field label and selection beside the Gallery;
+  the `real_windows_job` run without the job object, which should fail.
 - [ ] Settings, Task Manager and Notepad captures for title bar, layer and sidebar.
 - [ ] Windows has no window menu for windows the chrome is not installed on (TODO.md).
+  Analysis: every window gets `Chrome` in `WindowsHooks::window_opened`; only a failed install
+  skips it, and that window keeps GPUI's `WS_SYSMENU`, so an Alt+Space GPUI leaves unhandled
+  reaches `DefWindowProc` and the system menu. GPUI handles `WM_NCRBUTTONUP` itself, so the
+  title-row right-click may still show nothing there. Needs a VM run that forces the install to
+  fail.
 
 ## Interaction
 
-- [ ] Access keys (Alt shows key tips).
+- [ ] Access keys (Alt shows key tips). Deferred: nd has no access-key property on elements yet.
+  It needs one in nd-ui (set per control, as WinUI's `AccessKey`), carried to the GPUI backend,
+  plus a key-tip overlay shown on a lone Alt press and dispatching the matching control's press
+  action. Not something the skin can add on its own.
 - [ ] Flyout and page transitions against WinUI's.
 
 ## Tooling

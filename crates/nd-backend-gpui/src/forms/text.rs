@@ -674,6 +674,13 @@ impl gpui::Element for EditorElement {
             }
             None => vec![run(display.len(), false)],
         };
+        let runs = match look.selection_text {
+            Some(fg) if !e.selected.is_empty() => {
+                let (a, b) = (e.text_to_display(e.selected.start), e.text_to_display(e.selected.end));
+                recolor(runs, a..b, fg)
+            }
+            _ => runs,
+        };
         let text_system = window.text_system().clone();
         let placeholder = match (&self.placeholder, display.is_empty()) {
             (Some(p), true) => {
@@ -1558,4 +1565,49 @@ pub(crate) fn value_field(
     let (ctl, editor) = editor(b, id, &f, || Commit::Parse(Rc::new(parse)), window, cx);
     let field = line(&ctl, &editor, &f);
     (ctl, field)
+}
+
+/// `runs` with the bytes in `range` drawn in `color`, split at its ends.
+fn recolor(runs: Vec<TextRun>, range: Range<usize>, color: gpui::Hsla) -> Vec<TextRun> {
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut at = 0;
+    for run in runs {
+        let end = at + run.len;
+        let (a, b) = (range.start.clamp(at, end), range.end.clamp(at, end));
+        for (from, to, inside) in [(at, a, false), (a, b, true), (b, end, false)] {
+            if to > from {
+                let mut part = run.clone();
+                part.len = to - from;
+                if inside {
+                    part.color = color;
+                }
+                out.push(part);
+            }
+        }
+        at = end;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(len: usize) -> TextRun {
+        TextRun {
+            len,
+            font: gpui::font("Test"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    #[test]
+    fn recolor_splits_runs_at_the_selection() {
+        let out = recolor(vec![run(4), run(6)], 2..7, gpui::white());
+        let parts: Vec<(usize, bool)> = out.iter().map(|r| (r.len, r.color == gpui::white())).collect();
+        assert_eq!(parts, [(2, false), (2, true), (3, true), (3, false)]);
+    }
 }

@@ -56,8 +56,10 @@ pub struct FormLook {
     pub on_accent: Hsla,
     /// Accent as text on the window background (links).
     pub accent_text: Hsla,
-    /// Text selection behind the selected run.
+    /// Text selection behind the selected run, and the selected run's colour when the look
+    /// redraws it (WinUI: solid accent under white text).
     pub selection: Hsla,
+    pub selection_text: Option<Hsla>,
     /// Keyboard focus ring, drawn 2 px wide.
     pub focus_ring: Hsla,
     /// Errors and destructive consequences (danger labels).
@@ -216,6 +218,7 @@ impl FormLook {
             on_accent: theme.text.on_accent,
             accent_text: theme.accent,
             selection: theme.selection,
+            selection_text: None,
             focus_ring: theme.focus_ring,
             danger: theme.text.danger,
             track: theme.border.strong,
@@ -366,6 +369,10 @@ impl FormLook {
             cursor: gpui::CursorStyle::Arrow,
             link_button: true,
             spin_inline: true,
+            // AccentFillColorSelectedTextBackground under white; in dark the accent container,
+            // since the dark accent is too light to carry white.
+            selection: if dark { theme.accent_container.bg } else { theme.accent },
+            selection_text: Some(gpui::white()),
             toggle_row: px(32.),
             radio_spacing: (px(8.), px(7.)),
             popover_stroke: if dark { with_alpha(black, 0.2) } else { with_alpha(black, 0.059) },

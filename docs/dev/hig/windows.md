@@ -87,6 +87,9 @@ Disabled controls take 0.4 opacity. Layers: Mica window, opaque content layer `#
 - HyperlinkButton: accent text, button padding, subtle fill under the pointer, no underline
   (`FormLook::link_button`).
 - The pointer stays an arrow over controls; only links take the hand (`FormLook::cursor`).
+- Text selection: AccentFillColorSelectedTextBackground (solid accent) under white text
+  (`FormLook::{selection, selection_text}`). A TextBox header is Body, regular, 8 px above the
+  control (`form_field`).
 
 ## Focus visual
 

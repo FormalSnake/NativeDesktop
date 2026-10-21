@@ -12,6 +12,7 @@ use super::toggle::{Switch, Toggled, switch};
 use crate::controls::ButtonExt;
 use crate::form::{FormRow, FormSection, form_row, form_section};
 use crate::icon::Icon;
+use crate::overrides::OnPlatform;
 
 /// A titled group of rows; `form_section` under its libadwaita name.
 #[track_caller]
@@ -172,7 +173,10 @@ impl IntoElement for FormField {
             (None, None) => None,
         };
         column
-            .child(label(self.label).text_style(TextStyle::Headline))
+            // WinUI's TextBox header: Body, regular, 8 px above the control.
+            .child(
+                label(self.label).text_style(TextStyle::Headline).on_windows(|l| l.text_style(TextStyle::Body).mb_1()),
+            )
             .children(self.control)
             .children(note)
             .into_any_element()
