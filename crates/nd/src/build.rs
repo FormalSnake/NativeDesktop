@@ -156,18 +156,30 @@ fn bake_updates() -> Result<(), String> {
 /// Bakes `[webview] engine` into the app as `ND_WEBVIEW_ENGINE`, read back by
 /// `nd::manifest!()`. `ND_WEBVIEW_ENGINE` in the build's environment wins, as it does at run
 /// time (`ND_WEBVIEW_ENGINE=cef nd package` builds a Chromium package of the same app).
+/// `[webview.cef] style` becomes `ND_CEF_STYLE` the same way.
 fn bake_webview() -> Result<(), String> {
     println!("cargo::rerun-if-env-changed=ND_WEBVIEW_ENGINE");
-    if let Ok(engine) = env::var("ND_WEBVIEW_ENGINE") {
-        println!("cargo::rustc-env=ND_WEBVIEW_ENGINE={engine}");
-        return Ok(());
-    }
+    println!("cargo::rerun-if-env-changed=ND_CEF_STYLE");
     let config = PathBuf::from(var("CARGO_MANIFEST_DIR")?).join("nativedesktop.toml");
-    let Ok(text) = fs::read_to_string(&config) else { return Ok(()) };
-    println!("cargo::rerun-if-changed=nativedesktop.toml");
-    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", config.display()))?;
-    if let Some(engine) = table.get("webview").and_then(|w| w.get("engine")).and_then(|e| e.as_str()) {
+    let table: Option<toml::Table> = match fs::read_to_string(&config) {
+        Ok(text) => {
+            println!("cargo::rerun-if-changed=nativedesktop.toml");
+            Some(text.parse().map_err(|e| format!("{}: {e}", config.display()))?)
+        }
+        Err(_) => None,
+    };
+    let webview = table.as_ref().and_then(|t| t.get("webview"));
+    let engine = env::var("ND_WEBVIEW_ENGINE")
+        .ok()
+        .or_else(|| webview.and_then(|w| w.get("engine")).and_then(|e| e.as_str()).map(str::to_owned));
+    if let Some(engine) = engine {
         println!("cargo::rustc-env=ND_WEBVIEW_ENGINE={engine}");
+    }
+    let style = env::var("ND_CEF_STYLE").ok().or_else(|| {
+        webview.and_then(|w| w.get("cef")).and_then(|c| c.get("style")).and_then(|s| s.as_str()).map(str::to_owned)
+    });
+    if let Some(style) = style {
+        println!("cargo::rustc-env=ND_CEF_STYLE={style}");
     }
     Ok(())
 }

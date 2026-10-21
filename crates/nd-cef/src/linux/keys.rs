@@ -89,6 +89,60 @@ pub(crate) fn virtual_key(key: &str) -> i32 {
     }
 }
 
+/// GPUI's name of the key a Windows virtual key code is on: the unshifted symbol, as
+/// [`virtual_key`] reads it back.
+pub(crate) fn key_name(vk: i32) -> Option<String> {
+    let named = match vk {
+        0x41..=0x5A | 0x30..=0x39 => return Some(char::from(vk as u8).to_ascii_lowercase().to_string()),
+        0x70..=0x87 => return Some(format!("f{}", vk - 0x6F)),
+        0xBA => ";",
+        0xBB => "=",
+        0xBC => ",",
+        0xBD => "-",
+        0xBE => ".",
+        0xBF => "/",
+        0xC0 => "`",
+        0xDB => "[",
+        0xDC => "\\",
+        0xDD => "]",
+        0xDE => "'",
+        0x08 => "backspace",
+        0x09 => "tab",
+        0x0D => "enter",
+        0x1B => "escape",
+        0x20 => "space",
+        0x21 => "pageup",
+        0x22 => "pagedown",
+        0x23 => "end",
+        0x24 => "home",
+        0x25 => "left",
+        0x26 => "up",
+        0x27 => "right",
+        0x28 => "down",
+        0x2D => "insert",
+        0x2E => "delete",
+        0xA6 => "back",
+        0xA7 => "forward",
+        0x5D => "menu",
+        _ => return None,
+    };
+    Some(named.to_owned())
+}
+
+/// The GPUI keystroke a key-down of Chromium's stands for, as the app's bindings match it.
+pub(crate) fn keystroke(event: &cef::KeyEvent) -> Option<Keystroke> {
+    let key = key_name(event.windows_key_code)?;
+    let has = |bit: u32| event.modifiers & bit != 0;
+    let modifiers = Modifiers {
+        control: has(flag::CONTROL),
+        alt: has(flag::ALT),
+        shift: has(flag::SHIFT),
+        platform: has(flag::COMMAND),
+        ..Modifiers::default()
+    };
+    Some(Keystroke { modifiers, key, key_char: None })
+}
+
 /// The XKB keycode (evdev + 8) of the key on a US layout, from which Chromium derives the DOM
 /// `code`; 0 when unknown.
 pub(crate) fn native_key(key: &str) -> i32 {
@@ -206,6 +260,16 @@ mod tests {
         assert_eq!(native_key("escape"), 9);
         assert_eq!(native_key("f12"), 96);
         assert_eq!(native_key("\\"), 51);
+    }
+
+    #[test]
+    fn windows_codes_name_their_keys_back() {
+        for key in ["a", "z", "0", "9", "f1", "f12", ";", "\\", "'", "enter", "tab", "left", "pagedown", "space"] {
+            assert_eq!(key_name(virtual_key(key)).as_deref(), Some(key), "{key}");
+        }
+        let ctrl_t = cef::KeyEvent { windows_key_code: 0x54, modifiers: flag::CONTROL | flag::SHIFT, ..Default::default() };
+        let k = keystroke(&ctrl_t).unwrap();
+        assert_eq!((k.key.as_str(), k.modifiers.control, k.modifiers.shift, k.modifiers.alt), ("t", true, true, false));
     }
 
     #[test]

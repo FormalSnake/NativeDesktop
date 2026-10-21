@@ -4688,8 +4688,10 @@ dependencies = [
  "objc2-io-surface",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
  "serde_json",
  "tracing",
+ "x11rb",
 ]
 
 [[package]]

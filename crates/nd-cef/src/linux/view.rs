@@ -3,6 +3,10 @@
 //! resizes with the layout. Every pointer, wheel and key event the element receives goes to
 //! Chromium; text and compositions come through GPUI's input handler; `<select>` popups draw over
 //! the page and context menus are nd's drawn menus.
+//!
+//! A Chrome-style page ([`super::chrome`]) is a window of Chromium's over the element instead,
+//! which takes its own input and draws itself: the element places it, shapes it around overlays
+//! and hands it the keyboard.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -10,9 +14,9 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use cef::{
-    BrowserHost, CefString, CompositionUnderline, CompositionUnderlineStyle, CursorType, DragData, DragOperationsMask,
-    ImplBrowserHost, ImplMenuModel, KeyEventType, MenuItemType, MenuModel, MouseButtonType, MouseEvent, Rect,
-    RuntimeStyle, WindowInfo,
+    BrowserHost, BrowserSettings, CefString, Client, CompositionUnderline, CompositionUnderlineStyle, CursorType,
+    DragData, DragOperationsMask, ImplBrowserHost, ImplMenuModel, KeyEvent, KeyEventType, MenuItemType, MenuModel,
+    MouseButtonType, MouseEvent, Rect, RequestContext, RuntimeStyle, WindowInfo, browser_host_create_browser,
 };
 use nd_backend_gpui::custom::{CustomCx, FocusReporter};
 use nd_backend_gpui::{GpuiBackend, MenuRow};
@@ -27,6 +31,7 @@ use nd_gpui::gpui::{
 use nd_webview::WebViewProps;
 use nd_webview::menu::Entry;
 
+use super::chrome::{self, Chrome, R};
 use super::keys;
 use crate::keys::flag;
 use crate::menu::Choice;
@@ -36,7 +41,20 @@ use crate::page::{self, CefPage};
 pub(crate) type View = Rc<OsrView>;
 
 pub(crate) fn new(id: u64) -> View {
-    Rc::new(OsrView { id, st: RefCell::default() })
+    Rc::new(OsrView { id, st: RefCell::default(), chrome: RefCell::default() })
+}
+
+/// Chrome style parents Chromium's window to the page's, which takes an X11 window: in a Wayland
+/// window the page is off-screen instead.
+pub(crate) fn supported(style: nd_webview::CefStyle) -> nd_webview::CefStyle {
+    if style == nd_webview::CefStyle::Chrome && !nd_backend_gpui::on_x11() {
+        tracing::warn!(
+            "nd-cef: Chrome style needs the window on X11; this page is off-screen. Set \
+             `[webview.cef] style = \"chrome\"` for the app, which puts its windows on XWayland"
+        );
+        return nd_webview::CefStyle::Osr;
+    }
+    style
 }
 
 thread_local! {
@@ -92,6 +110,8 @@ struct St {
     placement: Option<Placement>,
     focus: Option<FocusHandle>,
     focused: bool,
+    /// A Chrome-style page holds the X keyboard focus.
+    keyboard: bool,
     focus_requested: bool,
     cursor: CursorStyle,
     /// Mouse buttons held, as Chromium's flags.
@@ -111,6 +131,7 @@ struct St {
 pub(crate) struct OsrView {
     id: u64,
     st: RefCell<St>,
+    chrome: RefCell<Option<Rc<Chrome>>>,
 }
 
 impl OsrView {
@@ -134,8 +155,85 @@ impl OsrView {
     /// Likewise there is no display link of ours to stop when the page leaves its window.
     pub(crate) fn stop_link(&self) {}
 
+    pub(crate) fn chrome(&self) -> Option<Rc<Chrome>> {
+        self.chrome.borrow().clone()
+    }
+
+    fn become_chrome(&self) -> Result<Rc<Chrome>, String> {
+        let chrome = Chrome::new(self.id)?;
+        *self.chrome.borrow_mut() = Some(chrome.clone());
+        Ok(chrome)
+    }
+
+    /// Creates the browser of a Chrome-style page, windowed in a container of this view's.
+    pub(crate) fn create_chrome(
+        &self,
+        mut client: Client,
+        settings: &BrowserSettings,
+        mut context: Option<RequestContext>,
+    ) -> Result<(), String> {
+        let info = self.become_chrome()?.window_info();
+        // Asynchronous: a windowed browser's creation waits on Chromium's loop, which only runs
+        // once this returns. The browser arrives through `on_after_created`.
+        let created = browser_host_create_browser(
+            Some(&info),
+            Some(&mut client),
+            Some(&CefString::from("")),
+            Some(settings),
+            None,
+            context.as_mut(),
+        );
+        if created == 0 {
+            return Err("Chromium could not create the browser".into());
+        }
+        Ok(())
+    }
+
+    /// This view's page is the popup a Chrome-style opener is about to create, in a container of
+    /// this view's.
+    pub(crate) fn expect_chrome_popup(&self, info: &mut WindowInfo) {
+        match self.become_chrome() {
+            Ok(chrome) => *info = chrome.window_info(),
+            Err(e) => tracing::warn!("nd-cef: {e}"),
+        }
+    }
+
+    /// The browser exists: its window takes the page's place on the next frame.
+    pub(crate) fn browser_created(self: &Rc<Self>) {
+        if self.chrome().is_some() {
+            self.painted();
+        }
+    }
+
+    pub(crate) fn browser_closed(&self) {}
+
+    /// A key-down Chromium is about to handle in a Chrome-style page: a chord the app's
+    /// bindings take runs there instead, as it would with any other element focused. Returns
+    /// whether the app took it.
+    pub(crate) fn pre_key(&self, event: &KeyEvent) -> bool {
+        if self.chrome().is_none() || event.type_ != KeyEventType::RAWKEYDOWN {
+            return false;
+        }
+        let Some(keystroke) = keys::keystroke(event) else { return false };
+        let m = &keystroke.modifiers;
+        let chord = m.control || m.alt || m.platform;
+        if !chord || crate::keys::edit_command(&keystroke.key, m.shift, m.alt).is_some() {
+            return false;
+        }
+        let (handle, backend) = {
+            let st = self.st.borrow();
+            (st.window, st.placement.as_ref().map(|p| p.backend.clone()))
+        };
+        let (Some(handle), Some(mut app)) = (handle, backend.and_then(|b| b.async_app())) else { return false };
+        // Busy when Chromium runs from inside an update of GPUI's: the page keeps the key.
+        app.update_window(handle, |_, window, cx| window.dispatch_keystroke(keystroke, cx)).unwrap_or(false)
+    }
+
     /// The page closed: its frames go.
     pub(crate) fn detach(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.teardown();
+        }
         let mut st = self.st.borrow_mut();
         let frames = [st.frame.take(), st.popup.take()];
         RETIRED.with(|r| r.borrow_mut().extend(frames.into_iter().flatten().map(|f| f.image)));
@@ -354,7 +452,8 @@ impl OsrView {
             });
             self.st.borrow_mut().interceptor = Some(interceptor);
         }
-        if let Some(host) = self.host() {
+        let chrome = self.chrome();
+        if let (None, Some(host)) = (&chrome, self.host()) {
             if rescaled {
                 host.notify_screen_info_changed();
             }
@@ -380,6 +479,9 @@ impl OsrView {
     }
 
     fn paint(self: &Rc<Self>, bounds: Bounds<Pixels>, hitbox: &Hitbox, window: &mut Window, cx: &mut App) {
+        if let Some(chrome) = self.chrome() {
+            self.place_chrome(&chrome, bounds, window);
+        }
         let st = self.st.borrow();
         let scale = st.scale.max(1.);
         // Device-pixel aligned, so the page's pixels land on the screen's.
@@ -402,11 +504,78 @@ impl OsrView {
                 let _ = window.paint_image(bounds, at, Corners::default(), popup.image.clone(), 0, false);
             }
         });
-        window.set_cursor_style(st.cursor, hitbox);
         let focus = st.focus.clone().expect("prepaint made the focus handle");
+        if self.chrome().is_some() {
+            drop(st);
+            self.listen_wheel(hitbox, window);
+            return;
+        }
+        window.set_cursor_style(st.cursor, hitbox);
         drop(st);
         self.listen(hitbox, &focus, window);
         window.handle_input(&focus, Input { view: self.clone() }, cx);
+    }
+
+    /// Moves the page's window to the element, shapes it around this frame's overlays, and
+    /// fills the holes they cut with a snapshot of the page, which the element paints.
+    fn place_chrome(self: &Rc<Self>, chrome: &Rc<Chrome>, bounds: Bounds<Pixels>, window: &mut Window) {
+        let Some(parent) = x11_window(window) else { return };
+        let scale = window.scale_factor();
+        let device = |b: Bounds<Pixels>| {
+            let (x, y) = ((b.origin.x.as_f32() * scale).round() as i32, (b.origin.y.as_f32() * scale).round() as i32);
+            let right = ((b.origin.x + b.size.width).as_f32() * scale).round() as i32;
+            let bottom = ((b.origin.y + b.size.height).as_f32() * scale).round() as i32;
+            R::new(x, y, right - x, bottom - y)
+        };
+        let frame = device(bounds);
+        let visible = device(window.content_mask().bounds).intersect(frame);
+        let overlays: Vec<(R, bool, bool)> = nd_backend_gpui::occlusion::occluders(window)
+            .iter()
+            .map(|o| (device(o.bounds), o.draws, o.blocks_input))
+            .collect();
+        let shape = chrome::shape(frame, visible, &overlays, scale);
+        let cut = shape.cut;
+        let had = self.st.borrow().frame.is_some();
+        // The snapshot is taken before the overlay's hole is cut, while the page still shows.
+        if cut
+            && !had
+            && let Some((pixels, width, height)) = chrome.snapshot()
+        {
+            self.set_frame(pixels, width, height);
+        }
+        let resized = chrome.place(parent, frame, shape);
+        // An overlay that takes the pointer takes the keys too, as it does over any other element.
+        let keyboard = self.st.borrow().focused && !overlays.iter().any(|&(_, _, blocks)| blocks);
+        if std::mem::replace(&mut self.st.borrow_mut().keyboard, keyboard) != keyboard {
+            chrome.focus(keyboard);
+        }
+        if had
+            && (!cut || resized)
+            && let Some(old) = self.st.borrow_mut().frame.take()
+        {
+            RETIRED.with(|r| r.borrow_mut().push(old.image));
+        }
+        let view = Rc::downgrade(self);
+        nd_backend_gpui::occlusion::shown(window, self.id, move || {
+            let Some(view) = view.upgrade() else { return };
+            view.st.borrow_mut().keyboard = false;
+            if let Some(chrome) = view.chrome() {
+                chrome.park();
+            }
+        });
+    }
+
+    fn set_frame(&self, pixels: Vec<u8>, width: u32, height: u32) {
+        let Some(buffer) = image::RgbaImage::from_raw(width, height, pixels) else { return };
+        let frame = Frame {
+            image: Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])),
+            width,
+            height,
+            edge: gpui::Rgba { r: 1., g: 1., b: 1., a: 1. },
+        };
+        if let Some(old) = self.st.borrow_mut().frame.replace(frame) {
+            RETIRED.with(|r| r.borrow_mut().push(old.image));
+        }
     }
 
     /// A pointer position as Chromium's mouse event, in the view's coordinates.
@@ -470,21 +639,7 @@ impl OsrView {
             let mouse = view.mouse(e.position, &e.modifiers);
             host.send_mouse_move_event(Some(&mouse), i32::from(!hovered && held == 0));
         });
-        let (view, hit) = (Rc::downgrade(self), hitbox.clone());
-        window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
-            let Some(view) = view.upgrade() else { return };
-            if phase != DispatchPhase::Bubble || !hit.should_handle_scroll(window) {
-                return;
-            }
-            let Some(host) = view.host() else { return };
-            let (dx, dy, precise) = keys::wheel_delta(&e.delta);
-            let mut mouse = view.mouse(e.position, &e.modifiers);
-            if precise {
-                mouse.modifiers |= flag::PRECISION_SCROLLING_DELTA;
-            }
-            host.send_mouse_wheel_event(Some(&mouse), dx, dy);
-            cx.stop_propagation();
-        });
+        self.listen_wheel(hitbox, window);
         let (view, focused) = (Rc::downgrade(self), focus.clone());
         window.on_key_event(move |e: &KeyDownEvent, phase, window, cx| {
             let Some(view) = view.upgrade() else { return };
@@ -507,6 +662,26 @@ impl OsrView {
         });
     }
 
+    /// The wheel over the page goes to Chromium, also when a Chrome-style page's window lets it
+    /// through to here (under a light-dismiss overlay's backdrop).
+    fn listen_wheel(self: &Rc<Self>, hitbox: &Hitbox, window: &mut Window) {
+        let (view, hit) = (Rc::downgrade(self), hitbox.clone());
+        window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
+            let Some(view) = view.upgrade() else { return };
+            if phase != DispatchPhase::Bubble || !hit.should_handle_scroll(window) {
+                return;
+            }
+            let Some(host) = view.host() else { return };
+            let (dx, dy, precise) = keys::wheel_delta(&e.delta);
+            let mut mouse = view.mouse(e.position, &e.modifiers);
+            if precise {
+                mouse.modifiers |= flag::PRECISION_SCROLLING_DELTA;
+            }
+            host.send_mouse_wheel_event(Some(&mouse), dx, dy);
+            cx.stop_propagation();
+        });
+    }
+
     /// A key-down for the page. Returns whether it was handled whole; a key that types text
     /// leaves that to GPUI's input handler, which hears it next.
     fn key_down(&self, e: &KeyDownEvent) -> bool {
@@ -525,6 +700,16 @@ impl OsrView {
             host.send_key_event(Some(&typed));
         }
         true
+    }
+}
+
+/// The X11 window GPUI draws `window` into.
+fn x11_window(window: &Window) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Xcb(h) => Some(h.window.get()),
+        RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok(),
+        _ => None,
     }
 }
 

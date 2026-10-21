@@ -79,6 +79,7 @@ pub struct NdView {
 
 impl Render for NdView {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::occlusion::begin_frame(window, cx);
         match self.host.upgrade() {
             Some(host) if host.single_canvas => host.render_canvas(window, cx),
             Some(host) => match self.surface {
@@ -1396,6 +1397,34 @@ impl Inner {
     }
 }
 
+static PREFER_X11: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Puts the app's windows on the X server (XWayland under a Wayland compositor) when there is
+/// one: a native surface that can only parent to an X11 window (a Chrome-style page) needs it.
+/// Call before [`run`].
+pub fn prefer_x11() {
+    PREFER_X11.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the app's windows are on an X server: [`prefer_x11`] found one, or the session has
+/// nothing else.
+#[cfg(target_os = "linux")]
+pub fn on_x11() -> bool {
+    let env = gpui::GraphicalEnvironment::detect();
+    let set = |v: &Option<std::ffi::OsString>| v.as_ref().is_some_and(|v| !v.is_empty());
+    set(&env.x11_display) && (PREFER_X11.load(std::sync::atomic::Ordering::Relaxed) || !set(&env.wayland_display))
+}
+
+fn application() -> gpui::Application {
+    let application = nd_gpui::gpui_platform::application();
+    #[cfg(target_os = "linux")]
+    if PREFER_X11.load(std::sync::atomic::Ordering::Relaxed) && on_x11() {
+        let env = gpui::GraphicalEnvironment { wayland_display: None, ..gpui::GraphicalEnvironment::detect() };
+        return application.with_windowing(gpui::WindowingRequest::Windowed(env));
+    }
+    application
+}
+
 /// Builds the app with `init` (which opens its windows) and runs GPUI's event loop until the last
 /// window closes.
 pub fn run(hooks: impl OsHooks, init: impl FnOnce(&mut App) + 'static) {
@@ -1404,7 +1433,7 @@ pub fn run(hooks: impl OsHooks, init: impl FnOnce(&mut App) + 'static) {
 
 /// As [`run`], handing `started` an [`AppSender`] once the windows are up.
 pub fn run_with(hooks: impl OsHooks, init: impl FnOnce(&mut App) + 'static, started: impl FnOnce(AppSender) + 'static) {
-    nd_gpui::gpui_platform::application().run(move |cx: &mut gpui::App| {
+    application().run(move |cx: &mut gpui::App| {
         let host = GpuiHost::builder().hooks(hooks).start(cx, init);
         started(host.sender());
         cx.activate(true);

@@ -1,6 +1,7 @@
 //! The Linux side: where `libcef.so` and its resources are, the switches Chromium needs on a
 //! Wayland or X11 desktop, and the GPUI element, menus and dialogs a page uses.
 
+pub(crate) mod chrome;
 pub(crate) mod dialogs;
 mod keys;
 pub(crate) mod pump;
@@ -67,7 +68,9 @@ pub(crate) fn settings() -> Result<Settings, String> {
 pub(crate) fn command_line(line: &mut CommandLine) {
     let platform = std::env::var("ND_CEF_OZONE").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| {
         let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
-        if set("WAYLAND_DISPLAY") {
+        if nd_backend_gpui::on_x11() {
+            "x11".into()
+        } else if set("WAYLAND_DISPLAY") {
             "wayland".into()
         } else if set("DISPLAY") {
             "x11".into()

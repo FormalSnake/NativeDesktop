@@ -105,6 +105,46 @@ pub struct PopupBlocked {
     pub disposition: Disposition,
 }
 
+/// A browser command Chromium would serve with its own browser UI, which a Chrome-style page
+/// (`[webview.cef] style = "chrome"`) never shows: its shortcuts and menus reach the app instead,
+/// which opens its own tab, history or downloads. Chromium does nothing with it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChromeCommand {
+    pub command: BrowserCommand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BrowserCommand {
+    NewTab,
+    NewWindow,
+    NewPrivateWindow,
+    ReopenClosedTab,
+    CloseTab,
+    CloseWindow,
+    NextTab,
+    PreviousTab,
+    History,
+    Downloads,
+    Bookmarks,
+    BookmarkPage,
+    TabSearch,
+    Settings,
+    Extensions,
+    ClearBrowsingData,
+    SavePage,
+    ViewSource,
+    OpenFile,
+    Find,
+    FindNext,
+    FindPrevious,
+    FocusAddress,
+    Fullscreen,
+    Home,
+    TaskManager,
+    Print,
+    Quit,
+}
+
 /// The page closed its own window (`window.close()` in a window a script opened). The app
 /// closes the tab or window that shows it.
 #[derive(Clone, Debug, PartialEq)]

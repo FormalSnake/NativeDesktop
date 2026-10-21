@@ -31,7 +31,8 @@ use std::rc::Rc;
 
 pub use element::{WebViewElement, WebViewProps, WebViewWidget, webview};
 pub use engine::{
-    Command, Engine, EngineFactory, EngineView, Page, PageState, default_engine, register_engine, set_default_engine,
+    CefStyle, Command, Engine, EngineFactory, EngineView, Page, PageState, default_cef_style, default_engine,
+    register_engine, set_default_cef_style, set_default_engine,
 };
 pub use events::*;
 pub use handle::{Profile, WebView, WebViewOptions};

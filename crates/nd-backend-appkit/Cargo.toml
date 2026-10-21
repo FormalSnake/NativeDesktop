@@ -99,6 +99,10 @@ name = "real_resize_cef_gate"
 harness = false
 
 [[test]]
+name = "real_resize_cef_chrome_gate"
+harness = false
+
+[[test]]
 name = "virtual_list"
 harness = false
 

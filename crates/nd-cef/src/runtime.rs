@@ -28,6 +28,10 @@ pub(crate) fn register(app_name: &str) {
         std::process::exit(code);
     }
     APP_NAME.with(|n| *n.borrow_mut() = app_name.to_owned());
+    #[cfg(target_os = "linux")]
+    if nd_webview::default_cef_style() == nd_webview::CefStyle::Chrome {
+        nd_backend_gpui::prefer_x11();
+    }
     nd_webview::register_engine(Engine::Cef, Factory);
     // No OS engine embeds in a GPUI window on Linux: Chromium is the system engine there.
     #[cfg(target_os = "linux")]
@@ -67,6 +71,7 @@ fn start() -> Result<(), String> {
     platform::pump::prepare();
     let root = root_cache();
     let _ = std::fs::create_dir_all(&root);
+    forget_windows(&root.join("Default"));
     let s = |p: &std::path::Path| CefString::from(p.to_string_lossy().as_ref());
     let settings = Settings {
         no_sandbox: 1,
@@ -96,6 +101,16 @@ pub(crate) fn app_name() -> String {
     APP_NAME.with(|n| n.borrow().clone())
 }
 
+/// Chrome records a Chrome-style page as a tab of a window of its own and, after a run that did
+/// not shut down cleanly, reopens those windows on the next start, outside the app's. Nothing
+/// of nd reads that record, so it goes before the profile loads.
+fn forget_windows(profile: &std::path::Path) {
+    match std::fs::remove_dir_all(profile.join("Sessions")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => tracing::debug!("nd-cef: Sessions: {e}"),
+        _ => {}
+    }
+}
+
 fn root_cache() -> PathBuf {
     if let Some(dir) = std::env::var_os("ND_CEF_CACHE") {
         return PathBuf::from(dir);
@@ -122,6 +137,7 @@ pub(crate) fn context(profile: &Profile) -> Option<RequestContext> {
             let safe: String =
                 name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
             let path = root_cache().join(format!("profile-{safe}"));
+            forget_windows(&path);
             let settings = RequestContextSettings {
                 cache_path: CefString::from(path.to_string_lossy().as_ref()),
                 persist_session_cookies: 1,
@@ -132,6 +148,45 @@ pub(crate) fn context(profile: &Profile) -> Option<RequestContext> {
             c.borrow_mut().insert(profile.clone(), ctx.clone());
             Some(ctx)
         }),
+    }
+}
+
+/// Browser process switches for Chrome style, harmless to off-screen pages: no first-run or
+/// default-browser prompts, no crash-restore bubble, and none of the Chrome features whose UI
+/// lives in the hidden toolbar.
+pub(crate) fn chrome_switches(line: &mut CommandLine) {
+    for switch in ["no-first-run", "no-default-browser-check", "hide-crash-restore-bubble"] {
+        line.append_switch(Some(&CefString::from(switch)));
+    }
+    #[cfg(target_os = "macos")]
+    line.append_switch(Some(&CefString::from("disable-print-preview")));
+    // Glic's actor UI looks up every attached WebContents as a tab, and a Chrome-style page's
+    // is attached before it is one: Chromium crashes in `TabInterface::GetFromContents`.
+    let features =
+        "MediaRouter,OptimizationHints,AutofillServerCommunication,Translate,DownloadBubble,Glic,GlicActor,GlicActorUi";
+    line.append_switch_with_value(Some(&CefString::from("disable-features")), Some(&CefString::from(features)));
+}
+
+/// Chrome-style pages show Chrome's bubbles (save password, translate, the download bubble)
+/// anchored to a toolbar nobody sees: the preferences that open them are off in their profile.
+pub(crate) fn quiet_chrome(context: &RequestContext) {
+    for name in [
+        "download_bubble.partial_view_enabled",
+        "credentials_enable_service",
+        "credentials_enable_autosignin",
+        "autofill.profile_enabled",
+        "autofill.credit_card_enabled",
+        "translate.enabled",
+    ] {
+        let Some(mut value) = value_create() else { return };
+        value.set_bool(0);
+        let name = CefString::from(name);
+        if context.can_set_preference(Some(&name)) != 0 {
+            let mut error = CefString::default();
+            if context.set_preference(Some(&name), Some(&mut value), Some(&mut error)) == 0 {
+                tracing::debug!("nd-cef: {name}: {error}");
+            }
+        }
     }
 }
 

@@ -2,7 +2,7 @@
 //! engine the run picked.
 
 use nd::prelude::*;
-use nd::webview::{WebView, webview};
+use nd::webview::{LoadingChanged, WebView, webview};
 
 actions!(browser_scenes, [Choose]);
 
@@ -163,4 +163,82 @@ pub fn input(cx: &mut App) {
     page.load_html(INPUT_PAGE, None);
     let options = WindowOptions::main("main").title("Input").size(size(px(720.), px(520.)));
     cx.open_window(options, move |_window, cx| cx.new(move |_cx| Edge { page }));
+}
+
+/// Chrome's own pages, which only a Chrome-style page has: each must load and lay out its WebUI
+/// root (`gate_m8_webview::real_chrome_pages`, `real_webview::real_chrome_pages_cef`). Prints
+/// `ND_CHROME_PAGES_OK`, or `ND_CHROME_PAGES_FAILED` with the page, and exits.
+const CHROME_PAGES: [(&str, &str); 2] = [("chrome://extensions", "extensions-manager"), ("chrome://settings", "settings-ui")];
+
+struct ChromePages {
+    page: WebView,
+    at: usize,
+    checking: bool,
+    tries: u32,
+}
+
+impl ChromePages {
+    fn loaded(&mut self, cx: &mut Context<Self>) {
+        let Some((url, _)) = CHROME_PAGES.get(self.at).copied() else { return };
+        if self.checking || !self.page.url().starts_with(url) {
+            return;
+        }
+        self.checking = true;
+        self.tries = 0;
+        self.check(cx);
+    }
+
+    /// WebUI elements upgrade after the load: the root counts once it has a shadow tree and a
+    /// size. Asked again until then, each answer a round trip to the page.
+    fn check(&mut self, cx: &mut Context<Self>) {
+        let Some((url, root)) = CHROME_PAGES.get(self.at).copied() else { return };
+        let code = format!(
+            "(() => {{ const e = document.querySelector('{root}'); \
+             return !!(e && e.shadowRoot && e.getBoundingClientRect().width > 0); }})()"
+        );
+        let this = cx.weak_entity();
+        self.page.execute_javascript(code, move |result, cx| {
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(v) if v == true => eprintln!("ND_CHROME_PAGES {url} ok"),
+                    Ok(_) if this.tries < 3000 => {
+                        this.tries += 1;
+                        return this.check(cx);
+                    }
+                    other => {
+                        eprintln!("ND_CHROME_PAGES_FAILED {url}: {other:?}");
+                        std::process::exit(1);
+                    }
+                }
+                this.at += 1;
+                this.checking = false;
+                match CHROME_PAGES.get(this.at) {
+                    Some((next, _)) => this.page.load(*next),
+                    None => {
+                        eprintln!("ND_CHROME_PAGES_OK");
+                        std::process::exit(0);
+                    }
+                }
+            });
+        });
+    }
+}
+
+impl Render for ChromePages {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        webview("web", &self.page).size_full().on_loading_changed(cx.listener(
+            |this, e: &LoadingChanged, _, cx| {
+                if !e.loading {
+                    this.loaded(cx);
+                }
+            },
+        ))
+    }
+}
+
+pub fn chrome_pages(cx: &mut App) {
+    let page = WebView::new();
+    page.load(CHROME_PAGES[0].0);
+    let options = WindowOptions::main("main").title("Chrome pages").size(size(px(900.), px(640.)));
+    cx.open_window(options, move |_window, cx| cx.new(move |_cx| ChromePages { page, at: 0, checking: false, tries: 0 }));
 }

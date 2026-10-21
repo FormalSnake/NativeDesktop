@@ -1,8 +1,13 @@
-//! Chromium as a web engine for `nd-webview` (ARCHITECTURE.md 8), through the `cef` crate in
-//! off-screen mode, so the page is an ordinary part of the window (overlays above it, resized
-//! with it) instead of a Chromium window floating over it. Input, IME, `<select>` popups,
-//! context menus, drag and drop, cursors and accessibility are all ours, since an off-screen
-//! browser has no view of its own to receive them.
+//! Chromium as a web engine for `nd-webview` (ARCHITECTURE.md 8), through the `cef` crate. By
+//! default in off-screen mode (Alloy style), so the page is an ordinary part of the window
+//! (overlays above it, resized with it) instead of a Chromium window floating over it. Input,
+//! IME, `<select>` popups, context menus, drag and drop, cursors and accessibility are all ours,
+//! since an off-screen browser has no view of its own to receive them.
+//!
+//! `[webview.cef] style = "chrome"` (or [`nd_webview::CefStyle::Chrome`] per page) hosts the page
+//! in Chrome style instead, for Chromium's extension runtime and `chrome://` pages: a windowed
+//! browser whose native view is a child of the page's own (`mac/chrome.rs`, `linux/chrome.rs`),
+//! with Chrome's browser UI hidden and its commands routed to the app (`commands.rs`).
 //!
 //! - macOS: every frame arrives as an IOSurface, is copied into a pool the view owns and shown
 //!   as its layer's contents. Frames are paced by the window's display link through external
@@ -30,6 +35,8 @@
 mod a11y;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod client;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod commands;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod devtools;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

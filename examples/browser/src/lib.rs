@@ -6,7 +6,8 @@
 //!
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
 //! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
-//! page that scrolls) or `parity` (every event and command against a local test page, printing
+//! page that scrolls), `chrome-pages` (`chrome://extensions` and `chrome://settings` in a
+//! Chrome-style page) or `parity` (every event and command against a local test page, printing
 //! `ND_WEBVIEW_PARITY_OK`).
 
 mod parity;
@@ -318,6 +319,7 @@ pub fn init(cx: &mut App) {
         Ok("overlays") => scenes::overlays(cx),
         Ok("resize") => scenes::resize(cx),
         Ok("input") => scenes::input(cx),
+        Ok("chrome-pages") => scenes::chrome_pages(cx),
         Ok("parity") => parity::open(cx),
         _ => {
             bind_keys(cx);

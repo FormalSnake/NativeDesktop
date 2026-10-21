@@ -135,8 +135,16 @@ example sets `engine = "system"` in its
 [nativedesktop.toml](../../../examples/browser/nativedesktop.toml) and builds with CEF through the
 environment variable.
 
-The config accepts `[webview.cef] style = "chrome"`, a windowed Chrome-style mode for extensions,
-but it isn't implemented. Only the off-screen style runs.
+`[webview.cef] style = "chrome"` hosts CEF pages in Chrome style instead of off-screen, for
+Chromium's extension runtime and `chrome://` pages. `WebViewOptions::cef_style` overrides it per
+page and `ND_CEF_STYLE` per build and run. The page is a windowed browser inside the page's
+element: on macOS Chromium's views move into the page's `NSView`, on Linux Chromium's X11 window
+is a child of the app's window. Chrome's own browser UI stays hidden. The commands that would
+show it (new tab, history, downloads, bookmarks, tab search, settings) reach the app as
+`on_chrome_command` with a `BrowserCommand`, page commands such as back and zoom run, and the rest
+are refused. On Linux an app whose default style is Chrome puts its windows on X11 (XWayland under
+a Wayland compositor). A Chrome-style page in a Wayland window falls back to off-screen with a
+warning.
 
 WKWebView's inspector opens through the private `_inspector` SPI, as wry does. Without it, you can
 still inspect the page from Safari.

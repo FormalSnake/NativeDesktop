@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FormalSnake <kyaniserni@gmail.com>
+Date: Tue, 20 Oct 2026 22:45:06 +0100
+Subject: [PATCH] gpui_linux: keep an x11 window active while a child window
+ has the focus
+
+---
+ crates/gpui_linux/src/linux/x11/client.rs | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
+index 6cf3563..32b04e4 100644
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -1058,6 +1058,10 @@
+                     .context("X11: Failed to handle property notify")
+                     .log_err();
+             }
++            // Focus moving to or from a child window (an embedded browser's) leaves this
++            // window the active one.
++            Event::FocusIn(event) | Event::FocusOut(event)
++                if event.detail == xproto::NotifyDetail::INFERIOR => {}
+             Event::FocusIn(event) => {
+                 let window = self.get_window(event.event)?;
+                 window.set_active(true);
+-- 
+2.51.0
+

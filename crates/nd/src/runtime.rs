@@ -109,6 +109,8 @@ pub struct Manifest {
     pub updates: Option<nd_update::UpdateConfig>,
     /// `[webview] engine`, when set.
     pub webview_engine: Option<&'static str>,
+    /// `[webview.cef] style`, when set.
+    pub cef_style: Option<&'static str>,
 }
 
 #[macro_export]
@@ -121,6 +123,7 @@ macro_rules! manifest {
             display_name: ::core::option_env!("ND_APP_DISPLAY_NAME"),
             updates: $crate::update::build_config!(),
             webview_engine: option_env!("ND_WEBVIEW_ENGINE"),
+            cef_style: option_env!("ND_CEF_STYLE"),
         }
     };
 }
@@ -131,6 +134,10 @@ fn install_webview(manifest: &Manifest) {
     #[cfg(feature = "webview")]
     if let Some(engine) = manifest.webview_engine.and_then(nd_webview::Engine::parse) {
         nd_webview::set_default_engine(engine);
+    }
+    #[cfg(feature = "webview")]
+    if let Some(style) = manifest.cef_style.and_then(nd_webview::CefStyle::parse) {
+        nd_webview::set_default_cef_style(style);
     }
     #[cfg(feature = "cef")]
     nd_cef::register(manifest.name);

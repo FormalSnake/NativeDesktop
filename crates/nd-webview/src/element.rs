@@ -122,6 +122,7 @@ impl WebViewElement {
         on_permission_request_dismissed => PermissionRequestDismissed;
         on_close_approved => CloseApproved;
         on_external_protocol => ExternalProtocol;
+        on_chrome_command => ChromeCommand;
     }
 }
 

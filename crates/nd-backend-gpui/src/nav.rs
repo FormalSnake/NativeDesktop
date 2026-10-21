@@ -313,7 +313,7 @@ pub fn palette_overlay(
     if let Some(on_input) = on_input {
         scrim = scrim.on_mouse_down(MouseButton::Left, move |_, window, cx| on_input(PaletteInput::Cancel, window, cx));
     }
-    deferred(anchored().position(point(px(0.), px(0.))).child(scrim))
+    deferred(anchored().position(point(px(0.), px(0.))).child(crate::occlusion::Occluding::surface(scrim)))
         .with_priority(crate::overlay::PANEL_PRIORITY)
         .into_any_element()
 }
@@ -661,7 +661,7 @@ pub fn toast_view(
         .justify_end()
         .items_center()
         .pb(px(t.bottom))
-        .child(body);
+        .child(crate::occlusion::Occluding::passive(body));
     deferred(anchored().position(point(px(0.), px(0.))).child(layer))
         .with_priority(crate::overlay::TOAST_PRIORITY)
         .into_any_element()

@@ -5,6 +5,7 @@
 //! GPUI's app.
 
 use std::cell::{Cell, RefCell};
+use std::ffi::{c_char, c_int, c_void};
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -18,6 +19,8 @@ use nd_gpui::gpui::{AsyncApp, Task};
 
 /// The longest Chromium waits for its work without a scheduled call, while pages are open.
 const FALLBACK: Duration = Duration::from_millis(33);
+/// The same, while a Chrome-style page is open: Chromium reads its X events only when polled.
+const CHROME_FALLBACK: Duration = Duration::from_millis(4);
 /// The same, with no page open.
 const IDLE: Duration = Duration::from_secs(1);
 /// How long shutdown lets closing browsers finish.
@@ -127,7 +130,11 @@ async fn run_loop(mut rx: UnboundedReceiver<Msg>, cx: &mut AsyncApp) {
         }
         if due || Instant::now() >= deadline {
             run();
-            let fallback = if crate::page::live_count() > 0 { FALLBACK } else { IDLE };
+            let fallback = match (super::chrome::live(), crate::page::live_count()) {
+                (1.., _) => CHROME_FALLBACK,
+                (_, 1..) => FALLBACK,
+                _ => IDLE,
+            };
             deadline = Instant::now() + fallback;
         }
         super::view::flush(cx);
@@ -141,7 +148,35 @@ pub(crate) fn run() {
         return;
     }
     do_message_loop_work();
+    if super::chrome::live() > 0 {
+        dispatch_glib();
+    }
     PUMPING.with(|p| p.set(false));
+}
+
+unsafe extern "C" {
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+
+/// Dispatches what is ready on glib's default context. Chromium's UI loop on Linux is glib's,
+/// and a Chrome-style page's X connection is a source on that context, which CEF leaves to the
+/// app's GTK loop under `external_message_pump`; GPUI runs none. glib comes in with libcef.
+fn dispatch_glib() {
+    type Iteration = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+    static ITERATION: OnceLock<Option<Iteration>> = OnceLock::new();
+    let iteration = ITERATION.get_or_init(|| {
+        // SAFETY: a lookup in the loaded objects; the symbol has this signature.
+        let f = unsafe { dlsym(std::ptr::null_mut(), c"g_main_context_iteration".as_ptr()) };
+        (!f.is_null()).then(|| unsafe { std::mem::transmute::<*mut c_void, Iteration>(f) })
+    });
+    let Some(iteration) = iteration else { return };
+    // A bound, so a source that is always ready cannot hold the main thread.
+    for _ in 0..64 {
+        // SAFETY: the default context (null), without blocking, on the thread Chromium runs on.
+        if unsafe { iteration(std::ptr::null_mut(), 0) } == 0 {
+            break;
+        }
+    }
 }
 
 /// Closes every browser, lets Chromium finish closing them, then shuts it down.

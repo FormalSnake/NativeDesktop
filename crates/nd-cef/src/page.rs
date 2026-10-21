@@ -9,11 +9,12 @@ use cef::*;
 use nd_webview::events::*;
 use nd_webview::menu::filter;
 use nd_webview::{
-    Command, ContextMenuMode, Cookie, Download, DownloadControl, EngineView, FindOptions, MenuItem, Once, Page,
-    PermissionDecision, PermissionResponder, SameSite, UserScript, WebViewProps,
+    CefStyle, Command, ContextMenuMode, Cookie, Download, DownloadControl, EngineView, FindOptions, MenuItem, Once,
+    Page, PermissionDecision, PermissionResponder, SameSite, UserScript, WebViewProps,
 };
 use serde_json::json;
 
+use crate::commands::{self, Route};
 use crate::devtools::{self, Devtools};
 use crate::keys;
 use crate::menu::{self, Choice};
@@ -59,7 +60,10 @@ pub(crate) fn closed(id: u64, browser: Option<i32>) {
     if let Some(page) = get(id) {
         page.devtools.detach();
         page.browser.borrow_mut().take();
+        page.view.browser_closed();
     }
+    #[cfg(target_os = "linux")]
+    crate::platform::chrome::released(id);
 }
 
 #[derive(Default)]
@@ -67,6 +71,8 @@ struct State {
     menu_items: Vec<MenuItem>,
     suppress_menu: bool,
     count_input: Option<String>,
+    /// Counting was asked for before the browser existed (a Chrome-style page's comes later).
+    count_input_queued: bool,
     scripts: Vec<(UserScript, Option<String>)>,
     handlers: HashMap<(String, String), Option<String>>,
     find: Option<(String, FindOptions)>,
@@ -98,6 +104,9 @@ struct DownloadEntry {
 pub(crate) struct CefPage {
     pub(crate) id: u64,
     pub(crate) page: Page,
+    /// Fixed when the page is created: a style Chromium cannot host here (Chrome style in a
+    /// Wayland window) falls back to off-screen.
+    pub(crate) style: CefStyle,
     pub(crate) view: View,
     browser: RefCell<Option<Browser>>,
     pub(crate) devtools: Devtools,
@@ -109,9 +118,11 @@ impl CefPage {
     fn new(page: Page) -> Rc<CefPage> {
         let id = NEXT.with(|n| n.replace(n.get() + 1));
         let view = crate::platform::view::new(id);
+        let style = crate::platform::view::supported(page.options().resolved_cef_style());
         let this = Rc::new(CefPage {
             id,
             page,
+            style,
             view,
             browser: RefCell::default(),
             devtools: Devtools::default(),
@@ -123,13 +134,26 @@ impl CefPage {
     }
 
     fn browser_settings() -> BrowserSettings {
-        BrowserSettings { windowless_frame_rate: 60, background_color: 0xffff_ffff, ..BrowserSettings::default() }
+        BrowserSettings {
+            windowless_frame_rate: 60,
+            background_color: 0xffff_ffff,
+            // Chrome style anchors it to a toolbar nobody sees; zoom is reported to the app.
+            chrome_zoom_bubble: cef::State::DISABLED,
+            ..BrowserSettings::default()
+        }
     }
 
     pub(crate) fn create(page: Page) -> Result<Rc<dyn EngineView>, String> {
         let this = Self::new(page);
         let mut context = crate::context(&this.page.options().profile);
-        let mut client = crate::client::client(this.id);
+        let mut client = crate::client::client(this.id, this.style);
+        if this.style == CefStyle::Chrome {
+            if let Some(context) = &context {
+                crate::runtime::quiet_chrome(context);
+            }
+            this.view.create_chrome(client, &Self::browser_settings(), context)?;
+            return Ok(this);
+        }
         let browser = browser_host_create_browser_sync(
             Some(&this.view.window_info()),
             Some(&mut client),
@@ -163,12 +187,34 @@ impl CefPage {
             self.set_user_agent(Some(ua));
         }
         self.install_agent();
+        self.view.browser_created();
         host.was_resized();
         self.view.wake();
+        if std::mem::take(&mut self.st.borrow_mut().count_input_queued) {
+            self.count_input();
+        }
         let queued = std::mem::take(&mut *self.queue.borrow_mut());
         for command in queued {
             self.run(command);
         }
+    }
+
+    /// Counts the pointer input of this document and every later one. A document that commits
+    /// while the script is being registered gets it once registration is through: a Chrome-style
+    /// page's first load races it. The script's title marks a document that already counts.
+    fn count_input(&self) {
+        self.st.borrow_mut().count_input = Some(String::new());
+        let id = self.id;
+        self.devtools.add_script(nd_webview::script::COUNTING_SCRIPT, None, move |identifier| {
+            let Some(p) = get(id) else { return };
+            p.st.borrow_mut().count_input = Some(identifier.unwrap_or_default());
+            let code = format!(
+                "if(!document.title.startsWith('down=')){{{}}}",
+                nd_webview::script::COUNTING_SCRIPT
+            );
+            p.devtools.evaluate(&code, None, |_| {});
+        });
+        self.devtools.evaluate(nd_webview::script::COUNTING_SCRIPT, None, |_| {});
     }
 
     pub(crate) fn host(&self) -> Option<BrowserHost> {
@@ -366,8 +412,12 @@ impl CefPage {
         };
         let popup = self.page.popup(|page| {
             let child = CefPage::new(page);
-            *info = child.view.window_info();
-            *client = Some(crate::client::client(child.id));
+            if child.style == CefStyle::Chrome {
+                child.view.expect_chrome_popup(info);
+            } else {
+                *info = child.view.window_info();
+            }
+            *client = Some(crate::client::client(child.id, child.style));
             *settings = Self::browser_settings();
             child as Rc<dyn EngineView>
         });
@@ -383,6 +433,46 @@ impl CefPage {
         let kind = Self::disposition(disposition);
         self.page.emit(NewWindow { url, disposition: kind, user_gesture, features: None, popup: None });
         true
+    }
+
+    /// A Chrome command: the page's own run, browser UI goes to the app, the rest is refused.
+    /// Returns whether Chromium should leave it alone.
+    pub(crate) fn chrome_command(&self, id: i32) -> bool {
+        match commands::route(id) {
+            Some(Route::Allow) => false,
+            Some(Route::App(command)) => {
+                self.page.emit(ChromeCommand { command });
+                true
+            }
+            None => {
+                tracing::debug!("nd-cef: Chrome command {id} refused; it would open Chrome's own UI");
+                true
+            }
+        }
+    }
+
+    /// `request_close` in Chrome style, where a close Chromium starts cannot be held for the app
+    /// (no `DoClose`): the page's `beforeunload` handlers run on a synthetic event, and when one
+    /// asks to stay, the same prompt as a real close's decides.
+    fn request_close_chrome(&self) {
+        const PROBE: &str = "(() => { const e = document.createEvent('BeforeUnloadEvent'); \
+            e.initEvent('beforeunload', false, true); window.dispatchEvent(e); \
+            return e.defaultPrevented || !!e.returnValue; })()";
+        let id = self.id;
+        self.devtools.evaluate(PROBE, None, move |result| {
+            let Some(page) = get(id) else { return };
+            let asks = result.ok().and_then(|v| v.as_bool()).unwrap_or(false);
+            if !asks || !dialogs::available(&page.view) {
+                page.page.emit(CloseApproved { approved: true });
+                return;
+            }
+            let message = "Changes you made may not be saved.";
+            dialogs::message(&page.view, "Leave this page?", message, &["Leave", "Cancel"], None, move |answer| {
+                if let Some(page) = get(id) {
+                    page.page.emit(CloseApproved { approved: answer.is_some() });
+                }
+            });
+        });
     }
 
     /// The page closes itself (`window.close()`): the app decides, by unmounting it.
@@ -437,7 +527,9 @@ impl CefPage {
                     return;
                 };
                 match chosen {
-                    Some(Choice::Chromium(command)) => callback.cont(command, EventFlags::default()),
+                    Some(Choice::Chromium(command)) => {
+                        commands::running_menu_command(command, || callback.cont(command, EventFlags::default()))
+                    }
                     Some(Choice::App(item)) => {
                         callback.cancel();
                         let (checked, was_checked) = nd_webview::menu::implied_check(&item);
@@ -906,6 +998,7 @@ impl CefPage {
                 let code = format!("window.__ndSetMuted&&window.__ndSetMuted({muted})");
                 self.devtools.evaluate(&code, Some(nd_webview::script::INTERNAL_WORLD), |_| {});
             }
+            Command::RequestClose if self.style == CefStyle::Chrome => self.request_close_chrome(),
             Command::RequestClose => {
                 let Some(host) = host else { return };
                 self.st.borrow_mut().requesting_close = true;
@@ -983,15 +1076,9 @@ impl EngineView for CefPage {
             st.suppress_menu = props.context_menu_mode == ContextMenuMode::Suppress;
             st.menu_items = props.context_menu_items.clone();
         }
-        if props.count_input && self.st.borrow().count_input.is_none() {
-            self.st.borrow_mut().count_input = Some(String::new());
-            let id = self.id;
-            self.devtools.add_script(nd_webview::script::COUNTING_SCRIPT, None, move |identifier| {
-                if let Some(p) = get(id) {
-                    p.st.borrow_mut().count_input = Some(identifier.unwrap_or_default());
-                }
-            });
-            self.devtools.evaluate(nd_webview::script::COUNTING_SCRIPT, None, |_| {});
+        self.st.borrow_mut().count_input_queued = props.count_input && self.host().is_none();
+        if props.count_input && self.host().is_some() && self.st.borrow().count_input.is_none() {
+            self.count_input();
         } else if !props.count_input
             && let Some(identifier) = self.st.borrow_mut().count_input.take()
             && !identifier.is_empty()

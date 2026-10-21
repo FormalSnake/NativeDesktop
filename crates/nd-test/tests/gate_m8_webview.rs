@@ -1,4 +1,5 @@
-//! M8/M9 web view gates on macOS (ARCHITECTURE.md 6.3, 8, 16), each on WKWebView and on CEF:
+//! M8/M9 web view gates on macOS (ARCHITECTURE.md 6.3, 8, 16), each on WKWebView and on CEF in
+//! both styles (off-screen, and Chrome style: `ND_CEF_STYLE=chrome`):
 //!
 //! - `real_parity_*`: `examples/browser` with `BROWSER_SCENE=parity` runs every event and command of
 //!   `nd::webview` against a local test page and must print `ND_WEBVIEW_PARITY_OK`.
@@ -7,6 +8,8 @@
 //!   every mousedown, mouseup, mousemove and wheel it sees, driven with real HID input. Nothing
 //!   inside an overlay reaches the page; a press that dismisses a light-dismiss overlay is
 //!   consumed, release included.
+//! - `real_chrome_pages_cef_chrome`: `chrome://extensions` and `chrome://settings` load and lay
+//!   out in a Chrome-style page.
 //!
 //! Needs `browser` built with the `cef` feature for the CEF runs (`cargo build -p browser
 //! --features cef`); a build without it fails the CEF tests with the engine's own message.
@@ -22,8 +25,13 @@ mod gate_m8_webview {
     use nd_ui::InputCounts;
     use ndshell::input;
 
+    /// `engine` is `system`, `cef` or `cef-chrome` (CEF in Chrome style).
     fn browser(engine: &str, scene: &str) -> LaunchOptions {
-        LaunchOptions::example("browser").env("ND_WEBVIEW_ENGINE", engine).env("BROWSER_SCENE", scene)
+        let (engine, style) = engine.split_once('-').unwrap_or((engine, "osr"));
+        LaunchOptions::example("browser")
+            .env("ND_WEBVIEW_ENGINE", engine)
+            .env("ND_CEF_STYLE", style)
+            .env("BROWSER_SCENE", scene)
     }
 
     fn parity(engine: &str) {
@@ -34,8 +42,12 @@ mod gate_m8_webview {
         let tail = app.stderr_tail(40).join("\n");
         match result {
             Ok(line) if line.contains("ND_WEBVIEW_PARITY_OK") => {
-                assert!(line.contains(&format!("engine={engine}")), "ran on the wrong engine: {line}");
-                println!("ND_M8_PARITY_{}_OK", engine.to_uppercase());
+                let (name, style) = engine.split_once('-').unwrap_or((engine, "osr"));
+                assert!(line.contains(&format!("engine={name}")), "ran on the wrong engine: {line}");
+                if name == "cef" {
+                    assert!(line.contains(&format!("style={style}")), "ran in the wrong style: {line}");
+                }
+                println!("ND_M8_PARITY_{}_OK", engine.to_uppercase().replace('-', "_"));
             }
             Ok(line) => panic!("{line}\n{tail}"),
             Err(e) => panic!("no parity result: {e}\n{tail}"),
@@ -50,6 +62,25 @@ mod gate_m8_webview {
     #[test]
     fn real_parity_cef() {
         parity("cef");
+    }
+
+    #[test]
+    fn real_parity_cef_chrome() {
+        parity("cef-chrome");
+    }
+
+    #[test]
+    fn real_chrome_pages_cef_chrome() {
+        let mut options = browser("cef-chrome", "chrome-pages");
+        options.ready_timeout = Duration::from_secs(60);
+        let app = launch_app(options).expect("launch browser");
+        let result = app.wait_for_stderr("ND_CHROME_PAGES_", Duration::from_secs(120));
+        let tail = app.stderr_tail(40).join("\n");
+        match result {
+            Ok(line) if line.contains("ND_CHROME_PAGES_OK") => println!("ND_M8_CHROME_PAGES_OK"),
+            Ok(line) => panic!("{line}\n{tail}"),
+            Err(e) => panic!("no chrome pages result: {e}\n{tail}"),
+        }
     }
 
     fn real_allowed(name: &str) -> bool {
@@ -265,7 +296,7 @@ mod gate_m8_webview {
         );
         input::click(under.at(0.5, 0.5));
         sc.status_has("under=2");
-        println!("ND_M8_OVERLAY_LEAK_{}_OK", engine.to_uppercase());
+        println!("ND_M8_OVERLAY_LEAK_{}_OK", engine.to_uppercase().replace('-', "_"));
     }
 
     #[test]
@@ -279,6 +310,13 @@ mod gate_m8_webview {
     fn real_overlay_leak_cef() {
         if real_allowed("real_overlay_leak_cef") {
             overlay_leak("cef");
+        }
+    }
+
+    #[test]
+    fn real_overlay_leak_cef_chrome() {
+        if real_allowed("real_overlay_leak_cef_chrome") {
+            overlay_leak("cef-chrome");
         }
     }
 }
