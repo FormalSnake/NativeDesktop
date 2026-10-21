@@ -32,6 +32,20 @@ pub(crate) fn unpack(crx: &Path, into: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// A package's id and its `manifest.json`, as the package carries it.
+pub(crate) fn manifest(bytes: &[u8]) -> Result<(String, String), String> {
+    use std::io::Read as _;
+    let (key, zip) = parse(bytes)?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip)).map_err(|e| e.to_string())?;
+    let mut text = String::new();
+    archive
+        .by_name("manifest.json")
+        .map_err(|e| format!("manifest.json: {e}"))?
+        .read_to_string(&mut text)
+        .map_err(|e| format!("manifest.json: {e}"))?;
+    Ok((id_for_key(&key), text))
+}
+
 /// The id Chromium gives an extension with public key `key` (DER): the first 16 bytes of its
 /// SHA-256, each nibble a letter from `a`.
 pub(crate) fn id_for_key(key: &[u8]) -> String {

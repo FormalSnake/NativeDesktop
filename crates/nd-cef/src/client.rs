@@ -550,6 +550,10 @@ wrap_download_handler! {
             callback: Option<&mut BeforeDownloadCallback>,
         ) -> c_int {
             let (Some(item), Some(callback)) = (download_item, callback) else { return 0 };
+            // The store's own install download: Chrome style installs it, the app never sees it.
+            if crate::store_browser::is_store_package(&crate::text(&item.original_url())) {
+                return 0;
+            }
             let suggested = suggested_name.map(|s| s.to_string()).unwrap_or_default();
             let callback = callback.clone();
             with(self.id, |p| p.before_download(item, suggested, callback)) as c_int

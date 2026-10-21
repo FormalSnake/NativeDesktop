@@ -9,6 +9,11 @@
 //! page.run_extension_action(id, bounds, |outcome, cx| {});
 //! ```
 //!
+//! The Chrome Web Store installs through Chromium's own flow, so a store install updates from the
+//! store like Chrome's: the store page's "Add to Chrome" works in any Chrome-style page, and
+//! [`install_from_store`] does the same by id. Chromium asks with its own prompt unless the app
+//! takes the question over ([`on_store_install`]).
+//!
 //! [`WebView::run_extension_action`](crate::WebView::run_extension_action) is a click on the
 //! extension's toolbar button in Chrome: Chromium opens the extension's own popup (anchored
 //! under the rectangle the app gives) or fires `chrome.action.onClicked` with `activeTab`
@@ -25,6 +30,7 @@ use std::rc::Rc;
 
 use nd_ui::App;
 
+use crate::Once;
 use crate::engine::Page;
 
 /// One installed extension.
@@ -113,13 +119,18 @@ pub trait ExtensionEngine: 'static {
     fn install_package(&self, path: PathBuf, done: Reply<String>);
     fn uninstall(&self, id: String, done: Reply<()>);
     fn set_enabled(&self, id: String, enabled: bool, done: Reply<()>);
+    fn install_from_store(&self, id: String, done: Reply<String>);
+    /// The app answers store pages' installs from now on ([`on_store_install`]).
+    fn watch_store(&self) {}
 }
 
 type Listener = Rc<dyn Fn(&Change, &mut App)>;
+type StoreHandler = Rc<dyn Fn(StoreInstall, &mut App)>;
 
 thread_local! {
     static ENGINE: RefCell<Option<Rc<dyn ExtensionEngine>>> = const { RefCell::new(None) };
     static LISTENERS: RefCell<Vec<Listener>> = const { RefCell::new(Vec::new()) };
+    static STORE_HANDLER: RefCell<Option<StoreHandler>> = const { RefCell::new(None) };
 }
 
 pub fn register_extension_engine(engine: impl ExtensionEngine) {
@@ -185,4 +196,203 @@ pub fn report_change(change: Change) {
             listener(&change, cx);
         }
     });
+}
+
+/// Installs extension `id` from the Chrome Web Store, as the store page's "Add to Chrome" does:
+/// Chromium downloads and verifies the package and keeps it updated from the store. The app has
+/// asked the user already, so Chromium's own prompt is answered unseen (where the platform can;
+/// elsewhere it shows). Answers the id once installed.
+pub fn install_from_store(id: impl Into<String>, done: impl FnOnce(Result<String, String>, &mut App) + 'static) {
+    let id = id.into();
+    with_engine(done, move |e, reply| {
+        if is_extension_id(&id) {
+            e.install_from_store(id, reply);
+        } else {
+            reply(Err(format!("{id:?} is not an extension id")));
+        }
+    });
+}
+
+/// Whether `id` has the shape of an extension id: 32 letters from `a` to `p`.
+pub fn is_extension_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b))
+}
+
+/// An install the Web Store page asked for (its "Add to Chrome"), held before Chromium prompts.
+#[derive(Clone, Debug)]
+pub struct StoreInstall {
+    pub id: String,
+    /// In the user's language, as the store names it.
+    pub name: String,
+    pub icon_url: Option<String>,
+    /// Chrome's lines under "It can:" in its prompt, in its order ([`permission_lines`]).
+    pub permissions: Vec<String>,
+    pub responder: StoreResponder,
+}
+
+/// How a [`StoreInstall`] is answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreDecision {
+    /// Install, with Chromium's prompt answered unseen.
+    Install,
+    /// The store hears that the user cancelled; Chromium never prompts.
+    Cancel,
+    /// Chromium asks with its own prompt. What a request the app drops unanswered gets.
+    AskInChrome,
+}
+
+/// Answers a [`StoreInstall`]; dropped unanswered, Chromium asks with its own prompt.
+#[derive(Clone)]
+pub struct StoreResponder(pub Once<StoreDecision>);
+
+impl std::fmt::Debug for StoreResponder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StoreResponder")
+    }
+}
+
+impl StoreResponder {
+    pub fn respond(&self, decision: StoreDecision) {
+        self.0.answer(decision);
+    }
+}
+
+/// Takes over the question Chromium asks before a Web Store install the store page starts: `f`
+/// hears each one and answers it, usually from a dialog of the app's own. Replaces the handler
+/// set before. Installs started with [`install_from_store`] are not asked about.
+pub fn on_store_install(f: impl Fn(StoreInstall, &mut App) + 'static) {
+    STORE_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(f)));
+    if let Some(engine) = ENGINE.with(|e| e.borrow().clone()) {
+        engine.watch_store();
+    }
+}
+
+/// Engines hand the app a store page's install here; `answer` runs once, on the main thread.
+pub fn ask_store_install(
+    id: String,
+    name: String,
+    icon_url: Option<String>,
+    manifest: &str,
+    answer: impl FnOnce(StoreDecision) + 'static,
+) {
+    let permissions = permission_lines(manifest);
+    let responder = StoreResponder(Once::new(StoreDecision::AskInChrome, answer));
+    Page::defer(move |cx| {
+        let handler = STORE_HANDLER.with(|h| h.borrow().clone());
+        let install = StoreInstall { id, name, icon_url, permissions, responder: responder.clone() };
+        match handler {
+            Some(handler) => handler(install, cx),
+            None => responder.respond(StoreDecision::AskInChrome),
+        }
+    });
+}
+
+/// Chrome's wording for what an extension can do, for the permissions that carry a warning in
+/// its install prompt; the rest (storage, alarms, ...) carry none there either.
+const WARNINGS: &[(&str, &str)] = &[
+    ("tabs", "Read your browsing history"),
+    ("webNavigation", "Read your browsing history"),
+    ("history", "Read and change your browsing history"),
+    ("topSites", "Read a list of your most frequently visited websites"),
+    ("bookmarks", "Read and change your bookmarks"),
+    ("downloads", "Manage your downloads"),
+    ("nativeMessaging", "Communicate with cooperating native applications"),
+    ("notifications", "Display notifications"),
+    ("clipboardRead", "Read data you copy and paste"),
+    ("clipboardWrite", "Modify data you copy and paste"),
+    ("privacy", "Change your privacy-related settings"),
+    ("management", "Manage your apps, extensions, and themes"),
+    ("declarativeNetRequest", "Block content on any page"),
+    ("geolocation", "Detect your physical location"),
+    ("contentSettings", "Change your settings that control websites' access to features"),
+    ("proxy", "Read and change all your data on all websites"),
+    ("debugger", "Access the page debugger backend"),
+    ("desktopCapture", "Capture content of your screen"),
+    ("tabCapture", "Read and change all your data on all websites"),
+];
+
+/// The lines under "It can:" in Chrome's install prompt for `manifest` (the manifest's JSON):
+/// site access first, then the other warnings, each said once.
+pub fn permission_lines(manifest: &str) -> Vec<String> {
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(manifest) else { return Vec::new() };
+    let strings = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+    };
+    let permissions = strings(&manifest["permissions"]);
+    let mut patterns = strings(&manifest["host_permissions"]);
+    patterns.extend(permissions.iter().filter(|p| p.contains("://") || *p == "<all_urls>").cloned());
+    if let Some(scripts) = manifest["content_scripts"].as_array() {
+        for script in scripts {
+            patterns.extend(strings(&script["matches"]));
+        }
+    }
+    let all_hosts = |p: &str| matches!(p, "<all_urls>" | "*://*/*" | "http://*/*" | "https://*/*" | "*://*/");
+    let host = |p: &str| -> Option<String> {
+        let (scheme, rest) = p.split_once("://")?;
+        if !matches!(scheme, "*" | "http" | "https" | "ws" | "wss" | "ftp") {
+            return None;
+        }
+        let (host, _) = rest.split_once('/')?;
+        (!host.is_empty()).then(|| host.strip_prefix("*.").unwrap_or(host).to_owned())
+    };
+    let mut lines = Vec::new();
+    if patterns.iter().any(|p| all_hosts(p)) {
+        lines.push("Read and change all your data on all websites".to_owned());
+    } else {
+        let mut hosts: Vec<String> = Vec::new();
+        for h in patterns.iter().filter_map(|p| host(p)) {
+            if !hosts.contains(&h) {
+                hosts.push(h);
+            }
+        }
+        match hosts.len() {
+            0 => {}
+            1 => lines.push(format!("Read and change your data on {}", hosts[0])),
+            2 | 3 => {
+                let (last, rest) = hosts.split_last().expect("two or three hosts");
+                lines.push(format!("Read and change your data on {} and {last}", rest.join(", ")));
+            }
+            _ => lines.push("Read and change your data on a number of websites".to_owned()),
+        }
+    }
+    for p in &permissions {
+        if let Some((_, line)) = WARNINGS.iter().find(|(name, _)| name == p)
+            && !lines.iter().any(|l| l == line)
+        {
+            lines.push((*line).to_owned());
+        }
+    }
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_lines_follow_chrome_s_prompt() {
+        let all =
+            r#"{"permissions":["tabs","storage","nativeMessaging","webNavigation"],"host_permissions":["<all_urls>"]}"#;
+        assert_eq!(
+            permission_lines(all),
+            [
+                "Read and change all your data on all websites",
+                "Read your browsing history",
+                "Communicate with cooperating native applications",
+            ]
+        );
+        let two = r#"{"content_scripts":[{"matches":["https://*.example.com/*","https://a.org/x"]}]}"#;
+        assert_eq!(permission_lines(two), ["Read and change your data on example.com and a.org"]);
+        let many = r#"{"host_permissions":["https://a/*","https://b/*","https://c/*","https://d/*"]}"#;
+        assert_eq!(permission_lines(many), ["Read and change your data on a number of websites"]);
+        assert!(permission_lines("{}").is_empty());
+        assert!(permission_lines("not json").is_empty());
+    }
+
+    #[test]
+    fn extension_ids() {
+        assert!(is_extension_id("aeblfdkhhhdcdjpifhhbdiojplfjncoa"));
+        assert!(!is_extension_id("aeblfdkhhhdcdjpifhhbdiojplfjncoz"));
+        assert!(!is_extension_id("short"));
+    }
 }

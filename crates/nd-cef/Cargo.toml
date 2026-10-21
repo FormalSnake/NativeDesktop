@@ -26,6 +26,8 @@ libc = "0.2.190"
 base64 = "0.22.1"
 sha2 = "0.10.9"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Fetches a Web Store package for its manifest (`extensions::install_from_store`).
+ureq = "3.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nd-backend-gpui.workspace = true

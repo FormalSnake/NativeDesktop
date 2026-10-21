@@ -107,6 +107,10 @@ name = "real_extensions_cef_chrome_gate"
 harness = false
 
 [[test]]
+name = "real_webstore_cef_chrome_gate"
+harness = false
+
+[[test]]
 name = "virtual_list"
 harness = false
 

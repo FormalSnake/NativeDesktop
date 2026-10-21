@@ -17,6 +17,12 @@
 //! Chromium loads those while it builds the profile, before any page navigates, so a page's
 //! first document gets their content scripts.
 //!
+//! Web Store installs go through `chrome.webstorePrivate` in a store page, the API the store's
+//! own "Add to Chrome" calls: Chromium parses the manifest, prompts, then downloads, verifies and
+//! installs the package as a store extension. An install by id does that in a hidden store page
+//! with the manifest of the package the store serves. When the app answers store installs
+//! itself, each store page's call is held in the page until the app has (`STORE_HOOK`).
+//!
 //! Startup: nothing here reads state ahead of a click and acts on it later. The list is the
 //! extensions Chromium has loaded, a click goes to Chromium as a click, and a click that reaches
 //! Chromium before the page's window has built its toolbar model waits for it
@@ -54,6 +60,15 @@ pub(crate) const POPUP_SEARCH: Duration = TRIGGER_PATIENCE.saturating_add(POPUP_
 const RECLICK: Duration = Duration::from_millis(500);
 /// The binding the hidden `chrome://extensions` page reports changes through.
 const BINDING: &str = "__ndExtensions";
+/// The Web Store's origin, the only one `chrome.webstorePrivate` is given to.
+const STORE: &str = "https://chromewebstore.google.com/";
+/// A store page `webstorePrivate` runs in that Google never sends through its cookie consent
+/// page, which a fresh profile in the EU gets for every other store URL.
+const STORE_QUIET: &str = "https://chromewebstore.google.com/robots.txt";
+/// The binding a store page asks the app through.
+const STORE_BINDING: &str = "__ndStoreAsk";
+/// How long the platform watches for Chromium's install prompt after an accepted install.
+pub(crate) const PROMPT_WAIT: Duration = Duration::from_secs(20);
 
 type Then<T> = Box<dyn FnOnce(Result<T, String>)>;
 
@@ -78,6 +93,10 @@ struct State {
     tabs: HashMap<String, String>,
     /// Targets auto-attached under a session, while a tab is searched.
     children: HashMap<String, Vec<String>>,
+    /// Whether store pages' installs go to the app.
+    watching_store: bool,
+    /// Store page targets with the install hook, and their sessions.
+    store_pages: HashMap<String, String>,
 }
 
 struct Popup {
@@ -108,6 +127,11 @@ fn ensure_listening() {
         return;
     }
     pipe::listen(|method, params, session| match method {
+        "Runtime.bindingCalled" if params["name"].as_str() == Some(STORE_BINDING) => {
+            if let Some(session) = session {
+                store_asked(session, params["payload"].as_str().unwrap_or_default());
+            }
+        }
         "Runtime.bindingCalled" if params["name"].as_str() == Some(BINDING) => {
             let registry = ST.with(|s| s.borrow().registry.clone());
             if session.is_some() && session == registry.as_deref() {
@@ -119,10 +143,17 @@ fn ensure_listening() {
                 ST.with(|s| s.borrow_mut().children.entry(parent.to_owned()).or_default().push(child.to_owned()));
             }
         }
-        "Target.targetCreated" | "Target.targetInfoChanged" => target_created(&params["targetInfo"]),
+        "Target.targetCreated" | "Target.targetInfoChanged" => {
+            target_created(&params["targetInfo"]);
+            store_page(&params["targetInfo"]);
+        }
         "Target.targetDestroyed" => {
             let target = params["targetId"].as_str().unwrap_or_default();
-            ST.with(|s| s.borrow_mut().tabs.retain(|page, tab| page != target && tab != target));
+            ST.with(|s| {
+                let mut s = s.borrow_mut();
+                s.tabs.retain(|page, tab| page != target && tab != target);
+                s.store_pages.remove(target);
+            });
             target_destroyed(target);
         }
         "Target.detachedFromTarget" => {
@@ -133,6 +164,7 @@ fn ensure_listening() {
                     s.registry = None;
                 }
                 s.probes.retain(|_, v| v != session);
+                s.store_pages.retain(|_, v| v != session);
             });
         }
         _ => {}
@@ -426,6 +458,336 @@ impl ExtensionEngine for Engine {
         let code = format!("chrome.management.setEnabled({}, {enabled}).then(() => true)", Value::String(id));
         self.registry_call(code, done);
     }
+
+    fn watch_store(&self) {
+        watch_store();
+    }
+
+    fn install_from_store(&self, id: String, done: Then<String>) {
+        let done = Rc::new(RefCell::new(Some(done)));
+        let d2 = done.clone();
+        let finish = move |r: Result<String, String>| {
+            if let Some(d) = d2.borrow_mut().take() {
+                d(r);
+            }
+        };
+        let f2 = finish.clone();
+        when_started(
+            move || {
+                pipe::call("Browser.getVersion", json!({}), None, move |r| {
+                    let version = r
+                        .ok()
+                        .and_then(|v| v["product"].as_str().and_then(|p| p.split('/').nth(1)).map(str::to_owned))
+                        .unwrap_or_else(|| "154.0.0.0".into());
+                    store_manifest(id.clone(), version, move |r| match r {
+                        Ok(manifest) => install_in_hidden_store(id, manifest, Box::new(f2)),
+                        Err(e) => f2(Err(e)),
+                    });
+                });
+                Ok(())
+            },
+            move |e| finish(Err(e)),
+        );
+    }
+}
+
+/// The manifest of the package the store serves for `id`, fetched off the main thread.
+fn store_manifest(id: String, version: String, then: impl FnOnce(Result<String, String>) + 'static) {
+    let url = format!(
+        "https://clients2.google.com/service/update2/crx?response=redirect&prodversion={version}\
+         &acceptformat=crx3&x=id%3D{id}%26installsource%3Dondemand%26uc"
+    );
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let s2 = slot.clone();
+    let fetched = std::thread::Builder::new().name("nd-cef-store".into()).spawn(move || {
+        let r = ureq::get(&url)
+            .call()
+            .map_err(|e| format!("the Web Store: {e}"))
+            .and_then(|mut r| r.body_mut().with_config().limit(256 << 20).read_to_vec().map_err(|e| e.to_string()))
+            .and_then(|bytes| crate::crx::manifest(&bytes))
+            .and_then(
+                |(got, manifest)| {
+                    if got == id { Ok(manifest) } else { Err(format!("the store served {got} for {id}")) }
+                },
+            );
+        if let Ok(mut s) = s2.lock() {
+            *s = Some(r);
+        }
+    });
+    if let Err(e) = fetched {
+        return then(Err(e.to_string()));
+    }
+    fn poll(slot: std::sync::Arc<std::sync::Mutex<Option<Result<String, String>>>>, then: Then<String>) {
+        match slot.lock().ok().and_then(|mut s| s.take()) {
+            Some(r) => then(r),
+            None => crate::runtime::later(Duration::from_millis(50), move || poll(slot, then)),
+        }
+    }
+    poll(slot, Box::new(then));
+}
+
+/// `true` once the API is there; otherwise where the page is, for the error.
+const STORE_READY: &str = "(typeof chrome === 'object' && !!chrome.webstorePrivate) || location.href";
+
+/// `chrome.webstorePrivate`'s two steps, run in a store page: answers the error or `true`.
+fn store_install_code(id: &str, manifest: &str) -> String {
+    let details = json!({ "id": id, "manifest": manifest });
+    format!(
+        r#"(async () => {{
+  const wp = chrome.webstorePrivate;
+  const call = (f, ...args) => new Promise((ok) => f.call(wp, ...args, (r) => ok({{ r, e: chrome.runtime.lastError && chrome.runtime.lastError.message }})));
+  const begin = await call(wp.beginInstallWithManifest3, {details});
+  if (begin.e || (begin.r && begin.r !== 'success')) return 'begin: ' + (begin.e || begin.r);
+  const done = await call(wp.completeInstall, {id});
+  if (done.e) return 'install: ' + done.e;
+  return true;
+}})()"#,
+        id = Value::String(id.to_owned())
+    )
+}
+
+/// Opens the quiet store page in a browser of nd-cef's own (`store_browser`) and attaches to it.
+fn open_store_browser(then: impl FnOnce(Result<(cef::Browser, String), String>) + 'static) {
+    thread_local! {
+        static OPENED: Cell<u64> = const { Cell::new(0) };
+    }
+    let n = OPENED.with(|o| {
+        o.set(o.get() + 1);
+        o.get()
+    });
+    let url = format!("{STORE_QUIET}?nd={}-{n}", std::process::id());
+    let browser = match crate::store_browser::create(&url) {
+        Ok(b) => b,
+        Err(e) => return then(Err(e)),
+    };
+    fn find(url: String, end: Instant, then: Then<String>) {
+        pipe::call("Target.getTargets", json!({}), None, move |r| {
+            let found = r.ok().and_then(|v| {
+                let infos = v["targetInfos"].as_array()?;
+                let info = infos.iter().find(|t| t["url"].as_str() == Some(url.as_str()))?;
+                info["targetId"].as_str().map(str::to_owned)
+            });
+            match found {
+                Some(target) => then(Ok(target)),
+                None if Instant::now() >= end => then(Err("the store page never loaded".into())),
+                None => crate::runtime::later(Duration::from_millis(50), move || find(url, end, then)),
+            }
+        });
+    }
+    let b2 = browser.clone();
+    find(
+        url,
+        Instant::now() + Duration::from_secs(30),
+        Box::new(move |r| {
+            let target = match r {
+                Ok(t) => t,
+                Err(e) => {
+                    crate::store_browser::close(&b2);
+                    return then(Err(e));
+                }
+            };
+            ST.with(|s| s.borrow_mut().own_targets.push(target.clone()));
+            let params = json!({ "targetId": target, "flatten": true });
+            pipe::call("Target.attachToTarget", params, None, move |r| match r {
+                Ok(v) => {
+                    let session = v["sessionId"].as_str().unwrap_or_default().to_owned();
+                    let s2 = session.clone();
+                    pipe::call("Runtime.enable", json!({}), Some(&s2), move |_| then(Ok((b2, session))));
+                }
+                Err(e) => {
+                    crate::store_browser::close(&b2);
+                    then(Err(e))
+                }
+            });
+        }),
+    );
+}
+
+fn install_in_hidden_store(id: String, manifest: String, done: Then<String>) {
+    open_store_browser(move |r| {
+        let (browser, session) = match r {
+            Ok(v) => v,
+            Err(e) => return done(Err(e)),
+        };
+        let s2 = session.clone();
+        wait_until(session, STORE_READY, Duration::from_secs(30), move |r| {
+            if let Err(e) = r {
+                crate::store_browser::close(&browser);
+                return done(Err(format!("the Web Store page: {e}")));
+            }
+            crate::platform::install_prompt::arm(PROMPT_WAIT);
+            evaluate(&s2, &store_install_code(&id, &manifest), move |r| {
+                crate::platform::install_prompt::disarm();
+                crate::store_browser::close(&browser);
+                done(match r {
+                    Ok(Value::Bool(true)) => Ok(id),
+                    Ok(other) => Err(other.as_str().map_or_else(|| other.to_string(), str::to_owned)),
+                    Err(e) => Err(e),
+                })
+            });
+        });
+    });
+}
+
+/// Store pages hold `beginInstallWithManifest3` until the app answers through `__ndStoreAnswer`.
+/// Main world, document start, so the store never holds the function unwrapped.
+const STORE_HOOK: &str = r#"(() => {
+  if (window.__ndStoreAnswer) return true;
+  const pending = new Map();
+  let begin = null, api = null;
+  window.__ndStoreAnswer = (id, accept) => {
+    const held = pending.get(id);
+    if (!held) return 'none';
+    pending.delete(id);
+    if (!accept) { held.cancel(); return 'cancelled'; }
+    if (held.callback) begin.call(api, held.details, held.callback);
+    else begin.call(api, held.details).then(held.resolve, held.reject);
+    return 'sent';
+  };
+  const hook = () => {
+    const wp = window.chrome && window.chrome.webstorePrivate;
+    if (!wp || typeof wp.beginInstallWithManifest3 !== 'function') return false;
+    api = wp;
+    begin = wp.beginInstallWithManifest3;
+    wp.beginInstallWithManifest3 = function (details, callback) {
+      if (typeof __ndStoreAsk !== 'function') return begin.call(api, ...arguments);
+      const ask = (held) => {
+        pending.set(details.id, held);
+        __ndStoreAsk(JSON.stringify({ id: details.id, name: details.localizedName || '', iconUrl: details.iconUrl || '', manifest: details.manifest || '' }));
+      };
+      if (typeof callback === 'function') {
+        ask({ details, callback, cancel: () => callback('user_cancelled') });
+        return undefined;
+      }
+      return new Promise((resolve, reject) => ask({ details, resolve, reject, cancel: () => reject(new Error('User cancelled install')) }));
+    };
+    return true;
+  };
+  if (!hook()) {
+    const timer = setInterval(() => { if (hook()) clearInterval(timer); }, 20);
+    setTimeout(() => clearInterval(timer), 60000);
+  }
+  return true;
+})()"#;
+
+/// Store installs go to the app from now on: every store page gets the hook.
+pub(crate) fn watch_store() {
+    if ST.with(|s| std::mem::replace(&mut s.borrow_mut().watching_store, true)) {
+        return;
+    }
+    if crate::runtime::started() {
+        started();
+    }
+}
+
+/// Chromium is up (`runtime::start`).
+pub(crate) fn started() {
+    if ST.with(|s| s.borrow().watching_store) && pipe::unavailable().is_none() {
+        ensure_listening();
+        discover(|| {});
+    }
+}
+
+/// A target appeared or navigated: a store page gets the hook. The script registered for new
+/// documents does not reach every one (none ran in a store page loaded right after an install),
+/// so each navigation runs the hook again, and a page whose session is gone is attached anew.
+/// Without the binding the hook leaves the install to Chrome's own prompt.
+fn store_page(info: &Value) {
+    let (Some(target), Some(url)) = (info["targetId"].as_str(), info["url"].as_str()) else { return };
+    // `targetCreated` for a hidden page of nd's own can arrive before its id is in `own_targets`.
+    if info["type"].as_str() != Some("page") || !url.starts_with(STORE) || url.starts_with(STORE_QUIET) {
+        return;
+    }
+    enum Next {
+        Skip,
+        Attach,
+        Rehook(String),
+    }
+    let next = ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if !s.watching_store || s.own_targets.iter().any(|t| t == target) {
+            return Next::Skip;
+        }
+        match s.store_pages.get(target) {
+            Some(session) if session.is_empty() => Next::Skip,
+            Some(session) => Next::Rehook(session.clone()),
+            None => {
+                s.store_pages.insert(target.to_owned(), String::new());
+                Next::Attach
+            }
+        }
+    });
+    match next {
+        Next::Skip => return,
+        Next::Attach => {}
+        // A binding can be gone from the new document too.
+        Next::Rehook(session) => {
+            let (target, info, s2) = (target.to_owned(), info.clone(), session.clone());
+            pipe::call("Runtime.addBinding", json!({ "name": STORE_BINDING }), Some(&session), move |_| {
+                evaluate(&s2, STORE_HOOK, move |r| {
+                    if r.is_err() {
+                        ST.with(|s| s.borrow_mut().store_pages.remove(&target));
+                        store_page(&info);
+                    }
+                });
+            });
+            return;
+        }
+    }
+    let target = target.to_owned();
+    pipe::call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None, move |r| {
+        let session = match r {
+            Ok(v) => v["sessionId"].as_str().unwrap_or_default().to_owned(),
+            Err(e) => {
+                tracing::warn!("nd-cef: a Web Store page: {e}");
+                return;
+            }
+        };
+        ST.with(|s| s.borrow_mut().store_pages.insert(target, session.clone()));
+        let s2 = session.clone();
+        pipe::call("Runtime.addBinding", json!({ "name": STORE_BINDING }), Some(&session), move |_| {
+            let s3 = s2.clone();
+            pipe::call(
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({ "source": STORE_HOOK }),
+                Some(&s2),
+                move |_| {
+                    evaluate(&s3, STORE_HOOK, |r| {
+                        if let Err(e) = r {
+                            tracing::warn!("nd-cef: the Web Store hook: {e}");
+                        }
+                    });
+                },
+            );
+        });
+    });
+}
+
+/// A store page asked to install: the app answers, then the page's held call goes on or ends.
+fn store_asked(session: &str, payload: &str) {
+    let Ok(v) = serde_json::from_str::<Value>(payload) else { return };
+    let id = v["id"].as_str().unwrap_or_default().to_owned();
+    if !nd_webview::extensions::is_extension_id(&id) {
+        return;
+    }
+    let session = session.to_owned();
+    let icon = v["iconUrl"].as_str().filter(|u| !u.is_empty()).map(str::to_owned);
+    let name = v["name"].as_str().unwrap_or_default().to_owned();
+    let manifest = v["manifest"].as_str().unwrap_or_default().to_owned();
+    let answer_id = id.clone();
+    nd_webview::extensions::ask_store_install(id, name, icon, &manifest, move |decision| {
+        use nd_webview::extensions::StoreDecision;
+        let accept = decision != StoreDecision::Cancel;
+        if decision == StoreDecision::Install {
+            crate::platform::install_prompt::arm(PROMPT_WAIT);
+        }
+        let code = format!("window.__ndStoreAnswer({}, {accept})", Value::String(answer_id));
+        evaluate(&session, &code, |r| {
+            if let Err(e) = r {
+                tracing::warn!("nd-cef: answering the Web Store: {e}");
+            }
+        });
+    });
 }
 
 fn record_path() -> PathBuf {

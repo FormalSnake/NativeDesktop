@@ -61,6 +61,8 @@ mod pipe;
 mod runtime;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod scheme;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod store_browser;
 
 #[cfg(target_os = "linux")]
 use linux as platform;
