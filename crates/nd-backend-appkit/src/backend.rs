@@ -751,8 +751,11 @@ impl State {
                 self.mark_form(parent);
                 return;
             }
-            [Some(Native::FormRow(_, child)), Some(_)] => {
+            [Some(Native::FormRow(_, child)), Some(native)] => {
                 *child = Some(node);
+                if let Native::Control(control) = native {
+                    control.control.placed_in_form_row();
+                }
                 self.mark_form(parent);
                 return;
             }

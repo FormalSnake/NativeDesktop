@@ -63,6 +63,9 @@ pub(crate) trait FormControl {
     /// The view's appearance may have changed (a scheme flip, a forced appearance): colours the
     /// control resolved itself are resolved again.
     fn appearance_changed(&self) {}
+    /// The control now sits in a `form()` row, where System Settings draws some controls
+    /// smaller than they stand alone.
+    fn placed_in_form_row(&self) {}
 }
 
 /// What a control needs to report user changes.
@@ -216,4 +219,38 @@ pub(crate) fn set_accessibility_label(view: &NSView, label: Option<&str>) {
 pub(crate) fn fitting(view: &NSView) -> Size {
     let s = view.fittingSize();
     Size { width: s.width as f32, height: s.height as f32 }
+}
+
+thread_local! {
+    static PROBE: std::cell::OnceCell<Retained<objc2_app_kit::NSWindow>> = const { std::cell::OnceCell::new() };
+}
+
+/// `fitting` as the control has it in a window. `NSSwitch` reports its regular size until it is
+/// in one, whatever its control size, so a view not yet placed is measured in a window that
+/// never shows.
+pub(crate) fn fitting_in_window(view: &NSView) -> Size {
+    if view.window().is_some() || unsafe { view.superview() }.is_some() {
+        return fitting(view);
+    }
+    let mtm = objc2_foundation::MainThreadMarker::from(view);
+    PROBE.with(|probe| {
+        let window = probe.get_or_init(|| {
+            let window = unsafe {
+                objc2_app_kit::NSWindow::initWithContentRect_styleMask_backing_defer(
+                    objc2_app_kit::NSWindow::alloc(mtm),
+                    objc2_foundation::NSRect::ZERO,
+                    objc2_app_kit::NSWindowStyleMask::Borderless,
+                    objc2_app_kit::NSBackingStoreType::Buffered,
+                    true,
+                )
+            };
+            unsafe { window.setReleasedWhenClosed(false) };
+            window
+        });
+        let Some(content) = window.contentView() else { return fitting(view) };
+        content.addSubview(view);
+        let size = fitting(view);
+        view.removeFromSuperview();
+        size
+    })
 }
