@@ -21,14 +21,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityGroupRole, NSApplication, NSAutoresizingMaskOptions, NSBackgroundStyle, NSBox,
-    NSBoxType, NSColor, NSControl, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSEventType,
-    NSFocusRingType, NSFont, NSFontWeightRegular, NSGlassEffectView, NSImage, NSImageScaling,
-    NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSResponder, NSScrollView, NSTableCellView,
-    NSTableColumn, NSTableColumnResizingOptions, NSTableRowView, NSTableView, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSTextFieldDelegate, NSTextView,
-    NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
-    NSVisualEffectView, NSWindow,
+    NSAccessibility, NSAccessibilityGroupRole, NSAnimatablePropertyContainer, NSAnimationContext, NSApplication,
+    NSAutoresizingMaskOptions, NSBackgroundStyle, NSBox, NSBoxType, NSColor, NSControl, NSControlTextEditingDelegate,
+    NSEvent, NSEventModifierFlags, NSEventType, NSFocusRingType, NSFont, NSFontWeightRegular, NSGlassEffectView,
+    NSImage, NSImageScaling, NSImageSymbolConfiguration, NSImageView, NSLineBreakMode, NSResponder, NSScrollView,
+    NSTableCellView, NSTableColumn, NSTableColumnResizingOptions, NSTableRowView, NSTableView,
+    NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField,
+    NSTextFieldDelegate, NSTextView, NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
 };
 use objc2_core_foundation::CGSize;
 use objc2_core_graphics::CGPath;
@@ -515,7 +515,7 @@ impl PaletteNative {
             if props.open {
                 p.request_present();
             } else {
-                p.dismiss(true);
+                p.dismiss(true, true);
             }
         }
     }
@@ -625,7 +625,7 @@ impl Drop for PaletteNative {
     // would strand it.
     fn drop(&mut self) {
         self.0.pending.set(false);
-        self.0.dismiss(true);
+        self.0.dismiss(true, false);
     }
 }
 
@@ -691,8 +691,10 @@ impl Palette {
         let ui = self.build(&host);
         let field = ui.field.clone();
         *self.ui.borrow_mut() = Some(ui);
-        layer.show();
         let panel = layer.window().retain();
+        panel.setAlphaValue(0.);
+        layer.show();
+        fade(&panel, 1., PALETTE.enter, || {});
         *self.layer.borrow_mut() = Some(layer);
         self.reload();
         self.sync_field(false);
@@ -702,23 +704,42 @@ impl Palette {
 
     fn user_cancel(&self) {
         let event = self.model.borrow_mut().dismiss(false);
-        self.teardown();
+        self.teardown(true);
         self.emit(event.into_iter().collect());
     }
 
-    fn dismiss(&self, programmatic: bool) {
+    fn dismiss(&self, programmatic: bool, animated: bool) {
         self.pending.set(false);
         let event = self.model.borrow_mut().dismiss(programmatic);
-        self.teardown();
+        self.teardown(animated);
         self.emit(event.into_iter().collect());
     }
 
-    fn teardown(&self) {
+    /// Closes the panel: fading out when `animated`, at once on unmount.
+    fn teardown(&self, animated: bool) {
         let Some(ui) = self.ui.borrow_mut().take() else { return };
-        ui.backdrop.removeFromSuperview();
         let layer = self.layer.borrow_mut().take();
         let window = layer.as_ref().map(|l| l.owner().retain());
-        drop(layer);
+        // The keyboard and pointer leave at once; the panel fades out and goes after.
+        if let Some(layer) = &layer {
+            let panel = layer.window();
+            panel.setIgnoresMouseEvents(true);
+            if panel.isKeyWindow() {
+                layer.owner().makeKeyWindow();
+            }
+        }
+        if let Some(panel) = layer.as_ref().filter(|_| animated).map(|l| l.window().retain()) {
+            let parked = RefCell::new(Some((ui, layer)));
+            fade(&panel, 0., PALETTE.exit, move || {
+                if let Some((ui, layer)) = parked.take() {
+                    ui.backdrop.removeFromSuperview();
+                    drop(layer);
+                }
+            });
+        } else {
+            ui.backdrop.removeFromSuperview();
+            drop(layer);
+        }
         // Focus goes back where it was; a responder that left the window leaves it with the window.
         let back = self.return_focus.borrow_mut().take().and_then(|w| w.load());
         if let (Some(window), Some(back)) = (window, back) {
@@ -747,7 +768,7 @@ impl Palette {
         let Some(events) = result else { return false };
         let accepted = before > 0 && self.model.borrow().completion().is_empty();
         if !self.model.borrow().is_presented() {
-            self.teardown();
+            self.teardown(true);
         } else {
             self.sync_highlight();
             self.sync_field(accepted);
@@ -997,4 +1018,15 @@ impl Palette {
         ui.separator.setFrame(NSRect::new(NSPoint::new(0., sep_y), NSSize::new(card_w, 1.)));
         ui.scroll.setFrame(NSRect::new(NSPoint::new(0., sep_y + 1. + f(m.list_gap)), NSSize::new(card_w, list_h)));
     }
+}
+
+/// Animates `panel`'s alpha to `to` over `duration`, then runs `done`.
+fn fade(panel: &NSWindow, to: f64, duration: std::time::Duration, done: impl Fn() + 'static) {
+    let target = panel.retain();
+    let changes = block2::RcBlock::new(move |context: std::ptr::NonNull<NSAnimationContext>| {
+        unsafe { context.as_ref() }.setDuration(duration.as_secs_f64());
+        target.animator().setAlphaValue(to);
+    });
+    let done = block2::RcBlock::new(done);
+    NSAnimationContext::runAnimationGroup_completionHandler(&changes, Some(&done));
 }
