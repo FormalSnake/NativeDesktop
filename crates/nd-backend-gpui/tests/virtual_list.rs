@@ -143,6 +143,14 @@ impl Harness for Gpui {
                 window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
             });
         });
+        // Windows eases a notch over real time (`GestureConfig::wheel_glide`); the checks read
+        // where it lands.
+        let glide = std::time::Duration::from_secs_f64(nd_gesture::GestureConfig::default().wheel_glide);
+        let until = std::time::Instant::now() + glide;
+        while std::time::Instant::now() < until {
+            self.settle();
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
         self.settle();
     }
 
