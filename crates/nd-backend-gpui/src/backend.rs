@@ -124,6 +124,8 @@ pub struct GpuiBackend {
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
     /// it without the app's state changing.
     pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
+    /// Sidebars and inspectors sliding open or shut, by pane.
+    pub(crate) pane_slides: crate::drawn::PaneSlides,
     /// Collapsed `edge_reveal()` sidebars sliding in and out over the content, by pane.
     pub(crate) reveals: Rc<RefCell<HashMap<NodeId, crate::reveal::Reveal>>>,
     /// Split divider drags in progress, by split node.
@@ -191,6 +193,7 @@ impl GpuiBackend {
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
+            pane_slides: Rc::default(),
             reveals: Rc::default(),
             splits: Rc::default(),
             dialogs: Rc::default(),
@@ -630,10 +633,14 @@ impl Backend for GpuiBackend {
     }
 
     fn release(&mut self, node: NodeId) {
-        self.form_drawn.borrow_mut().remove(&node);
+        let drawn = self.form_drawn.borrow_mut().remove(&node);
+        if let Some(drawn) = drawn {
+            crate::media::video_released(&drawn.state);
+        }
         self.reported_sizes.borrow_mut().remove(&node);
         self.reveals.borrow_mut().remove(&node);
         self.splits.borrow_mut().remove(&node);
+        self.pane_slides.borrow_mut().remove(&node);
         self.gestures.forget(node);
         let custom = match self.state.borrow().nodes.get(&node).map(|n| n.kind) {
             Some(NodeKind::Widget(w)) => crate::custom::lookup(w.type_id),
@@ -827,6 +834,16 @@ impl Backend for GpuiBackend {
                 }
             }
             SemanticAction::ScrollIntoView => self.scroll_row_into_view(node)?,
+            // A wheel over the node's centre, through the window's own input path: nd scrolls
+            // what is under the pointer, as it would for the user.
+            SemanticAction::Scroll { dx, dy } => {
+                let (window, at) = self.center(node)?;
+                let mut state = self.state.borrow_mut();
+                if state.windows.get(&window).and_then(|r| r.handle).is_none() {
+                    return Err(ActionError::WindowGone);
+                }
+                state.pending.push((window, crate::input::wheel(at, *dx, *dy)));
+            }
             _ => return Err(ActionError::Unsupported(format!("{action:?} on {kind:?}"))),
         }
         Ok(())

@@ -12,6 +12,8 @@ mod seek;
 mod shelf;
 mod video;
 
+pub(crate) use video::released as video_released;
+
 use std::any::TypeId;
 
 use nd_components::{

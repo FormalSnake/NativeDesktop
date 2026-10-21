@@ -1128,8 +1128,9 @@ impl Inner {
         for (ghost, snapshot, elapsed) in self.backend.overlay_exits.leaving(id, exit_duration) {
             let Some(node) = snapshot.nodes.get(&ghost) else { continue };
             let t = exit_ease((elapsed / exit_duration).clamp(0., 1.) as f32);
-            let ghost_build =
+            let mut ghost_build =
                 Build::new(&self.backend, &snapshot.nodes, &state.theme, insets, self.wake(), &self.hooks, id);
+            ghost_build.ghost = true;
             ghosts.push(ghost_build.overlay_with(ghost, node, Some((t, snapshot.anchor)), window, cx));
             ghost_paints.extend(ghost_build.take_paints());
             window.request_animation_frame();

@@ -179,7 +179,10 @@ impl Build<'_> {
                     let focus = cx.focus_handle();
                     let pointer = Rc::new(Cell::new(false));
                     let state = Rc::new(RefCell::new(make()));
-                    drawn.insert(id, Drawn { focus: focus.clone(), pointer: pointer.clone(), state: state.clone() });
+                    if !self.ghost {
+                        drawn
+                            .insert(id, Drawn { focus: focus.clone(), pointer: pointer.clone(), state: state.clone() });
+                    }
                     (focus, pointer, state)
                 }
             }

@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use nd_backend_gpui::{GpuiBackend, GpuiChrome, GpuiHost};
-use nd_components::{Chrome, SubtreeOverrides};
+use nd_components::{Chrome, Menu, MenuItem, SubtreeOverrides};
 use nd_gpui::gpui::{
     self, HeadlessAppContext, Modifiers, MouseButton as GpuiButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point,
@@ -26,6 +26,7 @@ struct Scene {
     panel: bool,
     cover: bool,
     cover_light: bool,
+    cover_field: bool,
     cover_taps: u32,
     under: u32,
     chosen: u32,
@@ -44,13 +45,23 @@ impl Render for Scene {
                 cx.notify();
             }))
             .child(div().id("anchor").w(px(300.)).h(px(30.)).when(self.popover, |d| {
-                d.child(popover("pop").w(px(280.)).h(px(160.)).child(text("inside")).on_dismiss(cx.listener(
-                    |this, e: &Dismissed, _, cx| {
-                        this.log.borrow_mut().push(format!("popover {:?}", e.reason));
-                        this.popover = false;
-                        cx.notify();
-                    },
-                )))
+                d.child(
+                    popover("pop")
+                        .w(px(280.))
+                        .h(px(160.))
+                        .child(
+                            v_flex().id("pop-list").size_full().overflow_y_scroll().child(text("inside")).children(
+                                (0..20).map(|i| {
+                                    div().id(format!("pop-row-{i}")).h(px(20.)).child(text(format!("row {i}")))
+                                }),
+                            ),
+                        )
+                        .on_dismiss(cx.listener(|this, e: &Dismissed, _, cx| {
+                            this.log.borrow_mut().push(format!("popover {:?}", e.reason));
+                            this.popover = false;
+                            cx.notify();
+                        })),
+                )
             }))
             .child(
                 h_flex()
@@ -69,7 +80,12 @@ impl Render for Scene {
                                 this.taps += 1;
                                 cx.notify();
                             }))
-                            .context_menu(|menu, _, _| menu.item("Choose", Chosen).separator().item("Again", Chosen))
+                            .context_menu(|menu, _, _| {
+                                menu.item("Choose", Chosen)
+                                    .separator()
+                                    .item("Again", Chosen)
+                                    .submenu(Menu::new("More").item(MenuItem::action("Deeper", Chosen)))
+                            })
                             .child(
                                 native_surface("surface", SurfaceSource::TestPattern)
                                     .count_input()
@@ -81,6 +97,7 @@ impl Render for Scene {
             .child(text(format!("under={} chosen={}", self.under, self.chosen)).id("status"))
             .when(self.cover, |d| {
                 let light = self.cover_light;
+                let field = self.cover_field;
                 d.child(
                     cover("cover")
                         .when(light, |c| c.modality(Modality::LightDismiss))
@@ -89,12 +106,18 @@ impl Render for Scene {
                             this.cover = false;
                             cx.notify();
                         }))
-                        .child(v_flex().size_full().p(px(40.)).child(div().id("cover-zone").size_full().on_tap(
-                            cx.listener(|this, _: &TapEvent, _, cx| {
-                                this.cover_taps += 1;
-                                cx.notify();
-                            }),
-                        ))),
+                        .child(
+                            v_flex()
+                                .size_full()
+                                .p(px(40.))
+                                .child(div().id("cover-zone").size_full().on_tap(cx.listener(
+                                    |this, _: &TapEvent, _, cx| {
+                                        this.cover_taps += 1;
+                                        cx.notify();
+                                    },
+                                )))
+                                .when(field, |v| v.child(nd_components::forms::text_field("cover-field").w(px(100.)))),
+                        ),
                 )
             })
             .when(self.panel, |d| {
@@ -218,6 +241,16 @@ fn wiggle_and_scroll(at: nd_ui::Point) -> Vec<PlatformInput> {
         touch_phase: TouchPhase::Moved,
     }));
     events
+}
+
+fn wiggle(at: nd_ui::Point) -> Vec<PlatformInput> {
+    let modifiers = Modifiers::default();
+    (0..3)
+        .map(|i| {
+            let position = point(px(at.x + i as f32), px(at.y));
+            PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers })
+        })
+        .collect()
 }
 
 fn set(o: &mut Opened, f: impl FnOnce(&mut Scene)) {
@@ -391,6 +424,74 @@ mod gate_m4_overlays {
         settle(&mut o.cx, &o.host);
         assert!(!o.host.backend().menu_open(o.window), "Esc closes the menu");
     }
+
+    /// A submenu opens beside its row on hover, and its items dispatch like the menu's own.
+    pub fn gpui_context_submenu_opens_on_hover() {
+        let mut o = open();
+        let surface = center(&o.host, o.window, "surface");
+        let open_at = nd_ui::Point { x: surface.x - 50., y: surface.y - 90. };
+        post(&mut o, click(open_at, GpuiButton::Right));
+        assert!(o.host.backend().menu_open(o.window));
+        let drawn = |o: &Opened, label: &str| {
+            o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == label)
+        };
+        assert!(drawn(&o, "More"), "the submenu's row is drawn");
+        assert!(!drawn(&o, "Deeper"), "the submenu stays shut until its row is hovered");
+        // Choose, a separator, Again, then More: 28 px rows, a 9 px separator, under the menu's
+        // 4 px inset and 1 px border.
+        let more = nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 28. + 9. + 28. + 14. };
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"), "hovering More opens its submenu");
+        // The submenu's first row is level with More, past the menu's 180 px.
+        let deeper = nd_ui::Point { x: open_at.x + 220., y: more.y };
+        post(&mut o, wiggle(deeper));
+        assert!(drawn(&o, "Deeper"), "the submenu stays open under the pointer");
+        post(&mut o, click(deeper, GpuiButton::Left));
+        assert!(!o.host.backend().menu_open(o.window), "choosing a submenu item closes the menu");
+        assert_eq!(o.host.read(|app| o.scene.read(app).chosen), 1, "the submenu item dispatched its action");
+
+        post(&mut o, click(open_at, GpuiButton::Right));
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"));
+        post(&mut o, wiggle(nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 14. }));
+        assert!(!drawn(&o, "Deeper"), "hovering another row shuts the submenu");
+    }
+
+    /// A closed cover still draws its controls while it animates out, but keeps no state for
+    /// them once their nodes are released: a control drawn then must not start anything that
+    /// outlives the exit (a video would play on unheard).
+    pub fn gpui_a_closed_cover_keeps_no_control_state() {
+        let mut o = open();
+        set(&mut o, |s| {
+            s.cover = true;
+            s.cover_field = true;
+        });
+        let field = by_test_id(&o.host, o.window, "cover-field").expect("the field is drawn").id;
+        assert!(o.host.backend().holds_control_state(field), "the open cover's field keeps its state");
+        set(&mut o, |s| s.cover = false);
+        settle(&mut o.cx, &o.host);
+        assert!(!o.host.backend().holds_control_state(field), "the leaving cover's field keeps none");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        assert!(!o.host.backend().holds_control_state(field), "nor after its exit");
+    }
+
+    /// A wheel over a scroll view inside a popover scrolls it: the popover's surface hides the
+    /// window root, which feeds the wheel everywhere else.
+    pub fn gpui_a_scroll_view_in_a_popover_scrolls() {
+        let mut o = open();
+        set(&mut o, |s| s.popover = true);
+        let pop = by_test_id(&o.host, o.window, "pop").and_then(|n| n.bounds).expect("popover bounds");
+        let row = |o: &Opened| by_test_id(&o.host, o.window, "pop-row-19").and_then(|n| n.bounds).expect("row bounds");
+        let before = row(&o);
+        let at = nd_ui::Point { x: pop.origin.x + pop.size.width / 2., y: pop.origin.y + pop.size.height / 2. };
+        post(&mut o, wiggle_and_scroll(at));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        settle(&mut o.cx, &o.host);
+        let after = row(&o);
+        assert!(after.origin.y < before.origin.y - 20., "the list scrolled: {before:?} to {after:?}");
+        assert!(log(&o).is_empty(), "the wheel closed the popover: {:?}", log(&o));
+    }
 }
 
 fn main() {
@@ -399,6 +500,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface",
             gate_m4_overlays::gpui_popover_captures_input_over_button_and_surface,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_scroll_view_in_a_popover_scrolls",
+            gate_m4_overlays::gpui_a_scroll_view_in_a_popover_scrolls,
         ),
         (
             "gate_m4_overlays::gpui_a_closed_popover_animates_out_then_is_gone",
@@ -419,6 +524,14 @@ fn main() {
         (
             "gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes",
             gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes,
+        ),
+        (
+            "gate_m4_overlays::gpui_context_submenu_opens_on_hover",
+            gate_m4_overlays::gpui_context_submenu_opens_on_hover,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_closed_cover_keeps_no_control_state",
+            gate_m4_overlays::gpui_a_closed_cover_keeps_no_control_state,
         ),
     ];
     let has = |flag: &str| args.iter().any(|a| a == flag);

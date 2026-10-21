@@ -266,6 +266,9 @@ pub(crate) struct Build<'a> {
     pub(crate) under_title: RefCell<Option<AnyElement>>,
     /// Bottom edge of the title rows (toolbar or titlebar) as last laid out, 0 without one.
     pub(crate) title_bottom: Cell<f32>,
+    /// Drawing a closed overlay's last subtree as it animates out: its nodes are released, so
+    /// controls keep no state for them and start nothing (a video would play on unheard).
+    pub(crate) ghost: bool,
 }
 
 impl<'a> Build<'a> {
@@ -301,6 +304,7 @@ impl<'a> Build<'a> {
             paints: RefCell::default(),
             under_title: RefCell::default(),
             title_bottom: Cell::default(),
+            ghost: false,
         }
     }
 
@@ -860,8 +864,10 @@ impl<'a> Build<'a> {
             // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 6.
             .rounded(theme.radius.md)
             .text_color(ink)
-            // Inside a drag region the button keeps its clicks and never starts a window move.
-            .occlude();
+            // Inside a drag region the button keeps its clicks and never starts a window move. A
+            // wheel passes on to the window root's router, so a scroll view full of buttons
+            // still scrolls.
+            .block_mouse_except_scroll();
         button = match glyph {
             Some(g) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
             // WinUI's ButtonPadding (11, 5, 11, 6) inside a 1 px border, 32 px tall.

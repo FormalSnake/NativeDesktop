@@ -184,12 +184,9 @@ impl IntoElement for Scaffold {
         });
         self.root
             .children(self.toolbar)
-            .children(
-                self.sidebar
-                    .filter(|s| !(s.is_collapsed() && !s.0.props().edge_reveal && cfg!(not(target_os = "macos")))),
-            )
+            .children(self.sidebar)
             .children(content)
-            .children(self.inspector.filter(|s| !(s.is_collapsed() && cfg!(not(target_os = "macos")))))
+            .children(self.inspector)
             .children(overlay)
             .into_any_element()
     }
