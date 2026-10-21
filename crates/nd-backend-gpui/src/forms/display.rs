@@ -1,7 +1,7 @@
 //! Drawn display controls: `progress` (bar, spinner, circular; indeterminate ones animate on the
 //! window's frame clock), `label` (text styles on the skin's type scale, tone colours) and
-//! `link` (accent text, underlined on Adwaita and a HyperlinkButton on Fluent, reporting
-//! [`LinkActivated`]).
+//! `link` (accent text, underlined at rest on Adwaita and under the pointer elsewhere, a
+//! HyperlinkButton on Fluent, reporting [`LinkActivated`]).
 
 use std::f32::consts::PI;
 
@@ -160,7 +160,7 @@ pub(crate) fn link(b: &Build, id: NodeId, p: &LinkProps, window: &mut Window, cx
         .text_color(look.accent_text)
         .whitespace_nowrap()
         // libadwaita underlines a link at rest; WinUI's HyperlinkButton is never underlined.
-        .when(!look.link_button, |d| d.underline().text_decoration_color(look.accent_text))
+        .when(look.preset == nd_theme::Preset::Adwaita, |d| d.underline().text_decoration_color(look.accent_text))
         .child(p.title.clone());
     if let Some(url) = &p.url {
         text = text.aria_value(url.clone());
@@ -180,6 +180,8 @@ pub(crate) fn link(b: &Build, id: NodeId, p: &LinkProps, window: &mut Window, cx
         let pressed = look.accent_text.opacity(0.8);
         text =
             text.hover(move |s| s.bg(look.subtle_hover)).active(move |s| s.bg(look.subtle_active).text_color(pressed));
+    } else if look.preset != nd_theme::Preset::Adwaita {
+        text = text.hover(move |s| s.underline().text_decoration_color(look.accent_text));
     }
     text = text.on_click(move |event, window, cx| {
         if !matches!(event, gpui::ClickEvent::Keyboard(_)) {

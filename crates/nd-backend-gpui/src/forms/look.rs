@@ -331,7 +331,47 @@ impl FormLook {
 
     /// The look of `theme`'s preset.
     pub fn of(theme: &Theme) -> Self {
-        if theme.preset == nd_theme::Preset::Fluent { Self::fluent(theme) } else { Self::adwaita(theme) }
+        match theme.preset {
+            nd_theme::Preset::Fluent => Self::fluent(theme),
+            nd_theme::Preset::Adwaita => Self::adwaita(theme),
+            nd_theme::Preset::MacOs | nd_theme::Preset::Plain => Self::plain(theme),
+        }
+    }
+
+    /// The drawn look off Linux and Windows (macOS's GPUI backend, the web): libadwaita's
+    /// metrics without its stylesheet's colours and states, so libadwaita-only rules stay on
+    /// Linux.
+    pub fn plain(theme: &Theme) -> Self {
+        let adwaita = Self::adwaita(theme);
+        Self {
+            radius: px(6.),
+            popover_radius: px(12.),
+            accent_text: theme.accent,
+            track: theme.border.strong,
+            track_hover: theme.border.strong,
+            track_active: theme.border.strong,
+            knob: theme.text.on_accent,
+            knob_hover: theme.text.on_accent,
+            knob_off: theme.text.on_accent,
+            knob_edge: theme.border.strong,
+            knob_shadow: None,
+            check_size: px(18.),
+            check_radius: px(5.),
+            check_stroke: theme.border.strong,
+            trough_states: false,
+            progress_thickness: adwaita.track_thickness,
+            slider_min_length: px(140.),
+            spinner_size: px(18.),
+            spinner_seconds: 0.9,
+            menu_row_height: adwaita.control_height,
+            menu_hover: adwaita.fill_hover,
+            menu_highlight: adwaita.fill_active,
+            ring_settles: false,
+            popover_stroke: theme.border.subtle,
+            accent_hover: theme.accent,
+            accent_active: theme.accent,
+            ..adwaita
+        }
     }
 
     /// WinUI 3's controls, from its theme resources (microsoft-ui-xaml `CommonStyles`): 32 px
