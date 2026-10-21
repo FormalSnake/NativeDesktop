@@ -749,11 +749,14 @@ impl IntoElement for PlayerBar {
                         .on_change(move |e: &SliderChanged, w, cx| on(TransportCommand::SetVolume(e.value))(w, cx))
                 };
                 let idle = now.title.is_empty() && now.artwork.is_none();
+                // The song fills the width between transport and volume, so its titles truncate
+                // only once that runs out.
                 let playing_now = h_flex()
                     .id(child("now"))
+                    .flex_1()
                     .min_w_0()
-                    .gap_3()
-                    .when(!idle, |row| row.child(art(48.)).child(titles))
+                    .gap_2()
+                    .when(!idle, |row| row.child(art(44.)).child(titles))
                     .when_some(on_open.filter(|_| !idle), |row, open| {
                         row.role(Role::Button, format!("{}, open player", now.title))
                             .on_tap(move |_, w, cx| open(w, cx))
@@ -763,16 +766,16 @@ impl IntoElement for PlayerBar {
                     .min_w_0()
                     .overflow_hidden()
                     .gap_2()
-                    .justify_center()
                     .child(playing_now)
-                    .when(!idle, |row| row.child(h_flex().flex_none().gap_1().children(accessories)));
-                // The sides share what the song leaves but never shrink under their controls; the
-                // song truncates first.
-                let side = || h_flex().flex_1().gap_1().items_center();
+                    .when(!idle && !accessories.is_empty(), |row| {
+                        row.child(h_flex().flex_none().gap_1().children(accessories))
+                    });
+                // The sides take only their controls' width.
+                let side = || h_flex().flex_none().gap_1().items_center();
                 v_flex().id(id.clone()).w_full().gap_1().child(seek.times_beside()).child(
                     h_flex()
                         .w_full()
-                        .gap_4()
+                        .gap_3()
                         .items_center()
                         .child(
                             side()
