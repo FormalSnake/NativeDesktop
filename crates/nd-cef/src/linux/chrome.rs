@@ -197,16 +197,17 @@ pub(crate) struct Chrome {
 }
 
 impl Chrome {
+    pub(crate) fn track_popup(&self, _id: &str, _anchor: nd_webview::extensions::Anchor) {}
+
+    pub(crate) fn untrack_popup(&self) {}
+
     pub(crate) fn new(page: u64) -> Result<Rc<Self>, String> {
         let x = x()?;
         let container = x.conn.generate_id().map_err(|e| format!("X11: {e}"))?;
         // The screen's own visual, not the parent's: a GPUI window can be 32-bit ARGB, and
         // Chromium's GL surface cannot be parented under one.
-        let aux = CreateWindowAux::new()
-            .background_pixel(x.white)
-            .border_pixel(0)
-            .colormap(x.colormap)
-            .override_redirect(1);
+        let aux =
+            CreateWindowAux::new().background_pixel(x.white).border_pixel(0).colormap(x.colormap).override_redirect(1);
         x.conn
             .create_window(x.depth, container, x.root, 0, 0, 800, 600, 0, WindowClass::INPUT_OUTPUT, x.visual, &aux)
             .map_err(|e| format!("X11: {e}"))?;

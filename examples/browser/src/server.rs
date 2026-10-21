@@ -1,4 +1,4 @@
-//! A local HTTP server for the parity scene: a few fixed pages, a download and an icon.
+//! A local HTTP server for the parity and extensions scenes: a few fixed pages, a download and an icon.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -9,6 +9,12 @@ pub const INDEX: &str = "<!doctype html><html><head><title>Parity Index</title>\
 <a id=\"blank\" target=\"_blank\" href=\"/second\">second in a new window</a></body></html>";
 
 pub const SECOND: &str = "<!doctype html><html><head><title>Second</title></head><body>Second page</body></html>";
+
+/// A login form for the extensions scene. Its first script records whether the test
+/// extension's content script ran before it, at document start.
+pub const LOGIN: &str = "<!doctype html><html><head><title>Login</title><script>\
+window.ndFirstDocument = document.documentElement.dataset.ndExtension === '1';</script></head>\
+<body><form><input id=\"user\"><input id=\"password\" type=\"password\"></form></body></html>";
 
 pub const DOWNLOAD_BODY: &str = "hello download";
 
@@ -36,6 +42,7 @@ pub fn start() -> String {
                 }
                 let (status, kind, extra, body): (&str, &str, &str, Vec<u8>) = match path {
                     "/" => ("200 OK", "text/html; charset=utf-8", "", INDEX.into()),
+                    "/login" => ("200 OK", "text/html; charset=utf-8", "", LOGIN.into()),
                     "/second" | "/slow" => ("200 OK", "text/html; charset=utf-8", "", SECOND.into()),
                     "/download" => (
                         "200 OK",

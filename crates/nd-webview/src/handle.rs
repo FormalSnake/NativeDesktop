@@ -10,6 +10,7 @@ use std::time::Duration;
 use nd_ui::App;
 
 use crate::engine::{CefStyle, Command, Engine, EngineView, Page, PageShared, PageState, default_engine, factory};
+use crate::extensions::{ActionOutcome, ActionState, Anchor};
 use crate::{Cookie, FindOptions, JsError, JsValue, UserScript};
 
 /// Which cookie jar, cache and storage a page uses.
@@ -420,6 +421,40 @@ impl WebView {
         self.send(Command::Focus);
     }
 
+    /// An extension's toolbar state for this page: badge, title, whether a click opens a popup
+    /// ([`crate::extensions`]).
+    pub fn extension_action(
+        &self,
+        id: impl Into<String>,
+        done: impl FnOnce(Result<ActionState, String>, &mut App) + 'static,
+    ) {
+        self.send(Command::ExtensionAction {
+            id: id.into(),
+            done: Box::new(move |result| Page::defer(move |cx| done(result, cx))),
+        });
+    }
+
+    /// A click on extension `id`'s toolbar button for this page: its popup opens under
+    /// `anchor` (the button's rectangle in the page's window), or `onClicked` fires; a click
+    /// while its popup is open closes it. The element hears [`crate::ExtensionPopupClosed`] when
+    /// the popup goes, however it went.
+    pub fn run_extension_action(
+        &self,
+        id: impl Into<String>,
+        anchor: Anchor,
+        done: impl FnOnce(Result<ActionOutcome, String>, &mut App) + 'static,
+    ) {
+        self.send(Command::RunExtensionAction {
+            id: id.into(),
+            anchor,
+            done: Box::new(move |result| Page::defer(move |cx| done(result, cx))),
+        });
+    }
+
+    pub fn close_extension_popup(&self) {
+        self.send(Command::CloseExtensionPopup);
+    }
+
     pub(crate) fn forward_key(&self) {
         self.send(Command::ForwardKey);
     }
@@ -452,11 +487,13 @@ fn missing_engine(engine: Engine) -> String {
 }
 
 /// Answers a command that can no longer run, so no callback is left waiting.
-fn fail(command: Command, error: &str) {
+pub(crate) fn fail(command: Command, error: &str) {
     match command {
         Command::ExecuteJavaScript { done, .. } => done(Err(JsError(error.to_owned()))),
         Command::GetCookies { done, .. } => done(Vec::new()),
         Command::SaveSession(done) => done(None),
+        Command::ExtensionAction { done, .. } => done(Err(error.to_owned())),
+        Command::RunExtensionAction { done, .. } => done(Err(error.to_owned())),
         _ => {}
     }
 }

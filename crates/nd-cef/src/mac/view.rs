@@ -833,6 +833,25 @@ impl OsrView {
         }
     }
 
+    /// Whether Chromium can run an extension action on this page: it needs the toolbar model a
+    /// Views-hosted browser has.
+    pub(crate) fn extension_actions(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// An extension action ran on this page: its popup, if it opens one, goes under `anchor`.
+    pub(crate) fn track_extension_popup(&self, id: &str, anchor: nd_webview::extensions::Anchor) {
+        if let Some(chrome) = self.chrome() {
+            chrome.track_popup(id, anchor);
+        }
+    }
+
+    pub(crate) fn track_extension_popup_cancel(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.untrack_popup();
+        }
+    }
+
     /// The browser closed.
     pub(crate) fn browser_closed(&self) {
         if let Some(chrome) = self.chrome() {
@@ -864,8 +883,12 @@ impl OsrView {
         let flags = event.modifierFlags();
         let key = event.charactersIgnoringModifiers().map(|c| c.to_string().to_lowercase()).unwrap_or_default();
         let edit = flags.contains(NSEventModifierFlags::Command)
-            && edit_command(&key, flags.contains(NSEventModifierFlags::Shift), flags.contains(NSEventModifierFlags::Option))
-                .is_some();
+            && edit_command(
+                &key,
+                flags.contains(NSEventModifierFlags::Shift),
+                flags.contains(NSEventModifierFlags::Option),
+            )
+            .is_some();
         if event.r#type() == NSEventType::KeyDown && !edit {
             let app = NSApplication::sharedApplication(self.mtm());
             if app.mainMenu().is_some_and(|m| m.performKeyEquivalent(event)) {

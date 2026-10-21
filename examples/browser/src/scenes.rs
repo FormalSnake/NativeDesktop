@@ -168,7 +168,8 @@ pub fn input(cx: &mut App) {
 /// Chrome's own pages, which only a Chrome-style page has: each must load and lay out its WebUI
 /// root (`gate_m8_webview::real_chrome_pages`, `real_webview::real_chrome_pages_cef`). Prints
 /// `ND_CHROME_PAGES_OK`, or `ND_CHROME_PAGES_FAILED` with the page, and exits.
-const CHROME_PAGES: [(&str, &str); 2] = [("chrome://extensions", "extensions-manager"), ("chrome://settings", "settings-ui")];
+const CHROME_PAGES: [(&str, &str); 2] =
+    [("chrome://extensions", "extensions-manager"), ("chrome://settings", "settings-ui")];
 
 struct ChromePages {
     page: WebView,
@@ -226,13 +227,11 @@ impl ChromePages {
 
 impl Render for ChromePages {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        webview("web", &self.page).size_full().on_loading_changed(cx.listener(
-            |this, e: &LoadingChanged, _, cx| {
-                if !e.loading {
-                    this.loaded(cx);
-                }
-            },
-        ))
+        webview("web", &self.page).size_full().on_loading_changed(cx.listener(|this, e: &LoadingChanged, _, cx| {
+            if !e.loading {
+                this.loaded(cx);
+            }
+        }))
     }
 }
 
@@ -240,5 +239,7 @@ pub fn chrome_pages(cx: &mut App) {
     let page = WebView::new();
     page.load(CHROME_PAGES[0].0);
     let options = WindowOptions::main("main").title("Chrome pages").size(size(px(900.), px(640.)));
-    cx.open_window(options, move |_window, cx| cx.new(move |_cx| ChromePages { page, at: 0, checking: false, tries: 0 }));
+    cx.open_window(options, move |_window, cx| {
+        cx.new(move |_cx| ChromePages { page, at: 0, checking: false, tries: 0 })
+    });
 }

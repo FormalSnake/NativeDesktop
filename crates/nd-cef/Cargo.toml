@@ -22,6 +22,10 @@ cef = { version = "=154.5.0", default-features = false }
 # Named directly only for its `CEF_DIR` build metadata (build.rs), the dev fallback for
 # finding the runtime.
 cef-dll-sys = { version = "=154.5.0", default-features = false }
+libc = "0.2.190"
+base64 = "0.22.1"
+sha2 = "0.10.9"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nd-backend-gpui.workspace = true

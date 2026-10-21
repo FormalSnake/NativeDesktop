@@ -207,6 +207,26 @@ impl OsrView {
 
     pub(crate) fn browser_closed(&self) {}
 
+    /// Whether Chromium can run an extension action on this page: it needs the toolbar model a
+    /// Views-hosted browser has, and a page in a native parent window has none (Chromium
+    /// dereferences the missing toolbar).
+    pub(crate) fn extension_actions(&self) -> Result<(), String> {
+        Err("extension actions on Linux need a Views-hosted page, which nd does not create yet".into())
+    }
+
+    /// An extension action ran on this page: its popup, if it opens one, goes under `anchor`.
+    pub(crate) fn track_extension_popup(&self, id: &str, anchor: nd_webview::extensions::Anchor) {
+        if let Some(chrome) = self.chrome() {
+            chrome.track_popup(id, anchor);
+        }
+    }
+
+    pub(crate) fn track_extension_popup_cancel(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.untrack_popup();
+        }
+    }
+
     /// A key-down Chromium is about to handle in a Chrome-style page: a chord the app's
     /// bindings take runs there instead, as it would with any other element focused. Returns
     /// whether the app took it.

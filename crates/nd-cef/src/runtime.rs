@@ -27,12 +27,14 @@ pub(crate) fn register(app_name: &str) {
     if let Some(code) = subprocess_from_args() {
         std::process::exit(code);
     }
+    crate::pipe::reserve();
     APP_NAME.with(|n| *n.borrow_mut() = app_name.to_owned());
     #[cfg(target_os = "linux")]
     if nd_webview::default_cef_style() == nd_webview::CefStyle::Chrome {
         nd_backend_gpui::prefer_x11();
     }
     nd_webview::register_engine(Engine::Cef, Factory);
+    crate::extensions::register();
     // No OS engine embeds in a GPUI window on Linux: Chromium is the system engine there.
     #[cfg(target_os = "linux")]
     nd_webview::register_engine(Engine::System, Factory);
@@ -62,7 +64,7 @@ fn schemes_from_args() -> Vec<String> {
 }
 
 /// Starts Chromium on first use. `Err` says why it cannot run.
-fn start() -> Result<(), String> {
+pub(crate) fn start() -> Result<(), String> {
     if let Some(ok) = STARTED.with(Cell::get) {
         return if ok { Ok(()) } else { Err("Chromium failed to start; see the log".into()) };
     }
@@ -72,6 +74,7 @@ fn start() -> Result<(), String> {
     let root = root_cache();
     let _ = std::fs::create_dir_all(&root);
     forget_windows(&root.join("Default"));
+    crate::native_messaging::link_hosts(&root);
     let s = |p: &std::path::Path| CefString::from(p.to_string_lossy().as_ref());
     let settings = Settings {
         no_sandbox: 1,
@@ -92,6 +95,7 @@ fn start() -> Result<(), String> {
     }
     APP.with(|a| *a.borrow_mut() = Some(app));
     STARTED.with(|s| s.set(Some(true)));
+    crate::pipe::start();
     platform::pump::start();
     crate::scheme::register_global();
     Ok(())
@@ -111,7 +115,7 @@ fn forget_windows(profile: &std::path::Path) {
     }
 }
 
-fn root_cache() -> PathBuf {
+pub(crate) fn root_cache() -> PathBuf {
     if let Some(dir) = std::env::var_os("ND_CEF_CACHE") {
         return PathBuf::from(dir);
     }
@@ -187,6 +191,37 @@ pub(crate) fn quiet_chrome(context: &RequestContext) {
                 tracing::debug!("nd-cef: {name}: {error}");
             }
         }
+    }
+}
+
+/// Runs `f` on the main thread after `delay`, through Chromium's task runner (so only once
+/// Chromium has started).
+pub(crate) fn later(delay: std::time::Duration, f: impl FnOnce() + 'static) {
+    thread_local! {
+        static DUE: RefCell<HashMap<u64, Box<dyn FnOnce()>>> = RefCell::default();
+        static NEXT: Cell<u64> = const { Cell::new(0) };
+    }
+    wrap_task! {
+        struct Due {
+            id: u64,
+        }
+
+        impl Task {
+            fn execute(&self) {
+                if let Some(f) = DUE.with(|d| d.borrow_mut().remove(&self.id)) {
+                    f();
+                }
+            }
+        }
+    }
+    let id = NEXT.with(|n| {
+        n.set(n.get() + 1);
+        n.get()
+    });
+    DUE.with(|d| d.borrow_mut().insert(id, Box::new(f)));
+    let ms = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX);
+    if post_delayed_task(ThreadId::UI, Some(&mut Due::new(id)), ms) == 0 {
+        DUE.with(|d| d.borrow_mut().remove(&id));
     }
 }
 

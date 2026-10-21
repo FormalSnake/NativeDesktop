@@ -4667,12 +4667,14 @@ dependencies = [
 name = "nd-cef"
 version = "0.6.1"
 dependencies = [
+ "base64 0.22.1",
  "block2 0.6.2",
  "cef",
  "cef-dll-sys",
  "dispatch2",
  "futures",
  "image",
+ "libc",
  "nd-backend-appkit",
  "nd-backend-gpui",
  "nd-components",
@@ -4690,8 +4692,10 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
  "serde_json",
+ "sha2 0.10.9",
  "tracing",
  "x11rb",
+ "zip",
 ]
 
 [[package]]

@@ -30,6 +30,8 @@ wrap_app! {
             let browser = process_type.is_none_or(|t| t.to_string().is_empty());
             if let (true, Some(line)) = (browser, command_line) {
                 crate::runtime::chrome_switches(line);
+                crate::pipe::switches(line);
+                crate::extensions::switches(line);
                 crate::platform::command_line(line);
             }
         }

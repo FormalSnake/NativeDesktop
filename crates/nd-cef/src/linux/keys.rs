@@ -267,7 +267,8 @@ mod tests {
         for key in ["a", "z", "0", "9", "f1", "f12", ";", "\\", "'", "enter", "tab", "left", "pagedown", "space"] {
             assert_eq!(key_name(virtual_key(key)).as_deref(), Some(key), "{key}");
         }
-        let ctrl_t = cef::KeyEvent { windows_key_code: 0x54, modifiers: flag::CONTROL | flag::SHIFT, ..Default::default() };
+        let ctrl_t =
+            cef::KeyEvent { windows_key_code: 0x54, modifiers: flag::CONTROL | flag::SHIFT, ..Default::default() };
         let k = keystroke(&ctrl_t).unwrap();
         assert_eq!((k.key.as_str(), k.modifiers.control, k.modifiers.shift, k.modifiers.alt), ("t", true, true, false));
     }
