@@ -683,6 +683,17 @@ impl App {
         self.backend.set_window_title(id, &title);
     }
 
+    /// Whether the app quits once its last window closes (the default). An app with a tray
+    /// item turns it off to keep running behind the item with no window open.
+    pub fn set_quit_when_windows_close(&mut self, quit: bool) {
+        self.backend.set_quit_when_windows_close(quit);
+    }
+
+    /// Ends the app as the OS's Quit does: the way out of an app that outlives its windows.
+    pub fn quit(&mut self) {
+        self.backend.quit();
+    }
+
     /// Brings the window forward and makes it key; in a tab group its tab is selected.
     pub fn activate_window(&mut self, id: WindowId) {
         self.window_command(id, crate::backend::WindowCommand::Activate);

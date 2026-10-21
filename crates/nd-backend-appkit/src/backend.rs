@@ -1836,6 +1836,16 @@ impl Backend for AppKitBackend {
         self.post(window, input)
     }
 
+    fn set_quit_when_windows_close(&mut self, quit: bool) {
+        crate::platform::QUIT_WHEN_WINDOWS_CLOSE.store(quit, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn quit(&mut self) {
+        if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
+            objc2_app_kit::NSApplication::sharedApplication(mtm).terminate(None);
+        }
+    }
+
     fn window_command(&mut self, window: WindowId, command: nd_ui::backend::WindowCommand) {
         let Some(ns) = self.ns_window(window) else { return };
         match command {

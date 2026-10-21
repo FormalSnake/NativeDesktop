@@ -13,6 +13,9 @@ use objc2_foundation::{
 
 use crate::NdWindow;
 
+/// Whether AppKit ends the app when its last window closes; an app with a tray item clears it.
+pub(crate) static QUIT_WHEN_WINDOWS_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 define_class!(
     // SAFETY: NSObject has no subclassing requirements and this type does not implement Drop.
     #[unsafe(super(NSObject))]
@@ -24,7 +27,7 @@ define_class!(
     unsafe impl NSApplicationDelegate for NdAppDelegate {
         #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]
         fn should_terminate_after_last_window_closed(&self, _app: &NSApplication) -> bool {
-            true
+            QUIT_WHEN_WINDOWS_CLOSE.load(std::sync::atomic::Ordering::Relaxed)
         }
 
         // Light-dismiss overlays close when the app loses activation (ARCHITECTURE.md 6.3).
