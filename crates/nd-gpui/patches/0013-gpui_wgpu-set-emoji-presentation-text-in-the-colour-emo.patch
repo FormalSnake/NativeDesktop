@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: FormalSnake <kyaniserni@gmail.com>
+Date: Wed, 21 Oct 2026 10:00:43 +0100
+Subject: [PATCH] gpui_wgpu: set emoji-presentation text in the colour emoji face
+
+---
+ crates/gpui_wgpu/src/cosmic_text_system.rs         | 130 ++++++++++++++++++++-
+ 1 file changed, 128 insertions(+), 2 deletions(-)
+
+diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
+--- a/crates/gpui_wgpu/src/cosmic_text_system.rs
++++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
+@@ -59,6 +59,10 @@ struct CosmicTextSystemState {
+     font_ids_by_family_cache: HashMap<FontKey, SmallVec<[FontId; 4]>>,
+     system_font_fallback: String,
+     missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
++    /// The colour emoji face emoji-presentation text is set in, once looked up. cosmic-text's
++    /// own fallback reaches it only after DejaVu Sans and Noto Sans Symbols, which draw many
++    /// emoji (U+1F600 among them) as monochrome outlines.
++    color_emoji: Option<Option<(FontId, SharedString)>>,
+ }
+ 
+ struct LoadedFont {
+@@ -141,6 +145,7 @@ impl CosmicTextSystem {
+             font_ids_by_family_cache: HashMap::default(),
+             system_font_fallback: system_font_fallback.to_string(),
+             missing_glyph_sink: None,
++            color_emoji: None,
+         }))
+     }
+ 
+@@ -160,6 +165,7 @@ impl CosmicTextSystem {
+             font_ids_by_family_cache: HashMap::default(),
+             system_font_fallback: system_font_fallback.to_string(),
+             missing_glyph_sink: None,
++            color_emoji: None,
+         }))
+     }
+ }
+@@ -328,6 +334,7 @@ impl CosmicTextSystemState {
+     #[profiling::function]
+     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
+         self.font_ids_by_family_cache.clear();
++        self.color_emoji = None;
+         let db = self.font_system.db_mut();
+         for bytes in fonts {
+             db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(bytes)));
+@@ -434,10 +441,12 @@ impl CosmicTextSystemState {
+ 
+             let font_id = FontId(self.loaded_fonts.len());
+             loaded_font_ids.push(font_id);
++            let is_known_emoji_font =
++                check_is_known_emoji_font(&postscript_name) || is_color_font(&font);
+             self.loaded_fonts.push(LoadedFont {
+                 font,
+                 features: cosmic_features.clone(),
+-                is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
++                is_known_emoji_font,
+                 user_fallback_chain: Arc::clone(&user_fallback_chain),
+             });
+             self.loaded_font_ids_by_key.insert(key, font_id);
+@@ -582,11 +591,13 @@ impl CosmicTextSystemState {
+                 .face(id)
+                 .context("fallback font face not found in cosmic-text database")?;
+ 
++            let is_known_emoji_font =
++                check_is_known_emoji_font(&face.post_script_name) || is_color_font(&font);
+             let font_id = FontId(self.loaded_fonts.len());
+             self.loaded_fonts.push(LoadedFont {
+                 font,
+                 features: CosmicFontFeatures::new(),
+-                is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
++                is_known_emoji_font,
+                 user_fallback_chain: Arc::from(Vec::new()),
+             });
+ 
+@@ -594,6 +605,34 @@ impl CosmicTextSystemState {
+         }
+     }
+ 
++    /// The system's colour emoji face: a face of a family named as an emoji font that carries
++    /// colour glyphs, Noto Color Emoji first.
++    fn color_emoji_font(&mut self) -> Option<(FontId, SharedString)> {
++        if let Some(found) = &self.color_emoji {
++            return found.clone();
++        }
++        let mut candidates = self
++            .font_system
++            .db()
++            .faces()
++            .filter_map(|face| {
++                let family = face.families.first()?.0.clone();
++                family.contains("Emoji").then_some((face.id, family))
++            })
++            .collect::<Vec<_>>();
++        candidates.sort_by_key(|(_, family)| family != "Noto Color Emoji");
++        let found = candidates.into_iter().find_map(|(id, family)| {
++            let font = self.font_system.get_font(id, Weight::NORMAL)?;
++            if !is_color_font(&font) {
++                return None;
++            }
++            let font_id = self.font_id_for_cosmic_id(id).ok()?;
++            Some((font_id, SharedString::from(family)))
++        });
++        self.color_emoji = Some(found.clone());
++        found
++    }
++
+     #[profiling::function]
+     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+         if contains_paragraph_separator(text) {
+@@ -697,6 +736,14 @@ impl CosmicTextSystemState {
+         font_runs: &[FontRun],
+     ) -> LineLayout {
+         let mut attrs_list = AttrsList::new(&Attrs::new());
++        let color_emoji = if text.is_ascii() {
++            None
++        } else {
++            self.color_emoji_font()
++        };
++        let emoji_attrs = color_emoji
++            .as_ref()
++            .map(|(id, family)| Attrs::new().metadata(id.0).family(Family::Name(family)));
+         let mut offs = 0;
+         for run in font_runs {
+             let run_end = offs + run.len;
+@@ -742,6 +789,19 @@ impl CosmicTextSystemState {
+                 };
+                 attrs_list.add_span(span.start..span.end, attrs);
+             }
++            if let (Some((emoji_id, _)), Some(emoji_attrs)) = (&color_emoji, &emoji_attrs)
++                && !self.loaded_fonts[run.font_id.0].is_known_emoji_font
++            {
++                for (at, grapheme) in text[offs..run_end].grapheme_indices(true) {
++                    let first = grapheme.chars().next().unwrap_or('\0');
++                    if is_emoji_presentation(grapheme)
++                        && charmap_covers(&self.loaded_fonts, *emoji_id, first)
++                    {
++                        let start = offs + at;
++                        attrs_list.add_span(start..start + grapheme.len(), emoji_attrs);
++                    }
++                }
++            }
+             offs = run_end;
+         }
+ 
+@@ -1204,6 +1264,72 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
+     postscript_name == "NotoColorEmoji"
+ }
+ 
++/// A face with colour glyphs: bitmap strikes (CBDT, sbix) or colour layers (COLR).
++fn is_color_font(font: &CosmicTextFont) -> bool {
++    use swash::TableProvider as _;
++    let font = font.as_swash();
++    [b"CBDT", b"sbix", b"COLR"]
++        .iter()
++        .any(|tag| font.table_by_tag(swash::tag_from_bytes(tag)).is_some())
++}
++
++/// Whether a grapheme shows as an emoji picture by default (UTS #51): a variation selector 16,
++/// a joined sequence, a skin tone, a flag or a keycap asks for it, as does a pictograph past the
++/// BMP or one of the BMP characters whose default presentation is emoji.
++fn is_emoji_presentation(grapheme: &str) -> bool {
++    let mut chars = grapheme.chars();
++    let Some(first) = chars.next() else {
++        return false;
++    };
++    if grapheme.contains('\u{FE0E}') {
++        return false;
++    }
++    if chars.any(|c| matches!(c, '\u{FE0F}' | '\u{200D}' | '\u{20E3}' | '\u{1F3FB}'..='\u{1F3FF}')) {
++        return true;
++    }
++    match first as u32 {
++        0x1F1E6..=0x1F1FF => true,
++        0x1F000..=0x1FAFF => {
++            use swash::text::Codepoint as _;
++            first.properties().is_extended_pictographic()
++        }
++        0x231A..=0x231B
++        | 0x23E9..=0x23EC
++        | 0x23F0
++        | 0x23F3
++        | 0x25FD..=0x25FE
++        | 0x2614..=0x2615
++        | 0x2648..=0x2653
++        | 0x267F
++        | 0x2693
++        | 0x26A1
++        | 0x26AA..=0x26AB
++        | 0x26BD..=0x26BE
++        | 0x26C4..=0x26C5
++        | 0x26CE
++        | 0x26D4
++        | 0x26EA
++        | 0x26F2..=0x26F3
++        | 0x26F5
++        | 0x26FA
++        | 0x26FD
++        | 0x2705
++        | 0x270A..=0x270B
++        | 0x2728
++        | 0x274C
++        | 0x274E
++        | 0x2753..=0x2755
++        | 0x2757
++        | 0x2795..=0x2797
++        | 0x27B0
++        | 0x27BF
++        | 0x2B1B..=0x2B1C
++        | 0x2B50
++        | 0x2B55 => true,
++        _ => false,
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-- 
+2.51.0
+
