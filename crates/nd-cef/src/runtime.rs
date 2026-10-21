@@ -98,6 +98,7 @@ pub(crate) fn start() -> Result<(), String> {
     crate::pipe::start();
     platform::pump::start();
     crate::scheme::register_global();
+    crate::origin::install();
     crate::extensions::started();
     Ok(())
 }

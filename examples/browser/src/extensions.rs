@@ -6,8 +6,9 @@
 //! The action runs the moment the extension list arrives, while the page is still loading. The
 //! popup must open under the toolbar button, the fill must land, the content script must have
 //! run in the page's first document, the popup must close itself, and the action's badge must
-//! read back. Prints `ND_EXTENSIONS_OK` with the timings, or `ND_EXTENSIONS_FAILED` and why,
-//! and exits. `ND_CEF_CACHE` names the profile, so a gate can run it on one profile many times.
+//! read back, and the service worker's own request must carry its extension's origin. Prints
+//! `ND_EXTENSIONS_OK` with the timings, or `ND_EXTENSIONS_FAILED` and why, and exits.
+//! `ND_CEF_CACHE` names the profile, so a gate can run it on one profile many times.
 //!
 //! On Linux nd's Chrome-style pages have no toolbar for an action to run in, so the page asks
 //! its content script for the fill and the popup checks are skipped.
@@ -150,9 +151,16 @@ impl Scene {
         }
         self.checking = true;
         let this = cx.weak_entity();
-        self.page.execute_javascript("window.ndFirstDocument === true", move |first, cx| {
-            if first != Ok(serde_json::Value::Bool(true)) {
-                fail(format!("the content script missed the page's first document: {first:?}"));
+        let probe = "JSON.stringify([window.ndFirstDocument === true, document.documentElement.dataset.ndOrigin])";
+        self.page.execute_javascript(probe, move |seen, cx| {
+            let seen = seen.ok().and_then(|v| v.as_str().and_then(|s| serde_json::from_str::<(bool, String)>(s).ok()));
+            let Some((first, origin)) = seen else { fail(format!("reading the page's checks: {seen:?}")) };
+            if !first {
+                fail("the content script missed the page's first document");
+            }
+            // CEF sends an extension's requests with `Origin: null` unless nd-cef drops it.
+            if origin != format!("chrome-extension://{ID}") {
+                fail(format!("the service worker's request left with Origin {origin:?}"));
             }
             let _ = this.update(cx, |this, _cx| {
                 let report = (this.clicked_ms, this.popup.map(|p| p.0), this.filled_ms);

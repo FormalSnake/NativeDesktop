@@ -54,6 +54,8 @@ mod menu;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native_messaging;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod origin;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod page;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod pipe;
