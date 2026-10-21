@@ -11,13 +11,18 @@
 //!
 //! `source_list()` is the same widget built from sections of nested items, for sidebars that
 //! are a fixed set of places.
+//!
+//! With [`SourceTree::draggable_rows`] rows drag as a [`DragItem`] of that kind, within the list,
+//! to another window, or onto any target taking the kind; with [`SourceTree::accepts_drops`] the
+//! list takes drags, marks the slot between rows with a line and reports [`Dropped`] with that
+//! [`DropSlot`]. Moving the row is the app's, as selection is.
 
 use std::collections::HashMap;
 
 use nd_core::semantic::Role;
 use nd_ui::backend::Props;
 use nd_ui::prelude::*;
-use nd_ui::{Key, NativeElement, StyleRefinement};
+use nd_ui::{DragEnded, DragItem, DragOver, DropSlot, Dropped, Key, NativeElement, StyleRefinement};
 
 use crate::icon::Icon;
 
@@ -38,6 +43,8 @@ pub struct SourceNode {
     pub selectable: bool,
     /// Trailing actions, by id from the widget's action catalog.
     pub actions: Vec<SharedString>,
+    /// The row drags when the list's rows do. Sections never drag.
+    pub movable: bool,
 }
 
 /// A row with `id` showing `title`.
@@ -54,6 +61,7 @@ pub fn source_node(id: impl Into<SharedString>, title: impl Into<SharedString>) 
         expanded: false,
         selectable: true,
         actions: Vec::new(),
+        movable: true,
     }
 }
 
@@ -100,6 +108,11 @@ impl SourceNode {
 
     pub fn actions(mut self, ids: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
         self.actions = ids.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn movable(mut self, movable: bool) -> Self {
+        self.movable = movable;
         self
     }
 }
@@ -166,7 +179,23 @@ pub struct SourceTreeProps {
     pub selected: Option<SharedString>,
     pub action_visibility: ActionVisibility,
     pub empty: Option<EmptyState>,
+    /// Rows drag as items of this kind.
+    pub drag_kind: Option<SharedString>,
+    /// Kinds the list takes; it then shows where a drop would land.
+    pub accepts: Vec<SharedString>,
     pub style: StyleRefinement,
+}
+
+impl SourceTreeProps {
+    /// Whether row `i` drags.
+    pub fn drags(&self, i: usize) -> bool {
+        self.drag_kind.is_some() && !self.nodes[i].section && self.nodes[i].movable
+    }
+
+    /// The item row `i` drags as.
+    pub fn drag_item(&self, i: usize) -> Option<DragItem> {
+        self.drag_kind.clone().filter(|_| self.drags(i)).map(|kind| DragItem::new(kind, self.nodes[i].id.clone()))
+    }
 }
 
 /// The user selected the row with this id.
@@ -217,6 +246,8 @@ pub fn source_tree(id: impl Into<SharedString>) -> SourceTree {
         selected: None,
         action_visibility: ActionVisibility::Hover,
         empty: None,
+        drag_kind: None,
+        accepts: Vec::new(),
         style: StyleRefinement::default(),
     };
     SourceTree(NativeElement::new::<SourceTreeKind>(Key::Id(id.into()), props).size_full())
@@ -297,6 +328,34 @@ impl SourceTree {
     }
 
     pub fn on_action(self, f: impl Fn(&SourceActionClicked, &mut Window, &mut App) + 'static) -> Self {
+        SourceTree(self.0.on(f))
+    }
+
+    /// Rows drag as [`DragItem`]s of `kind` with the row's id, except sections and rows that
+    /// are not [`movable`](SourceNode::movable).
+    pub fn draggable_rows(mut self, kind: impl Into<SharedString>) -> Self {
+        self.0.props_mut().drag_kind = Some(kind.into());
+        self
+    }
+
+    /// The list takes drags of these kinds (its own rows' kind, to reorder them).
+    pub fn accepts_drops(mut self, kinds: impl IntoIterator<Item = impl Into<SharedString>>) -> Self {
+        let kinds: Vec<SharedString> = kinds.into_iter().map(Into::into).collect();
+        self.0.props_mut().accepts = kinds.clone();
+        SourceTree(self.0.accepts_drops(kinds))
+    }
+
+    pub fn on_drag_over(self, f: impl Fn(&DragOver, &mut Window, &mut App) + 'static) -> Self {
+        SourceTree(self.0.on(f))
+    }
+
+    /// A drag was dropped on the list; its `slot` says where among the rows.
+    pub fn on_drop(self, f: impl Fn(&Dropped, &mut Window, &mut App) + 'static) -> Self {
+        SourceTree(self.0.on(f))
+    }
+
+    /// A row's drag is over: dropped, cancelled, or released outside the app's windows.
+    pub fn on_drag_end(self, f: impl Fn(&DragEnded, &mut Window, &mut App) + 'static) -> Self {
         SourceTree(self.0.on(f))
     }
 }
@@ -434,6 +493,39 @@ impl SourceIndex {
         out
     }
 
+    /// Where a drop lands when the pointer is over visible row `row` (an index into
+    /// [`Self::visible`]), in its upper half or not; `None` past the last row. A section header
+    /// takes it as its first row, an open row with children in its lower half as its first child,
+    /// anything else before or after the row among its siblings. The index counts the children
+    /// as they are now, the dragged row included.
+    pub fn drop_slot(
+        &self,
+        nodes: &[SourceNode],
+        visible: &[(usize, usize)],
+        row: Option<usize>,
+        upper: bool,
+    ) -> DropSlot {
+        let parent_of = |i: usize| nodes[i].parent.clone().filter(|p| self.by_id.contains_key(p));
+        let siblings = |parent: &Option<SharedString>| match parent {
+            Some(p) => self.children[self.by_id[p]].clone(),
+            None => self.roots.clone(),
+        };
+        let Some(&(i, _)) = row.and_then(|r| visible.get(r)) else {
+            // Past the last row: after the last row of the last section, or the last root.
+            let Some(&(last, _)) = visible.last() else { return DropSlot { parent: None, index: 0 } };
+            let parent = if nodes[last].section { Some(nodes[last].id.clone()) } else { parent_of(last) };
+            let index = siblings(&parent).len();
+            return DropSlot { parent, index };
+        };
+        let opens = nodes[i].expanded && !self.children[i].is_empty();
+        if nodes[i].section || (!upper && opens) {
+            return DropSlot { parent: Some(nodes[i].id.clone()), index: 0 };
+        }
+        let parent = parent_of(i);
+        let at = siblings(&parent).iter().position(|&s| s == i).unwrap_or(0);
+        DropSlot { parent, index: if upper { at } else { at + 1 } }
+    }
+
     fn walk(&self, nodes: &[SourceNode], i: usize, depth: usize, out: &mut Vec<(usize, usize)>) {
         out.push((i, depth));
         if nodes[i].expanded {
@@ -493,6 +585,34 @@ mod tests {
         let index = SourceIndex::new(&nodes);
         assert_eq!(index.roots, [1, 2], "the cycle is cut at the node closing it");
         assert_eq!(index.children[1], [0]);
+    }
+
+    #[test]
+    fn drop_slots_fall_between_siblings_and_into_sections() {
+        let nodes = vec![
+            source_section("pinned", "Pinned"),
+            source_node("p1", "P1").parent("pinned"),
+            source_section("tabs", "Tabs"),
+            source_node("t1", "T1").parent("tabs"),
+            source_node("t2", "T2").parent("tabs").expanded(true),
+            source_node("t2a", "T2a").parent("t2"),
+        ];
+        let index = SourceIndex::new(&nodes);
+        let rows = index.visible(&nodes);
+        let slot = |row, upper| index.drop_slot(&nodes, &rows, row, upper);
+        let at = |p: &str, i| DropSlot { parent: Some(p.into()), index: i };
+        assert_eq!(slot(Some(0), true), at("pinned", 0), "a section header takes it first");
+        assert_eq!(slot(Some(1), false), at("pinned", 1));
+        assert_eq!(slot(Some(3), true), at("tabs", 0));
+        assert_eq!(slot(Some(3), false), at("tabs", 1));
+        assert_eq!(slot(Some(4), false), at("t2", 0), "an open row's lower half is its first child");
+        assert_eq!(slot(Some(5), false), at("t2", 1));
+        assert_eq!(slot(None, false), at("t2", 1), "past the end is after the last row");
+        let flat = vec![source_node("a", "A"), source_node("b", "B")];
+        let index = SourceIndex::new(&flat);
+        let rows = index.visible(&flat);
+        assert_eq!(index.drop_slot(&flat, &rows, Some(1), true), DropSlot { parent: None, index: 1 });
+        assert_eq!(index.drop_slot(&flat, &rows, None, false), DropSlot { parent: None, index: 2 });
     }
 
     #[test]

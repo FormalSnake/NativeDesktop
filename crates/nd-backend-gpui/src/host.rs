@@ -718,7 +718,12 @@ impl Inner {
             self.notify(cx, all.into_iter());
             return;
         }
-        let bounds = Bounds::centered(None, gpui::size(px(size.width), px(size.height)), cx);
+        let origin = self.app.try_borrow().ok().and_then(|app| app.window(id)?.options().origin);
+        let extent = gpui::size(px(size.width), px(size.height));
+        let bounds = match origin {
+            Some(at) => Bounds::new(gpui::point(px(at.x), px(at.y)), extent),
+            None => Bounds::centered(None, extent, cx),
+        };
         if self.open_gpui_window(cx, id, title, bounds, surface).is_none() {
             self.windows.borrow_mut().remove(&id);
             if let Some(s) = surface {

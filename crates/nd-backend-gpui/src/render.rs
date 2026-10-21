@@ -675,6 +675,10 @@ impl<'a> Build<'a> {
         if let Some(row) = props.gestures.row_swipe.map(|_| last_bounds.map_or(0., |b| b.size.width)) {
             gestures.row_config(self.window_id, id, &props.gestures, row);
         }
+        let mut children = children;
+        if props.reports_size {
+            children.push(self.size_reporter(id));
+        }
         let children = if props.gestures.scroll.any() {
             // nd scrolls it (momentum, rubber band); GPUI only clips.
             let offset = gestures.scroll_offset(self.window_id, id, &props.gestures, last_bounds);
@@ -740,6 +744,28 @@ impl<'a> Build<'a> {
             })
             .children(children)
             .into_any_element()
+    }
+
+    /// Reports the div's laid-out size (`nd_ui::Resized`) when it changes, from a canvas filling
+    /// it: GPUI lays the div out, so its size is known only at prepaint.
+    fn size_reporter(&self, id: NodeId) -> AnyElement {
+        let emit = self.backend.state.borrow().events.emitter(id);
+        let (wake, reported) = (self.wake.clone(), self.backend.reported_sizes.clone());
+        gpui::canvas(
+            move |bounds, _, cx| {
+                let laid = (bounds.size.width.as_f32(), bounds.size.height.as_f32());
+                if reported.borrow_mut().insert(id, laid) != Some(laid) {
+                    emit.emit(nd_ui::Resized { width: laid.0, height: laid.1 });
+                    wake(cx);
+                }
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
     }
 
     fn button(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {

@@ -7,6 +7,11 @@
 //! selection on its row. The data source answers from the props it was last given (3.13: no app
 //! code in a data source). Programmatic selection, expansion and reloads never report back; a
 //! user's selection, disclosure click, double click or action click is reported once.
+//!
+//! Rows drag in AppKit's own dragging session (the row's image follows the pointer across
+//! windows), with the item on the pasteboard as [`DRAG_TYPE`]. The outline does not register as
+//! a destination: the windows do, and nd hit-tests targets, so a row and an nd element drop on
+//! the same targets. The slot line is a view in the outline placed by [`SourceTreeNative::drop_slot`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -18,18 +23,20 @@ use nd_components::{
 };
 use nd_ui::events::Emit;
 use nd_ui::prelude::SharedString;
+use nd_ui::{DragItem, DragPoint, DragSource, DropSlot, GesturePhase};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AllocAnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSBackgroundStyle, NSBezelStyle, NSButton, NSColor, NSControlTextEditingDelegate, NSEvent, NSFont,
-    NSFontWeightRegular, NSImageView, NSLayoutConstraint, NSLineBreakMode, NSOutlineView, NSOutlineViewDataSource,
-    NSOutlineViewDelegate, NSResponder, NSScrollView, NSTableCellView, NSTableColumn, NSTableRowView,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextField, NSTrackingArea, NSTrackingAreaOptions,
-    NSUserInterfaceItemIdentification, NSView,
+    NSAccessibility, NSBackgroundStyle, NSBezelStyle, NSButton, NSColor, NSControlTextEditingDelegate, NSDragOperation,
+    NSDraggingSession, NSEvent, NSFont, NSFontWeightRegular, NSImageView, NSLayoutConstraint, NSLineBreakMode,
+    NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSPasteboardItem, NSPasteboardWriting, NSResponder,
+    NSScrollView, NSTableCellView, NSTableColumn, NSTableRowView, NSTableViewDataSource, NSTableViewDelegate,
+    NSTableViewStyle, NSTextField, NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSIndexSet, NSInteger, NSNotification, NSObject, NSObjectProtocol, NSRect, NSString,
+    MainThreadMarker, NSArray, NSIndexSet, NSInteger, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
+    NSSize, NSString,
 };
 
 use crate::events::Wake;
@@ -43,6 +50,7 @@ struct Data {
     objects: HashMap<SharedString, Retained<NSString>>,
     actions: HashMap<SharedString, SourceAction>,
     hover: bool,
+    drag_kind: Option<SharedString>,
 }
 
 impl Data {
@@ -74,7 +82,24 @@ impl Data {
             .collect();
         self.actions = props.actions.iter().map(|a| (a.id.clone(), a.clone())).collect();
         self.hover = props.action_visibility == ActionVisibility::Hover;
+        self.drag_kind = props.drag_kind.clone();
     }
+
+    /// The item row `i` drags as, if it drags.
+    fn drag_item(&self, i: usize) -> Option<DragItem> {
+        let node = &self.nodes[i];
+        let kind = self.drag_kind.clone().filter(|_| !node.section && node.movable)?;
+        Some(DragItem::new(kind, node.id.clone()))
+    }
+}
+
+/// The pasteboard type an nd drag carries, with the dragged item's id as its string.
+pub const DRAG_TYPE: &str = "dev.nativedesktop.drag";
+
+/// AppKit's global coordinates (bottom-left origin) as nd's (top-left of the primary screen).
+pub(crate) fn screen_point(mtm: MainThreadMarker, p: NSPoint) -> nd_core::Point {
+    let primary = objc2_app_kit::NSScreen::screens(mtm).firstObject().map_or(0., |s| s.frame().size.height);
+    nd_core::Point { x: p.x as f32, y: (primary - p.y) as f32 }
 }
 
 pub(crate) struct Shared {
@@ -127,6 +152,44 @@ define_class!(
             let data = self.ivars().shared.data.borrow();
             let i = data.kids(item)[index as usize];
             Retained::into_super(Retained::into_super(data.object(i)))
+        }
+
+        #[unsafe(method_id(outlineView:pasteboardWriterForItem:))]
+        fn pasteboard_writer(
+            &self,
+            _outline: &NSOutlineView,
+            item: &AnyObject,
+        ) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+            let data = self.ivars().shared.data.borrow();
+            data.node_index(Some(item)).and_then(|i| data.drag_item(i)).map(|dragged| {
+                let writer = NSPasteboardItem::new();
+                writer.setString_forType(&NSString::from_str(&dragged.id), &NSString::from_str(DRAG_TYPE));
+                ProtocolObject::from_retained(writer)
+            })
+        }
+
+        #[unsafe(method(outlineView:draggingSession:willBeginAtPoint:forItems:))]
+        fn drag_began(&self, outline: &NSOutlineView, session: &NSDraggingSession, point: NSPoint, items: &NSArray) {
+            // A drop nowhere is the app's to place (a tab torn out to a new window), not a
+            // failure to animate back from.
+            session.setAnimatesToStartingPositionsOnCancelOrFail(false);
+            let shared = &self.ivars().shared;
+            let item = {
+                let data = shared.data.borrow();
+                items.firstObject().and_then(|o| data.node_index(Some(&o))).and_then(|i| data.drag_item(i))
+            };
+            if let Some(item) = item {
+                let at = DragPoint::Screen(screen_point(MainThreadMarker::from(outline), point));
+                shared.report(DragSource { item, phase: GesturePhase::Began, at, native: true });
+            }
+        }
+
+        #[unsafe(method(outlineView:draggingSession:endedAtPoint:operation:))]
+        fn drag_ended(&self, outline: &NSOutlineView, _session: &NSDraggingSession, point: NSPoint, _op: NSDragOperation) {
+            let shared = &self.ivars().shared;
+            let item = DragItem::new(shared.data.borrow().drag_kind.clone().unwrap_or_default(), "");
+            let at = DragPoint::Screen(screen_point(MainThreadMarker::from(outline), point));
+            shared.report(DragSource { item, phase: GesturePhase::Ended, at, native: true });
         }
 
         // A section is expandable too, or the outline would never show its rows; it just
@@ -604,6 +667,8 @@ pub(crate) struct SourceTreeNative {
     empty_title: Retained<NSTextField>,
     empty_description: Retained<NSTextField>,
     empty_icon: Retained<NSImageView>,
+    /// Marks where a drag over the list would land.
+    slot_line: Retained<NSView>,
     props: SourceTreeProps,
 }
 
@@ -667,8 +732,27 @@ impl SourceTreeNative {
         empty.setHidden(true);
         scroll.addSubview(&empty);
 
-        let mut this =
-            Self { scroll, outline, source, empty, empty_title, empty_description, empty_icon, props: props.clone() };
+        let slot_line = NSView::new(mtm);
+        slot_line.setWantsLayer(true);
+        if let Some(layer) = slot_line.layer() {
+            layer.setBackgroundColor(Some(&NSColor::controlAccentColor().CGColor()));
+        }
+        slot_line.setHidden(true);
+        outline.addSubview(&slot_line);
+        outline.setDraggingSourceOperationMask_forLocal(NSDragOperation::Move | NSDragOperation::Generic, true);
+        outline.setDraggingSourceOperationMask_forLocal(NSDragOperation::None, false);
+
+        let mut this = Self {
+            scroll,
+            outline,
+            source,
+            empty,
+            empty_title,
+            empty_description,
+            empty_icon,
+            slot_line,
+            props: props.clone(),
+        };
         this.reload(props);
         this
     }
@@ -704,6 +788,59 @@ impl SourceTreeNative {
             self.props.empty = props.empty.clone();
             self.update_empty();
         }
+        if props.drag_kind != self.props.drag_kind || props.accepts != self.props.accepts {
+            self.props.drag_kind = props.drag_kind.clone();
+            self.props.accepts = props.accepts.clone();
+            self.shared().data.borrow_mut().drag_kind = props.drag_kind.clone();
+        }
+    }
+
+    /// Where a drag at `at` (window points, top-left origin) would land, with the slot line
+    /// shown there; `None` hides the line.
+    pub fn drop_slot(&self, at: Option<nd_core::Point>) -> Option<DropSlot> {
+        let Some(at) = at else {
+            self.slot_line.setHidden(true);
+            return None;
+        };
+        let window = self.outline.window()?;
+        let height = window.contentView().map_or(0., |v| v.frame().size.height);
+        let p = self.outline.convertPoint_fromView(NSPoint::new(f64::from(at.x), height - f64::from(at.y)), None);
+        let rows = self.outline.numberOfRows();
+        let row = if p.y < 0. { 0 } else { self.outline.rowAtPoint(p) };
+        let data = self.shared().data.borrow();
+        let visible = data.index.visible(&data.nodes);
+        let (slot, line_y, line_x) = if row < 0 || row >= rows {
+            let last = rows - 1;
+            let y = if last >= 0 {
+                self.outline.rectOfRow(last).origin.y + self.outline.rectOfRow(last).size.height
+            } else {
+                0.
+            };
+            (data.index.drop_slot(&data.nodes, &visible, None, false), y, 0.)
+        } else {
+            let rect = self.outline.rectOfRow(row);
+            let upper = p.y < rect.origin.y + rect.size.height / 2.;
+            let node = data.node_index(self.outline.itemAtRow(row).as_deref());
+            let at = node.and_then(|i| visible.iter().position(|(v, _)| *v == i));
+            let slot = data.index.drop_slot(&data.nodes, &visible, at, upper);
+            let below = !upper || node.is_some_and(|i| data.nodes[i].section);
+            let y = if below { rect.origin.y + rect.size.height } else { rect.origin.y };
+            let x = self.outline.frameOfCellAtColumn_row(0, row).origin.x;
+            (slot, y, x)
+        };
+        let width = self.outline.bounds().size.width;
+        let thickness = 2.; // nd-lint: allow, matches NSTableView's own drop indicator
+        self.slot_line.setFrame(NSRect::new(
+            NSPoint::new(line_x, line_y - thickness / 2.),
+            NSSize::new((width - line_x).max(0.), thickness),
+        ));
+        if let Some(layer) = self.slot_line.layer() {
+            layer.setCornerRadius(thickness / 2.);
+        }
+        // Above the row views the outline adds as it scrolls.
+        self.outline.addSubview(&self.slot_line);
+        self.slot_line.setHidden(false);
+        Some(slot)
     }
 
     fn reload(&mut self, props: &SourceTreeProps) {
