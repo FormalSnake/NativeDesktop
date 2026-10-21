@@ -736,6 +736,16 @@ impl Backend for GpuiBackend {
                 }
             }
             SemanticAction::ScrollIntoView => self.scroll_row_into_view(node)?,
+            // A wheel over the node's centre, through the window's own input path: nd scrolls
+            // what is under the pointer, as it would for the user.
+            SemanticAction::Scroll { dx, dy } => {
+                let (window, at) = self.center(node)?;
+                let mut state = self.state.borrow_mut();
+                if state.windows.get(&window).and_then(|r| r.handle).is_none() {
+                    return Err(ActionError::WindowGone);
+                }
+                state.pending.push((window, crate::input::wheel(at, *dx, *dy)));
+            }
             _ => return Err(ActionError::Unsupported(format!("{action:?} on {kind:?}"))),
         }
         Ok(())
