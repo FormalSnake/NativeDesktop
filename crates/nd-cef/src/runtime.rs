@@ -100,7 +100,13 @@ pub(crate) fn start() -> Result<(), String> {
     crate::pipe::start();
     platform::pump::start();
     crate::scheme::register_global();
+    crate::origin::install();
+    crate::extensions::started();
     Ok(())
+}
+
+pub(crate) fn started() -> bool {
+    STARTED.with(Cell::get) == Some(true)
 }
 
 pub(crate) fn app_name() -> String {

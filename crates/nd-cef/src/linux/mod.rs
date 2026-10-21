@@ -3,6 +3,7 @@
 
 pub(crate) mod chrome;
 pub(crate) mod dialogs;
+pub(crate) mod install_prompt;
 mod keys;
 pub(crate) mod pump;
 pub(crate) mod view;

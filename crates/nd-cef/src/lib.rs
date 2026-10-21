@@ -56,6 +56,8 @@ mod menu;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native_messaging;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod origin;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod page;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod pipe;
@@ -63,6 +65,8 @@ mod pipe;
 mod runtime;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod scheme;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod store_browser;
 
 #[cfg(target_os = "linux")]
 use linux as platform;

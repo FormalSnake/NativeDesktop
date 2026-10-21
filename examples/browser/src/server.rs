@@ -1,4 +1,5 @@
-//! A local HTTP server for the parity and extensions scenes: a few fixed pages, a download and an icon.
+//! A local HTTP server for the parity and extensions scenes: a few fixed pages, a download, an icon,
+//! and `/origin`, which answers the request's `Origin` header.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -58,9 +59,14 @@ pub fn start() -> String {
                 if reader.read_line(&mut line).is_err() {
                     return;
                 }
-                // Drain the headers.
+                let mut origin = "none".to_owned();
                 let mut header = String::new();
                 while reader.read_line(&mut header).is_ok_and(|n| n > 2) {
+                    if let Some((name, value)) = header.split_once(':')
+                        && name.eq_ignore_ascii_case("origin")
+                    {
+                        origin = value.trim().to_owned();
+                    }
                     header.clear();
                 }
                 let path = line.split_whitespace().nth(1).unwrap_or("/");
@@ -81,6 +87,7 @@ pub fn start() -> String {
                         DOWNLOAD_BODY.into(),
                     ),
                     "/icon.png" => ("200 OK", "image/png", "", Vec::new()),
+                    "/origin" => ("200 OK", "text/plain", "Access-Control-Allow-Origin: *\r\n", origin.into_bytes()),
                     _ => ("404 Not Found", "text/plain", "", b"not found".to_vec()),
                 };
                 let head = format!(

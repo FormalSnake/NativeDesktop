@@ -4,17 +4,22 @@
 //! one. The engine is `[webview] engine` (WKWebView by default), or `ND_WEBVIEW_ENGINE=cef` in a
 //! build with the `cef` feature.
 //!
+//! With Chromium in Chrome style (`ND_WEBVIEW_ENGINE=cef ND_CEF_STYLE=chrome`) each installed
+//! extension with an action gets a toolbar button that opens its popup under the toolbar, and
+//! `BROWSER_INSTALL` (extension ids, comma separated) installs from the Chrome Web Store at launch.
+//!
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
 //! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
 //! page that scrolls), `chrome-pages` (`chrome://extensions` and `chrome://settings` in a
 //! Chrome-style page), `extensions` (a Chrome extension's popup, native messaging and fill right
-//! after launch, printing `ND_EXTENSIONS_OK`), `adblock` (uBlock Origin's default lists through the
-//! request filter, printing `ND_ADBLOCK_OK`), `private` (a private window's tabs share one
-//! in-memory profile, printing `ND_PRIVATE_OK`), `pip` (the floating video chord's script lifts a
-//! playing video into picture-in-picture and back, printing `ND_PIP_OK`), `parity` (every event
-//! and command against a local test page, printing `ND_WEBVIEW_PARITY_OK`), `tabdrag` (two windows
-//! of tabs that drag between them, carrying live pages) or `reveal` (a hidden sidebar that slides
-//! in from the leading edge).
+//! after launch, printing `ND_EXTENSIONS_OK`), `webstore` (Web Store installs by id, by the
+//! store's button and cancelled, printing `ND_WEBSTORE_OK`), `adblock` (uBlock Origin's default
+//! lists through the request filter, printing `ND_ADBLOCK_OK`), `private` (a private window's tabs
+//! share one in-memory profile, printing `ND_PRIVATE_OK`), `pip` (the floating video chord's script
+//! lifts a playing video into picture-in-picture and back, printing `ND_PIP_OK`), `parity` (every
+//! event and command against a local test page, printing `ND_WEBVIEW_PARITY_OK`), `tabdrag` (two
+//! windows of tabs that drag between them, carrying live pages) or `reveal` (a hidden sidebar that
+//! slides in from the leading edge).
 
 mod adblock;
 mod extensions;
@@ -24,8 +29,10 @@ mod private;
 mod scenes;
 mod server;
 mod tabdrag;
+mod webstore;
 
 use nd::prelude::*;
+use nd::webview::extensions::{self as webext, Anchor, Extension};
 use nd::webview::{
     ContextMenuItemClicked, Contexts, DownloadRequested, DownloadState, DownloadUpdated, LoadFailed, LoadProgress,
     LoadingChanged, MenuItem, Navigate, NewWindow, TitleChanged, WebView, WebViewOptions, WindowClosed,
@@ -36,6 +43,8 @@ actions!(browser, [NewTab, CloseTab, Reload, Back, Forward, DevTools, NextTab]);
 
 const HOME: &str = "https://example.com";
 const SEARCH: &str = "https://duckduckgo.com/?q={}";
+/// The toolbar's height, which an extension popup opens under.
+const EXTENSION_ANCHOR_TOP: f64 = 52.;
 
 struct Tab {
     id: u64,
@@ -52,6 +61,8 @@ pub struct Browser {
     next: u64,
     address: SharedString,
     status: SharedString,
+    /// Installed extensions with a toolbar action.
+    extensions: Vec<Extension>,
 }
 
 // docs:begin options
@@ -62,7 +73,14 @@ fn options() -> WebViewOptions {
 
 impl Browser {
     fn new(url: &str) -> Self {
-        let mut this = Self { tabs: Vec::new(), selected: 0, next: 1, address: url.into(), status: "".into() };
+        let mut this = Self {
+            tabs: Vec::new(),
+            selected: 0,
+            next: 1,
+            address: url.into(),
+            status: "".into(),
+            extensions: Vec::new(),
+        };
         let page = WebView::with_options(options());
         page.load(url);
         this.push(page, true);
@@ -84,6 +102,60 @@ impl Browser {
         if let Some(tab) = self.tab(id) {
             self.address = tab.url.clone();
         }
+    }
+
+    fn watch_extensions(cx: &mut Context<Self>) {
+        if !matches!(std::env::var("ND_WEBVIEW_ENGINE").as_deref(), Ok("cef")) {
+            return;
+        }
+        let this = cx.weak_entity();
+        webext::on_changed(move |_change, _cx| {
+            let this = this.clone();
+            webext::list(move |list, cx| {
+                let _ = this.update(cx, |this, cx| this.listed(list, cx));
+            });
+        });
+        let this = cx.weak_entity();
+        webext::list(move |list, cx| {
+            let _ = this.update(cx, |this, cx| this.listed(list, cx));
+            for id in std::env::var("BROWSER_INSTALL").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
+                let this = this.clone();
+                webext::install_from_store(id, move |r, cx| {
+                    let _ = this.update(cx, |this, cx| {
+                        this.status = match r {
+                            Ok(id) => format!("Installed {id}"),
+                            Err(e) => format!("Could not install: {e}"),
+                        }
+                        .into();
+                        cx.notify();
+                    });
+                });
+            }
+        });
+    }
+
+    fn listed(&mut self, list: Result<Vec<Extension>, String>, cx: &mut Context<Self>) {
+        match list {
+            Ok(list) => self.extensions = list.into_iter().filter(|e| e.enabled && e.has_action).collect(),
+            Err(e) => self.status = format!("Extensions: {e}").into(),
+        }
+        cx.notify();
+    }
+
+    /// A click on an extension's toolbar button: its popup opens under the toolbar's trailing end.
+    fn run_extension(&mut self, id: &str, window: &Window, cx: &mut Context<Self>) {
+        let Some(page) = self.current() else { return };
+        let width = f64::from(window.viewport_size().width);
+        let anchor = Anchor::new(width - 44., 0., 28., EXTENSION_ANCHOR_TOP);
+        let this = cx.weak_entity();
+        page.run_extension_action(id, anchor, move |r, cx| {
+            if let Err(e) = r {
+                let _ = this.update(cx, |this, cx| {
+                    this.status = format!("Extension: {e}").into();
+                    cx.notify();
+                });
+            }
+        });
     }
 
     fn tab(&self, id: u64) -> Option<&Tab> {
@@ -223,6 +295,44 @@ impl Render for Browser {
         };
         let items: Vec<SourceItem> =
             self.tabs.iter().map(|t| source_item(t.id.to_string(), t.title.clone()).icon(Icon::Globe)).collect();
+        let bar = toolbar()
+            .title(current.map_or_else(|| SharedString::from("Browser"), |t| t.title.clone()))
+            .sidebar_toggle()
+            .item(icon_button("back", Icon::ChevronLeft).tooltip("Back").dispatch(Back))
+            .item(icon_button("forward", Icon::ChevronRight).tooltip("Forward").dispatch(Forward))
+            .item(
+                icon_button("reload", if loading { Icon::X } else { Icon::RotateCw })
+                    .tooltip(if loading { "Stop" } else { "Reload" })
+                    .dispatch(Reload),
+            )
+            .item(
+                text_field("address")
+                    .text(self.address.clone())
+                    .placeholder("Search or enter address")
+                    .w(px(460.))
+                    .on_change(cx.listener(|this, e: &TextChanged, _, _| this.address = e.text.clone()))
+                    .on_submit(cx.listener(|this, e: &TextSubmitted, _, cx| {
+                        let url = resolve_address(&e.text, SEARCH);
+                        this.address = url.clone().into();
+                        if let Some(page) = this.current() {
+                            page.load(url);
+                            page.focus();
+                        }
+                        cx.notify();
+                    })),
+            )
+            .flexible_space();
+        let bar = self.extensions.iter().fold(bar, |bar, e| {
+            let id = e.id.clone();
+            bar.item(
+                icon_button(SharedString::from(format!("ext-{}", e.id)), Icon::Star)
+                    .tooltip(SharedString::from(e.name.clone()))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.run_extension(&id, window, cx))),
+            )
+        });
+        let bar = bar
+            .item(icon_button("devtools", Icon::Code).tooltip("Developer Tools").dispatch(DevTools))
+            .item(icon_button("new-tab", Icon::Plus).tooltip("New Tab").dispatch(NewTab));
         scaffold()
             .key_context("Browser")
             .on_action(cx.listener(|this, _: &NewTab, _, cx| {
@@ -263,37 +373,7 @@ impl Render for Browser {
                 }
             }))
             // docs:end commands
-            .toolbar(
-                toolbar()
-                    .title(current.map_or_else(|| SharedString::from("Browser"), |t| t.title.clone()))
-                    .sidebar_toggle()
-                    .item(icon_button("back", Icon::ChevronLeft).tooltip("Back").dispatch(Back))
-                    .item(icon_button("forward", Icon::ChevronRight).tooltip("Forward").dispatch(Forward))
-                    .item(
-                        icon_button("reload", if loading { Icon::X } else { Icon::RotateCw })
-                            .tooltip(if loading { "Stop" } else { "Reload" })
-                            .dispatch(Reload),
-                    )
-                    .item(
-                        text_field("address")
-                            .text(self.address.clone())
-                            .placeholder("Search or enter address")
-                            .w(px(460.))
-                            .on_change(cx.listener(|this, e: &TextChanged, _, _| this.address = e.text.clone()))
-                            .on_submit(cx.listener(|this, e: &TextSubmitted, _, cx| {
-                                let url = resolve_address(&e.text, SEARCH);
-                                this.address = url.clone().into();
-                                if let Some(page) = this.current() {
-                                    page.load(url);
-                                    page.focus();
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .flexible_space()
-                    .item(icon_button("devtools", Icon::Code).tooltip("Developer Tools").dispatch(DevTools))
-                    .item(icon_button("new-tab", Icon::Plus).tooltip("New Tab").dispatch(NewTab)),
-            )
+            .toolbar(bar)
             .sidebar(sidebar().min_w(px(200.)).child(
                 source_list("tabs").section("Tabs", items).selected(self.selected.to_string()).on_select(cx.listener(
                     |this, e: &SourceSelected, _, cx| {
@@ -338,12 +418,18 @@ pub fn init(cx: &mut App) {
         Ok("pip") => pip::open(cx),
         Ok("tabdrag") => tabdrag::tabdrag(cx),
         Ok("reveal") => tabdrag::reveal(cx),
+        Ok("webstore") => webstore::open(cx),
         _ => {
             bind_keys(cx);
             let url = std::env::var("BROWSER_URL").unwrap_or_else(|_| HOME.into());
             cx.open_window(
                 WindowOptions::main("main").title("Browser").size(size(px(1100.), px(720.))),
-                move |_window, cx| cx.new(move |_cx| Browser::new(&url)),
+                move |_window, cx| {
+                    cx.new(move |cx| {
+                        Browser::watch_extensions(cx);
+                        Browser::new(&url)
+                    })
+                },
             );
         }
     }
