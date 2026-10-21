@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use nd_backend_gpui::{GpuiBackend, GpuiChrome, GpuiHost};
-use nd_components::{Chrome, SubtreeOverrides};
+use nd_components::{Chrome, Menu, MenuItem, SubtreeOverrides};
 use nd_gpui::gpui::{
     self, HeadlessAppContext, Modifiers, MouseButton as GpuiButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, point,
@@ -69,7 +69,12 @@ impl Render for Scene {
                                 this.taps += 1;
                                 cx.notify();
                             }))
-                            .context_menu(|menu, _, _| menu.item("Choose", Chosen).separator().item("Again", Chosen))
+                            .context_menu(|menu, _, _| {
+                                menu.item("Choose", Chosen)
+                                    .separator()
+                                    .item("Again", Chosen)
+                                    .submenu(Menu::new("More").item(MenuItem::action("Deeper", Chosen)))
+                            })
                             .child(
                                 native_surface("surface", SurfaceSource::TestPattern)
                                     .count_input()
@@ -218,6 +223,16 @@ fn wiggle_and_scroll(at: nd_ui::Point) -> Vec<PlatformInput> {
         touch_phase: TouchPhase::Moved,
     }));
     events
+}
+
+fn wiggle(at: nd_ui::Point) -> Vec<PlatformInput> {
+    let modifiers = Modifiers::default();
+    (0..3)
+        .map(|i| {
+            let position = point(px(at.x + i as f32), px(at.y));
+            PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers })
+        })
+        .collect()
 }
 
 fn set(o: &mut Opened, f: impl FnOnce(&mut Scene)) {
@@ -391,6 +406,38 @@ mod gate_m4_overlays {
         settle(&mut o.cx, &o.host);
         assert!(!o.host.backend().menu_open(o.window), "Esc closes the menu");
     }
+
+    /// A submenu opens beside its row on hover, and its items dispatch like the menu's own.
+    pub fn gpui_context_submenu_opens_on_hover() {
+        let mut o = open();
+        let surface = center(&o.host, o.window, "surface");
+        let open_at = nd_ui::Point { x: surface.x - 50., y: surface.y - 90. };
+        post(&mut o, click(open_at, GpuiButton::Right));
+        assert!(o.host.backend().menu_open(o.window));
+        let drawn = |o: &Opened, label: &str| {
+            o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == label)
+        };
+        assert!(drawn(&o, "More"), "the submenu's row is drawn");
+        assert!(!drawn(&o, "Deeper"), "the submenu stays shut until its row is hovered");
+        // Choose, a separator, Again, then More: 28 px rows, a 9 px separator, under the menu's
+        // 4 px inset and 1 px border.
+        let more = nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 28. + 9. + 28. + 14. };
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"), "hovering More opens its submenu");
+        // The submenu's first row is level with More, past the menu's 180 px.
+        let deeper = nd_ui::Point { x: open_at.x + 220., y: more.y };
+        post(&mut o, wiggle(deeper));
+        assert!(drawn(&o, "Deeper"), "the submenu stays open under the pointer");
+        post(&mut o, click(deeper, GpuiButton::Left));
+        assert!(!o.host.backend().menu_open(o.window), "choosing a submenu item closes the menu");
+        assert_eq!(o.host.read(|app| o.scene.read(app).chosen), 1, "the submenu item dispatched its action");
+
+        post(&mut o, click(open_at, GpuiButton::Right));
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"));
+        post(&mut o, wiggle(nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 14. }));
+        assert!(!drawn(&o, "Deeper"), "hovering another row shuts the submenu");
+    }
 }
 
 fn main() {
@@ -419,6 +466,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes",
             gate_m4_overlays::gpui_context_menu_is_drawn_above_and_consumes,
+        ),
+        (
+            "gate_m4_overlays::gpui_context_submenu_opens_on_hover",
+            gate_m4_overlays::gpui_context_submenu_opens_on_hover,
         ),
     ];
     let has = |flag: &str| args.iter().any(|a| a == flag);
