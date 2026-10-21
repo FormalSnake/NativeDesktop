@@ -1,5 +1,6 @@
 //! Drawn alerts and the about panel on GPUI, in libadwaita's `AdwAlertDialog` and
-//! `AdwAboutDialog` look, in the window's deferred layer over the theme's scrim.
+//! `AdwAboutDialog` look, or WinUI 3's `ContentDialog` under the Fluent preset, in the window's
+//! deferred layer over the theme's scrim.
 //!
 //! A sheet alert covers its own window; a modal one covers every window of the app, its card on
 //! the window that asked and a bare scrim on the others, and each covered window takes no input
@@ -19,11 +20,13 @@ use nd_components::forms::TextStyle;
 use nd_components::services::AlertCallback;
 use nd_components::{AboutPanel, Alert, AlertPresentation, AlertResponse, ButtonRole};
 use nd_core::{NodeId, WindowId};
+use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
     self, AnyElement, BoxShadow, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement, Keystroke,
     ParentElement, SharedString, StatefulInteractiveElement, Styled, anchored, deferred, div, point, px,
 };
 use nd_theme::Theme;
+use nd_theme::color::with_alpha;
 
 use crate::backend::GpuiBackend;
 use crate::forms::FormLook;
@@ -39,6 +42,19 @@ const ABOUT_WIDTH: f32 = 360.;
 /// The shadow under a floating dialog.
 const SHADOW_RADIUS: f32 = 24.;
 const SHADOW_OPACITY: f32 = 0.25;
+/// ContentDialogMinWidth and ContentDialogMaxWidth; the dialog sizes to its text between them.
+const CONTENT_DIALOG_MIN: f32 = 320.;
+const CONTENT_DIALOG_MAX: f32 = 548.;
+/// SmokeFillColorDefault, WinUI's scrim behind a ContentDialog in both themes.
+const SMOKE_OPACITY: f32 = 0.3;
+
+fn fluent(theme: &Theme) -> bool {
+    theme.preset == nd_theme::Preset::Fluent
+}
+
+fn scrim(theme: &Theme) -> Hsla {
+    if fluent(theme) { gpui::black().opacity(SMOKE_OPACITY) } else { theme.scrim }
+}
 
 /// What a key means to a dialog. `None` leaves it alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +121,8 @@ fn layer(
     content: Option<AnyElement>,
     marks: &Marks,
 ) -> AnyElement {
-    marks.fill("dialog scrim", theme.scrim, &[]);
+    let fill = scrim(theme);
+    marks.fill("dialog scrim", fill, &[]);
     let mut scrim = div()
         .id("nd-dialog-scrim")
         .w(viewport.width)
@@ -114,7 +131,7 @@ fn layer(
         .items_center()
         .justify_center()
         .p(theme.spacing.md)
-        .bg(theme.scrim)
+        .bg(fill)
         .occlude()
         .children(content);
     if let Some(focus) = focus {
@@ -181,6 +198,9 @@ pub fn alert_view(
     on_input: Option<OnInput<DialogInput>>,
     marks: &Marks,
 ) -> AnyElement {
+    if fluent(theme) {
+        return content_dialog_alert(alert, focused, theme, viewport, focus, on_input, marks);
+    }
     let look = FormLook::of(theme);
     let s = &theme.spacing;
     let surface = theme.surface.overlay;
@@ -261,6 +281,9 @@ pub fn about_view(
     on_input: Option<OnInput<DialogInput>>,
     marks: &Marks,
 ) -> AnyElement {
+    if fluent(theme) {
+        return content_dialog_about(about, theme, viewport, focus, on_input, marks);
+    }
     let look = FormLook::of(theme);
     let s = &theme.spacing;
     let surface = theme.surface.overlay;
@@ -354,6 +377,237 @@ pub fn about_view(
     }
     let label: SharedString = if name.is_empty() { "About".into() } else { format!("About {name}").into() };
     let card = card(theme, ABOUT_WIDTH, viewport, label).role(gpui::Role::Dialog).child(column).child(close);
+    layer(theme, viewport, focus, on_input, Some(card.into_any_element()), marks)
+}
+
+/// A ContentDialog's parts: the content area on LayerFillColorAlt (the card colour) over the
+/// command area on SolidBackgroundFillColorBase (the Mica base), a CardStroke line between
+/// them, 24 px padding in both, 8 px corners.
+struct ContentDialog {
+    top: Hsla,
+    bottom: Hsla,
+    scrim: Hsla,
+}
+
+impl ContentDialog {
+    fn of(theme: &Theme) -> Self {
+        Self { top: theme.surface.raised, bottom: theme.surface.sidebar, scrim: scrim(theme) }
+    }
+
+    fn card(
+        &self,
+        theme: &Theme,
+        viewport: gpui::Size<gpui::Pixels>,
+        label: SharedString,
+        content: gpui::Div,
+        commands: gpui::Div,
+    ) -> gpui::Stateful<gpui::Div> {
+        let s = &theme.spacing;
+        let room = (viewport.width.as_f32() - 2. * s.md.as_f32()).max(0.);
+        div()
+            .id("nd-dialog")
+            .role(gpui::Role::AlertDialog)
+            .aria_label(label)
+            .flex()
+            .flex_col()
+            .min_w(px(CONTENT_DIALOG_MIN.min(room)))
+            .max_w(px(CONTENT_DIALOG_MAX.min(room)))
+            .bg(self.bottom)
+            .border_1()
+            .border_color(theme.border.subtle)
+            .rounded(theme.radius.lg)
+            .shadow(shadow())
+            .text_color(theme.text.primary)
+            .occlude()
+            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(s.md)
+                    .p(s.xl)
+                    .bg(self.top)
+                    // GPUI clips children to the card's rectangle, not its corners; inside the
+                    // 1 px border the corners are 1 px tighter.
+                    .rounded_t(theme.radius.lg - px(1.))
+                    .border_b_1()
+                    .border_color(theme.separator)
+                    .child(content),
+            )
+            .child(commands.flex().gap(s.sm).p(s.xl))
+    }
+
+    /// A WinUI button in the command row: AccentButton when `accent`, else the standard button
+    /// (ControlFillColorDefault with its stroke); each takes an equal share of the row.
+    #[allow(clippy::too_many_arguments)]
+    fn button(
+        &self,
+        theme: &Theme,
+        look: &FormLook,
+        id: ElementId,
+        label: &SharedString,
+        accent: bool,
+        focused: bool,
+        stacked: bool,
+        marks: &Marks,
+    ) -> gpui::Stateful<gpui::Div> {
+        let under = [self.scrim, self.bottom];
+        let (fill, text, stroke, what) = if accent {
+            (theme.accent, theme.text.on_accent, gpui::transparent_black(), "suggested button")
+        } else {
+            (look.fill, theme.text.primary, look.border, "button")
+        };
+        marks.fill(what, fill, &under);
+        marks.text(label, text, &[self.scrim, self.bottom, fill], look.text_size, FontWeight::NORMAL);
+        let (hover, pressed) =
+            if accent { (with_alpha(fill, 0.9), with_alpha(fill, 0.8)) } else { (look.fill_hover, look.fill_active) };
+        let button = div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(look.control_height)
+            .px(look.padding_x)
+            .rounded(look.radius)
+            .border_1()
+            .border_color(stroke)
+            .bg(fill)
+            .text_color(text)
+            .text_size(look.text_size)
+            .line_height(look.line_height)
+            .hover(move |st| st.bg(hover))
+            .active(move |st| st.bg(pressed))
+            .when(focused, |b| b.border_2().border_color(theme.focus_ring))
+            .child(label.clone());
+        if stacked { button.w_full() } else { button.flex_1().min_w_0() }
+    }
+}
+
+fn left_line(text: SharedString, style: TextStyle, color: Hsla, look: &FormLook) -> gpui::Div {
+    let (size, weight, height) = look.type_of(style);
+    div().text_size(size).line_height(height).font_weight(weight).text_color(color).child(text)
+}
+
+/// The alert as a ContentDialog: title and message left aligned, the buttons in their own
+/// order (primary first) sharing the command row, the default one in the accent. WinUI has no
+/// destructive style, so a destructive default is the accent button too.
+fn content_dialog_alert(
+    alert: &Alert,
+    focused: Option<usize>,
+    theme: &Theme,
+    viewport: gpui::Size<gpui::Pixels>,
+    focus: Option<&FocusHandle>,
+    on_input: Option<OnInput<DialogInput>>,
+    marks: &Marks,
+) -> AnyElement {
+    let look = FormLook::of(theme);
+    let dialog = ContentDialog::of(theme);
+    let under = [dialog.scrim, dialog.top];
+    marks.fill("alert", dialog.top, &[dialog.scrim]);
+    let (size, weight, _) = look.type_of(TextStyle::Title2);
+    marks.text(&alert.title, theme.text.primary, &under, size, weight);
+    let mut content = div().flex().flex_col().gap(theme.spacing.md).child(left_line(
+        alert.title.clone(),
+        TextStyle::Title2,
+        theme.text.primary,
+        &look,
+    ));
+    if let Some(text) = &alert.message {
+        let (size, weight, _) = look.type_of(TextStyle::Body);
+        marks.text(text, theme.text.primary, &under, size, weight);
+        content = content.child(left_line(text.clone(), TextStyle::Body, theme.text.primary, &look));
+    }
+    let default = default_button(alert);
+    let labels = buttons(alert);
+    let stacked = labels.len() > 3;
+    let mut row = div();
+    row = if stacked { row.flex_col() } else { row.flex_row() };
+    for (i, (label, _)) in labels.iter().enumerate() {
+        let id = ElementId::NamedInteger("nd-alert-button".into(), i as u64);
+        let mut button = dialog.button(theme, &look, id, label, i == default, focused == Some(i), stacked, marks);
+        if let Some(on_input) = on_input.clone() {
+            button = button.on_click(move |_, window, cx| on_input(DialogInput::Press(i), window, cx));
+        }
+        row = row.child(button);
+    }
+    let card = dialog.card(theme, viewport, alert.title.clone(), content, row);
+    layer(theme, viewport, focus, on_input, Some(card.into_any_element()), marks)
+}
+
+/// The about panel as a ContentDialog: "About" and the name as its title, the version, credits,
+/// website (a hyperlink button) and copyright as its content, and one Close button.
+fn content_dialog_about(
+    about: &AboutPanel,
+    theme: &Theme,
+    viewport: gpui::Size<gpui::Pixels>,
+    focus: Option<&FocusHandle>,
+    on_input: Option<OnInput<DialogInput>>,
+    marks: &Marks,
+) -> AnyElement {
+    let look = FormLook::of(theme);
+    let dialog = ContentDialog::of(theme);
+    let under = [dialog.scrim, dialog.top];
+    marks.fill("about", dialog.top, &[dialog.scrim]);
+    let name = about.name.clone().unwrap_or_default();
+    let label: SharedString = if name.is_empty() { "About".into() } else { format!("About {name}").into() };
+    let (size, weight, _) = look.type_of(TextStyle::Title2);
+    marks.text(&label, theme.text.primary, &under, size, weight);
+    let mut content = div().flex().flex_col().gap(theme.spacing.sm).child(left_line(
+        label.clone(),
+        TextStyle::Title2,
+        theme.text.primary,
+        &look,
+    ));
+    if let Some(version) = &about.version {
+        let text: SharedString = match &about.build {
+            Some(build) => format!("Version {version} ({build})").into(),
+            None => format!("Version {version}").into(),
+        };
+        let (size, weight, _) = look.type_of(TextStyle::Body);
+        marks.text(&text, theme.text.secondary, &under, size, weight);
+        content = content.child(left_line(text, TextStyle::Body, theme.text.secondary, &look));
+    }
+    if let Some(credits) = &about.credits {
+        let (size, weight, _) = look.type_of(TextStyle::Body);
+        marks.text(credits, theme.text.primary, &under, size, weight);
+        content = content.child(left_line(credits.clone(), TextStyle::Body, theme.text.primary, &look));
+    }
+    if let Some(website) = &about.website {
+        marks.text(website, theme.accent, &under, look.text_size, FontWeight::NORMAL);
+        let hover = look.fill_hover;
+        let mut link = div()
+            .id("nd-about-website")
+            .role(gpui::Role::Link)
+            .aria_label(website.clone())
+            .flex()
+            .items_center()
+            .h(look.control_height)
+            .px(look.padding_x)
+            .ml(-look.padding_x)
+            .rounded(look.radius)
+            .text_color(theme.accent)
+            .text_size(look.text_size)
+            .hover(move |st| st.bg(hover))
+            .child(website.clone());
+        if let Some(on_input) = on_input.clone() {
+            let url = website.clone();
+            link = link.on_click(move |_, window, cx| on_input(DialogInput::Open(url.clone()), window, cx));
+        }
+        content = content.child(div().flex().child(link));
+    }
+    if let Some(copyright) = &about.copyright {
+        let (size, weight, _) = look.type_of(TextStyle::Footnote);
+        marks.text(copyright, theme.text.secondary, &under, size, weight);
+        content = content.child(left_line(copyright.clone(), TextStyle::Footnote, theme.text.secondary, &look));
+    }
+    let mut close =
+        dialog.button(theme, &look, "nd-about-close".into(), &SharedString::from("Close"), false, false, false, marks);
+    if let Some(on_input) = on_input.clone() {
+        close = close.on_click(move |_, window, cx| on_input(DialogInput::Close, window, cx));
+    }
+    let card = dialog.card(theme, viewport, label, content, div().flex_row().child(close)).role(gpui::Role::Dialog);
     layer(theme, viewport, focus, on_input, Some(card.into_any_element()), marks)
 }
 

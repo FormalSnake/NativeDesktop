@@ -157,14 +157,22 @@ struct Opened {
 }
 
 fn registry(scheme: Scheme) -> ThemeRegistry {
+    registry_in(Preset::Adwaita, scheme)
+}
+
+fn registry_in(preset: Preset, scheme: Scheme) -> ThemeRegistry {
     // The GPUI look on every OS, in the OS's own fonts, as `nd` sets it up at launch.
-    let mut registry = ThemeRegistry::new(Preset::Adwaita);
+    let mut registry = ThemeRegistry::new(preset);
     let os = OsTheme { scheme: Some(scheme), fonts: nd_theme::fonts::resolve(), ..registry.os().clone() };
     registry.set_os(os);
     registry
 }
 
 fn open_with(kind: Kind, scheme: Scheme) -> Opened {
+    open_in(kind, Preset::Adwaita, scheme)
+}
+
+fn open_in(kind: Kind, preset: Preset, scheme: Scheme) -> Opened {
     let mut cx = headless();
     let log: Rc<RefCell<Log>> = Rc::default();
     let l = log.clone();
@@ -172,7 +180,7 @@ fn open_with(kind: Kind, scheme: Scheme) -> Opened {
     let host = cx.update(|cx| {
         GpuiHost::builder().quit_when_empty(false).start(cx, |app| {
             let backend = app.backend_as::<GpuiBackend>().expect("GPUI backend").clone();
-            backend.set_theme(registry(scheme));
+            backend.set_theme(registry_in(preset, scheme));
             app.set_global(Chrome(GpuiChrome::new(backend)));
             let options = WindowOptions::main("layout").size(size(px(800.), px(560.)));
             let options = if matches!(kind, Kind::Bar { .. }) { options.title("Notes") } else { options };
@@ -483,6 +491,14 @@ mod gate_m6 {
                     failed.push(e);
                 }
             }
+            // WinUI's ContentDialog, drawn on Linux as `ND_PRESET=fluent` shows it.
+            if cfg!(target_os = "linux") {
+                for view in ["alert-fluent", "about-fluent"] {
+                    if let Err(e) = golden(view, scheme) {
+                        failed.push(e);
+                    }
+                }
+            }
         }
         assert!(failed.is_empty(), "{failed:#?}");
     }
@@ -504,8 +520,12 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
         "status" => Kind::Status,
         _ => Kind::Plain,
     };
-    let mut o = open_with(kind, scheme);
-    match view {
+    let (shown, preset) = match view.strip_suffix("-fluent") {
+        Some(shown) => (shown, Preset::Fluent),
+        None => (view, Preset::Adwaita),
+    };
+    let mut o = open_in(kind, preset, scheme);
+    match shown {
         "alert" => o.alert(
             Alert::confirm("Delete the note?", "Delete").message("The note and its attachments are removed for good."),
         ),

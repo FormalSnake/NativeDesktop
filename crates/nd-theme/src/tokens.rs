@@ -19,7 +19,8 @@ pub struct SurfaceTokens {
     /// Popovers, menus and sheets drawn by nd.
     pub overlay: Hsla,
     /// The opaque content layer a window with a backdrop material (Mica) lays beside a
-    /// see-through sidebar and title row, as Windows' own apps do (measured on Task Manager).
+    /// see-through sidebar and title row, as Windows' own apps do (measured: `#191919` dark on
+    /// Task Manager, `#f9f9f9` light on Notepad).
     pub layer: Hsla,
 }
 

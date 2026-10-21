@@ -189,8 +189,10 @@ impl Build<'_> {
         if cover {
             content = content.bg(fill).size_full();
         } else if styled.is_none() {
-            content =
-                content.bg(fill).border_1().border_color(theme.border.subtle).rounded(theme.radius.lg).shadow_md();
+            // WinUI's ToolTip takes the control radius, its flyouts the overlay radius.
+            let fluent_tip = props.kind == OverlayKind::Tooltip && theme.preset == nd_theme::Preset::Fluent;
+            let radius = if fluent_tip { theme.radius.md } else { theme.radius.lg };
+            content = content.bg(fill).border_1().border_color(theme.border.subtle).rounded(radius).shadow_md();
         }
         let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(theme.text.primary), "overlay", || {
             node.children.iter().map(|c| self.node(*c, window, cx)).collect()
