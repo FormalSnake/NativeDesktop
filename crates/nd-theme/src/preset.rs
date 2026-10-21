@@ -94,6 +94,9 @@ pub enum GlassVariant {
     #[default]
     Regular,
     Clear,
+    /// Regular glass with the window's background laid over it, so content passing under a
+    /// floating bar stays illegible, as under Music's mini player.
+    Frosted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

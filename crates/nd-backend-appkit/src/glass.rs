@@ -9,7 +9,7 @@ use nd_theme::GlassVariant;
 use objc2::rc::Retained;
 use objc2::runtime::AnyClass;
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSGlassEffectContainerView, NSGlassEffectView, NSGlassEffectViewStyle, NSView,
+    NSAutoresizingMaskOptions, NSColor, NSGlassEffectContainerView, NSGlassEffectView, NSGlassEffectViewStyle, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
 };
 use objc2_foundation::MainThreadMarker;
@@ -37,6 +37,9 @@ pub(crate) struct GlassNative {
 /// Glass this short or narrower is a control, which the HIG draws as a capsule or a circle;
 /// anything bigger is a surface, square unless the app rounds it.
 const CONTROL_MAX: f64 = 64.;
+
+/// How much of the window background a frosted glass lays over the material.
+const FROST: f64 = 0.6;
 
 /// The corner radius the glass draws at `size`: the app's when it sets one; otherwise half the
 /// short side for a control-sized element (a capsule, or a circle when square), none for a large
@@ -111,19 +114,22 @@ impl GlassNative {
         let explicit = self.props.style.corner_radii.top_left.is_some();
         let r =
             radius(&self.props, (frame.width, frame.height)) * if explicit { f64::from(self.radius_scale) } else { 1. };
-        let tint = self.props.tint.map(|t| Color::from(t).ns_color());
+        let tint = self.props.tint.map(|t| Color::from(t).ns_color()).or_else(|| {
+            (self.props.variant == GlassVariant::Frosted)
+                .then(|| NSColor::windowBackgroundColor().colorWithAlphaComponent(FROST))
+        });
         match &self.material {
             Material::Glass(glass) => {
                 glass.setCornerRadius(r);
                 glass.setTintColor(tint.as_deref());
                 glass.setStyle(match self.props.variant {
-                    GlassVariant::Regular => NSGlassEffectViewStyle::Regular,
+                    GlassVariant::Regular | GlassVariant::Frosted => NSGlassEffectViewStyle::Regular,
                     GlassVariant::Clear => NSGlassEffectViewStyle::Clear,
                 });
             }
             Material::Vibrancy(effect) => {
                 effect.setMaterial(match self.props.variant {
-                    GlassVariant::Regular => NSVisualEffectMaterial::Popover,
+                    GlassVariant::Regular | GlassVariant::Frosted => NSVisualEffectMaterial::Popover,
                     GlassVariant::Clear => NSVisualEffectMaterial::HUDWindow,
                 });
                 if let Some(layer) = effect.layer() {
