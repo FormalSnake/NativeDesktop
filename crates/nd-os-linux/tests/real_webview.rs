@@ -20,6 +20,9 @@
 //!   its buffer, so the compositor shows along the dragged edge for a frame or two.
 //! - `real_chrome_pages_cef_chrome`: `chrome://extensions` and `chrome://settings` load and lay
 //!   out in a Chrome-style page.
+//! - `real_extensions_cef_chrome`: `BROWSER_SCENE=extensions` on one profile, once to install
+//!   the test extension and then 20 times from a cold start: each time its content script runs
+//!   in the page's first document and fills it through a native messaging host.
 //!
 //! Needs `browser` built next to this test (`cargo build -p browser`) or `ND_BROWSER_BIN`.
 
@@ -63,7 +66,8 @@ mod gate_m8_webview {
     impl Run {
         fn start(style: &'static str) -> Self {
             let chrome = style == "chrome";
-            let extra_config = if chrome { "hl.config({ xwayland = { enabled = true } })".into() } else { String::new() };
+            let extra_config =
+                if chrome { "hl.config({ xwayland = { enabled = true } })".into() } else { String::new() };
             let hyprland = Hyprland::start(Options { extra_config, ..Options::default() })
                 .unwrap_or_else(|e| panic!("headless Hyprland: {e}"));
             let display = chrome.then(|| hyprland.x11_display(Duration::from_secs(10)).unwrap());
@@ -98,8 +102,7 @@ mod gate_m8_webview {
 
     fn parity(style: &'static str) {
         let run = Run::start(style);
-        let mut probe =
-            Probe::launch(run.command(), &[("BROWSER_SCENE", "parity"), ("ND_WEBVIEW_ENGINE", "cef")]);
+        let mut probe = Probe::launch(run.command(), &[("BROWSER_SCENE", "parity"), ("ND_WEBVIEW_ENGINE", "cef")]);
         let result = result_line(&mut probe, "ND_WEBVIEW_PARITY_", Duration::from_secs(240));
         assert!(result.starts_with("ND_WEBVIEW_PARITY_OK"), "{result}\n{}", probe.log());
         assert!(result.contains("engine=cef"), "ran on the wrong engine: {result}");
@@ -141,6 +144,24 @@ mod gate_m8_webview {
         assert!(result.starts_with("ND_CHROME_PAGES_OK"), "{result}\n{}", probe.log());
         assert_chrome_style(&run, &probe);
         println!("{}", run.marker("CHROME_PAGES"));
+    }
+
+    #[test]
+    fn real_extensions_cef_chrome() {
+        const COLD_STARTS: usize = 20;
+        let run = Run::start("chrome");
+        let cache = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("nd-extensions-cef-chrome");
+        let _ = std::fs::remove_dir_all(&cache);
+        for i in 0..=COLD_STARTS {
+            let mut command = run.command();
+            command.env("ND_CEF_CACHE", &cache);
+            let mut probe = Probe::launch(command, &[("BROWSER_SCENE", "extensions"), ("ND_WEBVIEW_ENGINE", "cef")]);
+            let result = result_line(&mut probe, "ND_EXTENSIONS_", Duration::from_secs(120));
+            assert!(result.starts_with("ND_EXTENSIONS_OK"), "run {i}: {result}\n{}", probe.log());
+            assert_chrome_style(&run, &probe);
+            let _ = probe.child.wait();
+        }
+        println!("{COLD_STARTS} cold starts; {}", run.marker("EXTENSIONS"));
     }
 
     fn find<'a>(node: &'a SemanticNode, test_id: &str) -> Option<&'a SemanticNode> {

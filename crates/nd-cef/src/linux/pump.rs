@@ -5,8 +5,8 @@
 //! GPUI's app.
 
 use std::cell::{Cell, RefCell};
-use std::ffi::{c_char, c_int, c_void};
 use std::collections::VecDeque;
+use std::ffi::{c_char, c_int, c_void};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 

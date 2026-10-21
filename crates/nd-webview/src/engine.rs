@@ -11,6 +11,7 @@ use nd_ui::events::Emit;
 
 use crate::element::WebViewProps;
 use crate::events::*;
+use crate::extensions::{ActionOutcome, ActionState, Anchor};
 use crate::handle::{Inner, WebViewOptions};
 use crate::{Cookie, FindOptions, JsError, JsValue, UserScript};
 
@@ -225,6 +226,18 @@ pub enum Command {
     /// Delivers the key event nd is dispatching (Tab, Shift-Tab, which nd binds to focus
     /// traversal) to the page instead, so it moves focus inside the page.
     ForwardKey,
+    /// An extension's toolbar state for this page.
+    ExtensionAction {
+        id: String,
+        done: Box<dyn FnOnce(Result<ActionState, String>)>,
+    },
+    /// A click on an extension's toolbar button, for this page.
+    RunExtensionAction {
+        id: String,
+        anchor: Anchor,
+        done: Box<dyn FnOnce(Result<ActionOutcome, String>)>,
+    },
+    CloseExtensionPopup,
 }
 
 impl std::fmt::Debug for Command {
@@ -262,6 +275,9 @@ impl std::fmt::Debug for Command {
             Command::RequestClose => "RequestClose",
             Command::ResetPermissions { .. } => "ResetPermissions",
             Command::AllowPopups { .. } => "AllowPopups",
+            Command::ExtensionAction { .. } => "ExtensionAction",
+            Command::RunExtensionAction { .. } => "RunExtensionAction",
+            Command::CloseExtensionPopup => "CloseExtensionPopup",
         };
         f.write_str(name)
     }

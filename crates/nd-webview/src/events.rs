@@ -304,6 +304,21 @@ pub struct ExternalProtocol {
     pub url: String,
 }
 
+/// An extension popup that [`WebView::run_extension_action`] opened for this page is on screen,
+/// at `bounds` in the page's window (logical pixels from the content's top left).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionPopupOpened {
+    pub id: String,
+    pub bounds: crate::extensions::Anchor,
+}
+
+/// An extension popup that [`WebView::run_extension_action`] opened for this page closed: a
+/// click outside it, `window.close()`, a second click, or the page going away.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionPopupClosed {
+    pub id: String,
+}
+
 /// The engine withdrew a [`PermissionRequest`] itself (navigation, close); answering it now is a
 /// no-op.
 #[derive(Clone, Debug, PartialEq)]

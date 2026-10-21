@@ -680,6 +680,13 @@ impl EngineView for WkPage {
                     forward_key(web, &event);
                 }
             }
+            command @ (Command::ExtensionAction { .. } | Command::RunExtensionAction { .. }) => {
+                crate::handle::fail(
+                    command,
+                    "WebKit has no extension runtime; extensions run on Chromium in Chrome style",
+                );
+            }
+            Command::CloseExtensionPopup => {}
         }
     }
 

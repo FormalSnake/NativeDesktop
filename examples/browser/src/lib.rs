@@ -7,9 +7,11 @@
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
 //! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
 //! page that scrolls), `chrome-pages` (`chrome://extensions` and `chrome://settings` in a
-//! Chrome-style page) or `parity` (every event and command against a local test page, printing
+//! Chrome-style page), `extensions` (a Chrome extension's popup, native messaging and fill right
+//! after launch, printing `ND_EXTENSIONS_OK`) or `parity` (every event and command against a local test page, printing
 //! `ND_WEBVIEW_PARITY_OK`).
 
+mod extensions;
 mod parity;
 mod scenes;
 mod server;
@@ -321,6 +323,7 @@ pub fn init(cx: &mut App) {
         Ok("input") => scenes::input(cx),
         Ok("chrome-pages") => scenes::chrome_pages(cx),
         Ok("parity") => parity::open(cx),
+        Ok("extensions") => extensions::open(cx),
         _ => {
             bind_keys(cx);
             let url = std::env::var("BROWSER_URL").unwrap_or_else(|_| HOME.into());

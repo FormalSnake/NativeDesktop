@@ -123,6 +123,8 @@ impl WebViewElement {
         on_close_approved => CloseApproved;
         on_external_protocol => ExternalProtocol;
         on_chrome_command => ChromeCommand;
+        on_extension_popup_opened => ExtensionPopupOpened;
+        on_extension_popup_closed => ExtensionPopupClosed;
     }
 }
 

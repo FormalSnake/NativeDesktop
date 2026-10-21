@@ -20,6 +20,7 @@
 pub mod element;
 pub mod engine;
 pub mod events;
+pub mod extensions;
 mod handle;
 pub mod menu;
 mod platform;

@@ -28,7 +28,11 @@ use objc2_app_kit::{
     NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification, NSWindowDidMoveNotification,
     NSWindowDidResizeNotification, NSWindowOrderingMode,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSTimer};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSTimer,
+};
+
+use nd_webview::extensions::Anchor;
 
 use crate::page::{self, CefPage};
 
@@ -57,6 +61,22 @@ pub(crate) struct Chrome {
     /// The page's offset from the top left of its window's content, laid out as the BrowserView's
     /// inset in the Views window.
     inset: Cell<Option<(f64, f64)>>,
+    popup: RefCell<Option<PopupTrack>>,
+}
+
+/// An extension popup on its way or on screen. Chromium anchors it to the hidden toolbar, so it
+/// is moved under the app's anchor whenever Chromium sizes or places it.
+struct PopupTrack {
+    id: String,
+    anchor: Anchor,
+    /// The windows that existed when the click ran; the popup is the new one.
+    before: Vec<*const NSWindow>,
+    window: Option<Retained<NSWindow>>,
+    timer: Option<Retained<NSTimer>>,
+    observers: Vec<Observer>,
+    deadline: std::time::Instant,
+    placing: bool,
+    reported: bool,
 }
 
 thread_local! {
@@ -80,6 +100,7 @@ impl Chrome {
             focused: Cell::new(false),
             closed: Cell::new(false),
             inset: Cell::new(None),
+            popup: RefCell::default(),
         })
     }
 
@@ -381,7 +402,9 @@ impl Chrome {
             ]
         } {
             let object: &AnyObject = host;
-            observers.push(unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), Some(object), None, &sync) });
+            observers.push(unsafe {
+                center.addObserverForName_object_queue_usingBlock(Some(name), Some(object), None, &sync)
+            });
         }
         *self.observers.borrow_mut() = observers;
     }
@@ -418,6 +441,136 @@ impl Chrome {
         }
     }
 
+    /// An action click ran: the next window of this process to appear is its popup.
+    pub(crate) fn track_popup(&self, id: &str, anchor: Anchor) {
+        self.untrack_popup();
+        let Some(view) = self.view() else { return };
+        let app = objc2_app_kit::NSApplication::sharedApplication(view.mtm());
+        let before = app.windows().iter().map(|w| &*w as *const NSWindow).collect();
+        let page_id = self.page;
+        let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+            if let Some(chrome) = page::get(page_id).and_then(|p| p.view.chrome()) {
+                chrome.find_popup();
+            }
+        });
+        // SAFETY: added to the main run loop, the thread this runs on.
+        let timer = unsafe { NSTimer::timerWithTimeInterval_repeats_block(1. / 120., true, &block) };
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        *self.popup.borrow_mut() = Some(PopupTrack {
+            id: id.to_owned(),
+            anchor,
+            before,
+            window: None,
+            timer: Some(timer),
+            observers: Vec::new(),
+            deadline: std::time::Instant::now() + crate::extensions::POPUP_SEARCH,
+            placing: false,
+            reported: false,
+        });
+    }
+
+    pub(crate) fn untrack_popup(&self) {
+        let Some(track) = self.popup.borrow_mut().take() else { return };
+        if let Some(timer) = track.timer {
+            timer.invalidate();
+        }
+        let center = NSNotificationCenter::defaultCenter();
+        for observer in track.observers {
+            unsafe { center.removeObserver(observer.as_ref()) };
+        }
+    }
+
+    fn find_popup(&self) {
+        let Some(view) = self.view() else { return };
+        let found = {
+            let popup = self.popup.borrow();
+            let Some(track) = popup.as_ref() else { return };
+            if track.window.is_some() {
+                return;
+            }
+            if std::time::Instant::now() > track.deadline {
+                drop(popup);
+                self.untrack_popup();
+                return;
+            }
+            let anchor = self.anchor.borrow().clone();
+            let host = view.window();
+            let app = objc2_app_kit::NSApplication::sharedApplication(view.mtm());
+            app.windows().iter().find(|w| {
+                let ptr = &**w as *const NSWindow;
+                !track.before.contains(&ptr)
+                    && w.isVisible()
+                    && anchor.as_deref().is_none_or(|a| !std::ptr::eq(a, &**w))
+                    && host.as_deref().is_none_or(|h| !std::ptr::eq(h, &**w))
+            })
+        };
+        let Some(window) = found else { return };
+        let id = self.page;
+        let place = RcBlock::new(move |_note: NonNull<NSNotification>| {
+            if let Some(chrome) = page::get(id).and_then(|p| p.view.chrome()) {
+                chrome.place_popup();
+            }
+        });
+        let center = NSNotificationCenter::defaultCenter();
+        let object: &AnyObject = &window;
+        let observers = unsafe {
+            [NSWindowDidResizeNotification, NSWindowDidMoveNotification]
+                .map(|name| center.addObserverForName_object_queue_usingBlock(Some(name), Some(object), None, &place))
+        };
+        if let Some(track) = self.popup.borrow_mut().as_mut() {
+            if let Some(timer) = track.timer.take() {
+                timer.invalidate();
+            }
+            track.window = Some(window);
+            track.observers.extend(observers);
+        }
+        self.place_popup();
+    }
+
+    /// The popup's top edge on the anchor's bottom, its leading edge on the anchor's, kept on
+    /// the screen (flipped above the anchor when there is no room under it).
+    fn place_popup(&self) {
+        let Some(host) = self.view().and_then(|v| v.window()) else { return };
+        let (window, anchor) = {
+            let mut popup = self.popup.borrow_mut();
+            let Some(track) = popup.as_mut() else { return };
+            let Some(window) = track.window.clone() else { return };
+            if track.placing {
+                return;
+            }
+            track.placing = true;
+            (window, track.anchor)
+        };
+        let content = host.contentRectForFrameRect(host.frame());
+        let top = content.origin.y + content.size.height;
+        let frame = window.frame();
+        let size = frame.size;
+        let visible = host.screen().map(|s| s.visibleFrame()).unwrap_or(content);
+        let mut x = content.origin.x + anchor.x;
+        if x + size.width > visible.origin.x + visible.size.width {
+            x = content.origin.x + anchor.x + anchor.width - size.width;
+        }
+        x = x.max(visible.origin.x);
+        let mut y = top - anchor.y - anchor.height - size.height;
+        if y < visible.origin.y {
+            y = top - anchor.y;
+        }
+        let origin = NSPoint::new(x.round(), y.round());
+        if frame.origin != origin {
+            window.setFrameOrigin(origin);
+        }
+        let bounds = Anchor::new(origin.x - content.origin.x, top - (origin.y + size.height), size.width, size.height);
+        let report = {
+            let mut popup = self.popup.borrow_mut();
+            let Some(track) = popup.as_mut() else { return };
+            track.placing = false;
+            (!std::mem::replace(&mut track.reported, true)).then(|| track.id.clone())
+        };
+        if let (Some(id), Some(page)) = (report, self.page()) {
+            page.page.emit(nd_webview::ExtensionPopupOpened { id, bounds });
+        }
+    }
+
     /// The subtree goes home before the browser closes: closing it while it lives in another
     /// window takes Chromium's teardown through a hierarchy that no longer exists. The anchor
     /// leaves the screen first, or AppKit can make it key while the app's windows close, after
@@ -429,6 +582,7 @@ impl Chrome {
         if let Some(timer) = self.relift.borrow_mut().take() {
             timer.invalidate();
         }
+        self.untrack_popup();
         let center = NSNotificationCenter::defaultCenter();
         for observer in self.observers.borrow_mut().drain(..) {
             unsafe { center.removeObserver(observer.as_ref()) };

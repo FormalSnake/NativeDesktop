@@ -38,7 +38,11 @@ mod client;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod commands;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod crx;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod devtools;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod extensions;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod keys;
 #[cfg(target_os = "linux")]
@@ -48,7 +52,11 @@ mod mac;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod menu;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod native_messaging;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod page;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod pipe;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod runtime;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

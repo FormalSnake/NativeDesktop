@@ -208,10 +208,7 @@ impl CefPage {
         self.devtools.add_script(nd_webview::script::COUNTING_SCRIPT, None, move |identifier| {
             let Some(p) = get(id) else { return };
             p.st.borrow_mut().count_input = Some(identifier.unwrap_or_default());
-            let code = format!(
-                "if(!document.title.startsWith('down=')){{{}}}",
-                nd_webview::script::COUNTING_SCRIPT
-            );
+            let code = format!("if(!document.title.startsWith('down=')){{{}}}", nd_webview::script::COUNTING_SCRIPT);
             p.devtools.evaluate(&code, None, |_| {});
         });
         self.devtools.evaluate(nd_webview::script::COUNTING_SCRIPT, None, |_| {});
@@ -1051,9 +1048,29 @@ impl CefPage {
             }
             Command::Focus => self.view.focus(),
             Command::ForwardKey => self.view.forward_current_key(),
+            Command::ExtensionAction { id, done } => match self.style {
+                CefStyle::Chrome => crate::extensions::action_state(self, id, done),
+                CefStyle::Osr => done(Err(NOT_CHROME.into())),
+            },
+            Command::RunExtensionAction { id, anchor, done } => match self.style {
+                CefStyle::Chrome => crate::extensions::run_action(self, id, anchor, done),
+                CefStyle::Osr => done(Err(NOT_CHROME.into())),
+            },
+            Command::CloseExtensionPopup => crate::extensions::close_popup(self.id),
         }
     }
+
+    /// The page's DevTools target id.
+    pub(crate) fn target_id(&self, then: impl FnOnce(Result<String, String>) + 'static) {
+        self.devtools.call("Target.getTargetInfo", json!({}), move |r| {
+            then(r.and_then(|v| {
+                v["targetInfo"]["targetId"].as_str().map(str::to_owned).ok_or_else(|| "no target id".to_owned())
+            }));
+        });
+    }
 }
+
+const NOT_CHROME: &str = "extension actions run in Chrome-style pages (`[webview.cef] style = \"chrome\"`)";
 
 impl EngineView for CefPage {
     #[cfg(target_os = "macos")]

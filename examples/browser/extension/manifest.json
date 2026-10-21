@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "nd test extension",
+  "description": "What 1Password does when it fills a login: a popup asks its service worker, the worker asks a native messaging host, the content script fills the page.",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA53YEwR0L5CW+rf6Ys6KM1HEJ/SH4qSov2b0z004pqdbAbR+wxFavOmIpWJhvY3t/8ECsOsCeI+Dp/r+/IV+WmRHmDqmc8zAkKcITXd6MyvJjoix5hs2+czfULVereRPxojqgceOVl6vc0Y5ycMvdGKTYjuS9aKECoaZo3dsx48hmL2PaOLwW513cJqNf4uUGD5QGKogkomDgbCCwl12c78C9hUGGYWdbx7PLCEfIrvEEm6gNot5eJXwx0sEe6rgYOi3vvmu4B6EuzabeBlPdeBPCLyjCxbsosyh12KWZRr+B8HFoCPlov1DhXBEAvqMaeMsjYXhwC0C04YHym/wmmwIDAQAB",
+  "icons": { "128": "icon.png" },
+  "action": { "default_popup": "popup.html", "default_title": "nd test" },
+  "background": { "service_worker": "worker.js" },
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_start" }
+  ],
+  "permissions": ["nativeMessaging", "tabs"],
+  "host_permissions": ["http://127.0.0.1/*"]
+}
