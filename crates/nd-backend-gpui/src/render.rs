@@ -851,7 +851,7 @@ impl<'a> Build<'a> {
             _ => fill,
         };
         // Borderless: no bezel until the pointer is over it.
-        let bezel = props.bezel != Bezel::Borderless || accent;
+        let bezel = !matches!(props.bezel, Bezel::Borderless | Bezel::Plain) || accent;
         let rest = (bezel || checked).then_some(fill);
         self.painted(id, rest, None, "button", || {
             if glyph.is_some() {

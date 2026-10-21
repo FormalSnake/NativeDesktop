@@ -44,6 +44,9 @@ define_class!(
     }
 );
 
+/// The accent's opacity in the circle behind an on toggle.
+const TOGGLE_FILL: f64 = 0.18;
+
 thread_local! {
     static WARNED_RADIUS: Cell<bool> = const { Cell::new(false) };
 }
@@ -127,7 +130,7 @@ impl NativeButtonView {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Glass);
                 }
-                Bezel::Borderless => b.setBordered(false),
+                Bezel::Borderless | Bezel::Plain => b.setBordered(false),
                 Bezel::Toolbar => {
                     b.setBordered(true);
                     b.setBezelStyle(NSBezelStyle::Toolbar);
@@ -186,20 +189,35 @@ impl NativeButtonView {
         self.button.setBezelColor(bezel.as_deref());
         // A borderless button draws no bezel, so its colour goes to the icon instead: a prominent
         // borderless icon button is the accent glyph (Messages' send arrow).
-        let borderless = props.bezel == Bezel::Borderless && props.label.is_empty();
-        // A toggle that is on draws its glyph in the accent, as Music's repeat and shuffle do.
-        let on = (props.checked == Some(true)).then(|| match self.accent.get() {
+        let plain = props.bezel == Bezel::Plain;
+        let borderless = (props.bezel == Bezel::Borderless || plain) && props.label.is_empty();
+        // A toggle draws its glyph in the accent when on and, unless plain, secondary when off, as
+        // Music's repeat and shuffle do; an on borderless icon toggle also sits in a tinted circle.
+        let accent = || match self.accent.get() {
             Some(c) => Color::from(c).ns_color(),
             None => NSColor::controlAccentColor(),
-        });
+        };
+        let toggle = match props.checked {
+            Some(true) => Some(accent()),
+            Some(false) if borderless && !plain => Some(NSColor::secondaryLabelColor()),
+            _ => None,
+        };
         let tint = props
             .style
             .text
             .color
             .map(|c| Color::from(c).ns_color())
-            .or(on)
-            .or_else(|| if borderless { bezel.clone() } else { None });
+            .or(toggle)
+            .or_else(|| if borderless { bezel.clone() } else { None })
+            .or_else(|| plain.then(NSColor::labelColor));
         self.button.setContentTintColor(tint.as_deref());
+        let circle = (borderless && props.checked == Some(true)).then(|| accent().colorWithAlphaComponent(TOGGLE_FILL));
+        self.button.setWantsLayer(true);
+        if let Some(layer) = self.button.layer() {
+            let fill = circle.map(|c| c.CGColor());
+            layer.setBackgroundColor(fill.as_deref());
+        }
+        self.round();
         // A push button's title ignores the content tint; its attributed title carries the colour.
         match &tint {
             Some(color) => {
@@ -212,6 +230,14 @@ impl NativeButtonView {
                 self.button.setAttributedTitle(&title);
             }
             None => self.button.setTitle(&NSString::from_str(&props.label)),
+        }
+    }
+
+    /// Keeps an on toggle's circle round at the size nd laid the button out at.
+    pub fn round(&self) {
+        if let Some(layer) = self.button.layer() {
+            let size = self.button.frame().size;
+            layer.setCornerRadius(size.width.min(size.height) / 2.);
         }
     }
 

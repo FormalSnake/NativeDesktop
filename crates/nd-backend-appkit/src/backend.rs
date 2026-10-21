@@ -1632,6 +1632,9 @@ impl Backend for AppKitBackend {
         };
         if view.frame() != rect {
             view.setFrame(rect);
+            if let Some(Native::Button(b)) = state.nodes.get(&node) {
+                b.round();
+            }
         }
     }
 

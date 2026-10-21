@@ -884,6 +884,9 @@ pub enum Bezel {
     Glass,
     Bordered,
     Borderless,
+    /// Borderless with the glyph in the primary label colour instead of the control grey: a
+    /// media player's transport, as in Music.
+    Plain,
     /// The toolbar's own button style (`NSBezelStyle.toolbar` on macOS).
     Toolbar,
     /// A round button, the size of the element's box (`NSBezelStyle.circular` on macOS): a
