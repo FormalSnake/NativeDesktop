@@ -24,6 +24,10 @@
 //!   the test extension and then 20 times from a cold start: each time its content script runs
 //!   in the page's first document and fills it through a native messaging host.
 //!
+//! - `real_adblock_cef`: `BROWSER_SCENE=adblock`, uBlock Origin's default lists on the request
+//!   filter: the 0.5.11 adblock fixture's requests blocked and redirected as that build did, a
+//!   `$csp=` rule's policy in the document, and the filter never on the main thread.
+//!
 //! Needs `browser` built next to this test (`cargo build -p browser`) or `ND_BROWSER_BIN`.
 
 #![cfg(target_os = "linux")]
@@ -133,6 +137,26 @@ mod gate_m8_webview {
         if run.style == "chrome" {
             assert!(!probe.log().contains("Chrome style needs the window on X11"), "{}", probe.log());
         }
+    }
+
+    /// A scene that prints `<prefix>OK` or `<prefix>FAILED`, in `style`.
+    fn scene(style: &'static str, scene: &str, prefix: &str, what: &str) {
+        let run = Run::start(style);
+        let mut probe = Probe::launch(run.command(), &[("BROWSER_SCENE", scene), ("ND_WEBVIEW_ENGINE", "cef")]);
+        let result = result_line(&mut probe, prefix, Duration::from_secs(150));
+        assert!(result.starts_with(&format!("{prefix}OK")), "{result}\n{}", probe.log());
+        assert_chrome_style(&run, &probe);
+        println!("{result}; {}", run.marker(what));
+    }
+
+    #[test]
+    fn real_adblock_cef() {
+        scene("osr", "adblock", "ND_ADBLOCK_", "ADBLOCK");
+    }
+
+    #[test]
+    fn real_adblock_cef_chrome() {
+        scene("chrome", "adblock", "ND_ADBLOCK_", "ADBLOCK");
     }
 
     #[test]
