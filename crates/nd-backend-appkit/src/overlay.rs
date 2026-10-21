@@ -517,7 +517,41 @@ impl WindowLayer {
                 center.addObserverForName_object_queue_usingBlock(Some(name), Some(any), None, &block)
             });
         }
+        if key {
+            // Reactivating the app makes the owner key again, not this child panel: hand the
+            // keyboard back while the panel shows, as it had it when the app went inactive.
+            let weak_panel = objc2::rc::Weak::from_retained(&panel);
+            let block = RcBlock::new(move |_n: std::ptr::NonNull<objc2_foundation::NSNotification>| {
+                // Not from inside the owner's own key change, which AppKit finishes after this.
+                let weak_panel = weak_panel.clone();
+                crate::events::defer(move || {
+                    if let Some(panel) = weak_panel.load()
+                        && panel.ivars().key.get()
+                        && panel.isVisible()
+                    {
+                        panel.makeKeyAndOrderFront(None);
+                    }
+                });
+            });
+            let any: &AnyObject = owner.as_ref();
+            observers.push(unsafe {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(objc2_app_kit::NSWindowDidBecomeKeyNotification),
+                    Some(any),
+                    None,
+                    &block,
+                )
+            });
+        }
         Self { panel, owner: owner.retain(), observers }
+    }
+
+    /// Gives the keyboard back to the owner for good, ahead of a closing animation.
+    pub fn resign_key(&self) {
+        self.panel.ivars().key.set(false);
+        if self.panel.isKeyWindow() {
+            self.owner.makeKeyWindow();
+        }
     }
 
     /// The flipped-or-not view to add content to, the size of the owner's frame.

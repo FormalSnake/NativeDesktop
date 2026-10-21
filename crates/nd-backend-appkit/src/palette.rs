@@ -722,11 +722,8 @@ impl Palette {
         let window = layer.as_ref().map(|l| l.owner().retain());
         // The keyboard and pointer leave at once; the panel fades out and goes after.
         if let Some(layer) = &layer {
-            let panel = layer.window();
-            panel.setIgnoresMouseEvents(true);
-            if panel.isKeyWindow() {
-                layer.owner().makeKeyWindow();
-            }
+            layer.window().setIgnoresMouseEvents(true);
+            layer.resign_key();
         }
         if let Some(panel) = layer.as_ref().filter(|_| animated).map(|l| l.window().retain()) {
             let parked = RefCell::new(Some((ui, layer)));

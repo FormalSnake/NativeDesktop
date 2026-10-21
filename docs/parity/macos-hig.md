@@ -29,6 +29,10 @@ A ticked item is fixed in nd for every app; the note says how it was checked.
 - [x] The palette appeared and vanished in one frame. Spotlight's panel fades in and out
   (200 ms in, 150 ms out). Checked: `nav_components` tests; unmount still removes it at once.
 
+- [x] With the palette open, leaving the app and coming back made the window key, so typing
+  missed the palette's field. Spotlight keeps the keyboard. The palette's panel now takes key
+  back when its window turns key. Checked: `nav_components`, which fails with the handback off.
+
 ## Forms and tables
 
 - [x] Switches in a form row were regular (54 by 24 pt). System Settings uses mini ones (36 by
