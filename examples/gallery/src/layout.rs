@@ -46,15 +46,17 @@ impl Render for TabsDemo {
                                 .gap_2()
                                 .child(
                                     h_flex()
+                                        .justify_between()
                                         .gap_2()
-                                        .child(switch("launch").label("Open at login"))
-                                        .child(label("Open at login")),
+                                        .child(label("Open at login"))
+                                        .child(switch("launch").label("Open at login")),
                                 )
                                 .child(
                                     h_flex()
+                                        .justify_between()
                                         .gap_2()
-                                        .child(switch("updates").label("Check for updates"))
-                                        .child(label("Check for updates")),
+                                        .child(label("Check for updates"))
+                                        .child(switch("updates").label("Check for updates")),
                                 ),
                         ),
                     )

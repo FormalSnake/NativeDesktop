@@ -31,8 +31,9 @@ use objc2_app_kit::{
     NSAccessibility, NSBackgroundStyle, NSBezelStyle, NSButton, NSColor, NSControlTextEditingDelegate, NSDragOperation,
     NSDraggingSession, NSEvent, NSFont, NSFontWeightRegular, NSImageView, NSLayoutConstraint, NSLineBreakMode,
     NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSPasteboardItem, NSPasteboardWriting, NSResponder,
-    NSScrollView, NSTableCellView, NSTableColumn, NSTableRowView, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceItemIdentification, NSView,
+    NSScrollView, NSTableCellView, NSTableColumn, NSTableRowView, NSTableViewAnimationOptions, NSTableViewDataSource,
+    NSTableViewDelegate, NSTableViewRowSizeStyle, NSTableViewStyle, NSTextField, NSTrackingArea, NSTrackingAreaOptions,
+    NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSIndexSet, NSInteger, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
@@ -224,6 +225,9 @@ define_class!(
         #[unsafe(method(outlineView:heightOfRowByItem:))]
         fn height(&self, outline: &NSOutlineView, item: &AnyObject) -> f64 {
             let data = self.ivars().shared.data.borrow();
+            if data.node_index(Some(item)).is_some_and(|i| data.nodes[i].section) {
+                return GROUP_ROW;
+            }
             let caption = data.node_index(Some(item)).is_some_and(|i| data.nodes[i].caption.is_some());
             // A caption is a second line in the small system font under the row's own height.
             if caption { outline.rowHeight() + caption_line(MainThreadMarker::from(outline)) } else { outline.rowHeight() }
@@ -317,6 +321,11 @@ fn caption_line(mtm: MainThreadMarker) -> f64 {
     probe.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
     probe.intrinsicContentSize().height.ceil()
 }
+
+/// The height AppKit gives a source list's group row when no delegate sizes it, at every sidebar
+/// size (measured on macOS 27; AppKit has no API for it). The outline adds the space above
+/// a section itself, so a header sits as Finder's do.
+const GROUP_ROW: f64 = 19.; // nd-lint: allow, AppKit's own group row height, which it does not expose
 
 const ROW_CELL: &str = "nd.source.row";
 const SECTION_CELL: &str = "nd.source.section";
@@ -562,9 +571,8 @@ impl NdSourceCell {
             NSColor::secondaryLabelColor()
         };
         iv.caption.setTextColor(Some(&secondary));
-        // secondaryLabelColor badges are 3.95:1 on a light sidebar and 2.3:1 on an unemphasized
-        // selection, under WCAG AA for text this size.
-        let badge = if style == NSBackgroundStyle::Emphasized { secondary } else { NSColor::labelColor() };
+        // Counts recede behind the title, as in Notes' and Mail's sidebars.
+        let badge = if style == NSBackgroundStyle::Emphasized { secondary } else { NSColor::tertiaryLabelColor() };
         iv.badge.setTextColor(Some(&badge));
     }
 
@@ -670,12 +678,18 @@ pub(crate) struct SourceTreeNative {
     /// Marks where a drag over the list would land.
     slot_line: Retained<NSView>,
     props: SourceTreeProps,
+    /// The objects of rows the last update removed: the outline holds its items unretained and
+    /// may still touch them while their rows animate out.
+    retired: Vec<Retained<NSString>>,
 }
 
 impl SourceTreeNative {
     pub fn new(mtm: MainThreadMarker, emit: Emit, wake: Wake, props: &SourceTreeProps) -> Self {
         let outline = NSOutlineView::new(mtm);
         outline.setStyle(NSTableViewStyle::SourceList);
+        // A table made in code starts at the custom 24 pt row; the default style follows the
+        // sidebar icon size in System Settings, as Finder's and Notes' sidebars do.
+        outline.setRowSizeStyle(NSTableViewRowSizeStyle::Default);
         outline.setHeaderView(None);
         let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), &NSString::from_str("nd.source"));
         outline.addTableColumn(&column);
@@ -752,6 +766,7 @@ impl SourceTreeNative {
             empty_icon,
             slot_line,
             props: props.clone(),
+            retired: Vec::new(),
         };
         this.reload(props);
         this
@@ -846,9 +861,24 @@ impl SourceTreeNative {
     fn reload(&mut self, props: &SourceTreeProps) {
         self.props = props.clone();
         let shared = self.shared().clone();
+        let diff = {
+            let data = shared.data.borrow();
+            let on_screen = !data.nodes.is_empty() && self.outline.window().is_some();
+            on_screen.then(|| RowDiff::between(&data.nodes, &data.index, &props.nodes)).flatten()
+        };
+        self.retired = match &diff {
+            Some(diff) => {
+                let data = shared.data.borrow();
+                diff.retired.iter().filter_map(|id| data.objects.get(id).cloned()).collect()
+            }
+            None => Vec::new(),
+        };
         shared.data.borrow_mut().set(props);
         shared.programmatic.set(true);
-        self.outline.reloadData();
+        match diff {
+            Some(diff) => self.apply(&diff),
+            None => self.outline.reloadData(),
+        }
         // Parent first, in list order: a child expands only once its parent's rows exist.
         let order: Vec<(Retained<NSString>, bool)> = {
             let data = shared.data.borrow();
@@ -865,6 +895,47 @@ impl SourceTreeNative {
         shared.programmatic.set(false);
         self.select_now(true);
         self.update_empty();
+    }
+
+    /// Removes and inserts rows as `diff` says, sliding them in and out as Finder's sidebar
+    /// does (a fade alone under Reduce Motion), then redraws the rows whose content changed.
+    fn apply(&self, diff: &RowDiff) {
+        let reduce = objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        let (out, into) = if reduce {
+            (NSTableViewAnimationOptions::EffectFade, NSTableViewAnimationOptions::EffectFade)
+        } else {
+            (
+                NSTableViewAnimationOptions::EffectFade | NSTableViewAnimationOptions::SlideUp,
+                NSTableViewAnimationOptions::EffectFade | NSTableViewAnimationOptions::SlideDown,
+            )
+        };
+        let shared = self.shared();
+        let parent =
+            |id: &Option<SharedString>| id.as_ref().and_then(|id| shared.data.borrow().objects.get(id).cloned());
+        self.outline.beginUpdates();
+        for (id, rows) in &diff.removed {
+            let p = parent(id);
+            let p: Option<&AnyObject> = p.as_deref().map(|o| o as &AnyObject);
+            unsafe { self.outline.removeItemsAtIndexes_inParent_withAnimation(&index_set(rows), p, out) };
+        }
+        for (id, rows) in &diff.inserted {
+            let p = parent(id);
+            let p: Option<&AnyObject> = p.as_deref().map(|o| o as &AnyObject);
+            unsafe { self.outline.insertItemsAtIndexes_inParent_withAnimation(&index_set(rows), p, into) };
+        }
+        self.outline.endUpdates();
+        let mut rows = Vec::new();
+        for id in &diff.changed {
+            let Some(object) = shared.data.borrow().objects.get(id).cloned() else { continue };
+            unsafe { self.outline.reloadItem(Some(&object)) };
+            let row = unsafe { self.outline.rowForItem(Some(&object)) };
+            if let Ok(row) = usize::try_from(row) {
+                rows.push(row);
+            }
+        }
+        if !rows.is_empty() {
+            self.outline.noteHeightOfRowsWithIndexesChanged(&index_set(&rows));
+        }
     }
 
     fn update_empty(&self) {
@@ -958,6 +1029,91 @@ impl SourceTreeNative {
     }
 }
 
+fn index_set(rows: &[usize]) -> Retained<objc2_foundation::NSMutableIndexSet> {
+    let set = objc2_foundation::NSMutableIndexSet::new();
+    for &row in rows {
+        set.addIndex(row);
+    }
+    set
+}
+
+/// A nodes update that only adds and removes rows, per parent (`None` for the roots): removals
+/// by position among the old children, insertions by position among the new.
+#[derive(Debug, Default, PartialEq)]
+struct RowDiff {
+    removed: Vec<(Option<SharedString>, Vec<usize>)>,
+    inserted: Vec<(Option<SharedString>, Vec<usize>)>,
+    /// Rows in both whose own content changed.
+    changed: Vec<SharedString>,
+    /// Every removed id, its subtree included.
+    retired: Vec<SharedString>,
+}
+
+impl RowDiff {
+    /// `None` when the update moves or reorders a row, or gives a parent its first child or
+    /// takes its last (its disclosure changes): a reload shows those.
+    fn between(old: &[SourceNode], old_index: &SourceIndex, new: &[SourceNode]) -> Option<Self> {
+        let new_index = SourceIndex::new(new);
+        let mut diff = Self::default();
+        let kids = |nodes: &[SourceNode], index: &SourceIndex, parent: Option<usize>| -> Vec<SharedString> {
+            let list = parent.map_or(&index.roots, |p| &index.children[p]);
+            list.iter().map(|&i| nodes[i].id.clone()).collect()
+        };
+        let mut parents: Vec<(Option<SharedString>, Option<usize>, Option<usize>)> = vec![(None, None, None)];
+        for (i, node) in old.iter().enumerate() {
+            if old_index.by_id.get(&node.id) == Some(&i)
+                && let Some(&j) = new_index.by_id.get(&node.id)
+            {
+                parents.push((Some(node.id.clone()), Some(i), Some(j)));
+            }
+        }
+        for (id, i, j) in parents {
+            let before = kids(old, old_index, i);
+            let after = kids(new, &new_index, j);
+            if id.is_some() && before.is_empty() != after.is_empty() {
+                return None;
+            }
+            let kept_before: Vec<&SharedString> = before.iter().filter(|k| after.contains(k)).collect();
+            let kept_after: Vec<&SharedString> = after.iter().filter(|k| before.contains(k)).collect();
+            if kept_before != kept_after {
+                return None;
+            }
+            let removed: Vec<usize> = (0..before.len()).filter(|&r| !after.contains(&before[r])).collect();
+            let inserted: Vec<usize> = (0..after.len()).filter(|&r| !before.contains(&after[r])).collect();
+            for &r in &removed {
+                // Somewhere else in the new list: a move.
+                if new_index.by_id.contains_key(&before[r]) {
+                    return None;
+                }
+                let mut stack = vec![old_index.by_id[&before[r]]];
+                while let Some(n) = stack.pop() {
+                    diff.retired.push(old[n].id.clone());
+                    stack.extend(&old_index.children[n]);
+                }
+            }
+            if inserted.iter().any(|&r| old_index.by_id.contains_key(&after[r])) {
+                return None;
+            }
+            if let (Some(i), Some(j)) = (i, j) {
+                if old[i].has_children != new[j].has_children {
+                    return None;
+                }
+                let same = SourceNode { expanded: new[j].expanded, ..old[i].clone() };
+                if same != new[j] {
+                    diff.changed.push(new[j].id.clone());
+                }
+            }
+            if !removed.is_empty() {
+                diff.removed.push((id.clone(), removed));
+            }
+            if !inserted.is_empty() {
+                diff.inserted.push((id, inserted));
+            }
+        }
+        Some(diff)
+    }
+}
+
 trait VisibleAll {
     fn visible_all(&self) -> Vec<usize>;
 }
@@ -976,5 +1132,45 @@ impl VisibleAll for SourceIndex {
             walk(self, r, &mut out);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nd_components::source_node;
+
+    use super::*;
+
+    fn diff(old: &[SourceNode], new: &[SourceNode]) -> Option<RowDiff> {
+        RowDiff::between(old, &SourceIndex::new(old), new)
+    }
+
+    #[test]
+    fn an_added_and_a_removed_row_animate_in_their_parent() {
+        let old = [source_node("f", "Folders"), source_node("a", "A").parent("f"), source_node("b", "B").parent("f")];
+        let new = [source_node("f", "Folders"), source_node("b", "B").parent("f"), source_node("c", "C").parent("f")];
+        let d = diff(&old, &new).expect("rows only come and go");
+        assert_eq!(d.removed, vec![(Some("f".into()), vec![0])]);
+        assert_eq!(d.inserted, vec![(Some("f".into()), vec![1])]);
+        assert_eq!(d.retired, vec![SharedString::from("a")]);
+        assert!(d.changed.is_empty());
+    }
+
+    #[test]
+    fn a_retitled_row_redraws_and_a_reorder_reloads() {
+        let old = [source_node("a", "A"), source_node("b", "B")];
+        let renamed = [source_node("a", "A2"), source_node("b", "B")];
+        assert_eq!(diff(&old, &renamed).map(|d| d.changed), Some(vec![SharedString::from("a")]));
+        let swapped = [source_node("b", "B"), source_node("a", "A")];
+        assert_eq!(diff(&old, &swapped), None);
+    }
+
+    #[test]
+    fn a_move_or_a_first_child_reloads() {
+        let old = [source_node("p", "P"), source_node("q", "Q"), source_node("a", "A").parent("p")];
+        let moved = [source_node("p", "P"), source_node("q", "Q"), source_node("a", "A").parent("q")];
+        assert_eq!(diff(&old, &moved), None);
+        let emptied = [source_node("p", "P"), source_node("q", "Q")];
+        assert_eq!(diff(&old, &emptied), None);
     }
 }
