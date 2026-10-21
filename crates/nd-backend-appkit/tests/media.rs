@@ -1,6 +1,7 @@
 //! Tier 2: the media family on the real AppKit backend. Images land as layer contents and
 //! report once; the seek bar scrubs and commits once per drag and takes keys; lyrics follow,
-//! hand over to a user scroll and resync; a shelf pages through its handle; bubbles and avatars
+//! hand over to a user scroll and resync; a shelf pages through its handle and hands a vertical
+//! trackpad gesture to the page around it; bubbles and avatars
 //! draw; the composer's text area submits on Return and turns pasted images into events. Each
 //! widget also gets the echo check (feeding its reported value back emits nothing) and the
 //! reentrancy check (props set from inside its own handler neither loop nor emit twice).
@@ -24,7 +25,7 @@ mod media {
     use std::time::{Duration, Instant};
 
     use nd_backend_appkit::objc2::rc::Retained;
-    use nd_backend_appkit::objc2::{ClassType, sel};
+    use nd_backend_appkit::objc2::{ClassType, Message, sel};
     use nd_backend_appkit::objc2_app_kit::{
         NSButton, NSControl, NSEvent, NSEventModifierFlags, NSEventType, NSPasteboard, NSPasteboardTypePNG,
         NSScrollView, NSTextField, NSTextView, NSView,
@@ -44,6 +45,7 @@ mod media {
         seek(&rig, &mut c);
         lyrics(&rig, &mut c);
         shelves(&rig, &mut c);
+        shelf_in_page(&rig, &mut c);
         chat(&rig, &mut c);
         composer_field(&rig, &mut c);
         if c.0 == 0 {
@@ -341,6 +343,94 @@ mod media {
         rig.update(&opened, |_, cx| cx.notify());
         rig.pump();
         c.check(rig.read(&opened, |s| s.scrolled.len()) == count, "shelf: a re-render emits nothing");
+        rig.close(opened);
+    }
+
+    struct Page;
+
+    impl Render for Page {
+        fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .id("page")
+                .w_full()
+                .h(px(400.))
+                .overflow_y_scroll()
+                .child(div().w_full().h(px(40.)).flex_none())
+                .child(
+                    shelf("inner", &ShelfHandle::new())
+                        .gap_4()
+                        .px_4()
+                        .h(px(140.))
+                        .flex_none()
+                        .children((0..8).map(|i| div().id(format!("pc{i}")).w(px(120.)).h(px(120.)).flex_none())),
+                )
+                .children((0..30).map(|i| div().id(format!("pr{i}")).w_full().h(px(60.)).flex_none()))
+        }
+    }
+
+    fn scroll_views(view: &NSView, out: &mut Vec<Retained<NSScrollView>>) {
+        if let Some(s) = view.downcast_ref::<NSScrollView>() {
+            out.push(s.retain());
+        }
+        for child in view.subviews() {
+            scroll_views(&child, out);
+        }
+    }
+
+    /// One continuous scroll event with a finger phase or a momentum phase, as a trackpad sends.
+    fn trackpad(dx: i32, dy: i32, phase: i64, momentum: i64) -> Retained<NSEvent> {
+        use objc2_core_graphics::{CGEvent, CGEventField, CGScrollEventUnit};
+        let event = CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 2, dy, dx, 0).expect("event");
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventIsContinuous, 1);
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventScrollPhase, phase);
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventMomentumPhase, momentum);
+        NSEvent::eventWithCGEvent(&event).expect("NSEvent")
+    }
+
+    /// A gesture as AppKit delivers it to the scroll view it latched: began, `steps` changes,
+    /// ended, then momentum that decays.
+    fn gesture(target: &NSScrollView, rig: &Rig, dx: i32, dy: i32, steps: u32) {
+        let send = |e: Retained<NSEvent>| {
+            let _: () = unsafe { objc2::msg_send![target, scrollWheel: &*e] };
+        };
+        send(trackpad(dx, dy, 1, 0));
+        for _ in 0..steps {
+            send(trackpad(dx, dy, 2, 0));
+            rig.pump();
+        }
+        send(trackpad(0, 0, 4, 0));
+        send(trackpad(dx, dy, 0, 1));
+        for _ in 0..steps {
+            send(trackpad(dx / 2, dy / 2, 0, 2));
+        }
+        send(trackpad(0, 0, 0, 3));
+        rig.pump();
+    }
+
+    fn shelf_in_page(rig: &Rig, c: &mut Checks) {
+        let opened = rig.open("shelf in page", |_| Page);
+        rig.pump();
+        let mut found = Vec::new();
+        scroll_views(&opened.window.contentView().expect("content"), &mut found);
+        let page = found.iter().find(|s| (s.frame().size.height - 400.).abs() < 1.).cloned();
+        let inner = found.iter().find(|s| (s.frame().size.height - 140.).abs() < 1.).cloned();
+        let (Some(page), Some(inner)) = (page, inner) else {
+            c.check(false, &format!("shelf in page: both scroll views exist ({} found)", found.len()));
+            rig.close(opened);
+            return;
+        };
+        let at = |s: &NSScrollView| s.contentView().bounds().origin;
+        // Fingers up: the page scrolls down. Over the shelf, as AppKit latches it there.
+        gesture(&inner, rig, 0, -12, 10);
+        let (moved, sideways) = (at(&page).y, at(&inner).x);
+        c.check(moved > 100., &format!("shelf in page: a vertical gesture over a shelf scrolls the page ({moved})"));
+        c.check(sideways.abs() < 0.5, &format!("shelf in page: and leaves the shelf alone ({sideways})"));
+        let before = at(&page).y;
+        // Fingers left: the shelf moves on.
+        gesture(&inner, rig, -12, 1, 10);
+        let sideways = at(&inner).x;
+        c.check(sideways > 50., &format!("shelf in page: a sideways gesture scrolls the shelf ({sideways})"));
+        c.check((at(&page).y - before).abs() < 0.5, "shelf in page: and leaves the page where it was");
         rig.close(opened);
     }
 
