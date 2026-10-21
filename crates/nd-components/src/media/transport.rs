@@ -53,8 +53,11 @@ pub struct PillMetrics {
     pub height: f32,
     pub art: f32,
     pub art_radius: f32,
-    /// Between the art and the two lines.
+    /// Between the art and the two lines' frames; the glyphs' side bearing adds about 3 pt, giving
+    /// Music's 8 pt from art to ink.
     pub art_gap: f32,
+    /// Between the title and the artist line: Music's baselines sit 16 pt apart.
+    pub line_gap: f32,
     /// Between the art and the seek bar's track.
     pub seek_gap: f32,
     /// The widest the block grows: about half the capsule in Music.
@@ -68,7 +71,8 @@ pub const PILL: PillMetrics = PillMetrics {
     height: 52.,
     art: 34.,
     art_radius: 4.,
-    art_gap: 8.,
+    art_gap: 5.,
+    line_gap: 2.,
     seek_gap: 4.,
     song_width: 368.,
     play_glyph: 22.,
@@ -663,6 +667,7 @@ impl IntoElement for PlayerBar {
                                     v_flex()
                                         .flex_1()
                                         .min_w_0()
+                                        .gap(px(PILL.line_gap))
                                         .child(
                                             label(now.title.clone())
                                                 .rich(RichText::new([span(now.title.clone()).semibold()]))
