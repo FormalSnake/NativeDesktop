@@ -25,6 +25,7 @@ mod overlay;
 pub mod render;
 mod reveal;
 mod rich;
+mod scrollbar;
 mod split;
 pub mod status;
 pub mod tab_bar;

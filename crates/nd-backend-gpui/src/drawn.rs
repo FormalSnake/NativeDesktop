@@ -280,14 +280,20 @@ impl Build<'_> {
             });
             let rows = div().id(ElementId::Integer(id.0)).overflow_y_scroll().flex().flex_col().gap(s.xl).p(s.md);
             match (title, p.title_pinned) {
-                (Some(title), true) => div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .child(title.px(s.md).pt(s.md))
-                    .child(rows.flex_1().min_h_0().children(children(window, cx)))
-                    .into_any_element(),
-                (title, _) => rows.size_full().children(title).children(children(window, cx)).into_any_element(),
+                (Some(title), true) => {
+                    let rows = rows.children(children(window, cx));
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(title.px(s.md).pt(s.md))
+                        .child(self.scrolled(id, rows, crate::scrollbar::Fit::Flex, window))
+                        .into_any_element()
+                }
+                (title, _) => {
+                    let rows = rows.children(title).children(children(window, cx));
+                    self.scrolled(id, rows, crate::scrollbar::Fit::Fill, window)
+                }
             }
         } else if is::<FormSection>(kind) {
             let p = props::<FormSectionProps>(node)?;
@@ -568,12 +574,3 @@ impl Build<'_> {
 fn is_kind<W: 'static>(node: &Node) -> bool {
     matches!(node.kind, nd_ui::backend::NodeKind::Widget(w) if is::<W>(w))
 }
-
-/// A background only when `on`, for selected rows and segments.
-pub(crate) trait WhenBg: Styled + Sized {
-    fn when_bg(self, on: bool, color: gpui::Hsla) -> Self {
-        if on { self.bg(color) } else { self }
-    }
-}
-
-impl<T: Styled> WhenBg for T {}

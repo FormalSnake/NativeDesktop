@@ -190,7 +190,12 @@ pub fn palette_overlay(
         .py(px(m.list_gap));
     for (i, item) in rows.iter().enumerate() {
         let highlighted = model.highlight() == Some(i);
-        let (bg, fg, secondary) = if highlighted {
+        // WinUI's list selection: SubtleFillColorSecondary under an accent pill, the text as is.
+        let fluent = theme.preset == Preset::Fluent;
+        let (bg, fg, secondary) = if highlighted && fluent {
+            let subtle = with_alpha(theme.text.primary, if theme.is_dark() { 0.059 } else { 0.035 });
+            (Some(subtle), theme.text.primary, theme.text.secondary)
+        } else if highlighted {
             (Some(theme.accent_container.bg), theme.accent_container.fg, theme.accent_container.fg.opacity(0.8))
         } else {
             (None, theme.text.primary, theme.text.secondary)
@@ -236,6 +241,9 @@ pub fn palette_overlay(
                     .clone()
                     .map(|hint| div().flex_shrink_0().pl(px(m.hint_gap)).text_color(secondary).child(hint)),
             );
+        if highlighted && fluent {
+            row = row.relative().child(crate::forms::text::selection_pill(theme.accent, px(16.)));
+        }
         if let Some(bg) = bg {
             row = row.bg(bg);
         } else {
@@ -347,7 +355,7 @@ pub fn source_tree_view(
     compact: bool,
     on_input: Option<OnInput<TreeInput>>,
     marks: &Marks,
-) -> AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let (body, footnote) = (theme.type_scale.body, theme.type_scale.footnote);
     // WinUI's NavigationView: an icon per item, a subtle fill with an accent pill on the selected
     // one, and an icon-only rail when the pane is compact.
@@ -361,8 +369,9 @@ pub fn source_tree_view(
         .flex_col()
         .size_full()
         .overflow_y_scroll()
-        .p(theme.spacing.sm)
-        .gap(px(1.))
+        // NavigationViewItem: 36 px rows 4 px in from the pane's edge, 4 px apart.
+        .p(if fluent { px(4.) } else { theme.spacing.sm })
+        .gap(if fluent { px(4.) } else { px(1.) })
         .text_size(theme.type_scale.body);
     if props.nodes.is_empty() {
         if let Some(empty) = &props.empty {
@@ -382,7 +391,7 @@ pub fn source_tree_view(
                 );
             }
         }
-        return list.into_any_element();
+        return list;
     }
     let index = SourceIndex::new(&props.nodes);
     let actions: HashMap<&SharedString, _> = props.actions.iter().map(|a| (&a.id, a)).collect();
@@ -407,6 +416,21 @@ pub fn source_tree_view(
     for (i, depth) in index.visible(&props.nodes) {
         let node = &props.nodes[i];
         if node.section && compact {
+            continue;
+        }
+        if node.section && fluent {
+            // NavigationViewItemHeader: body text, semibold, secondary, on a row's height.
+            marks.text(&node.title, theme.text.secondary, &[], body, semibold);
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h(px(FLUENT_ROW))
+                    .px(px(12.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.text.secondary)
+                    .child(node.title.clone()),
+            );
             continue;
         }
         if node.section {
@@ -458,6 +482,21 @@ pub fn source_tree_view(
             .w(theme.spacing.lg)
             .text_color(secondary)
             .child(if expandable { if node.expanded { "\u{25be}" } else { "\u{25b8}" } } else { "" });
+        if fluent {
+            // WinUI puts the expand chevron at the row's trailing edge.
+            let chevron = if cfg!(target_os = "windows") {
+                crate::fluent_icons::glyph(if node.expanded { '\u{E70E}' } else { '\u{E70D}' }, px(12.), secondary)
+                    .into_any_element()
+            } else {
+                let g = if node.expanded { Glyph::ChevronUp } else { Glyph::ChevronDown };
+                glyph(g, px(12.), secondary, px(1.))
+            };
+            disclosure = div()
+                .id(ElementId::Name(format!("{}-disclosure", node.id).into()))
+                .flex_shrink_0()
+                .ml(theme.spacing.sm)
+                .children(expandable.then_some(chevron));
+        }
         if expandable && let Some(on_input) = on_input.clone() {
             let (key, expand) = (key.clone(), !node.expanded);
             disclosure = disclosure.on_click(move |_, window, cx| {
@@ -470,11 +509,13 @@ pub fn source_tree_view(
             .filter(|_| fluent)
             .and_then(|icon| icon.segoe_fluent())
             .map(|code| crate::fluent_icons::glyph(code, px(16.), fg));
+        let row_height = if fluent { px(FLUENT_ROW) } else { theme.control.regular };
+        // At the item's indentation: a child's pill sits in from its parent's.
         let pill = (fluent && selected).then(|| {
             div()
                 .absolute()
-                .left_0()
-                .top(px((theme.control.regular.as_f32() - 16.) / 2.))
+                .left(px(32. * depth as f32))
+                .top((row_height - px(16.)) / 2.)
                 .w(px(3.))
                 .h(px(16.))
                 .rounded(px(1.5))
@@ -489,7 +530,7 @@ pub fn source_tree_view(
             .flex()
             .flex_row()
             .items_center()
-            .min_h(theme.control.regular)
+            .min_h(row_height)
             .rounded(theme.radius.md)
             .text_color(fg)
             .children(pill);
@@ -502,12 +543,22 @@ pub fn source_tree_view(
                 )
             }));
         } else {
+            // WinUI: the icon 12 px in, the label 16 px past it, children indented to the label.
+            let (lead, indent, trail, icon_gap) = if fluent {
+                (px(12.), px(32.), px(14.), px(16.))
+            } else {
+                (px(0.), px(indent), theme.spacing.sm, theme.spacing.md)
+            };
+            let (leading, trailing) = match fluent {
+                true => (None, expandable.then_some(disclosure)),
+                false => (Some(disclosure), None),
+            };
             row = row
-                .pl(px(depth as f32 * indent))
-                .pr(theme.spacing.sm)
-                .child(disclosure)
+                .pl(lead + indent * depth as f32)
+                .pr(trail)
+                .children(leading)
                 .children(match icon {
-                    Some(icon) => Some(icon.mr(theme.spacing.md).into_any_element()),
+                    Some(icon) => Some(icon.mr(icon_gap).into_any_element()),
                     None => icon_glyph(node.icon).map(|g| {
                         div()
                             .flex_shrink_0()
@@ -534,7 +585,8 @@ pub fn source_tree_view(
                         .text_size(theme.type_scale.footnote)
                         .text_color(secondary)
                         .child(b)
-                }));
+                }))
+                .children(trailing);
         }
         if expandable {
             row = row.aria_expanded(node.expanded);
@@ -570,6 +622,11 @@ pub fn source_tree_view(
             let hover = if fluent { subtle } else { theme.hover(theme.surface.sidebar) };
             row = row.hover(move |s| s.bg(hover));
         }
+        if fluent {
+            // SubtleFillColorTertiary while pressed.
+            let pressed = with_alpha(theme.text.primary, if theme.is_dark() { 0.039 } else { 0.024 });
+            row = row.active(move |s| s.bg(pressed));
+        }
         if let Some(on_input) = on_input.clone() {
             let selectable = node.selectable;
             let click_key = key.clone();
@@ -595,7 +652,7 @@ pub fn source_tree_view(
         }
         list = list.child(row.children(report(&node.id)));
     }
-    list.into_any_element()
+    list
 }
 
 /// Window-wide pointer listeners for a press on a row of a tree whose rows drag: past
@@ -660,6 +717,9 @@ fn row_drag_listener(drawn: &Rc<RefCell<Drawn>>, emit: &Emit, wake: &crate::back
     .size_0()
     .into_any_element()
 }
+
+/// NavigationViewItem's height in the pane.
+const FLUENT_ROW: f32 = 36.;
 
 /// Input on a drawn toast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -766,6 +826,9 @@ pub fn banner_view(
     if !props.revealed {
         return div().into_any_element();
     }
+    if theme.preset == Preset::Fluent {
+        return info_bar(id, props, theme, on_action, marks);
+    }
     let (bg, fg) = (theme.accent_container.bg, theme.accent_container.fg);
     let button = theme.pressed(bg);
     marks.fill("banner", bg, &[]);
@@ -808,12 +871,92 @@ pub fn banner_view(
         }
         bar = bar.child(button);
     }
-    // WinUI's InfoBar is a card inset in the content, where libadwaita's banner spans it edge to
-    // edge; inset, it also keeps clear of the rounded corner of a Mica window's content layer.
-    if theme.preset == nd_theme::Preset::Fluent {
-        return div().w_full().p(theme.spacing.md).child(bar.rounded(theme.radius.md)).into_any_element();
-    }
     bar.into_any_element()
+}
+
+/// The banner as WinUI's informational InfoBar (InfoBar_themeresources.xaml): a 48 px card in
+/// SystemFillColorAttentionBackground with a CardStrokeColorDefault outline, the accent info
+/// badge, the message and a standard button. It sits inset in the content, where libadwaita's
+/// banner spans it edge to edge, which also keeps it clear of the content layer's rounded corner.
+fn info_bar(id: NodeId, props: &BannerProps, theme: &Theme, on_action: Option<OnAction>, marks: &Marks) -> AnyElement {
+    let dark = theme.is_dark();
+    let look = crate::forms::look::FormLook::fluent(theme);
+    let bg: Hsla = if dark { with_alpha(gpui::white(), 0.031) } else { gpui::rgba(0xf6f6f680).into() };
+    let stroke = with_alpha(gpui::black(), if dark { 0.098 } else { 0.059 });
+    let inverse = if dark { with_alpha(gpui::black(), 0.894) } else { gpui::white() };
+    let under = [theme.surface.layer];
+    marks.fill("banner", bg, &under);
+    marks.text(&props.title, theme.text.primary, &[under[0], bg], theme.type_scale.body, FontWeight::NORMAL);
+    // InfoBarIconBackgroundGlyph under InfoBarInformationalIconGlyph, 16 px.
+    let badge = if cfg!(target_os = "windows") {
+        div()
+            .relative()
+            .size(px(16.))
+            .child(crate::fluent_icons::glyph('\u{F136}', px(16.), theme.accent))
+            .child(crate::fluent_icons::glyph('\u{F13F}', px(16.), inverse).absolute().top_0().left_0())
+    } else {
+        div()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(theme.accent)
+            .text_color(inverse)
+            .text_size(px(11.))
+            .font_weight(FontWeight::BOLD)
+            .child("i")
+    };
+    let mut bar = div()
+        .id(ElementId::Integer(id.0))
+        .role(gpui::Role::Status)
+        .aria_label(props.title.clone())
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .min_h(px(48.))
+        .pl(px(16.))
+        .pr(px(16.))
+        .rounded(theme.radius.md)
+        .bg(bg)
+        .border_1()
+        .border_color(stroke)
+        .text_color(theme.text.primary)
+        .text_size(theme.type_scale.body)
+        .child(badge.flex_none().mr(px(14.)))
+        .child(div().flex_1().min_w_0().truncate().child(props.title.clone()));
+    if let Some(label) = &props.action {
+        marks.fill("banner button", look.fill, &[under[0], bg]);
+        marks.text(label, look.text, &[under[0], bg, look.fill], theme.type_scale.body, FontWeight::NORMAL);
+        let edge = crate::forms::toggle::elevation_edge(look, look.radius);
+        let mut button = div()
+            .id("nd-banner-action")
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .ml(px(16.))
+            .my(px(8.))
+            .h(look.control_height)
+            .px(look.padding_x)
+            .rounded(look.radius)
+            .bg(look.fill)
+            .border_1()
+            .border_color(look.border)
+            .children(edge)
+            .text_color(look.text)
+            .hover(move |s| s.bg(look.fill_hover))
+            .active(move |s| s.bg(look.fill_active))
+            .child(label.clone());
+        if let Some(on_action) = on_action {
+            button = button.on_click(move |_, _, cx| on_action(cx));
+        }
+        bar = bar.child(button);
+    }
+    div().w_full().p(theme.spacing.md).child(bar).into_any_element()
 }
 
 /// Per-node state of the drawn widgets, kept beside the retained tree and dropped on release.
@@ -1255,17 +1398,18 @@ impl Build<'_> {
             });
             let mut style = div();
             gpui::Refineable::refine(style.style(), &props.style);
+            let tree = source_tree_view(
+                id,
+                props,
+                hovered.as_ref(),
+                theme,
+                self.in_hidden_sidebar(node),
+                Some(on_input),
+                marks,
+            );
             return Some(
                 style
-                    .child(source_tree_view(
-                        id,
-                        props,
-                        hovered.as_ref(),
-                        theme,
-                        self.in_hidden_sidebar(node),
-                        Some(on_input),
-                        marks,
-                    ))
+                    .child(self.scrolled(id, tree, crate::scrollbar::Fit::Fill, window))
                     .children(slot.map(|(at, width)| {
                         let line = div().w(width).h(px(2.)).rounded(px(1.)).bg(theme.accent);
                         deferred(anchored().position(point(at.x, at.y - px(1.))).child(line))
