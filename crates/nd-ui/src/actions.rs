@@ -17,7 +17,10 @@ gpui::actions!(
         /// focus scope that asked for it (the innermost overlay).
         Cancel,
         /// F12: cycles the frame HUD hidden, minimal and full (`nd::hud`).
-        ToggleFrameHud
+        ToggleFrameHud,
+        /// Shows or hides the window's sidebar. Unhandled, nd toggles the window's scaffold the
+        /// way its toolbar toggle does (`WindowCommand::ToggleSidebar`).
+        ToggleSidebar
     ]
 );
 
@@ -29,5 +32,11 @@ pub fn standard_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", Confirm, None),
         KeyBinding::new("escape", Cancel, None),
         KeyBinding::new("f12", ToggleFrameHud, None),
+        KeyBinding::new(SIDEBAR_KEY, ToggleSidebar, None),
     ]
 }
+
+/// The platform's sidebar shortcut: Control-Command-S on macOS (the HIG's View menu), F9 in
+/// GNOME (the HIG's standard keyboard shortcuts) and on Windows, which has no convention of its
+/// own and shares GNOME's key for the same app.
+const SIDEBAR_KEY: &str = if cfg!(target_os = "macos") { "ctrl-cmd-s" } else { "f9" };

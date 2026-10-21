@@ -229,6 +229,42 @@ impl GpuiBackend {
         }
     }
 
+    /// Hides or shows the sidebar of the window's outermost scaffold that has one, as its
+    /// toolbar toggle does.
+    fn toggle_sidebar(&self, window: WindowId) {
+        let mut state = self.state.borrow_mut();
+        let is = |kind: NodeKind, ty: TypeId| matches!(kind, NodeKind::Widget(w) if w.type_id == ty);
+        let mut queue: std::collections::VecDeque<NodeId> =
+            state.windows.get(&window).and_then(|w| w.root).into_iter().collect();
+        while let Some(id) = queue.pop_front() {
+            let Some(node) = state.nodes.get(&id) else { continue };
+            let sidebar = is(node.kind, TypeId::of::<nd_components::Scaffold>())
+                && node.children.iter().any(|c| {
+                    state.nodes.get(c).is_some_and(|pane| {
+                        is(pane.kind, TypeId::of::<nd_components::Pane>())
+                            && pane
+                                .props
+                                .downcast_ref::<nd_components::PaneProps>()
+                                .is_some_and(|p| p.role == nd_components::PaneRole::Sidebar)
+                    })
+                });
+            if sidebar {
+                let mut hidden = self.hidden_sidebars.borrow_mut();
+                if !hidden.remove(&id) {
+                    hidden.insert(id);
+                }
+                state.dirty.insert(window);
+                break;
+            }
+            queue.extend(node.children.iter().copied());
+        }
+        let (app, wake) = (state.app.clone(), state.wake.clone());
+        drop(state);
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
+    }
+
     /// The app's menu bar, for a single canvas to draw (the web). Other GPUI desktops fold
     /// menus into the command palette and ignore it.
     pub fn set_menu_bar(&self, menus: Vec<nd_components::Menu>) {
@@ -710,6 +746,10 @@ impl Backend for GpuiBackend {
 
     /// Recorded for the host, which carries it out on its next pump with the app free.
     fn window_command(&mut self, window: WindowId, command: nd_ui::backend::WindowCommand) {
+        if command == nd_ui::backend::WindowCommand::ToggleSidebar {
+            self.toggle_sidebar(window);
+            return;
+        }
         self.tab_seam.borrow_mut().commands.push((window, command));
         let (app, wake) = {
             let state = self.state.borrow();

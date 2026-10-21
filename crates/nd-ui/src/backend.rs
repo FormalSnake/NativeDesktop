@@ -173,6 +173,9 @@ pub enum WindowCommand {
     Activate,
     /// Shows or hides the overview of the window's tab group (macOS "Show All Tabs").
     ToggleTabOverview,
+    /// Shows or hides the window's sidebar, as the toolbar's sidebar toggle does: outside the
+    /// app's state, which hears of it as the pane's collapse.
+    ToggleSidebar,
 }
 
 /// Where an op runs inside a transaction. Ordered: a transaction never sends an op of an

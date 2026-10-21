@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::model::NoteId;
 
-actions!(notes, [NewNote, OpenPalette, OpenSettings, FocusSearch, ToggleSidebar, ReportIssue]);
+actions!(notes, [NewNote, OpenPalette, OpenSettings, FocusSearch, ReportIssue]);
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[schemars(crate = "nd::schemars")]
@@ -30,7 +30,7 @@ pub fn shortcut(action: &dyn Action) -> Option<&'static str> {
         "notes::NewNote" => label("⌘N", "Ctrl+N"),
         "notes::OpenPalette" => label("⌘K", "Ctrl+K"),
         "notes::OpenSettings" => label("⌘,", "Ctrl+,"),
-        "notes::ToggleSidebar" => label("⌥⌘S", "Ctrl+Alt+S"),
+        "nd::ToggleSidebar" => label("⌃⌘S", "F9"),
         _ => None,
     }
 }
@@ -42,7 +42,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-k", OpenPalette, Some(CONTEXT)),
         KeyBinding::new("secondary-f", FocusSearch, Some(CONTEXT)),
         KeyBinding::new("secondary-,", OpenSettings, None),
-        KeyBinding::new("secondary-alt-s", ToggleSidebar, Some(CONTEXT)),
     ]);
 
     set_menus(
@@ -50,10 +49,8 @@ pub fn init(cx: &mut App) {
         [
             Menu::app([MenuItem::action("Settings…", OpenSettings)]),
             Menu::new("File").items([MenuItem::action("New Note", NewNote)]),
-            Menu::new("View").items([
-                MenuItem::action("Command Palette", OpenPalette),
-                MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            ]),
+            Menu::new("View")
+                .items([MenuItem::action("Command Palette", OpenPalette), MenuItem::role(MenuRole::ToggleSidebar)]),
             Menu::help([MenuItem::action("Report an Issue…", ReportIssue)]),
         ],
     );

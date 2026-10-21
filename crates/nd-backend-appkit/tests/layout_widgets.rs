@@ -116,15 +116,17 @@ mod layout {
 
     impl Render for Shell {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            scaffold().toolbar(toolbar().inspector_toggle()).content(div().size_full()).inspector(
-                inspector().collapsed(self.collapsed).on_collapse_change(cx.listener(
+            scaffold()
+                .toolbar(toolbar().inspector_toggle())
+                .sidebar(sidebar().child(div()))
+                .content(div().size_full())
+                .inspector(inspector().collapsed(self.collapsed).on_collapse_change(cx.listener(
                     |this, e: &PaneCollapsed, _, cx| {
                         this.log.borrow_mut().collapses.push(e.collapsed);
                         this.collapsed = e.collapsed;
                         cx.notify();
                     },
-                )),
-            )
+                )))
         }
     }
 
@@ -444,6 +446,30 @@ mod layout {
         c.check(!item.isCollapsed(), "a controlled expand opens the inspector");
         let collapses = log.borrow().collapses.clone();
         c.check(collapses == [true], &format!("a controlled change echoes nothing ({collapses:?})"));
+
+        // The View menu's sidebar role: the split view titles it, and nd's action toggles it.
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let side = controller.splitViewItems().firstObject().expect("the sidebar item");
+        let bar = nd_backend_appkit::menu_bar(
+            mtm,
+            vec![Menu::new("View").items([MenuItem::role(MenuRole::ToggleSidebar)])],
+            &[],
+        );
+        let menu = bar
+            .itemWithTitle(&nd_backend_appkit::objc2_foundation::NSString::from_str("View"))
+            .and_then(|i| i.submenu())
+            .expect("the View menu");
+        let role = menu.itemAtIndex(0).expect("the sidebar item");
+        menu.update();
+        c.check(
+            role.title().to_string() == "Hide Sidebar" && role.isEnabled(),
+            &format!("an open sidebar's item reads Hide Sidebar ({}, {})", role.title(), role.isEnabled()),
+        );
+        host.update(|app| app.dispatch_action(shell, &nd_ui::actions::ToggleSidebar));
+        pump(&host, Duration::from_millis(1000));
+        c.check(side.isCollapsed(), "nd::ToggleSidebar, unhandled, collapses the sidebar");
+        menu.update();
+        c.check(role.title().to_string() == "Show Sidebar", &format!("then the item reads {}", role.title()));
 
         shell_window.close();
         window.close();

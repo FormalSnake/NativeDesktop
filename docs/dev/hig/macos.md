@@ -105,6 +105,12 @@ a change, never for decoration, and honour Reduce Motion
 - [Menus](https://developer.apple.com/design/human-interface-guidelines/the-menu-bar): standard
   roles (Hide, Quit, Undo, Cut, Copy, Paste, Minimize, Zoom, Enter Full Screen with Control-Command-F)
   map to AppKit selectors so the system validates and titles them. `services.rs`.
+- The View menu's sidebar item is `MenuItem::role(MenuRole::ToggleSidebar)`: `toggleSidebar:` on
+  Control-Command-S, which the window's `NSSplitViewController` titles Show Sidebar or Hide
+  Sidebar ([the menu bar](https://developer.apple.com/design/human-interface-guidelines/the-menu-bar#View-menu)).
+  The same key is in nd's standard bindings as `nd::ToggleSidebar`; unhandled, it becomes
+  `WindowCommand::ToggleSidebar`, so an app needs no sidebar state of its own. GNOME and Windows
+  get F9. `services.rs`, `nd-ui/src/actions.rs`.
 - [Context menus](https://developer.apple.com/design/human-interface-guidelines/context-menus)
   open on Control-click and secondary click; `views.rs`, `services.rs`.
 - Scrolling: `NSScrollView` elasticity and momentum; nd never replaces them.

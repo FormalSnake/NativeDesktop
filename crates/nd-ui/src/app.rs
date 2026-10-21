@@ -568,6 +568,9 @@ impl App {
         if let Some(scope) = tree.dispatch.take_dismissal() {
             self.events.emitter(scope).emit(crate::dispatch::DismissRequested);
         }
+        if tree.dispatch.take_sidebar_toggle() {
+            self.window_command(window, crate::backend::WindowCommand::ToggleSidebar);
+        }
         match self.windows.get_mut(&window) {
             Some(slot) => slot.tree = Some(tree),
             // A listener closed the window.

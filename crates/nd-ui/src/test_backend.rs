@@ -46,6 +46,7 @@ pub struct TestBackend {
     probes: HashMap<NodeId, Probe>,
     performed: Vec<(NodeId, SemanticAction)>,
     haptics: Vec<nd_gesture::Haptic>,
+    commands: Vec<(WindowId, crate::backend::WindowCommand)>,
     windows: HashMap<WindowId, Rect>,
     previews: Vec<(NodeId, Option<nd_core::Point>)>,
 }
@@ -70,6 +71,7 @@ impl TestBackend {
             probes: HashMap::new(),
             performed: Vec::new(),
             haptics: Vec::new(),
+            commands: Vec::new(),
             windows: HashMap::new(),
             previews: Vec::new(),
         }
@@ -114,6 +116,11 @@ impl TestBackend {
     /// Haptics played so far, in order.
     pub fn haptics(&self) -> &[nd_gesture::Haptic] {
         &self.haptics
+    }
+
+    /// Window commands received, oldest first.
+    pub fn window_commands(&self) -> &[(WindowId, crate::backend::WindowCommand)] {
+        &self.commands
     }
 
     /// Behaves like the GPUI backend, which lays out itself and never receives frames.
@@ -429,6 +436,10 @@ impl Backend for TestBackend {
     /// Focus is nd's own; everything else is unsupported here.
     fn haptic(&mut self, haptic: nd_gesture::Haptic) {
         self.haptics.push(haptic);
+    }
+
+    fn window_command(&mut self, window: WindowId, command: crate::backend::WindowCommand) {
+        self.commands.push((window, command));
     }
 
     fn perform(&mut self, node: NodeId, action: &SemanticAction) -> Result<(), ActionError> {

@@ -15,7 +15,6 @@ pub struct Notes {
     editor: Entity<Editor>,
     search: Entity<TextFieldState>,
     folder: Folder,
-    sidebar_collapsed: bool,
     palette_open: bool,
     palette_query: SharedString,
 }
@@ -51,7 +50,6 @@ impl Notes {
             editor,
             search,
             folder: Folder::All,
-            sidebar_collapsed: false,
             palette_open: false,
             palette_query: SharedString::default(),
         }
@@ -126,11 +124,6 @@ impl Notes {
         window.focus_id(cx, SEARCH);
     }
 
-    fn toggle_sidebar(&mut self, _: &ToggleSidebar, _window: &mut Window, cx: &mut Context<Self>) {
-        self.sidebar_collapsed = !self.sidebar_collapsed;
-        cx.notify();
-    }
-
     fn open_palette(&mut self, _: &OpenPalette, _window: &mut Window, cx: &mut Context<Self>) {
         self.palette_open = true;
         self.palette_query = SharedString::default();
@@ -158,7 +151,7 @@ impl Notes {
         let commands = [
             ("cmd:new", "New Note", Icon::SquarePen, shortcut(&NewNote)),
             ("cmd:settings", "Settings", Icon::Settings, shortcut(&OpenSettings)),
-            ("cmd:sidebar", "Toggle Sidebar", Icon::PanelLeft, shortcut(&ToggleSidebar)),
+            ("cmd:sidebar", "Toggle Sidebar", Icon::PanelLeft, shortcut(&nd::actions::ToggleSidebar)),
         ];
         items.extend(fuzzy::rank(&self.palette_query, commands, |c| c.1).map(|(id, title, icon, keys)| {
             palette_item(id, title).icon(icon).when_some(keys, |item, keys| item.hint(keys))
@@ -171,7 +164,7 @@ impl Notes {
         match event.id.as_ref() {
             "cmd:new" => self.new_note(&NewNote, window, cx),
             "cmd:settings" => self.open_settings(&OpenSettings, window, cx),
-            "cmd:sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
+            "cmd:sidebar" => cx.window_command(window.id(), nd::backend::WindowCommand::ToggleSidebar),
             other => {
                 if let Some(id) = other.strip_prefix("note:").and_then(|n| n.parse().ok()) {
                     self.select(NoteId(id), window, cx);
@@ -202,7 +195,6 @@ impl Render for Notes {
             .on_action(cx.listener(Self::duplicate))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::focus_search))
-            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::open_palette))
             .on_action(cx.listener(|_, _: &ReportIssue, _window, _cx| report_issue()))
             .toolbar(
@@ -212,7 +204,7 @@ impl Render for Notes {
                     .flexible_space()
                     .item(search_field(SEARCH, &self.search).w(px(220.))),
             )
-            .sidebar(sidebar().collapsed(self.sidebar_collapsed).min_w(px(200.)).child(folders))
+            .sidebar(sidebar().min_w(px(200.)).child(folders))
             .content(
                 h_flex()
                     .size_full()

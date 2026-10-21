@@ -38,9 +38,9 @@ A ticked item is fixed in nd for every app; the note says how it was checked.
 
 ## Menus
 
-- [ ] The View menu item is an app's "Toggle Sidebar" with its own shortcut. The HIG wants "Show
-  Sidebar" / "Hide Sidebar" flipping with the state, on Control-Command-S. Open: needs a
-  cross-platform menu role in `nd-components/src/menu.rs`, which the formalmusic-ui lane has open.
+- [x] The View menu item was an app's "Toggle Sidebar" on Option-Command-S. The HIG wants "Show
+  Sidebar" / "Hide Sidebar" flipping with the state, on Control-Command-S. Now
+  `MenuRole::ToggleSidebar`, with `nd::ToggleSidebar` for the key and palette elsewhere.
 
 ## Gallery (the example itself, not the framework)
 

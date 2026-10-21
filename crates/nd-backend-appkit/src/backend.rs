@@ -34,7 +34,9 @@ use nd_ui::{
 };
 use objc2::Message;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSAppearanceCustomization, NSApplication, NSBox, NSView, NSWindowOrderingMode};
+use objc2_app_kit::{
+    NSAppearanceCustomization, NSApplication, NSBox, NSSplitViewController, NSView, NSWindowOrderingMode,
+};
 use objc2_foundation::{MainThreadMarker, NSAlignmentOptions};
 use objc2_quartz_core::CATransaction;
 
@@ -1841,6 +1843,12 @@ impl Backend for AppKitBackend {
                 ns.makeKeyAndOrderFront(None);
             }
             nd_ui::backend::WindowCommand::ToggleTabOverview => ns.toggleTabOverview(None),
+            nd_ui::backend::WindowCommand::ToggleSidebar => {
+                if let Some(split) = ns.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok())
+                {
+                    unsafe { split.toggleSidebar(None) };
+                }
+            }
             _ => {}
         }
     }
