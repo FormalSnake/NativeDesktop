@@ -106,6 +106,7 @@ mod mac {
         let titles: Vec<String> = columns.iter().map(|c| c.title().to_string()).collect();
         assert_eq!(titles, ["Name", "Size", "Kind"]);
         assert!(table.headerView().is_some(), "a table has a header");
+        assert!(table.usesAlternatingRowBackgroundColors(), "a multicolumn table alternates its rows");
         for col in 0..3 {
             let cell = table.viewAtColumn_row_makeIfNecessary(col, 0, true).expect("cell");
             assert_eq!(cell.subviews().len(), 1, "column {col} holds its cell's view");
