@@ -49,8 +49,38 @@ impl Engine {
     }
 }
 
+/// How Chromium hosts a page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CefStyle {
+    /// Alloy style, rendered off-screen and drawn by nd in the window's own frame.
+    #[default]
+    Osr,
+    /// Chrome style in a native child view of the window (an `NSView` on macOS, an X11 child
+    /// window under XWayland on Linux): Chromium's extension runtime, `chrome://` pages and
+    /// its own context menus and popups, with Chrome's browser UI hidden.
+    Chrome,
+}
+
+impl CefStyle {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "osr" | "alloy" | "off-screen" => Some(Self::Osr),
+            "chrome" => Some(Self::Chrome),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Osr => "osr",
+            Self::Chrome => "chrome",
+        }
+    }
+}
+
 thread_local! {
     static DEFAULT: Cell<Option<Engine>> = const { Cell::new(None) };
+    static DEFAULT_STYLE: Cell<Option<CefStyle>> = const { Cell::new(None) };
     static FACTORIES: RefCell<HashMap<Engine, Rc<dyn EngineFactory>>> = RefCell::default();
 }
 
@@ -66,6 +96,20 @@ pub fn default_engine() -> Engine {
 
 pub fn set_default_engine(engine: Engine) {
     DEFAULT.with(|d| d.set(Some(engine)));
+}
+
+/// The Chromium style pages use when their options name none: `ND_CEF_STYLE` when set, else
+/// what the app set with [`set_default_cef_style`] (nd sets it from `[webview.cef] style`), else
+/// [`CefStyle::Osr`].
+pub fn default_cef_style() -> CefStyle {
+    if let Some(style) = std::env::var("ND_CEF_STYLE").ok().and_then(|v| CefStyle::parse(&v)) {
+        return style;
+    }
+    DEFAULT_STYLE.with(Cell::get).unwrap_or_default()
+}
+
+pub fn set_default_cef_style(style: CefStyle) {
+    DEFAULT_STYLE.with(|d| d.set(Some(style)));
 }
 
 /// Makes `engine` available to pages. `nd-cef` registers [`Engine::Cef`].

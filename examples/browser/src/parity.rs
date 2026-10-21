@@ -1,6 +1,6 @@
 //! Every event and command of `nd::webview` against a local test page, on whichever engine the
 //! run picked. Each step runs a command and waits for what the page must report; the run prints
-//! `ND_PARITY <step> ok` per step and `ND_WEBVIEW_PARITY_OK engine=<name>` at the end, or
+//! `ND_PARITY <step> ok` per step and `ND_WEBVIEW_PARITY_OK engine=<name> style=<cef style>` at the end, or
 //! `ND_WEBVIEW_PARITY_FAILED` with the step and what was seen, and exits.
 
 use std::path::PathBuf;
@@ -83,7 +83,8 @@ impl Driver {
             self.step += 1;
         }
         let Some(step) = self.steps.get(self.step) else {
-            eprintln!("ND_WEBVIEW_PARITY_OK engine={}", engine.name());
+            let style = self.page.options().resolved_cef_style().name();
+            eprintln!("ND_WEBVIEW_PARITY_OK engine={} style={style}", engine.name());
             std::process::exit(0);
         };
         *self.watchdog.lock().expect("watchdog") = (step.name.to_owned(), Instant::now());

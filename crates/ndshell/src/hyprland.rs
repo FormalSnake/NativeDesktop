@@ -247,6 +247,49 @@ impl Hyprland {
         }
     }
 
+    /// The X display of the instance's XWayland, with `hl.config({ xwayland = { enabled = true } })`
+    /// in [`Options::extra_config`]: the `/tmp/.X11-unix` socket that this Hyprland or its
+    /// Xwayland holds, so parallel runs never take each other's.
+    pub fn x11_display(&self, timeout: Duration) -> Result<String, String> {
+        let end = Instant::now() + timeout;
+        let hyprland = self.child.id().to_string();
+        loop {
+            // Hyprland and its children (Xwayland, which takes over the listening sockets).
+            let mut pids = vec![hyprland.clone()];
+            for entry in fs::read_dir("/proc").map_err(|e| format!("/proc: {e}"))?.flatten() {
+                let stat = fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
+                let ppid = stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().nth(1));
+                if ppid == Some(hyprland.as_str()) {
+                    pids.push(entry.file_name().to_string_lossy().into_owned());
+                }
+            }
+            let inodes: Vec<String> = pids
+                .iter()
+                .filter_map(|pid| fs::read_dir(format!("/proc/{pid}/fd")).ok())
+                .flatten()
+                .filter_map(|fd| fs::read_link(fd.ok()?.path()).ok())
+                .filter_map(|link| {
+                    let link = link.to_string_lossy().into_owned();
+                    Some(link.strip_prefix("socket:[")?.strip_suffix(']')?.to_owned())
+                })
+                .collect();
+            let sockets = fs::read_to_string("/proc/net/unix").map_err(|e| format!("/proc/net/unix: {e}"))?;
+            let display = sockets.lines().find_map(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                let (inode, path) = (fields.get(6)?, fields.get(7)?);
+                let n = path.trim_start_matches('@').strip_prefix("/tmp/.X11-unix/X")?;
+                (inodes.iter().any(|i| i == inode) && n.parse::<u32>().is_ok()).then(|| format!(":{n}"))
+            });
+            if let Some(display) = display {
+                return Ok(display);
+            }
+            if Instant::now() > end {
+                return Err(format!("no XWayland socket after {timeout:?}; log: {}", self.log_tail()));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     pub fn log_tail(&self) -> String {
         let log = fs::read_to_string(self.runtime_dir.join("hyprland.log")).unwrap_or_default();
         let lines: Vec<&str> = log.lines().collect();

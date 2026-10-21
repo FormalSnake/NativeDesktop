@@ -2,6 +2,10 @@
 //! frames become its layer contents; every input event it receives is forwarded to Chromium;
 //! it is the text input client, the drag source and destination, and the accessibility parent
 //! of the page. Its display link paces Chromium's frames.
+//!
+//! A Chrome-style page ([`super::chrome`]) has Chromium's own views lifted into this one
+//! instead: they take the page's input, focus, drags and accessibility themselves, and this view
+//! only frames them, clips them and hands them the keyboard.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -24,6 +28,7 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CADisplayLink, CALayer, CATransaction, kCAGravityTopLeft};
 
+use super::chrome::Chrome;
 use super::keys;
 use super::paint::Pool;
 use crate::a11y;
@@ -36,6 +41,11 @@ pub(crate) type View = Retained<OsrView>;
 pub(crate) fn new(id: u64) -> View {
     let mtm = MainThreadMarker::new().expect("pages are created on the main thread");
     OsrView::new(mtm, id)
+}
+
+/// Both styles run in any window on macOS.
+pub(crate) fn supported(style: nd_webview::CefStyle) -> nd_webview::CefStyle {
+    style
 }
 
 /// Display ticks without a paint before the link stops and a slow probe takes over.
@@ -72,6 +82,7 @@ pub struct ViewIvars {
     accessibility_on: Cell<bool>,
     elements: RefCell<Option<Retained<NSArray<AnyObject>>>>,
     weak: RefCell<Weak<OsrView>>,
+    chrome: RefCell<Option<Rc<Chrome>>>,
 }
 
 define_class!(
@@ -102,22 +113,28 @@ define_class!(
 
         #[unsafe(method(becomeFirstResponder))]
         fn become_first_responder(&self) -> bool {
-            if let Some(host) = self.host() {
-                host.set_focus(1);
-            }
-            if let Some(p) = self.page() {
-                p.page.report_focus(true);
+            if self.chrome().is_some() {
+                self.focus_chrome();
+            } else {
+                if let Some(host) = self.host() {
+                    host.set_focus(1);
+                }
+                if let Some(p) = self.page() {
+                    p.page.report_focus(true);
+                }
             }
             true
         }
 
         #[unsafe(method(resignFirstResponder))]
         fn resign_first_responder(&self) -> bool {
-            if let Some(host) = self.host() {
-                host.set_focus(0);
-            }
-            if let Some(p) = self.page() {
-                p.page.report_focus(false);
+            if self.chrome().is_none() {
+                if let Some(host) = self.host() {
+                    host.set_focus(0);
+                }
+                if let Some(p) = self.page() {
+                    p.page.report_focus(false);
+                }
             }
             true
         }
@@ -125,6 +142,10 @@ define_class!(
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            if let Some(chrome) = self.chrome() {
+                chrome.geometry_changed();
+                return;
+            }
             if let Some(host) = self.host() {
                 host.was_resized();
                 self.wake();
@@ -146,6 +167,13 @@ define_class!(
         fn did_move_to_window(&self) {
             let _: () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
             let in_window = self.window().is_some();
+            if let Some(chrome) = self.chrome() {
+                chrome.geometry_changed();
+                if let Some(host) = self.host() {
+                    host.was_hidden(i32::from(!in_window));
+                }
+                return;
+            }
             if in_window {
                 self.start_link();
             } else {
@@ -159,10 +187,31 @@ define_class!(
             }
         }
 
+        #[unsafe(method(viewDidHide))]
+        fn did_hide(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidHide] };
+            if let Some(chrome) = self.chrome() {
+                chrome.geometry_changed();
+            }
+        }
+
+        #[unsafe(method(viewDidUnhide))]
+        fn did_unhide(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidUnhide] };
+            if let Some(chrome) = self.chrome() {
+                chrome.geometry_changed();
+            }
+        }
+
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
             if let Some(old) = self.ivars().tracking.borrow_mut().take() {
                 self.removeTrackingArea(&old);
+            }
+            // Chromium's own views track the pointer and set the cursor in Chrome style.
+            if self.chrome().is_some() {
+                let _: () = unsafe { msg_send![super(self), updateTrackingAreas] };
+                return;
             }
             let options = NSTrackingAreaOptions::MouseEnteredAndExited
                 | NSTrackingAreaOptions::MouseMoved
@@ -322,7 +371,7 @@ define_class!(
         /// run in the focused frame, the rest go to the page as keys.
         #[unsafe(method(performKeyEquivalent:))]
         fn perform_key_equivalent(&self, event: &NSEvent) -> bool {
-            self.key_equivalent(event)
+            if self.chrome().is_some() { self.chrome_key_equivalent(event) } else { self.key_equivalent(event) }
         }
 
         #[unsafe(method(copy:))]
@@ -365,8 +414,22 @@ define_class!(
             false
         }
 
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, point: NSPoint) -> Option<Retained<NSView>> {
+            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
+            match (self.chrome(), unsafe { self.superview() }) {
+                (Some(chrome), Some(superview)) if hit.is_some() => {
+                    chrome.contents_at(superview.convertPoint_toView(point, None)).or(hit)
+                }
+                _ => hit,
+            }
+        }
+
         #[unsafe(method_id(accessibilityChildren))]
         fn accessibility_children(&self) -> Option<Retained<NSArray<AnyObject>>> {
+            if self.chrome().is_some() {
+                return unsafe { msg_send![super(self), accessibilityChildren] };
+            }
             self.enable_accessibility();
             self.ivars().elements.borrow().clone()
         }
@@ -643,6 +706,7 @@ impl OsrView {
             accessibility_on: Cell::new(false),
             elements: RefCell::default(),
             weak: RefCell::default(),
+            chrome: RefCell::default(),
         });
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
         *this.ivars().weak.borrow_mut() = Weak::from_retained(&this);
@@ -721,8 +785,94 @@ impl OsrView {
 
     /// The page closed: out of the window, frames stopped.
     pub(crate) fn detach(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.teardown();
+        }
         self.stop_link();
         self.removeFromSuperview();
+    }
+
+    pub(crate) fn chrome(&self) -> Option<Rc<Chrome>> {
+        self.ivars().chrome.borrow().clone()
+    }
+
+    /// Makes this view the frame of a Chrome-style page and creates its browser.
+    pub(crate) fn create_chrome(
+        &self,
+        client: Client,
+        settings: &BrowserSettings,
+        context: Option<RequestContext>,
+    ) -> Result<(), String> {
+        let chrome = self.become_chrome();
+        chrome.create(client, settings, context)
+    }
+
+    /// Makes this view the frame of a Chrome-style page whose browser Chromium creates itself (a
+    /// popup of a Chrome-style opener).
+    pub(crate) fn become_chrome(&self) -> Rc<Chrome> {
+        let chrome = Chrome::new(self.ivars().id.get());
+        *self.ivars().chrome.borrow_mut() = Some(chrome.clone());
+        self.unregisterDraggedTypes();
+        if let Some(layer) = self.layer() {
+            layer.setMasksToBounds(true);
+        }
+        chrome
+    }
+
+    /// This view's page is the popup a Chrome-style opener is about to create: Chromium builds
+    /// its BrowserView, which this view adopts. The window info is Chromium's to fill.
+    pub(crate) fn expect_chrome_popup(&self, _info: &mut WindowInfo) {
+        self.become_chrome();
+        super::chrome::expect_popup(self.ivars().id.get());
+    }
+
+    /// The browser exists: its views move in.
+    pub(crate) fn browser_created(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.browser_created();
+        }
+    }
+
+    /// The browser closed.
+    pub(crate) fn browser_closed(&self) {
+        if let Some(chrome) = self.chrome() {
+            chrome.browser_closed();
+        }
+    }
+
+    /// Hands the keyboard to the page's own view, on a later turn: a first responder change made
+    /// while one is in progress is overwritten by it.
+    fn focus_chrome(&self) {
+        let id = self.ivars().id.get();
+        super::run_later(move || {
+            let Some(page) = page::get(id) else { return };
+            let (Some(chrome), Some(window)) = (page.view.chrome(), page.view.window()) else { return };
+            if let Some(target) = chrome.focus_target() {
+                window.makeFirstResponder(Some(&target));
+            }
+            chrome.sync_focus();
+        });
+    }
+
+    /// Cmd shortcuts the main menu declares run there: Chromium's views claim every Cmd chord
+    /// otherwise (Cmd-W, Cmd-T), and the app's menu would never hear them. The edit chords stay
+    /// the page's.
+    fn chrome_key_equivalent(&self, event: &NSEvent) -> bool {
+        if !self.chrome().is_some_and(|c| c.has_focus()) {
+            return false;
+        }
+        let flags = event.modifierFlags();
+        let key = event.charactersIgnoringModifiers().map(|c| c.to_string().to_lowercase()).unwrap_or_default();
+        let edit = flags.contains(NSEventModifierFlags::Command)
+            && edit_command(&key, flags.contains(NSEventModifierFlags::Shift), flags.contains(NSEventModifierFlags::Option))
+                .is_some();
+        if event.r#type() == NSEventType::KeyDown && !edit {
+            let app = NSApplication::sharedApplication(self.mtm());
+            if app.mainMenu().is_some_and(|m| m.performKeyEquivalent(event)) {
+                return true;
+            }
+        }
+        unsafe { msg_send![super(self), performKeyEquivalent: event] }
     }
 
     pub(crate) fn page(&self) -> Option<Rc<CefPage>> {

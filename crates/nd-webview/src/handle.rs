@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use nd_ui::App;
 
-use crate::engine::{Command, Engine, EngineView, Page, PageShared, PageState, default_engine, factory};
+use crate::engine::{CefStyle, Command, Engine, EngineView, Page, PageShared, PageState, default_engine, factory};
 use crate::{Cookie, FindOptions, JsError, JsValue, UserScript};
 
 /// Which cookie jar, cache and storage a page uses.
@@ -30,6 +30,9 @@ pub struct WebViewOptions {
     pub profile: Profile,
     /// `None` takes [`crate::default_engine`].
     pub engine: Option<Engine>,
+    /// How Chromium hosts the page; `None` takes [`crate::default_cef_style`]. Other engines
+    /// ignore it.
+    pub cef_style: Option<CefStyle>,
     /// `window.open` and `target=_blank` hand the app a live page ([`crate::NewWindow::popup`])
     /// that keeps `window.opener`, instead of only a URL.
     pub adopt_popups: bool,
@@ -42,6 +45,16 @@ impl WebViewOptions {
     pub fn engine(mut self, engine: Engine) -> Self {
         self.engine = Some(engine);
         self
+    }
+
+    pub fn cef_style(mut self, style: CefStyle) -> Self {
+        self.cef_style = Some(style);
+        self
+    }
+
+    /// The Chromium style this page uses.
+    pub fn resolved_cef_style(&self) -> CefStyle {
+        self.cef_style.unwrap_or_else(crate::default_cef_style)
     }
 
     pub fn profile(mut self, profile: Profile) -> Self {

@@ -18,6 +18,7 @@ mod gestures;
 mod host;
 mod input;
 mod media;
+pub mod occlusion;
 pub mod nav;
 pub mod os;
 mod overlay;
@@ -31,7 +32,9 @@ mod window_tabs;
 
 pub use backend::{ActivationListener, FileDropListener, GpuiBackend};
 pub use clock::{DisplayClock, Pacing};
-pub use host::{AppJob, AppSender, GpuiHost, HostBuilder, NdView, run, run_with};
+pub use host::{AppJob, AppSender, GpuiHost, HostBuilder, NdView, prefer_x11, run, run_with};
+#[cfg(target_os = "linux")]
+pub use host::on_x11;
 pub use os::{ChromeContext, FrameRequest, NoOsHooks, OsHooks};
 pub use overlay::{GpuiChrome, MenuResponse, MenuRow};
 pub use render::Look;

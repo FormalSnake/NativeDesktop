@@ -651,7 +651,9 @@ pub fn drag_preview(title: &SharedString, theme: &Theme, at: gpui::Point<Pixels>
         .text_size(look.text_size)
         .text_color(look.text)
         .child(div().truncate().child(title.clone()));
-    deferred(anchored().position(at).child(card)).with_priority(crate::overlay::PANEL_PRIORITY).into_any_element()
+    deferred(anchored().position(at).child(crate::occlusion::Occluding::passive(card)))
+        .with_priority(crate::overlay::PANEL_PRIORITY)
+        .into_any_element()
 }
 
 use gpui::prelude::FluentBuilder as _;

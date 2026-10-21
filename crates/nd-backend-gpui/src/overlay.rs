@@ -36,6 +36,7 @@ use nd_ui::backend::NodeKind;
 use nd_ui::{DismissCause, Dismissed, DivProps, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
 
 use crate::backend::{GpuiBackend, Node};
+use crate::occlusion::Occluding;
 use crate::render::{Build, Tracked};
 
 /// Stacking inside GPUI's deferred layer, one order for every overlay kind: toasts lowest (they
@@ -250,6 +251,7 @@ impl Build<'_> {
             .into_any_element()
         };
         let content = Tracked::new(id, content, self.backend.bounds.clone());
+        let content = if passive { Occluding::passive(content) } else { Occluding::surface(content) };
 
         let viewport = window.viewport_size();
         let positioned = if cover {
@@ -310,7 +312,7 @@ impl Build<'_> {
                     }
                 })
                 .child(positioned);
-            anchored().position(point(px(0.), px(0.))).child(backdrop).into_any_element()
+            anchored().position(point(px(0.), px(0.))).child(Occluding::backdrop(backdrop)).into_any_element()
         };
         deferred(layer).with_priority(PANEL_PRIORITY + 1 + self.overlay_depth(id)).into_any_element()
     }
@@ -522,9 +524,9 @@ impl Build<'_> {
                     .position(point(px(menu.at.x), px(menu.at.y)))
                     .anchor(if menu.above { Anchor::BottomLeft } else { Anchor::TopLeft })
                     .snap_to_window_with_margin(px(8.))
-                    .child(list),
+                    .child(Occluding::surface(list)),
             );
-        deferred(anchored().position(point(px(0.), px(0.))).child(backdrop))
+        deferred(anchored().position(point(px(0.), px(0.))).child(Occluding::backdrop(backdrop)))
             .with_priority(MENU_PRIORITY)
             .into_any_element()
     }

@@ -29,6 +29,7 @@ wrap_app! {
         fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
             let browser = process_type.is_none_or(|t| t.to_string().is_empty());
             if let (true, Some(line)) = (browser, command_line) {
+                crate::runtime::chrome_switches(line);
                 crate::platform::command_line(line);
             }
         }
@@ -57,6 +58,12 @@ wrap_browser_process_handler! {
             super::pump::schedule(delay_ms);
         }
 
+        /// Chrome style would answer a second launch on the same profile by opening a window of
+        /// its own.
+        fn on_already_running_app_relaunch(&self, _command_line: Option<&mut CommandLine>, _current_directory: Option<&CefString>) -> c_int {
+            1
+        }
+
         fn on_before_child_process_launch(&self, command_line: Option<&mut CommandLine>) {
             if let (false, Some(line)) = (self.schemes.is_empty(), command_line) {
                 line.append_switch_with_value(
@@ -79,9 +86,13 @@ wrap_client! {
     impl Client {}
 }
 
-pub(crate) fn client(id: u64) -> Client {
+/// A page's handlers. A Chrome-style page is windowed: Chromium draws and takes input itself, so
+/// it has no render handler.
+pub(crate) fn client(id: u64, style: nd_webview::CefStyle) -> Client {
+    let windowed = style == nd_webview::CefStyle::Chrome;
     NdClient::new(Handlers {
-        render: NdRender::new(id),
+        render: (!windowed).then(|| NdRender::new(id)),
+        command: NdCommand::new(id),
         life_span: NdLifeSpan::new(id),
         load: NdLoad::new(id),
         display: NdDisplay::new(id),
@@ -101,7 +112,8 @@ pub(crate) fn client(id: u64) -> Client {
 /// One page's handler objects, made once and handed out on every lookup.
 #[derive(Clone)]
 struct Handlers {
-    render: RenderHandler,
+    render: Option<RenderHandler>,
+    command: CommandHandler,
     life_span: LifeSpanHandler,
     load: LoadHandler,
     display: DisplayHandler,
@@ -124,7 +136,11 @@ wrap_client! {
 
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> {
-            Some(self.h.render.clone())
+            self.h.render.clone()
+        }
+
+        fn command_handler(&self) -> Option<CommandHandler> {
+            Some(self.h.command.clone())
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
@@ -712,6 +728,30 @@ wrap_request_handler! {
     }
 }
 
+wrap_command_handler! {
+    struct NdCommand {
+        id: u64,
+    }
+
+    impl CommandHandler {
+        fn on_chrome_command(&self, _browser: Option<&mut Browser>, command_id: c_int, _disposition: WindowOpenDisposition) -> c_int {
+            with(self.id, |p| p.chrome_command(command_id)) as c_int
+        }
+
+        fn is_chrome_app_menu_item_visible(&self, _browser: Option<&mut Browser>, _command_id: c_int) -> c_int {
+            0
+        }
+
+        fn is_chrome_page_action_icon_visible(&self, _icon_type: ChromePageActionIconType) -> c_int {
+            0
+        }
+
+        fn is_chrome_toolbar_button_visible(&self, _button_type: ChromeToolbarButtonType) -> c_int {
+            0
+        }
+    }
+}
+
 wrap_focus_handler! {
     struct NdFocus {
         id: u64,
@@ -719,7 +759,14 @@ wrap_focus_handler! {
 
     impl FocusHandler {
         fn on_got_focus(&self, _browser: Option<&mut Browser>) {
-            with(self.id, |p| p.page.report_focus(true));
+            with(self.id, |p| {
+                p.page.report_focus(true);
+                // A click in a Chrome-style page's window reaches Chromium alone: nd focus follows.
+                #[cfg(target_os = "linux")]
+                if p.view.chrome().is_some() {
+                    p.view.focus();
+                }
+            });
         }
 
         fn on_take_focus(&self, _browser: Option<&mut Browser>, next: c_int) {
@@ -748,7 +795,8 @@ wrap_keyboard_handler! {
     impl KeyboardHandler {
         /// Keys the page did not handle go back to AppKit, so the main menu's key equivalents
         /// (an app's accelerators) still run when a page has the keyboard. On Linux the app's
-        /// bindings see every key before the page does.
+        /// bindings see every key before an off-screen page does, and a Chrome-style page's
+        /// chords before Chromium does.
         #[cfg(target_os = "macos")]
         fn on_key_event(&self, _browser: Option<&mut Browser>, event: Option<&KeyEvent>, os_event: *mut u8) -> c_int {
             let Some(event) = event else { return 0 };
@@ -757,6 +805,12 @@ wrap_keyboard_handler! {
                 return 0;
             }
             with(self.id, |p| p.view.unhandled_key(os_event.cast())) as c_int
+        }
+
+        #[cfg(target_os = "linux")]
+        fn on_pre_key_event(&self, _browser: Option<&mut Browser>, event: Option<&KeyEvent>, _os_event: Option<&mut cef::sys::XEvent>, _is_keyboard_shortcut: Option<&mut c_int>) -> c_int {
+            let Some(event) = event else { return 0 };
+            with(self.id, |p| p.view.pre_key(event)) as c_int
         }
     }
 }

@@ -134,7 +134,9 @@ fn layer(
                 }
             });
     }
-    deferred(anchored().position(point(px(0.), px(0.))).child(scrim)).with_priority(DIALOG_PRIORITY).into_any_element()
+    deferred(anchored().position(point(px(0.), px(0.))).child(crate::occlusion::Occluding::surface(scrim)))
+        .with_priority(DIALOG_PRIORITY)
+        .into_any_element()
 }
 
 /// A dialog's card: the overlay surface, rounded, over the scrim.

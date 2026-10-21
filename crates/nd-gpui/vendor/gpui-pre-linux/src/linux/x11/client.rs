@@ -1058,6 +1058,10 @@ impl X11Client {
                     .context("X11: Failed to handle property notify")
                     .log_err();
             }
+            // Focus moving to or from a child window (an embedded browser's) leaves this
+            // window the active one.
+            Event::FocusIn(event) | Event::FocusOut(event)
+                if event.detail == xproto::NotifyDetail::INFERIOR => {}
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_active(true);

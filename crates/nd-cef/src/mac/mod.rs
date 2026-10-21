@@ -1,6 +1,7 @@
 //! The macOS side: finding and loading the framework, the settings that point Chromium at it
 //! and at the helper bundles, and the AppKit view, menus and sheets a page uses.
 
+pub(crate) mod chrome;
 pub(crate) mod dialogs;
 pub(crate) mod keys;
 pub(crate) mod menu;
