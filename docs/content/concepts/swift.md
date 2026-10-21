@@ -70,7 +70,7 @@ Events don't cross from Swift yet. The C functions take no emitter, so a Swift w
 ## Toolchain
 
 Swift and the macOS SDK come from the system Xcode or Command Line Tools, never from Nix.
-[swift-toolchain.toml](../../../swift-toolchain.toml) pins the minimum versions (Swift 6, SDK 26).
+[crates/nd/swift-toolchain.toml](../../../crates/nd/swift-toolchain.toml) pins the minimum versions (Swift 6, SDK 26).
 When the installed major versions are lower, `nd::build::app()` fails with a message. The Swift
 runtime is the OS's own in `/usr/lib/swift`, which is present from macOS 14 on, so the example
 declares `minimum_system_version = "14.0"`.

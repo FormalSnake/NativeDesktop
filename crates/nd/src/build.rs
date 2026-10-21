@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const PINNED: &str = include_str!("../../../swift-toolchain.toml");
+const PINNED: &str = include_str!("../swift-toolchain.toml");
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 pub fn app() {

@@ -391,7 +391,7 @@ SwiftUI state, because a hosting view is not the control the user sees (`NDLeafS
 Bridge:
 - Toolchain and SDK: Swift and the macOS SDK come from the system Xcode or Command Line Tools,
   never from Nix (nixpkgs ships Swift 6.2.4 and SDK 14.4; the design needs the 26/27 SDK). The
-  pin is `swift-toolchain.toml` at the repo root (minimum Swift and SDK major); `nd doctor` fails
+  pin is `crates/nd/swift-toolchain.toml` (minimum Swift and SDK major); `nd doctor` fails
   when the installed Swift or SDK major does not match, and CI selects the pinned Xcode with
   `xcode-select`. On darwin the Nix dev shell exports no `SDKROOT` and no linker;
   `.cargo/config.toml` sets `target.aarch64-apple-darwin.linker = "/usr/bin/clang"`, and build
