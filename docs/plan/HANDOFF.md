@@ -30,7 +30,7 @@ they were recorded on g815. Not a regression.
   Builds run on the macbook (`target/release/messages`, real config), on e1504g (demo data,
   `MESSAGES_LINUX_HOST=e1504g ND_DIR=<nd worktree> scripts/linux-gate`), and on the Windows PC
   (`C:\nd\msg`, task `ndmsgrun`). Parity is tracked in `docs/nd-parity.md` there.
-  Open on macOS: the "+" menu rows have no icons; a double-click on a bubble selects a word
+  Open on macOS: a double-click on a bubble selects a word
   (Messages does nothing); the header hover fade drives the private `NSScrollPocket`.
   Open on Linux: a .MOV in the user's own session not yet seen playing (GStreamer now in the
   app's dev shell and package); the "+" menu not yet clicked by hand.
