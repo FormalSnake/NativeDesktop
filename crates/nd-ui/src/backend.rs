@@ -277,6 +277,13 @@ pub trait Backend: Any {
     /// Carries out a window-level request. A no-op where the backend has no OS windows.
     fn window_command(&mut self, _window: WindowId, _command: WindowCommand) {}
 
+    /// Whether the app quits once its last window closes. On by default; an app with a tray
+    /// item turns it off to keep running behind the item.
+    fn set_quit_when_windows_close(&mut self, _quit: bool) {}
+
+    /// Ends the app as the OS's Quit does.
+    fn quit(&mut self) {}
+
     /// The window's title changed after it opened (a native tab shows it as the tab's title).
     fn set_window_title(&mut self, _window: WindowId, _title: &str) {}
 

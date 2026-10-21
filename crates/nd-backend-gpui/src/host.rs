@@ -667,7 +667,11 @@ impl Inner {
             }
             self.open_window(cx, id, title, size, group);
         }
-        if self.quit_when_empty && self.had_windows.get() && self.windows.borrow().is_empty() {
+        let (outlive, quit) = {
+            let state = self.backend.state.borrow();
+            (state.outlive_windows, state.quit)
+        };
+        if quit || (self.quit_when_empty && !outlive && self.had_windows.get() && self.windows.borrow().is_empty()) {
             cx.quit();
         }
     }

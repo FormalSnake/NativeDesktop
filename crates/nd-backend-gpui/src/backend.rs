@@ -78,6 +78,10 @@ pub(crate) struct State {
     pub activation_listener: Option<ActivationListener>,
     /// What each window painted in its last build.
     pub paints: HashMap<WindowId, Vec<Paint>>,
+    /// The app keeps running with no window open (it has a tray item).
+    pub outlive_windows: bool,
+    /// The app asked to quit; the host's next pump does.
+    pub quit: bool,
 }
 
 /// The GPUI backend. A cheap handle: `nd-ui`'s `App` owns one clone as its `Box<dyn Backend>`, the
@@ -175,6 +179,8 @@ impl GpuiBackend {
                 file_drop_listener: None,
                 activation_listener: None,
                 paints: HashMap::new(),
+                outlive_windows: false,
+                quit: false,
             })),
             bounds: Rc::default(),
             form_drawn: Rc::default(),
@@ -749,6 +755,22 @@ impl Backend for GpuiBackend {
         let mut state = self.state.borrow_mut();
         state.windows.entry(window).or_default().title = title.to_owned().into();
         state.dirty.insert(window);
+    }
+
+    fn set_quit_when_windows_close(&mut self, quit: bool) {
+        self.state.borrow_mut().outlive_windows = !quit;
+    }
+
+    /// Recorded for the host, which quits on its next pump.
+    fn quit(&mut self) {
+        let (app, wake) = {
+            let mut state = self.state.borrow_mut();
+            state.quit = true;
+            (state.app.clone(), state.wake.clone())
+        };
+        if let (Some(app), Some(wake)) = (app, wake) {
+            app.spawn(async move |cx| cx.update(|cx| wake(cx))).detach();
+        }
     }
 
     /// Recorded for the host, which carries it out on its next pump with the app free.
