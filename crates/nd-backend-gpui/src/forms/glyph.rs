@@ -1,10 +1,10 @@
-//! Every icon the controls draw, as GPUI paths from `nd-icons`' Lucide shapes, plus the arcs of
-//! spinners and circular progress.
+//! Every icon the controls draw, as GPUI paths from `nd-icons`' Lucide shapes (Segoe Fluent
+//! Icons under the Fluent preset on Windows), plus the arcs of spinners and circular progress.
 
 use std::f32::consts::PI;
 
 use nd_components::Icon;
-use nd_gpui::gpui::{self, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, canvas, point};
+use nd_gpui::gpui::{self, AnyElement, Bounds, Hsla, IntoElement, PathBuilder, Pixels, Point, Styled, canvas, point};
 use nd_icons::Seg;
 
 /// An icon drawn as GPUI paths: Lucide's strokes (round caps and joins), tinted by the caller.
@@ -99,10 +99,26 @@ pub(crate) fn paint_glyph(glyph: Glyph, bounds: Bounds<Pixels>, color: Hsla, wid
 }
 
 /// `glyph` in a `size` square.
-pub(crate) fn glyph(glyph: Glyph, size: Pixels, color: Hsla, width: Pixels) -> impl IntoElement {
+pub(crate) fn glyph(glyph: Glyph, size: Pixels, color: Hsla, width: Pixels) -> AnyElement {
+    if ICON_FONT.get()
+        && let Some(code) = glyph.0.segoe_fluent()
+    {
+        return crate::fluent_icons::glyph(code, size, color).into_any_element();
+    }
     canvas(|_, _, _| (), move |bounds, _, window, _| paint_glyph(glyph, bounds, color, width, window))
         .size(size)
         .flex_none()
+        .into_any_element()
+}
+
+thread_local! {
+    /// Whether [`glyph`] draws from Segoe Fluent Icons, for the window being built: the
+    /// Fluent preset on Windows, the one OS that ships the font.
+    static ICON_FONT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn set_icon_font(theme: &nd_theme::Theme) {
+    ICON_FONT.set(cfg!(target_os = "windows") && theme.preset == nd_theme::Preset::Fluent);
 }
 
 /// An arc from `start` (radians, clockwise from three o'clock) through `sweep`, inset by half

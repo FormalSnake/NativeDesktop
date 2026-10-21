@@ -63,6 +63,16 @@ Replies on these PRs are the user's to write.
   target dir), and the launcher refuses to start under 15 GB free. Check
   `ssh g815 'df -h / ; du -sh /var/lib/windows-vm'` and the guest's `Get-PSDrive C` before and
   after every build or copy; stop and report rather than clean when it runs low.
+  About 12 minutes after a start `windows-vm-prep` reboots the guest into a local admin `ndvm`
+  (pagefile off, autologon): wait for it (`systemctl status windows-vm-prep`) before building,
+  or the reboot kills the build. GUI tests run as a scheduled task registered over
+  `ssh -p 2222 ndvm@127.0.0.1` (a task of `kyan` does not start, `kyan` holds no session), and
+  ndvm's first login shows the privacy screens over everything until they are clicked through
+  (an elevated task: `mouse_event` into them is refused otherwise). The VM has no Edge, so the
+  PDF association is broken there. With the pagefile off, three rustc jobs run the 8 GB guest
+  out of memory (os error 1455); two fit. A debug `cargo test --workspace` grew the overlay by
+  about 30 GB and took g815 to 15 GB free: build with `CARGO_PROFILE_DEV_DEBUG=0`. A guest
+  `Optimize-Volume -ReTrim` does not shrink the overlay file.
 
 ## Rules that bit us (keep them)
 

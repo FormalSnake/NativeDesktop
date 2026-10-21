@@ -279,6 +279,7 @@ impl<'a> Build<'a> {
         window_id: nd_core::WindowId,
     ) -> Self {
         let theme = registry.window_theme(window_id).clone();
+        crate::forms::glyph::set_icon_font(&theme);
         let ink = Ink {
             text: theme.text.primary,
             background: theme.surface.base,
