@@ -10,12 +10,14 @@
 //! Chrome-style page), `extensions` (a Chrome extension's popup, native messaging and fill right
 //! after launch, printing `ND_EXTENSIONS_OK`), `adblock` (uBlock Origin's default lists through the
 //! request filter, printing `ND_ADBLOCK_OK`), `private` (a private window's tabs share one
-//! in-memory profile, printing `ND_PRIVATE_OK`) or `parity` (every event and command against a local test page, printing
+//! in-memory profile, printing `ND_PRIVATE_OK`), `pip` (the floating video chord's script lifts a
+//! playing video into picture-in-picture and back, printing `ND_PIP_OK`) or `parity` (every event and command against a local test page, printing
 //! `ND_WEBVIEW_PARITY_OK`).
 
 mod adblock;
 mod extensions;
 mod parity;
+mod pip;
 mod private;
 mod scenes;
 mod server;
@@ -330,6 +332,7 @@ pub fn init(cx: &mut App) {
         Ok("extensions") => extensions::open(cx),
         Ok("adblock") => adblock::open(cx),
         Ok("private") => private::open(cx),
+        Ok("pip") => pip::open(cx),
         _ => {
             bind_keys(cx);
             let url = std::env::var("BROWSER_URL").unwrap_or_else(|_| HOME.into());

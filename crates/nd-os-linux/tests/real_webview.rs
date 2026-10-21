@@ -31,6 +31,11 @@
 //!   a normal window does not see it, and a private window opened after the first closed
 //!   starts empty.
 //!
+//! - `real_pip_cef_chrome`: `BROWSER_SCENE=pip`: a page's own `requestPictureInPicture` is
+//!   refused for want of a gesture, and nativebrowser's floating video script through
+//!   `execute_javascript` lifts the playing video into Chromium's picture-in-picture window and
+//!   back. Chrome style only: an off-screen page has no picture-in-picture window.
+//!
 //! Needs `browser` built next to this test (`cargo build -p browser`) or `ND_BROWSER_BIN`.
 
 #![cfg(target_os = "linux")]
@@ -170,6 +175,11 @@ mod gate_m8_webview {
     #[test]
     fn real_private_cef_chrome() {
         scene("chrome", "private", "ND_PRIVATE_", "PRIVATE");
+    }
+
+    #[test]
+    fn real_pip_cef_chrome() {
+        scene("chrome", "pip", "ND_PIP_", "PIP");
     }
 
     #[test]

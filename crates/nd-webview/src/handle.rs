@@ -358,7 +358,11 @@ impl WebView {
     }
 
     /// Runs `code` in the page's main frame and hands its completion value, as JSON, to `done`.
-    /// A thrown exception is `Err` with its message; a returned promise is awaited.
+    /// A thrown exception is `Err` with its message; a returned promise is not awaited, so have
+    /// it report through the page (a title, a script message) instead. The code runs with a user
+    /// gesture: the app acts for the user, so it may open a popup, enter fullscreen or lift a
+    /// video into picture-in-picture (on Chromium only in Chrome style; off-screen pages have
+    /// no picture-in-picture window).
     pub fn execute_javascript(
         &self,
         code: impl Into<String>,

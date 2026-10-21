@@ -160,9 +160,27 @@ impl Devtools {
         });
     }
 
-    /// Evaluates `code` and answers with its completion value, like WebKit's
-    /// `evaluateJavaScript`: a thrown exception is an error, a promise is not awaited. The app asked, so the code runs with a user gesture (`window.open`, fullscreen), as on WebKit.
+    /// Evaluates the framework's own `code` and answers with its completion value: a thrown
+    /// exception is an error, a promise is not awaited. It runs without a user gesture, so
+    /// nothing the framework runs hands the page user activation (popups, fullscreen,
+    /// picture-in-picture) it did not get from the user.
     pub(crate) fn evaluate(&self, code: &str, world: Option<&str>, done: impl FnOnce(Result<Value, String>) + 'static) {
+        self.run(code, world, false, done);
+    }
+
+    /// [`Self::evaluate`] for the app's `execute_javascript`: the app acts for the user (a
+    /// shortcut, a menu item), so the code runs with a user gesture, as on WebKit, and may open
+    /// windows, enter fullscreen or picture-in-picture.
+    pub(crate) fn evaluate_as_user(
+        &self,
+        code: &str,
+        world: Option<&str>,
+        done: impl FnOnce(Result<Value, String>) + 'static,
+    ) {
+        self.run(code, world, true, done);
+    }
+
+    fn run(&self, code: &str, world: Option<&str>, gesture: bool, done: impl FnOnce(Result<Value, String>) + 'static) {
         let code = code.to_owned();
         let id = self.page.get();
         self.context_for(world.unwrap_or_default(), move |context| {
@@ -171,7 +189,7 @@ impl Devtools {
                 return;
             };
             let mut params =
-                json!({ "expression": code, "returnByValue": true, "awaitPromise": false, "userGesture": true });
+                json!({ "expression": code, "returnByValue": true, "awaitPromise": false, "userGesture": gesture });
             match context {
                 Ok(Some(id)) => params["contextId"] = json!(id),
                 Ok(None) => {}
