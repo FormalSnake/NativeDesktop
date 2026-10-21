@@ -98,6 +98,12 @@ pub(crate) fn paint_glyph(glyph: Glyph, bounds: Bounds<Pixels>, color: Hsla, wid
     }
 }
 
+/// `icon` drawn as [`glyph`] draws it, for chrome outside this crate (the OS hooks' window
+/// controls).
+pub fn icon_glyph(icon: Icon, size: Pixels, color: Hsla, width: Pixels) -> AnyElement {
+    glyph(Glyph(icon), size, color, width)
+}
+
 /// `glyph` in a `size` square.
 pub(crate) fn glyph(glyph: Glyph, size: Pixels, color: Hsla, width: Pixels) -> AnyElement {
     if ICON_FONT.get()

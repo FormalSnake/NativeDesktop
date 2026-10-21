@@ -513,7 +513,7 @@ impl<'a> Build<'a> {
                 d.style().text.color = Some(color);
                 d.child(props.text.clone()).into_any_element()
             }
-            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node, window),
+            NodeKind::Widget(_) if is_button(node.kind) => self.button(id, node, window, cx),
             NodeKind::Widget(w) if w.type_id == std::any::TypeId::of::<WindowControls>() => {
                 let props = node.props.downcast_ref::<WindowControlsProps>().expect("WindowControlsProps");
                 self.window_controls(props, window)
@@ -806,7 +806,7 @@ impl<'a> Build<'a> {
         .into_any_element()
     }
 
-    fn button(&self, id: NodeId, node: &Node, window: &mut gpui::Window) -> AnyElement {
+    fn button(&self, id: NodeId, node: &Node, window: &mut gpui::Window, cx: &mut App) -> AnyElement {
         let props = GpuiBackend::button_label(&node.props);
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
@@ -838,10 +838,28 @@ impl<'a> Build<'a> {
             None if accent => (theme.accent, theme.text.on_accent),
             None => (look.control, look.text),
         };
+        // libadwaita's buttons: a tint of the text colour (nothing on a flat one), the accent for
+        // the suggested action, the destructive colour over a tint of itself; no outline.
+        let adwaita = (theme.preset == nd_theme::Preset::Adwaita && explicit.is_none()).then(|| {
+            use crate::forms::look::AdwButton;
+            let kind = match props.variant {
+                ButtonVariant::Accent | ButtonVariant::Primary => AdwButton::Suggested,
+                ButtonVariant::Destructive => AdwButton::Destructive,
+                _ if matches!(props.bezel, Bezel::Borderless | Bezel::Plain) => AdwButton::Flat,
+                _ => AdwButton::Regular,
+            };
+            kind.fills(&theme)
+        });
+        let (fill, ink) = adwaita.map_or((fill, ink), |a| (a.rest, a.ink));
         // A toggle that is on sits pressed in with an accent glyph, as libadwaita's flat
-        // toggle buttons and WinUI's toggle states draw it.
+        // toggle buttons and WinUI's toggle states draw it; libadwaita's checked fill is the
+        // pressed 30%.
         let checked = props.checked == Some(true) && !accent;
-        let (fill, ink) = if checked { (theme.pressed(fill), theme.accent) } else { (fill, ink) };
+        let (fill, ink) = match (checked, adwaita) {
+            (true, Some(a)) => (a.active, theme.accent),
+            (true, None) => (theme.pressed(fill), theme.accent),
+            (false, _) => (fill, ink),
+        };
         let (fill, ink) = if props.enabled { (fill, ink) } else { (theme.disabled(fill), theme.text.tertiary) };
         // WinUI's Button: ControlFillColorDefault, Secondary and Tertiary inside an elevation
         // border, its accent button AccentFillColorDefault at 100, 90 and 80%.
@@ -851,7 +869,8 @@ impl<'a> Build<'a> {
             _ => fill,
         };
         // Borderless: no bezel until the pointer is over it.
-        let bezel = !matches!(props.bezel, Bezel::Borderless | Bezel::Plain) || accent;
+        let flat = matches!(props.bezel, Bezel::Borderless | Bezel::Plain);
+        let bezel = !flat || accent || adwaita.is_some();
         let rest = (bezel || checked).then_some(fill);
         self.painted(id, rest, None, "button", || {
             if glyph.is_some() {
@@ -870,7 +889,7 @@ impl<'a> Build<'a> {
             .flex()
             .items_center()
             .justify_center()
-            // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 6.
+            // The look's control radius: WinUI rounds a button at 4 px, libadwaita at 9.
             .rounded(theme.radius.md)
             .text_color(ink)
             // Inside a drag region the button keeps its clicks and never starts a window move. A
@@ -880,15 +899,28 @@ impl<'a> Build<'a> {
         // A labelled button with an icon leads with it, as libadwaita's button content does.
         let leading = (!props.label.is_empty()).then(|| props.icon.as_deref().and_then(Glyph::named)).flatten();
         button = match (glyph, leading) {
+            // `button.image-button`: 34 px square; `button.text-button`: 17 px each side, 34 tall.
+            (Some(g), _) if adwaita.is_some() => {
+                button.size(px(34.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75)))
+            }
             (Some(g), _) => button.size(px(28.)).child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75))),
             (None, Some(g)) => button
                 .gap(px(6.))
                 .pl(px(10.))
                 .pr(px(12.))
                 .py(px(4.))
-                .min_h(px(if fluent.is_some() { 32. } else { 0. }))
+                .min_h(px(if fluent.is_some() {
+                    32.
+                } else if adwaita.is_some() {
+                    34.
+                } else {
+                    0.
+                }))
                 .child(crate::forms::glyph::glyph(g, px(16.), ink, px(1.75)))
                 .child(label),
+            (None, None) if adwaita.is_some() => {
+                button.min_h(px(34.)).px(px(17.)).font_weight(gpui::FontWeight::BOLD).child(label)
+            }
             // WinUI's ButtonPadding (11, 5, 11, 6) inside a 1 px border, 32 px tall.
             (None, None) if fluent.is_some() => button.px(px(11.)).min_h(px(32.)).child(label),
             (None, None) => button.px(px(12.)).py(px(4.)).child(label),
@@ -912,27 +944,53 @@ impl<'a> Build<'a> {
                     .border_color(f.border)
                     .bg(fill)
                     .children(crate::forms::toggle::elevation_edge(*f, theme.radius.md)),
+                // libadwaita's buttons have no border.
+                None if adwaita.is_some() => button.bg(fill),
                 None => button.border_1().border_color(look.border).bg(fill),
             };
         } else if checked {
             button = button.bg(fill);
         }
-        if props.bezel == Bezel::Circle || filled_circle {
+        let circle = props.bezel == Bezel::Circle || filled_circle;
+        if circle {
             button = button.rounded_full();
         }
-        let button = crate::forms::with_style(button, &props.style);
+        let mut button = crate::forms::with_style(button, &props.style);
         if !props.enabled {
             return button.into_any_element();
         }
+        // libadwaita's buttons are tab stops with a 2 px outline right outside them. A click
+        // leaves the keyboard focus where it was, so pressing a toolbar button never pulls it
+        // out of a text field.
+        if adwaita.is_some() {
+            let (ctl, _) = self.ctl(id, true, window, cx, || ());
+            if ctl.focused {
+                let radius = if circle { px(17.) } else { theme.radius.md };
+                button = button.child(crate::forms::focus_outline(
+                    ctl.look.focus_ring,
+                    radius,
+                    px(0.),
+                    ctl.look.ring_settles,
+                ));
+            }
+            button = button.track_focus(ctl.focus()).capture_any_mouse_down(|_, window, _| window.prevent_default());
+        }
         // Rest, hover and pressed fills fade into each other at the look's own speed (WinUI's
         // 83 ms), or switch at once when the OS has animations off.
-        let (hover, active) = match &fluent {
-            Some(f) if explicit.is_none() && accent => (f.accent_hover, f.accent_active),
-            Some(f) if explicit.is_none() => (f.fill_hover, f.fill_active),
+        let (hover, active) = match (&fluent, adwaita) {
+            (Some(f), _) if explicit.is_none() && accent => (f.accent_hover, f.accent_active),
+            (Some(f), _) if explicit.is_none() => (f.fill_hover, f.fill_active),
+            // A checked libadwaita toggle: 30% at rest, 35% hovered, 40% pressed.
+            (_, Some(_)) if checked => {
+                let t = theme.text.primary;
+                (with_alpha(t, t.a * 0.35), with_alpha(t, t.a * 0.4))
+            }
+            (_, Some(a)) => (a.hover, a.active),
             _ => (theme.hover(fill), theme.pressed(fill)),
         };
         let duration =
             if self.backend.platform_reduce_motion() == Some(true) { 0. } else { theme.motion.fast.as_secs_f64() };
+        let curve = if adwaita.is_some() { crate::forms::look::EASE_OUT_QUAD } else { crate::fade::LINEAR };
         let fades = self.backend.fades.clone();
         let pointer = fades.pointer(id);
         let rest = if bezel || checked { fill } else { with_alpha(fill, 0.) };
@@ -943,7 +1001,7 @@ impl<'a> Build<'a> {
         } else {
             rest
         };
-        let (shown, moving) = fades.sample(id, target, self.time, duration);
+        let (shown, moving) = fades.sample(id, target, self.time, duration, curve);
         if moving {
             window.request_animation_frame();
         }

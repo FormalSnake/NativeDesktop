@@ -32,6 +32,7 @@ use nd_gpui::gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Refineable, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement, Styled, anchored, canvas, deferred, div, fill, hsla, point, px,
 };
+use nd_theme::color::with_alpha;
 use nd_ui::backend::NodeKind;
 use nd_ui::{DismissCause, Dismissed, DivProps, Modality, OverlayKind, OverlayProps, Placement, SurfaceProps};
 
@@ -173,7 +174,9 @@ impl Build<'_> {
         let props = node.props.downcast_ref::<OverlayProps>().expect("Overlay node needs OverlayProps");
         let theme = self.theme();
         let passive = props.modality == Modality::Passive || exit.is_some();
-        if exit.is_none() && props.modality != Modality::Passive {
+        // GTK 4's popovers close at once, so libadwaita's look leaves no ghost to animate out.
+        let closes_animated = theme.preset != nd_theme::Preset::Adwaita;
+        if exit.is_none() && props.modality != Modality::Passive && closes_animated {
             self.backend.overlay_exits.seen(
                 id,
                 self.window_id,
@@ -187,9 +190,37 @@ impl Build<'_> {
         // The app's own background, or the theme's overlay surface; content builds over it.
         let styled = props.style.background.as_ref().and_then(|f| f.color()).and_then(|b| b.as_solid());
         let cover = props.kind == OverlayKind::Cover;
-        let fill = styled.unwrap_or(if cover { theme.scrim } else { theme.surface.overlay });
+        let adwaita = theme.preset == nd_theme::Preset::Adwaita;
+        // libadwaita's tooltip: 80% near-black under white text, whatever the window's scheme.
+        let adw_tip = adwaita && props.kind == OverlayKind::Tooltip;
+        let fill = styled.unwrap_or(if cover {
+            theme.scrim
+        } else if adw_tip {
+            with_alpha(theme.scrim, 0.8)
+        } else {
+            theme.surface.overlay
+        });
+        let ink = if adw_tip { theme.text.on_osd } else { theme.text.primary };
         if cover {
             content = content.bg(fill).size_full();
+        } else if styled.is_none() && adw_tip {
+            content = content
+                .bg(fill)
+                .text_color(ink)
+                .border_1()
+                .border_color(with_alpha(gpui::white(), 0.1))
+                .rounded(theme.radius.md)
+                .px(px(10.))
+                .py(px(6.));
+        } else if styled.is_none() && adwaita {
+            // `popover > contents`: 15 px corners, a 14% black edge and two soft shadows.
+            let look = crate::forms::FormLook::of(&theme);
+            content = content
+                .bg(fill)
+                .border_1()
+                .border_color(look.popover_stroke)
+                .rounded(theme.radius.xl)
+                .shadow(look.popover_shadows());
         } else if styled.is_none() {
             // WinUI's ToolTip takes the control radius, its flyouts the overlay radius.
             let fluent_tip = props.kind == OverlayKind::Tooltip && theme.preset == nd_theme::Preset::Fluent;
@@ -209,7 +240,7 @@ impl Build<'_> {
                 content.border_color(theme.border.subtle).shadow_md()
             };
         }
-        let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(theme.text.primary), "overlay", || {
+        let children: Vec<AnyElement> = self.painted(id, Some(fill), Some(ink), "overlay", || {
             node.children.iter().map(|c| self.node(*c, window, cx)).collect()
         });
         if !passive {
@@ -257,7 +288,8 @@ impl Build<'_> {
         };
         let content = if let Some((t, _)) = exit {
             content.opacity(1. - t).mt(px(rise * t)).into_any_element()
-        } else if passive || reduce {
+        } else if passive || reduce || adwaita {
+            // GTK 4's popovers open at once.
             content.into_any_element()
         } else {
             let fluent = theme.preset == nd_theme::Preset::Fluent;

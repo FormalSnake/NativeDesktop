@@ -9,6 +9,7 @@ use nd_gpui::gpui::{
     self, App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
+use nd_theme::color::with_alpha;
 
 use nd_gpui::gpui::prelude::FluentBuilder as _;
 
@@ -200,6 +201,11 @@ fn segmented(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &m
     let (ctl, _) = b.ctl(id, p.enabled, window, cx, || ());
     let look = ctl.look;
     let inset = px(3.);
+    // AdwToggleGroup nests its toggles inside its own 9 px corners; elsewhere the group grows
+    // around the control radius.
+    let adwaita = look.preset == nd_theme::Preset::Adwaita;
+    let (group_radius, segment_radius) =
+        if adwaita { (look.radius, look.radius - inset) } else { (look.radius + inset, look.radius) };
     let mut group = div()
         .id(ElementId::Integer(id.0))
         .role(gpui::Role::RadioGroup)
@@ -208,7 +214,7 @@ fn segmented(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &m
         .flex_row()
         .h(look.control_height)
         .p(inset - px(2.))
-        .rounded(look.radius + inset)
+        .rounded(group_radius)
         .bg(look.fill)
         .border_2()
         .border_color(if ctl.ring() { look.focus_ring } else { gpui::transparent_black() })
@@ -226,11 +232,36 @@ fn segmented(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &m
             .flex_1()
             .items_center()
             .justify_center()
-            .px(look.padding_x)
-            .rounded(look.radius)
+            .px(if adwaita { px(8.) } else { look.padding_x })
+            .rounded(segment_radius)
             .whitespace_nowrap()
             .child(option.clone());
-        if selected {
+        if adwaita {
+            // AdwToggleGroup's toggles are bold buttons.
+            segment = segment.font_weight(gpui::FontWeight::BOLD);
+        }
+        if selected && adwaita {
+            // The active toggle: the card colour (white, or 20% white on dark) under the
+            // toast's two-layer shadow.
+            let shade = |a: f32| gpui::hsla(240. / 360., 1., 0.012, a);
+            let fill = if look.text.l > 0.5 { with_alpha(gpui::white(), 0.2) } else { gpui::white() };
+            segment = segment.bg(fill).shadow(vec![
+                gpui::BoxShadow {
+                    color: shade(0.07),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(3.),
+                    spread_radius: px(1.),
+                    inset: false,
+                },
+                gpui::BoxShadow {
+                    color: shade(0.03),
+                    offset: gpui::point(px(0.), px(2.)),
+                    blur_radius: px(6.),
+                    spread_radius: px(2.),
+                    inset: false,
+                },
+            ]);
+        } else if selected {
             segment = segment.bg(look.raised).shadow(vec![gpui::BoxShadow {
                 color: gpui::hsla(0., 0., 0., 0.12),
                 offset: gpui::point(px(0.), px(1.)),
@@ -241,11 +272,22 @@ fn segmented(b: &Build, id: NodeId, p: &SelectProps, window: &mut Window, cx: &m
         }
         if p.enabled {
             let sink = ctl.sink.clone();
-            segment =
-                segment.cursor(look.cursor).when_hover_bg(!selected, look.fill_hover).on_click(move |_, window, cx| {
-                    sink.take_focus(window, cx);
-                    sink.send(SelectChanged { index }, cx);
-                });
+            // libadwaita's toggles hover at 7% of the text colour over the group's 10%.
+            let hover = if adwaita { with_alpha(look.text, look.text.a * 0.07) } else { look.fill_hover };
+            if adwaita && !selected {
+                let pressed = with_alpha(look.text, look.text.a * 0.16);
+                segment = segment.active(move |s| s.bg(pressed));
+            }
+            segment = segment.cursor(look.cursor).when_hover_bg(!selected, hover).on_click(move |_, window, cx| {
+                sink.take_focus(window, cx);
+                sink.send(SelectChanged { index }, cx);
+            });
+        }
+        // A hairline between two unchecked toggles, 6 px short of the group's edges.
+        if adwaita && index > 0 {
+            let shown = !selected && index - 1 != p.selected;
+            let line = if shown { with_alpha(look.text, look.text.a * 0.15) } else { gpui::transparent_black() };
+            group = group.child(div().flex_none().w(px(1.)).my(px(3.)).bg(line));
         }
         group = group.child(segment);
     }

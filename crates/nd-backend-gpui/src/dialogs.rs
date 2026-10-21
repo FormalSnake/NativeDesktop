@@ -201,6 +201,9 @@ pub fn alert_view(
     if fluent(theme) {
         return content_dialog_alert(alert, focused, theme, viewport, focus, on_input, marks);
     }
+    if theme.preset == nd_theme::Preset::Adwaita {
+        return adw_alert(alert, focused, theme, viewport, focus, on_input, marks);
+    }
     let look = FormLook::of(theme);
     let s = &theme.spacing;
     let surface = theme.surface.overlay;
@@ -269,6 +272,126 @@ pub fn alert_view(
         items.reverse();
     }
     let card = card(theme, ALERT_WIDTH, viewport, alert.title.clone()).child(message).child(row.children(items));
+    layer(theme, viewport, focus, on_input, Some(card.into_any_element()), marks)
+}
+
+/// AdwAlertDialog (`_dialogs.scss`): the dialog colour at radius 18 under libadwaita's dialog
+/// shadow, a `title-2` heading 32 px from the top with the body 10 px under it, 24 px sides,
+/// and 44 px responses at radius 12, 12 px apart: plain responses as regular buttons, the
+/// default as a suggested one, destructive ones as red text on a red tint.
+fn adw_alert(
+    alert: &Alert,
+    focused: Option<usize>,
+    theme: &Theme,
+    viewport: gpui::Size<gpui::Pixels>,
+    focus: Option<&FocusHandle>,
+    on_input: Option<OnInput<DialogInput>>,
+    marks: &Marks,
+) -> AnyElement {
+    use crate::forms::look::AdwButton;
+    let look = FormLook::of(theme);
+    let surface = if theme.is_dark() { theme.surface.overlay } else { theme.surface.base };
+    let under = [theme.scrim, surface];
+    marks.fill("alert", surface, &[theme.scrim]);
+    let (title_size, title_weight, _) = look.type_of(TextStyle::Title1);
+    marks.text(&alert.title, theme.text.primary, &under, title_size, title_weight);
+    let mut message = div().flex().flex_col().gap(px(10.)).px(px(24.)).pt(px(32.)).pb(px(24.)).child(line(
+        alert.title.clone(),
+        TextStyle::Title1,
+        theme.text.primary,
+        &look,
+    ));
+    if let Some(text) = &alert.message {
+        let (size, weight, _) = look.type_of(TextStyle::Body);
+        marks.text(text, theme.text.primary, &under, size, weight);
+        message = message.child(line(text.clone(), TextStyle::Body, theme.text.primary, &look));
+    }
+    let default = default_button(alert);
+    let labels = buttons(alert);
+    let stacked = labels.len() > 2;
+    let mut row = div().flex().gap(px(12.)).px(px(24.)).pt(px(12.)).pb(px(24.));
+    row = if stacked { row.flex_col() } else { row.flex_row() };
+    let mut items: Vec<AnyElement> = Vec::new();
+    for (i, (label, role)) in labels.iter().enumerate() {
+        let (kind, what) = match role {
+            ButtonRole::Destructive => (AdwButton::Destructive, "destructive button"),
+            _ if i == default => (AdwButton::Suggested, "suggested button"),
+            _ => (AdwButton::Regular, "button"),
+        };
+        let fills = kind.fills(theme);
+        marks.fill(what, fills.rest, &under);
+        marks.text(label, fills.ink, &[theme.scrim, surface, fills.rest], look.text_size, FontWeight::BOLD);
+        let (hover, active) = (fills.hover, fills.active);
+        let mut button = div()
+            .id(ElementId::NamedInteger("nd-alert-button".into(), i as u64))
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .min_h(px(44.))
+            .px(px(20.))
+            .rounded(px(12.))
+            .bg(fills.rest)
+            .text_color(fills.ink)
+            .text_size(look.text_size)
+            .font_weight(FontWeight::BOLD)
+            .hover(move |st| st.bg(hover))
+            .active(move |st| st.bg(active))
+            .child(label.clone());
+        button = if stacked { button.w_full() } else { button.flex_1().min_w_0() };
+        if let Some(on_input) = on_input.clone() {
+            button = button.on_click(move |_, window, cx| on_input(DialogInput::Press(i), window, cx));
+        }
+        if focused == Some(i) {
+            button = button.child(crate::forms::focus_outline(theme.focus_ring, px(12.), px(0.), false));
+        }
+        items.push(button.into_any_element());
+    }
+    if !stacked {
+        items.reverse();
+    }
+    let shade = |a: f32| gpui::hsla(240. / 360., 1., 0.012, a);
+    let card = div()
+        .id("nd-dialog")
+        .role(gpui::Role::AlertDialog)
+        .aria_label(alert.title.clone())
+        .relative()
+        .flex()
+        .flex_col()
+        .w(px(ALERT_WIDTH.min(viewport.width.as_f32() - 2. * theme.spacing.md.as_f32()).max(0.)))
+        .bg(surface)
+        .rounded(px(18.))
+        .shadow(vec![
+            BoxShadow {
+                color: shade(0.03),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(14.),
+                spread_radius: px(2.),
+                inset: false,
+            },
+            BoxShadow {
+                color: shade(0.1),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(5.),
+                spread_radius: px(2.),
+                inset: false,
+            },
+            BoxShadow {
+                color: gpui::black().opacity(0.05),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(1.),
+                inset: false,
+            },
+        ])
+        .when(theme.is_dark(), |card| card.border_1().border_color(with_alpha(gpui::white(), 0.07)))
+        .text_color(theme.text.primary)
+        .occlude()
+        .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+        .child(message)
+        .child(row.children(items));
     layer(theme, viewport, focus, on_input, Some(card.into_any_element()), marks)
 }
 

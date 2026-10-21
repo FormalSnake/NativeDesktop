@@ -5,9 +5,10 @@ use nd_components::forms::*;
 use nd_core::NodeId;
 use nd_gpui::gpui::prelude::FluentBuilder as _;
 use nd_gpui::gpui::{
-    self, App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels,
+    self, AnimationExt as _, App, ElementId, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, Window, div, px,
 };
+use nd_theme::color::with_alpha;
 
 use super::glyph::{Glyph, glyph};
 use super::{Ctl, FormLook, Sink, with_style};
@@ -19,13 +20,44 @@ pub(crate) fn ring(look: FormLook, on: bool, radius: Pixels, inner: impl IntoEle
     if look.focus_inner.is_some() {
         return div().flex_none().relative().child(inner).when(on, |d| d.child(focus_visual(look, radius)));
     }
+    if !look.ring_settles {
+        return div()
+            .flex_none()
+            .p(px(1.))
+            .rounded(radius + px(3.))
+            .border_2()
+            .border_color(if on { look.focus_ring } else { gpui::transparent_black() })
+            .child(inner);
+    }
     div()
+        .relative()
         .flex_none()
-        .p(px(1.))
-        .rounded(radius + px(3.))
-        .border_2()
-        .border_color(if on { look.focus_ring } else { gpui::transparent_black() })
+        .p(px(3.))
         .child(inner)
+        .when(on, |d| d.child(focus_outline(look.focus_ring, radius + px(3.), px(-2.), true)))
+}
+
+/// libadwaita's focus outline over an element rounded at `radius`: 2 px of `color`, `offset`
+/// outside its edge (inside when negative), drawn over it so its layout never moves. When it
+/// `settles`, it starts 4 px further out and closes onto the element over 200 ms, as GTK's
+/// outline transition does.
+pub(crate) fn focus_outline(color: gpui::Hsla, radius: Pixels, offset: Pixels, settles: bool) -> gpui::AnyElement {
+    let edge = move |d: gpui::Div, grow: Pixels| {
+        let out = (offset + px(2.) + grow).as_f32();
+        let at = px(-out);
+        d.top(at).left(at).right(at).bottom(at).rounded(px((radius.as_f32() + out).max(0.)))
+    };
+    let outline = edge(div().absolute().border_2().border_color(color), px(0.));
+    if !settles {
+        return outline.into_any_element();
+    }
+    let settle = gpui::Animation::new(std::time::Duration::from_millis(200))
+        .with_easing(|t| super::look::cubic_bezier(super::look::EASE_OUT_QUAD, t));
+    outline
+        .with_animation("nd-focus-outline", settle, move |d, t| {
+            edge(d, px(4. * (1. - t))).border_color(with_alpha(color, color.a * t))
+        })
+        .into_any_element()
 }
 
 /// WinUI's focus visual for a control of `radius` filling its parent (which must be
@@ -112,7 +144,13 @@ pub(crate) fn checkbox(
         .border_color(if on { look.accent } else { look.check_stroke })
         .bg(rest)
         .children(on.then(|| glyph(mark, look.check_glyph, look.on_accent, look.glyph_stroke + px(0.25))));
-    if p.enabled {
+    if p.enabled && look.trough_states && !on {
+        // libadwaita: the ring darkens hovered; pressed, the box fills and the ring goes.
+        let (hover, active) = (look.track_hover, look.track_active);
+        indicator = indicator
+            .group_hover(CHECK_GROUP, move |s| s.border_color(hover))
+            .group_active(CHECK_GROUP, move |s| s.bg(active).border_color(gpui::transparent_black()));
+    } else if p.enabled {
         indicator = indicator
             .group_hover(CHECK_GROUP, move |s| s.bg(hover).border_color(if on { hover } else { look.check_stroke }))
             .group_active(CHECK_GROUP, move |s| s.bg(active).border_color(if on { active } else { look.check_stroke }));
@@ -193,9 +231,16 @@ pub(crate) fn switch(b: &Build, id: NodeId, p: &SwitchProps, window: &mut Window
         .left(left)
         .size(knob)
         .rounded_full()
-        .bg(if p.checked { look.knob } else { look.knob_off })
+        .bg(if p.checked { look.knob_hover } else { look.knob_off })
         .border_1()
         .border_color(look.knob_edge);
+    if let Some(shadow) = look.knob_shadow {
+        knob_el = knob_el.shadow(knob_shadow(shadow));
+    }
+    if p.enabled && look.trough_states {
+        let lit = look.knob_hover;
+        knob_el = knob_el.group_hover(SWITCH_GROUP, move |s| s.bg(lit));
+    }
     let mut track = div()
         .id("track")
         .relative()
@@ -208,7 +253,11 @@ pub(crate) fn switch(b: &Build, id: NodeId, p: &SwitchProps, window: &mut Window
             (false, None) => look.track,
         })
         .when_some(look.switch_outline.filter(|_| !p.checked), |track, outline| track.border_1().border_color(outline));
-    if p.enabled && look.switch_outline.is_some() {
+    if p.enabled && look.trough_states {
+        // libadwaita: the trough darkens hovered and pressed; checked, a 10% veil and a 20% shade.
+        let (hover, active) = if p.checked { (on_hover, on_active) } else { (look.track_hover, look.track_active) };
+        track = track.group_hover(SWITCH_GROUP, move |s| s.bg(hover)).group_active(SWITCH_GROUP, move |s| s.bg(active));
+    } else if p.enabled && look.switch_outline.is_some() {
         // WinUI's knob grows under the pointer and stretches towards the middle while pressed,
         // and the track takes the hovered and pressed fills.
         let half = grow / 2.;
@@ -240,4 +289,15 @@ pub(crate) fn switch(b: &Build, id: NodeId, p: &SwitchProps, window: &mut Window
         .child(ring(look, ctl.ring(), look.switch_height / 2., track));
     let control = if p.enabled { toggles(control, &ctl, !p.checked) } else { control.opacity(look.disabled_opacity) };
     with_style(control, &p.style).into_any_element()
+}
+
+/// libadwaita's knob shadow: `0 2px 4px` of `color`.
+pub(crate) fn knob_shadow(color: gpui::Hsla) -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color,
+        offset: gpui::point(px(0.), px(2.)),
+        blur_radius: px(4.),
+        spread_radius: px(0.),
+        inset: false,
+    }]
 }

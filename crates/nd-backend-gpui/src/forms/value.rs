@@ -91,7 +91,11 @@ pub(crate) fn slider(b: &Build, id: NodeId, p: &SliderProps, window: &mut Window
             d.h(thickness).top((knob - thickness) / 2.)
         }
     };
-    let track = bar(div().absolute().rounded_full().bg(look.track));
+    let mut track = bar(div().absolute().rounded_full().bg(look.track));
+    if p.enabled && look.trough_states {
+        let hover = look.track_hover;
+        track = track.group_hover(SLIDER_GROUP, move |s| s.bg(hover));
+    }
     let track = if p.vertical { track.top_0().bottom_0() } else { track.left_0().right_0() };
     let filled = bar(div().absolute().rounded_full().bg(look.accent));
     let filled =
@@ -131,8 +135,34 @@ pub(crate) fn slider(b: &Build, id: NodeId, p: &SliderProps, window: &mut Window
                 .border_color(look.border)
                 .children(super::toggle::elevation_edge(look, knob / 2.))
                 .child(dot)
+                .into_any_element()
         }
-        None => div().size(knob - px(2.)).rounded_full().bg(look.knob).border_1().border_color(look.knob_edge),
+        None => {
+            let mut face = div()
+                .id(ElementId::NamedInteger("nd-slider-knob".into(), id.0))
+                .size(knob - px(2.))
+                .rounded_full()
+                .bg(look.knob)
+                .border_1()
+                .border_color(look.knob_edge);
+            if let Some(shadow) = look.knob_shadow {
+                // libadwaita's slider: a 10% shade ring and the knob shadow; white under the pointer.
+                let mut shadows = super::toggle::knob_shadow(shadow);
+                shadows.push(gpui::BoxShadow {
+                    color: shadow.opacity(0.5),
+                    offset: gpui::point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(1.),
+                    inset: false,
+                });
+                face = face.shadow(shadows);
+            }
+            if p.enabled && look.trough_states {
+                let lit = look.knob_hover;
+                face = face.group_hover(SLIDER_GROUP, move |s| s.bg(lit));
+            }
+            face.into_any_element()
+        }
     };
     let thumb = div()
         .absolute()

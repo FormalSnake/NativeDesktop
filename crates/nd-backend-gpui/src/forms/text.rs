@@ -1436,7 +1436,7 @@ pub(crate) fn menu_item(
     current: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let (hover, active) =
-        if look.item_pill { (look.subtle_hover, look.subtle_active) } else { (look.fill_hover, look.fill_active) };
+        if look.item_pill { (look.subtle_hover, look.subtle_active) } else { (look.menu_hover, look.menu_highlight) };
     let mut item = div()
         .id(ElementId::Integer(index as u64))
         .role(gpui::Role::MenuItem)
@@ -1447,7 +1447,7 @@ pub(crate) fn menu_item(
         .flex_row()
         .items_center()
         .gap(look.gap)
-        .h(look.control_height)
+        .h(look.menu_row_height)
         .px(look.padding_x)
         .rounded(look.radius)
         .whitespace_nowrap()
@@ -1465,7 +1465,7 @@ pub(crate) fn menu_item(
         }
         return item;
     }
-    let item = if highlighted { item.bg(look.fill_active) } else { item };
+    let item = if highlighted { item.bg(look.menu_highlight) } else { item };
     if current { item.child(glyph(Glyph::Check, look.icon_size, look.text, look.glyph_stroke)) } else { item }
 }
 
@@ -1527,13 +1527,7 @@ pub(crate) fn popover(
             .bg(look.popover)
             .border_1()
             .border_color(look.popover_stroke)
-            .shadow(vec![gpui::BoxShadow {
-                color: look.popover_shadow.0,
-                offset: point(px(0.), look.popover_shadow.1),
-                blur_radius: look.popover_shadow.2,
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .shadow(look.popover_shadows())
             .text_size(look.text_size)
             .text_color(look.text)
             .children(items),

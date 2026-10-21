@@ -33,6 +33,7 @@ use nd_ui::backend::{NodeKind, Props, WidgetKind};
 use nd_ui::events::Emit;
 
 pub use look::FormLook;
+pub(crate) use toggle::focus_outline;
 
 use crate::backend::{Node, PlatformFocus, Wake};
 use crate::render::Build;
@@ -207,7 +208,10 @@ impl Build<'_> {
         };
         let ctl = Ctl {
             id,
-            look: FormLook::of(&self.theme()),
+            look: {
+                let look = FormLook::of(&self.theme());
+                FormLook { ring_settles: look.ring_settles && !cx.reduce_motion(), ..look }
+            },
             focused: focus.is_focused(window),
             sink,
             time: self.time,

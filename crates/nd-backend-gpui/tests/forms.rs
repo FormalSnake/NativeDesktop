@@ -647,6 +647,18 @@ mod forms {
             let capture = rig.host.job(|app| app.capture(rig.window)).expect("capture");
             compare(scheme, &capture.png);
         }
+        // The open menu with the keyboard on its second row, and the focus ring on its button:
+        // libadwaita's popover edge, shadows, 32 px rows and 10% highlight.
+        if cfg!(target_os = "linux") {
+            for (scheme, appearance) in [("menu-light", WindowAppearance::Light), ("menu-dark", WindowAppearance::Dark)]
+            {
+                let mut rig = open_with(appearance, false);
+                rig.click("select");
+                rig.keys(&["down"]);
+                let capture = rig.host.job(|app| app.capture(rig.window)).expect("capture");
+                compare(scheme, &capture.png);
+            }
+        }
         // The Windows skin drawn on Linux (what `ND_PRESET=fluent` shows), so it is checked
         // without a Windows machine.
         if cfg!(target_os = "linux") {

@@ -1,6 +1,7 @@
 //! Drawn display controls: `progress` (bar, spinner, circular; indeterminate ones animate on the
 //! window's frame clock), `label` (text styles on the skin's type scale, tone colours) and
-//! `link` (accent text, underlined under the pointer, reporting [`LinkActivated`]).
+//! `link` (accent text, underlined on Adwaita and a HyperlinkButton on Fluent, reporting
+//! [`LinkActivated`]).
 
 use std::f32::consts::PI;
 
@@ -57,7 +58,7 @@ pub(crate) fn progress(b: &Build, id: NodeId, p: &ProgressProps, window: &mut Wi
                 None => div()
                     .relative()
                     .overflow_hidden()
-                    .h(look.track_thickness)
+                    .h(look.progress_thickness)
                     .min_w(look.slider_min_length)
                     .rounded_full()
                     .bg(look.track)
@@ -158,6 +159,8 @@ pub(crate) fn link(b: &Build, id: NodeId, p: &LinkProps, window: &mut Window, cx
         .line_height(look.line_height)
         .text_color(look.accent_text)
         .whitespace_nowrap()
+        // libadwaita underlines a link at rest; WinUI's HyperlinkButton is never underlined.
+        .when(!look.link_button, |d| d.underline().text_decoration_color(look.accent_text))
         .child(p.title.clone());
     if let Some(url) = &p.url {
         text = text.aria_value(url.clone());
@@ -171,14 +174,13 @@ pub(crate) fn link(b: &Build, id: NodeId, p: &LinkProps, window: &mut Window, cx
     }
     let (sink, url, external) = (ctl.sink.clone(), p.url.clone(), p.open_external);
     text = pressable(text, &ctl).cursor(CursorStyle::PointingHand);
-    text = if look.link_button {
+    if look.link_button {
         // HyperlinkButton: SubtleFillColorSecondary under the pointer, Tertiary and
         // AccentTextFillColorTertiary while pressed.
         let pressed = look.accent_text.opacity(0.8);
-        text.hover(move |s| s.bg(look.subtle_hover)).active(move |s| s.bg(look.subtle_active).text_color(pressed))
-    } else {
-        text.hover(move |s| s.underline().text_decoration_color(look.accent_text))
-    };
+        text =
+            text.hover(move |s| s.bg(look.subtle_hover)).active(move |s| s.bg(look.subtle_active).text_color(pressed));
+    }
     text = text.on_click(move |event, window, cx| {
         if !matches!(event, gpui::ClickEvent::Keyboard(_)) {
             sink.take_focus(window, cx);

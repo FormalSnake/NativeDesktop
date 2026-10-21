@@ -321,7 +321,8 @@ mod gate_m4_overlays {
     }
 
     /// A closed popover keeps drawing its content for the look's exit, takes no input while it
-    /// does, and is gone once the exit is over.
+    /// does, and is gone once the exit is over. libadwaita's look has no exit: GTK 4's popovers
+    /// close at once.
     pub fn gpui_a_closed_popover_animates_out_then_is_gone() {
         let mut o = open();
         let button = center(&o.host, o.window, "under");
@@ -330,6 +331,10 @@ mod gate_m4_overlays {
             |o: &Opened| o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == "inside");
         assert!(inside(&o), "the open popover is drawn");
         set(&mut o, |s| s.popover = false);
+        if nd_theme::Preset::forced().unwrap_or(nd_theme::Preset::native()) == nd_theme::Preset::Adwaita {
+            assert!(!inside(&o), "a closed libadwaita popover is gone at once");
+            return;
+        }
         assert!(inside(&o), "right after closing, the popover is still drawn, leaving");
         post(&mut o, click(button, GpuiButton::Left));
         assert_eq!(o.host.read(|app| o.scene.read(app).under), 1, "the leaving popover takes no input");

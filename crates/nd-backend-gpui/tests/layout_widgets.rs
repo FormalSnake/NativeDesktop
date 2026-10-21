@@ -415,7 +415,13 @@ mod gate_m6 {
         let theme = o.theme();
         let paints = o.host.backend().paints(o.window).expect("paints");
         let fill = paints.iter().find(|p| p.label == "destructive button").expect("destructive button");
-        assert_eq!(fill.color, theme.danger);
+        // libadwaita draws a destructive response as its red over a 15% tint of it.
+        let red = if theme.preset == Preset::Adwaita {
+            nd_theme::color::with_alpha(theme.text.danger, 0.15)
+        } else {
+            theme.danger
+        };
+        assert_eq!(fill.color, red);
         assert!(paints.iter().any(|p| p.label == "dialog scrim" && p.color == theme.scrim));
         o.keys(&["escape"]);
         assert_eq!(o.log.borrow().answers, [1]);

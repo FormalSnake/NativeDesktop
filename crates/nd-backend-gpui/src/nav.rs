@@ -360,6 +360,7 @@ pub fn source_tree_view(
     // WinUI's NavigationView: an icon per item, a subtle fill with an accent pill on the selected
     // one, and an icon-only rail when the pane is compact.
     let fluent = theme.preset == Preset::Fluent;
+    let adwaita = theme.preset == Preset::Adwaita;
     let subtle = with_alpha(theme.text.primary, if theme.is_dark() { 0.06 } else { 0.04 });
     let (regular, semibold) = (FontWeight::NORMAL, FontWeight::SEMIBOLD);
     let mut list = div()
@@ -371,7 +372,13 @@ pub fn source_tree_view(
         .overflow_y_scroll()
         // NavigationViewItem: 36 px rows 4 px in from the pane's edge, 4 px apart.
         .p(if fluent { px(4.) } else { theme.spacing.sm })
-        .gap(if fluent { px(4.) } else { px(1.) })
+        .gap(if fluent {
+            px(4.)
+        } else if theme.preset == Preset::Adwaita {
+            px(2.)
+        } else {
+            px(1.)
+        })
         .text_size(theme.type_scale.body);
     if props.nodes.is_empty() {
         if let Some(empty) = &props.empty {
@@ -451,12 +458,28 @@ pub fn source_tree_view(
         }
         let selected = props.selected.as_ref() == Some(&node.id);
         let expandable = index.expandable(&props.nodes, i);
-        let (fg, secondary) = if selected && !fluent {
+        // libadwaita's navigation sidebar selects with a tenth of the text colour and keeps the
+        // text as it is (`.navigation-sidebar > row:selected`).
+        let tinted = !fluent && !adwaita;
+        let (fg, secondary) = if selected && tinted {
             (theme.accent_container.fg, theme.accent_container.fg.opacity(0.8))
         } else {
             (theme.text.primary, theme.text.secondary)
         };
-        let selected_fill = if fluent { subtle } else { theme.accent_container.bg };
+        let selected_fill = if fluent {
+            subtle
+        } else if adwaita {
+            with_alpha(theme.text.primary, theme.text.primary.a * 0.1)
+        } else {
+            theme.accent_container.bg
+        };
+        // Dim text on a selected libadwaita row darkens just enough to keep 4.5:1 on the tint.
+        let secondary = if selected && adwaita {
+            let under = nd_theme::color::over(selected_fill, theme.surface.sidebar);
+            nd_theme::color::legible(secondary, &[under], 4.5)
+        } else {
+            secondary
+        };
         let mut under = Vec::new();
         if selected {
             marks.fill("selected row", selected_fill, &[]);
@@ -476,10 +499,12 @@ pub fn source_tree_view(
             marks.text(&label, color, &under, footnote, regular);
         }
         let key = node.id.clone();
+        // libadwaita's rows start 8 px in and keep no room for a disclosure they do not have.
+        let disclosure_width = if adwaita && !expandable { px(0.) } else { theme.spacing.lg };
         let mut disclosure = div()
             .id(ElementId::Name(format!("{}-disclosure", node.id).into()))
             .flex_shrink_0()
-            .w(theme.spacing.lg)
+            .w(disclosure_width)
             .text_color(secondary)
             .child(if expandable { if node.expanded { "\u{25be}" } else { "\u{25b8}" } } else { "" });
         if fluent {
@@ -509,7 +534,14 @@ pub fn source_tree_view(
             .filter(|_| fluent)
             .and_then(|icon| icon.segoe_fluent())
             .map(|code| crate::fluent_icons::glyph(code, px(16.), fg));
-        let row_height = if fluent { px(FLUENT_ROW) } else { theme.control.regular };
+        // libadwaita's sidebar rows: 36 px at the button radius.
+        let row_height = if fluent {
+            px(FLUENT_ROW)
+        } else if adwaita {
+            px(36.)
+        } else {
+            theme.control.regular
+        };
         // At the item's indentation: a child's pill sits in from its parent's.
         let pill = (fluent && selected).then(|| {
             div()
@@ -544,8 +576,11 @@ pub fn source_tree_view(
             }));
         } else {
             // WinUI: the icon 12 px in, the label 16 px past it, children indented to the label.
+            // libadwaita: 8 px in from either edge.
             let (lead, indent, trail, icon_gap) = if fluent {
                 (px(12.), px(32.), px(14.), px(16.))
+            } else if adwaita {
+                (px(8.), px(indent), px(8.), theme.spacing.md)
             } else {
                 (px(0.), px(indent), theme.spacing.sm, theme.spacing.md)
             };
@@ -559,12 +594,10 @@ pub fn source_tree_view(
                 .children(leading)
                 .children(match icon {
                     Some(icon) => Some(icon.mr(icon_gap).into_any_element()),
+                    // A symbolic icon in the text colour, 12 px before the title on libadwaita.
                     None => icon_glyph(node.icon).map(|g| {
-                        div()
-                            .flex_shrink_0()
-                            .pr(theme.spacing.sm)
-                            .child(glyph(g, px(16.), secondary, px(1.5)))
-                            .into_any_element()
+                        let (gap, ink) = if adwaita { (theme.spacing.md, fg) } else { (theme.spacing.sm, secondary) };
+                        div().flex_shrink_0().pr(gap).child(glyph(g, px(16.), ink, px(1.5))).into_any_element()
                     }),
                 })
                 .child(
@@ -618,8 +651,18 @@ pub fn source_tree_view(
         }
         if selected {
             row = row.bg(selected_fill);
+            if adwaita {
+                let hover = with_alpha(theme.text.primary, theme.text.primary.a * 0.13);
+                row = row.hover(move |s| s.bg(hover));
+            }
         } else {
-            let hover = if fluent { subtle } else { theme.hover(theme.surface.sidebar) };
+            let hover = if fluent {
+                subtle
+            } else if adwaita {
+                with_alpha(theme.text.primary, theme.text.primary.a * 0.07)
+            } else {
+                theme.hover(theme.surface.sidebar)
+            };
             row = row.hover(move |s| s.bg(hover));
         }
         if fluent {
@@ -738,6 +781,9 @@ pub fn toast_view(
     marks: &Marks,
 ) -> AnyElement {
     let Some(toast) = toast else { return div().into_any_element() };
+    if theme.preset == Preset::Adwaita {
+        return adw_toast(toast, theme, viewport, animate, on_input, marks);
+    }
     let t = TOAST;
     let under = [theme.surface.overlay];
     marks.fill("toast", theme.surface.overlay, &[]);
@@ -815,6 +861,132 @@ pub fn toast_view(
         .into_any_element()
 }
 
+/// AdwToast (`_misc.scss`, `adw-toast-overlay.c`): a pill of the OSD grey with white text, a
+/// bold title, the button as a regular button and a flat close button, 12 px from the window's
+/// sides and 24 px from its bottom. It slides up from below the window over 300 ms on
+/// libadwaita's ease.
+fn adw_toast(
+    toast: &Toast,
+    theme: &Theme,
+    viewport: gpui::Size<gpui::Pixels>,
+    animate: bool,
+    on_input: Option<OnInput<ToastInput>>,
+    marks: &Marks,
+) -> AnyElement {
+    const HEIGHT: f32 = 46.;
+    const BOTTOM: f32 = 24.;
+    let (bg, ink) = (theme.surface.osd, theme.text.on_osd);
+    let tint = |share: f32| with_alpha(ink, ink.a * share);
+    let under = [bg];
+    marks.fill("toast", bg, &[]);
+    marks.text(&toast.title, ink, &under, theme.type_scale.body, FontWeight::BOLD);
+    let button = |id: &'static str, rest: Hsla, hover: Hsla, active: Hsla| {
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .h(px(34.))
+            .rounded(theme.radius.md)
+            .bg(rest)
+            .hover(move |s| s.bg(hover))
+            .active(move |s| s.bg(active))
+    };
+    let mut body = div()
+        .id(ElementId::Name(format!("nd-toast-{}", toast.id).into()))
+        .role(gpui::Role::Status)
+        .aria_label(toast.title.clone())
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .h(px(HEIGHT))
+        .max_w(px((viewport.width.as_f32() - 24.).max(0.)))
+        .p(px(6.))
+        .pl(px(12.))
+        .rounded_full()
+        .bg(bg)
+        .shadow(vec![
+            BoxShadow {
+                color: gpui::hsla(240. / 360., 1., 0.012, 0.07),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(3.),
+                spread_radius: px(1.),
+                inset: false,
+            },
+            BoxShadow {
+                color: gpui::hsla(240. / 360., 1., 0.012, 0.03),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(6.),
+                spread_radius: px(2.),
+                inset: false,
+            },
+        ])
+        .text_size(theme.type_scale.body)
+        .text_color(ink)
+        .occlude()
+        .child(div().min_w_0().flex_1().px(px(6.)).truncate().font_weight(FontWeight::BOLD).child(toast.title.clone()));
+    if let Some(label) = &toast.action {
+        marks.fill("toast button", tint(0.1), &under);
+        marks.text(label, ink, &[bg, tint(0.1)], theme.type_scale.body, FontWeight::BOLD);
+        let mut action = button("nd-toast-action", tint(0.1), tint(0.15), tint(0.3))
+            .aria_label(label.clone())
+            .px(px(17.))
+            .font_weight(FontWeight::BOLD)
+            .child(label.clone());
+        if let Some(on_input) = on_input.clone() {
+            action = action.on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                on_input(ToastInput::Action, window, cx);
+            });
+        }
+        body = body.child(action);
+    }
+    marks.fill("toast close", ink, &under);
+    let mut close = button("nd-toast-close", gpui::transparent_black(), tint(0.07), tint(0.16))
+        .aria_label("Dismiss")
+        .w(px(34.))
+        .rounded_full()
+        .child(glyph(Glyph::Clear, px(16.), ink, px(1.75)));
+    if let Some(on_input) = on_input.clone() {
+        close = close.on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            on_input(ToastInput::Body, window, cx);
+        });
+    }
+    body = body.child(close);
+    if let Some(on_input) = on_input {
+        body = body.on_click(move |_, window, cx| on_input(ToastInput::Body, window, cx));
+    }
+    let body: AnyElement = if animate {
+        let rise = HEIGHT + BOTTOM;
+        body.with_animation(
+            ElementId::Name(format!("nd-toast-enter-{}", toast.id).into()),
+            Animation::new(std::time::Duration::from_millis(300))
+                .with_easing(|t| crate::forms::look::cubic_bezier([0.25, 0.1, 0.25, 1.], t)),
+            move |el, delta| el.mt(px(rise * (1. - delta))),
+        )
+        .into_any_element()
+    } else {
+        body.into_any_element()
+    };
+    let layer = div()
+        .w(viewport.width)
+        .h(viewport.height)
+        .flex()
+        .flex_col()
+        .justify_end()
+        .items_center()
+        .px(px(12.))
+        .pb(px(BOTTOM))
+        .child(crate::occlusion::Occluding::passive(body));
+    deferred(anchored().position(point(px(0.), px(0.))).child(layer))
+        .with_priority(crate::overlay::TOAST_PRIORITY)
+        .into_any_element()
+}
+
 /// The drawn banner: the title and an optional button on the accent container.
 pub fn banner_view(
     id: NodeId,
@@ -828,6 +1000,9 @@ pub fn banner_view(
     }
     if theme.preset == Preset::Fluent {
         return info_bar(id, props, theme, on_action, marks);
+    }
+    if theme.preset == Preset::Adwaita {
+        return adw_banner(id, props, theme, on_action, marks);
     }
     let (bg, fg) = (theme.accent_container.bg, theme.accent_container.fg);
     let button = theme.pressed(bg);
@@ -957,6 +1132,63 @@ fn info_bar(id: NodeId, props: &BannerProps, theme: &Theme, on_action: Option<On
         bar = bar.child(button);
     }
     div().w_full().p(theme.spacing.md).child(bar).into_any_element()
+}
+
+/// AdwBanner: a neutral strip (libadwaita's banner grey at 30% over the window, here the text
+/// colour at the same weight), the title bold and centred, the button a regular button, 6 px
+/// around.
+fn adw_banner(
+    id: NodeId,
+    props: &BannerProps,
+    theme: &Theme,
+    on_action: Option<OnAction>,
+    marks: &Marks,
+) -> AnyElement {
+    let ink = theme.text.primary;
+    let bg = with_alpha(ink, ink.a * if theme.is_dark() { 0.12 } else { 0.15 });
+    let button = with_alpha(ink, ink.a * 0.1);
+    marks.fill("banner", bg, &[]);
+    marks.text(&props.title, ink, &[bg], theme.type_scale.body, FontWeight::BOLD);
+    let mut bar = div()
+        .id(ElementId::Integer(id.0))
+        .role(gpui::Role::Status)
+        .aria_label(props.title.clone())
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .min_h(px(46.))
+        .gap(px(6.))
+        .p(px(6.))
+        .bg(bg)
+        .text_color(ink)
+        .text_size(theme.type_scale.body)
+        .font_weight(FontWeight::BOLD)
+        .child(div().flex_1().min_w_0().px(px(6.)).text_center().truncate().child(props.title.clone()));
+    if let Some(label) = &props.action {
+        marks.fill("banner button", button, &[bg]);
+        marks.text(label, ink, &[bg, button], theme.type_scale.body, FontWeight::BOLD);
+        let (hover, active) = (with_alpha(ink, ink.a * 0.15), with_alpha(ink, ink.a * 0.3));
+        let mut b = div()
+            .id("nd-banner-action")
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .h(px(34.))
+            .px(px(17.))
+            .rounded(theme.radius.md)
+            .bg(button)
+            .hover(move |s| s.bg(hover))
+            .active(move |s| s.bg(active))
+            .child(label.clone());
+        if let Some(on_action) = on_action {
+            b = b.on_click(move |_, _, cx| on_action(cx));
+        }
+        bar = bar.child(b);
+    }
+    bar.into_any_element()
 }
 
 /// Per-node state of the drawn widgets, kept beside the retained tree and dropped on release.

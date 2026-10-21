@@ -9,6 +9,8 @@ use nd_theme::{TextStyles, Theme};
 
 #[derive(Clone, Copy, Debug)]
 pub struct FormLook {
+    /// The look these values are for.
+    pub preset: nd_theme::Preset,
     /// Height of single-line controls: fields, pop-up buttons, segmented controls, steppers.
     pub control_height: Pixels,
     /// Corner radius of fields, buttons, segments and popover items.
@@ -111,6 +113,26 @@ pub struct FormLook {
     pub spinner_seconds: f64,
     /// Size, weight and line height per text style: the theme's.
     pub type_scale: TextStyles,
+    /// Unfilled track under the pointer, and while pressed.
+    pub track_hover: Hsla,
+    pub track_active: Hsla,
+    /// Thickness of a progress bar's trough.
+    pub progress_thickness: Pixels,
+    /// The slider and switch knob's drop shadow (libadwaita's `0 2px 4px` of 20% shade), in
+    /// place of `knob_edge`.
+    pub knob_shadow: Option<Hsla>,
+    /// The knob under the pointer.
+    pub knob_hover: Hsla,
+    /// Checks, switches and sliders darken their trough under the pointer and while pressed,
+    /// as libadwaita's do; WinUI's keep theirs.
+    pub trough_states: bool,
+    /// Height of a menu row, and its fill under the pointer and under the keyboard.
+    pub menu_row_height: Pixels,
+    pub menu_hover: Hsla,
+    pub menu_highlight: Hsla,
+    /// Whether a focus ring settles onto its control (libadwaita's 200 ms outline transition)
+    /// rather than appearing at once.
+    pub ring_settles: bool,
     /// A field's outline at rest: WinUI's control stroke; libadwaita's entries have none.
     pub field_stroke: Option<Hsla>,
     /// An off switch outlined in this colour over the plain fill, its knob in `knob_off`:
@@ -162,7 +184,8 @@ pub struct FormLook {
     /// between rows and between columns (RadioButtonsRowSpacing 8, ColumnSpacing 7).
     pub toggle_row: Pixels,
     pub radio_spacing: (Pixels, Pixels),
-    /// Flyout outline (SurfaceStrokeColorFlyout), and its drop shadow's colour, y offset and blur.
+    /// Flyout outline (SurfaceStrokeColorFlyout; libadwaita's 14% black), and its drop shadow's
+    /// colour, y offset and blur (libadwaita's two layers are in [`FormLook::popover_shadows`]).
     pub popover_stroke: Hsla,
     pub popover_shadow: (Hsla, Pixels, Pixels),
     /// Accent fills hovered and pressed (AccentFillColorSecondary and Tertiary).
@@ -186,16 +209,23 @@ pub struct FormLook {
 }
 
 impl FormLook {
-    /// The Linux look on libadwaita metrics: 34 px controls, 6 px radius, fills of the text colour
-    /// at 10% (15% hovered, 30% pressed), 46x26 switch with a 20 px knob, 4 px slider track with a
-    /// 20 px knob, 12 px popovers with 6 px item inset, 0.5 opacity when insensitive. Every colour is the resolved theme's.
+    /// The Linux look on libadwaita's stylesheet: 34 px controls at the 9 px button radius,
+    /// fills of the text colour at 10% (15% hovered, 30% pressed), troughs at 15% (20% hovered,
+    /// 25% pressed), a 46x26 switch and 20 px checks, a 6 px slider trough and 8 px progress
+    /// trough, knobs with a soft drop shadow, 15 px popovers with a 6 px item inset, 0.5 opacity
+    /// when insensitive, 200 ms ease-out-quad state transitions. Every colour is the resolved
+    /// theme's.
     pub fn adwaita(theme: &Theme) -> Self {
         let ink = theme.text.primary;
         let tint = |share: f32| with_alpha(ink, ink.a * share);
+        // libadwaita's slider: 80% white over the view, white when hovered.
+        let white = nd_gpui::gpui::white();
+        let view = if theme.is_dark() { nd_gpui::gpui::rgb(0x1d1d20).into() } else { white };
         Self {
+            preset: theme.preset,
             control_height: px(34.),
-            radius: px(6.),
-            popover_radius: px(12.),
+            radius: theme.radius.md,
+            popover_radius: theme.radius.xl,
             popover_inset: px(6.),
             padding_x: px(10.),
             // libadwaita's 9 px entry padding less the ring border.
@@ -216,24 +246,33 @@ impl FormLook {
             raised: theme.surface.raised,
             accent: theme.accent,
             on_accent: theme.text.on_accent,
-            accent_text: theme.accent,
+            accent_text: theme.text.accent,
             selection: theme.selection,
             selection_text: None,
             focus_ring: theme.focus_ring,
             danger: theme.text.danger,
-            track: theme.border.strong,
-            knob: theme.text.on_accent,
-            knob_edge: theme.border.strong,
-            check_size: px(18.),
-            check_radius: px(5.),
+            track: tint(0.15),
+            track_hover: tint(0.2),
+            track_active: tint(0.25),
+            knob: nd_theme::color::mix(view, white, 0.8),
+            knob_hover: white,
+            knob_edge: nd_gpui::gpui::transparent_black(),
+            knob_shadow: Some(nd_gpui::gpui::hsla(240. / 360., 1., 0.012, 0.2)),
+            check_size: px(20.),
+            check_radius: theme.radius.sm,
+            trough_states: true,
             switch_width: px(46.),
             switch_height: px(26.),
             switch_inset: px(3.),
+            // `scale > trough`: 4 px.
             track_thickness: px(4.),
+            progress_thickness: px(8.),
             slider_knob: px(20.),
             tick_length: px(5.),
-            slider_min_length: px(140.),
-            spinner_size: px(18.),
+            // GtkProgressBar's 150 px trough.
+            slider_min_length: px(150.),
+            // AdwSpinner at its 16 px.
+            spinner_size: px(16.),
             spinner_stroke: px(2.),
             field_min_width: px(120.),
             swatch_size: px(22.),
@@ -243,17 +282,24 @@ impl FormLook {
             toggle_ease: [0.23, 1., 0.32, 1.],
             indeterminate_seconds: 1.2,
             indeterminate_segment: 0.3,
-            spinner_seconds: 0.9,
+            spinner_seconds: 1.2,
+            // `modelbutton`: 32 px rows at the button radius, 10% of the text colour hovered or
+            // selected.
+            menu_row_height: px(32.),
+            menu_hover: tint(0.1),
+            menu_highlight: tint(0.1),
+            ring_settles: true,
             type_scale: theme.text_styles,
             field_stroke: None,
             switch_outline: None,
-            knob_off: theme.text.on_accent,
+            knob_off: nd_theme::color::mix(view, white, 0.8),
             focus_inner: None,
             stroke_bottom: None,
             field_underline: None,
             field_focus_fill: tint(0.1),
             check_fill: [gpui::transparent_black(); 3],
-            check_stroke: theme.border.strong,
+            // libadwaita's check button: an inset ring of 15% of the text colour.
+            check_stroke: tint(0.15),
             check_stroke_width: px(2.),
             check_glyph: px(14.),
             chevron_size: px(16.),
@@ -269,10 +315,11 @@ impl FormLook {
             spin_inline: false,
             toggle_row: px(0.),
             radio_spacing: (px(4.), px(16.)),
-            popover_stroke: theme.border.subtle,
+            popover_stroke: nd_gpui::gpui::black().opacity(0.14),
             popover_shadow: (gpui::hsla(0., 0., 0., 0.18), px(4.), px(12.)),
-            accent_hover: theme.accent,
-            accent_active: theme.accent,
+            // `suggested-action` and checked toggles: a 10% veil of the ink hovered, a 20% shade pressed.
+            accent_hover: nd_theme::color::mix(theme.accent, theme.text.on_accent, 0.1),
+            accent_active: nd_theme::color::mix(theme.accent, gpui::black(), 0.2),
             thumb_dot: None,
             thumb_fill: theme.text.on_accent,
             knob_hover_grow: px(0.),
@@ -387,7 +434,35 @@ impl FormLook {
             progress_rail: Some((px(1.), px(3.))),
             track_thickness: px(4.),
             spinner_track: false,
+            knob: theme.text.on_accent,
+            knob_hover: theme.text.on_accent,
+            knob_shadow: None,
+            track_hover: strong,
+            track_active: strong,
+            trough_states: false,
+            slider_min_length: px(140.),
+            menu_hover: fill_hover,
+            menu_highlight: fill_active,
+            ring_settles: false,
             ..Self::adwaita(theme)
+        }
+    }
+
+    /// A popover's shadow: libadwaita's near 9% and far 5% layers, elsewhere `popover_shadow`.
+    pub fn popover_shadows(&self) -> Vec<nd_gpui::gpui::BoxShadow> {
+        use nd_gpui::gpui::{BoxShadow, hsla, point};
+        let layer = |alpha: f32, y: f32, blur: f32, spread: f32| BoxShadow {
+            color: hsla(0., 0., 0., alpha),
+            offset: point(px(0.), px(y)),
+            blur_radius: px(blur),
+            spread_radius: px(spread),
+            inset: false,
+        };
+        if self.preset == nd_theme::Preset::Adwaita {
+            vec![layer(0.09, 1., 5., 1.), layer(0.05, 2., 14., 3.)]
+        } else {
+            let (color, y, blur) = self.popover_shadow;
+            vec![BoxShadow { color, offset: point(px(0.), y), blur_radius: blur, spread_radius: px(0.), inset: false }]
         }
     }
 
@@ -401,6 +476,61 @@ impl FormLook {
         cubic_bezier(self.toggle_ease, t.clamp(0., 1.))
     }
 }
+
+/// What a libadwaita push button is (`_buttons.scss`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdwButton {
+    /// The text colour at 10%, 15% hovered, 30% pressed.
+    Regular,
+    /// `.flat`: nothing at rest, 7% hovered, 16% pressed.
+    Flat,
+    /// `.suggested-action`: the accent, a 10% veil of its ink hovered, 20% shade pressed.
+    Suggested,
+    /// `.destructive-action`: the destructive colour as text over 15% of itself, 20% hovered,
+    /// 35% pressed.
+    Destructive,
+}
+
+/// A button's fills at rest, hovered and pressed, and its ink.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ButtonFills {
+    pub rest: Hsla,
+    pub hover: Hsla,
+    pub active: Hsla,
+    pub ink: Hsla,
+}
+
+impl AdwButton {
+    pub fn fills(self, theme: &Theme) -> ButtonFills {
+        let tint = |c: Hsla, share: f32| with_alpha(c, c.a * share);
+        match self {
+            AdwButton::Regular | AdwButton::Flat => {
+                let ink = theme.text.primary;
+                let (rest, hover, active) = if self == AdwButton::Flat { (0., 0.07, 0.16) } else { (0.1, 0.15, 0.3) };
+                ButtonFills { rest: tint(ink, rest), hover: tint(ink, hover), active: tint(ink, active), ink }
+            }
+            AdwButton::Suggested => {
+                // `accent_fill`: libadwaita's accent background, darkened only as far as white
+                // labels need to read at 4.5:1 (its own #3584e4 gives 3.8:1).
+                let (fill, ink) = (theme.accent_fill, theme.text.on_accent);
+                let shade = nd_gpui::gpui::black();
+                ButtonFills {
+                    rest: fill,
+                    hover: nd_theme::color::mix(fill, with_alpha(ink, fill.a), 0.1),
+                    active: nd_theme::color::mix(fill, with_alpha(shade, fill.a), 0.2),
+                    ink,
+                }
+            }
+            AdwButton::Destructive => {
+                let red = theme.text.danger;
+                ButtonFills { rest: tint(red, 0.15), hover: tint(red, 0.2), active: tint(red, 0.35), ink: red }
+            }
+        }
+    }
+}
+
+/// libadwaita's `$ease_out_quad`, the curve of its state and focus transitions.
+pub const EASE_OUT_QUAD: [f32; 4] = [0.25, 0.46, 0.45, 0.94];
 
 /// y at x on the curve from (0, 0) to (1, 1) with control points `c`, solved for x by bisection.
 pub(crate) fn cubic_bezier(c: [f32; 4], x: f32) -> f32 {
