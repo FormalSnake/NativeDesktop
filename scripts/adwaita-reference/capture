@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Captures the libadwaita reference boards (board.py) and real GNOME apps in light and dark at
+# scale 2, each in its own private headless Hyprland, into docs/parity/linux-hig/adwaita/.
+# Runs on the Linux host inside the dev shell: scripts/linux-gate run scripts/adwaita-reference/capture
+#
+#   PAGES="controls app"   only these boards (default: all)
+#   APPS=0                 skip the real apps
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+out="$root/docs/parity/linux-hig/adwaita"
+mkdir -p "$out"
+cargo build -q -p ndshell
+shot="${CARGO_TARGET_DIR:-$root/target}/debug/ndshell"
+# A fresh home for every run: the user's own gtk.css (a matugen theme), settings.ini and app
+# state (recent files) would otherwise restyle the reference and show private documents.
+mkdir -p "${CARGO_TARGET_DIR:-$root/target}/adwaita-reference"
+home=$(mktemp -d "${CARGO_TARGET_DIR:-$root/target}/adwaita-reference/home.XXXXXX")
+mkdir -p "$home"/{config,data,state,cache}
+# The dev shell's mesa and lavapipe are for nd; GTK takes the system's.
+clean=(env -u LD_LIBRARY_PATH -u VK_ICD_FILENAMES -u GTK_THEME HOME="$home" XDG_CONFIG_HOME="$home/config"
+  XDG_DATA_HOME="$home/data" XDG_STATE_HOME="$home/state" XDG_CACHE_HOME="$home/cache")
+for page in ${PAGES:-controls app dialog popover tabs typography}; do
+  for scheme in light dark; do
+    nix-shell "$here/shell.nix" --run \
+      "$shot shot $out/$page-$scheme.png 3 2 -- ${clean[*]} python3 $here/board.py $page $scheme"
+  done
+done
+[ "${APPS:-1}" = 0 ] && exit 0
+for app in gnome-text-editor nautilus; do
+  command -v "$app" >/dev/null || continue
+  for scheme in light dark; do
+    "$shot" shot "$out/app-$app-$scheme.png" 5 2 -- "${clean[@]}" ADW_DEBUG_COLOR_SCHEME="prefer-$scheme" "$app"
+  done
+done

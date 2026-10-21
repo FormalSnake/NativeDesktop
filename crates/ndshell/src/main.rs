@@ -88,8 +88,14 @@ fn run(args: &[String]) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn run(args: &[String]) -> Result<(), String> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    if let ["shot", rest @ ..] = args.as_slice() {
+        return shot(rest);
+    }
     let ["drag", rest @ ..] = args.as_slice() else {
-        return Err(format!("{USAGE} | ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h>"));
+        return Err(format!(
+            "{USAGE} | ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h> \
+             | ndshell shot <out.png> <seconds> <scale> -- <command>..."
+        ));
     };
     let n: Vec<f64> =
         rest.iter().map(|a| a.parse::<f64>().map_err(|e| format!("{a}: {e}"))).collect::<Result<_, _>>()?;
@@ -120,6 +126,63 @@ fn run(args: &[String]) -> Result<(), String> {
     std::thread::sleep(std::time::Duration::from_millis(300));
     input.button(false);
     input.sync()
+}
+
+/// `ndshell shot <out.png> <seconds> <scale> -- <command>...` runs the command in a private
+/// headless Hyprland at `scale`, waits `seconds`, and writes its first window (the whole output
+/// when it opened none) to `out.png`, so nd and real GTK apps are captured the same way.
+#[cfg(target_os = "linux")]
+fn shot(args: &[&str]) -> Result<(), String> {
+    let [out, seconds, scale, "--", program, rest @ ..] = args else {
+        return Err("usage: ndshell shot <out.png> <seconds> <scale> -- <command>...".into());
+    };
+    let seconds: f64 = seconds.parse().map_err(|e| format!("{seconds}: {e}"))?;
+    let scale: f64 = scale.parse().map_err(|e| format!("{scale}: {e}"))?;
+    // A 1280x800 layout at any scale, room for a GNOME app's default window size.
+    let options = ndshell::hyprland::Options {
+        width: (1280. * scale).round() as u32,
+        height: (800. * scale).round() as u32,
+        ..ndshell::hyprland::Options::default()
+    };
+    let extra_config = format!(
+        "hl.monitor({{ output = \"{}\", mode = \"{}x{}@{}\", position = \"0x0\", scale = \"{scale}\" }})",
+        ndshell::hyprland::OUTPUT,
+        options.width,
+        options.height,
+        options.refresh
+    );
+    let hyprland = ndshell::hyprland::Hyprland::start(ndshell::hyprland::Options { extra_config, ..options })?;
+    let mut child = hyprland.command(program).args(rest).spawn().map_err(|e| format!("{program}: {e}"))?;
+    std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
+    let frame = ndshell::wayland::screenshot(&hyprland);
+    let client = hyprland.clients().ok().and_then(|c| c.into_iter().next());
+    let _ = child.kill();
+    let _ = child.wait();
+    let frame = frame?;
+    let (mut x, mut y, mut w, mut h) = (0, 0, frame.width, frame.height);
+    if let Some(c) = client {
+        let px = |v: i32| (f64::from(v) * scale).round().max(0.) as u32;
+        x = px(c.at.0).min(frame.width);
+        y = px(c.at.1).min(frame.height);
+        w = px(c.size.0).min(frame.width - x);
+        h = px(c.size.1).min(frame.height - y);
+    }
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for row in y..y + h {
+        for col in x..x + w {
+            let i = (row * frame.stride + col * 4) as usize;
+            let p = &frame.data[i..i + 4];
+            let (r, b) = if frame.red_first { (p[0], p[2]) } else { (p[2], p[0]) };
+            rgba.extend_from_slice(&[r, p[1], b, 255]);
+        }
+    }
+    let file = std::fs::File::create(out).map_err(|e| format!("{out}: {e}"))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().and_then(|mut wr| wr.write_image_data(&rgba)).map_err(|e| format!("{out}: {e}"))?;
+    println!("ndshell: wrote {out} ({w}x{h})");
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
