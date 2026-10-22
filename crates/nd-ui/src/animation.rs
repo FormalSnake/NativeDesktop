@@ -57,9 +57,105 @@ impl Curve {
 pub enum Animation {
     /// Over `duration`, along `curve`.
     Timed { duration: Duration, curve: Curve },
+    /// Holds for `delay`, then runs over `duration` along `curve`.
+    Delayed { delay: Duration, duration: Duration, curve: Curve },
     /// A spring in Apple's terms (`damping` 1 settles without overshoot, `response` is roughly
     /// the seconds it takes). Carries velocity through a retarget.
     Spring { response: f64, damping: f64 },
+    /// One of the platform's own timings, from the app's [`MotionTokens`]: the same feel in
+    /// every widget and app on that platform.
+    Themed(Pace),
+}
+
+/// A platform timing, see [`MotionTokens`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Pace {
+    /// Hover, press and small state changes.
+    Fast,
+    /// Things coming in or going out: a revealer, a presentation.
+    Normal,
+    /// Larger moves across the window.
+    Slow,
+    /// The platform's spring: interruptible moves that keep their velocity.
+    Spring,
+    /// Waits out the platform spring, then runs on the fast timing: what surrounds a shared
+    /// element coming in once it has landed.
+    Settled,
+    /// Waits the fast timing, then runs as long as the platform spring: a backdrop going out
+    /// with a shared element, after what surrounds it has faded.
+    Exit,
+}
+
+/// The platform's motion: durations, curve and spring, set by the host from the theme. Every
+/// [`Animation::Themed`] resolves through them, so hover fades, presentations and lyrics move
+/// alike in every app on a platform.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionTokens {
+    pub fast: Duration,
+    pub normal: Duration,
+    pub slow: Duration,
+    pub curve: Curve,
+    /// Apple's response and damping.
+    pub spring: (f64, f64),
+}
+
+impl Default for MotionTokens {
+    fn default() -> Self {
+        Self {
+            fast: Duration::from_millis(150),
+            normal: Duration::from_millis(250),
+            slow: Duration::from_millis(400),
+            curve: Curve::Bezier(0.25, 0.1, 0.25, 1.),
+            spring: (0.35, 0.86),
+        }
+    }
+}
+
+/// The fade reduce motion keeps when the theme zeroed its durations.
+const REDUCED_FADE: Duration = Duration::from_millis(150);
+
+impl MotionTokens {
+    /// `animation` with a themed pace replaced by its timing. With reduce motion a themed
+    /// animation is a short fade: movement jumps anyway, opacity still eases.
+    pub fn resolve(&self, animation: Animation, reduce: bool) -> Animation {
+        let Animation::Themed(pace) = animation else { return animation };
+        if reduce {
+            let fade = if self.fast.is_zero() { REDUCED_FADE } else { self.fast };
+            return Animation::timed(fade, self.curve);
+        }
+        let k = slowdown();
+        match pace {
+            Pace::Fast => Animation::timed(self.fast.mul_f64(k), self.curve),
+            Pace::Normal => Animation::timed(self.normal.mul_f64(k), self.curve),
+            Pace::Slow => Animation::timed(self.slow.mul_f64(k), self.curve),
+            Pace::Spring => Animation::spring(self.spring.0 * k, self.spring.1),
+            Pace::Settled => Animation::Delayed {
+                delay: Duration::from_secs_f64(self.spring.0 * k),
+                duration: self.fast.mul_f64(k),
+                curve: self.curve,
+            },
+            Pace::Exit => Animation::Delayed {
+                delay: self.fast.mul_f64(k),
+                duration: Duration::from_secs_f64(self.spring.0 * k),
+                curve: self.curve,
+            },
+        }
+    }
+
+    /// How long a shared element waits before it travels home: the time what surrounds it takes
+    /// to fade out. Nothing under reduce motion, where it does not travel.
+    pub fn hero_hold(&self, reduce: bool) -> f64 {
+        if reduce { 0. } else { self.fast.as_secs_f64() * slowdown() }
+    }
+}
+
+/// `ND_ANIMATION_SLOWDOWN=<factor>` stretches every themed animation, for a test or a person to
+/// watch it frame by frame.
+fn slowdown() -> f64 {
+    static K: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
+        std::env::var("ND_ANIMATION_SLOWDOWN").ok().and_then(|v| v.parse().ok()).filter(|v| *v >= 1.).unwrap_or(1.)
+    });
+    *K
 }
 
 impl Animation {
@@ -81,6 +177,25 @@ impl Animation {
 
     pub fn spring(response: f64, damping: f64) -> Self {
         Animation::Spring { response, damping }
+    }
+
+    /// The platform's hover and small state change timing.
+    pub fn fast() -> Self {
+        Animation::Themed(Pace::Fast)
+    }
+
+    /// The platform's timing for things coming in and going out.
+    pub fn normal() -> Self {
+        Animation::Themed(Pace::Normal)
+    }
+
+    pub fn slow() -> Self {
+        Animation::Themed(Pace::Slow)
+    }
+
+    /// The platform's spring.
+    pub fn natural() -> Self {
+        Animation::Themed(Pace::Spring)
     }
 }
 
@@ -206,8 +321,14 @@ impl Motion {
             Animation::Timed { duration, curve } => {
                 Motion::Timed { from, to, start: now, duration: duration.as_secs_f64(), curve }
             }
+            Animation::Delayed { delay, duration, curve } => {
+                Motion::Timed { from, to, start: now + delay.as_secs_f64(), duration: duration.as_secs_f64(), curve }
+            }
             Animation::Spring { response, damping } => {
                 Motion::Spring(Spring { response: response.max(0.01), damping }.start(from, to, velocity, now))
+            }
+            Animation::Themed(_) => {
+                Self::start(MotionTokens::default().resolve(animation, false), from, to, velocity, now)
             }
         }
     }
@@ -318,6 +439,26 @@ impl MotionState {
             };
         }
         self.targets = targets;
+    }
+
+    pub fn animation(&self) -> Animation {
+        self.animation
+    }
+
+    pub fn targets(&self) -> Values {
+        self.targets
+    }
+
+    /// Starts every channel `from` names towards its target, as an enter pose does.
+    pub fn start_from(&mut self, from: &Values, now: f64, reduce: bool) {
+        for (c, from) in from.iter().enumerate() {
+            if let (Some(from), Some(to)) = (*from, self.targets[c])
+                && !(reduce && moves(c))
+                && from != to
+            {
+                self.motions[c] = Some(Motion::start(self.animation, from, to, 0., now));
+            }
+        }
     }
 
     /// The values to show at `now`.

@@ -37,12 +37,23 @@ pub struct ImageProps {
     pub tint: Option<Hsla>,
     /// Cut to a message bubble with its tail on this side: a picture ending a run of messages.
     pub tail: Option<BubbleSide>,
+    /// Softens the picture to colour washes about this many points across: decoded that small
+    /// and stretched, the same on every backend, for a backdrop behind content.
+    pub blur: Option<f32>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
 }
 
 impl ImageProps {
+    /// The pixels per point to decode at: the screen's, or far fewer for a blurred picture.
+    pub fn decode_scale(&self, scale: f32) -> f32 {
+        match self.blur {
+            Some(radius) if radius > 1. => scale.min(1. / radius),
+            _ => scale,
+        }
+    }
+
     /// The image's own pixel size: the hint, else the header.
     pub fn intrinsic(&self, pipeline: &ImagePipeline) -> Option<(u32, u32)> {
         self.size_hint.or_else(|| self.source.as_ref().and_then(|s| pipeline.intrinsic_size(s)))
@@ -109,6 +120,7 @@ fn image_at(source: Option<ImageSource>, site: &'static Location<'static>) -> Im
         animate: true,
         tint: None,
         tail: None,
+        blur: None,
         enabled: true,
         tooltip: None,
         style: StyleRefinement::default(),
@@ -134,6 +146,12 @@ impl Image {
 
     pub fn fit(mut self, fit: ImageFit) -> Self {
         self.0.props_mut().fit = fit;
+        self
+    }
+
+    /// Softens the picture to washes of its colours about `radius` across, for a backdrop.
+    pub fn blur(mut self, radius: Pixels) -> Self {
+        self.0.props_mut().blur = Some(radius.as_f32());
         self
     }
 

@@ -10,9 +10,11 @@
 mod chat;
 mod clock;
 mod composer;
+mod hover;
 mod image;
 mod lyrics;
 pub mod pipeline;
+mod player_layout;
 mod shelf;
 mod transport;
 mod video;
@@ -26,14 +28,16 @@ pub use clock::{PlaybackClock, format_clock, parse_clock};
 pub use composer::{
     ATTACHMENT_THUMB, Attachment, COMPOSER_LINES, COMPOSER_ROW, Composer, ComposerEvent, Draft, Outgoing, composer,
 };
+pub use hover::{ArtworkActions, BuildMenu, OnPlay, artwork_actions, hover_menu_button};
 pub use image::{Image, ImageFailed, ImageKind, ImageLoaded, ImageProps, UNKNOWN_ASPECT, image, image_placeholder};
 pub use lyrics::{
-    ANCHOR_AT, DEPTH_OPACITY, Follow, Lit, LyricClicked, LyricLine, LyricWord, Lyrics, LyricsFollowChanged, LyricsKind,
-    LyricsModel, LyricsProps, LyricsView, Row as LyricRow, RowKind as LyricRowKind, RowWord as LyricRowWord,
-    SCALE_ANIM, SCROLL, SCROLL_CURVE, UNLIT_SCALE, anchor_y, bezier, depth_opacity, follow_offset, interlude_fill,
-    lit_at, lyrics_view, rows as lyric_rows, word_fill,
+    ANCHOR_AT, DEPTH_BLUR, DEPTH_OPACITY, Follow, Lit, LyricClicked, LyricLine, LyricWord, Lyrics, LyricsFollowChanged,
+    LyricsKind, LyricsModel, LyricsProps, LyricsView, Row as LyricRow, RowKind as LyricRowKind,
+    RowWord as LyricRowWord, SCROLL, SCROLL_CURVE, UNLIT_SCALE, anchor_y, bezier, depth_blur, depth_opacity,
+    follow_offset, interlude_fill, lit_at, lyrics_view, row_depth, rows as lyric_rows, word_fill,
 };
 pub use pipeline::{DecodeRequest, Decoded, ImageFit, ImagePipeline, ImageSource};
+pub use player_layout::{HEADER_ART, PlayerLayout, PlayerLayoutState, WIDE_FROM, player_layout};
 pub use shelf::{
     Shelf, ShelfArrows, ShelfHandle, ShelfKind, ShelfProps, ShelfScroll, ShelfScrolled, scroll_target, shelf,
     snap_offset,

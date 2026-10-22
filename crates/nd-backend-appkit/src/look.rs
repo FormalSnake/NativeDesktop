@@ -1,7 +1,7 @@
 //! What the AppKit views draw, resolved from `nd-ui` props. Layout fields of a style arrive as
 //! frames; only the visual part is read here.
 
-use nd_gpui::gpui::Visibility;
+use nd_gpui::gpui::{Overflow, Visibility};
 use nd_ui::StyleRefinement;
 use nd_ui::prelude::{AbsoluteLength, FontWeight, Hsla, px};
 use objc2::rc::Retained;
@@ -101,6 +101,8 @@ pub(crate) struct ViewLook {
     pub hidden: bool,
     /// A move and scale about the centre that layout never sees.
     pub transform: nd_ui::Transform,
+    /// `overflow_hidden()`: subviews are clipped to the view, rounded corners included.
+    pub clips: bool,
     /// What it paints while the pointer is over it.
     pub hover: Option<Box<ViewLook>>,
 }
@@ -114,6 +116,7 @@ impl Default for ViewLook {
             opacity: 1.,
             hidden: false,
             transform: nd_ui::Transform::default(),
+            clips: false,
             hover: None,
         }
     }
@@ -134,6 +137,7 @@ impl ViewLook {
             opacity: style.opacity.unwrap_or(1.),
             hidden: style.visibility == Some(Visibility::Hidden),
             transform: nd_ui::Transform::default(),
+            clips: style.overflow.x == Some(Overflow::Hidden) && style.overflow.y == Some(Overflow::Hidden),
             hover: None,
         }
     }

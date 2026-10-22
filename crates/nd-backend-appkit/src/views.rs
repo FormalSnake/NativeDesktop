@@ -299,13 +299,14 @@ define_class!(
             if self.tracks_hover() {
                 use objc2::AnyThread;
                 use objc2_app_kit::{NSTrackingArea, NSTrackingAreaOptions};
-                let options = NSTrackingAreaOptions::MouseEnteredAndExited
-                    | NSTrackingAreaOptions::ActiveInKeyWindow
-                    | NSTrackingAreaOptions::InVisibleRect;
+                let options =
+                    NSTrackingAreaOptions::MouseEnteredAndExited | NSTrackingAreaOptions::ActiveInKeyWindow;
+                // Not InVisibleRect: inside a scroll view's document, visibleRect can reach past
+                // the view, and a card lit up while the pointer was over its neighbour.
                 let area = unsafe {
                     NSTrackingArea::initWithRect_options_owner_userInfo(
                         NSTrackingArea::alloc(),
-                        NSRect::ZERO,
+                        self.hover_rect(),
                         options,
                         Some(self),
                         None,
@@ -354,6 +355,7 @@ define_class!(
                 .min(size.width.min(size.height) / 2.)
                 .max(0.);
             layer.setCornerRadius(radius);
+            layer.setMasksToBounds(props.clips);
             match props.border {
                 Some((width, color)) => {
                     layer.setBorderWidth(width.into());
@@ -452,6 +454,16 @@ impl NdLayerView {
         if had != self.tracks_hover() {
             self.updateTrackingAreas();
         }
+    }
+
+    /// The part of the view on screen, where the pointer hovers it.
+    fn hover_rect(&self) -> NSRect {
+        let (b, v) = (self.bounds(), self.visibleRect());
+        let x0 = b.origin.x.max(v.origin.x);
+        let y0 = b.origin.y.max(v.origin.y);
+        let x1 = (b.origin.x + b.size.width).min(v.origin.x + v.size.width);
+        let y1 = (b.origin.y + b.size.height).min(v.origin.y + v.size.height);
+        NSRect::new(NSPoint::new(x0, y0), NSSize::new((x1 - x0).max(0.), (y1 - y0).max(0.)))
     }
 
     fn tracks_hover(&self) -> bool {

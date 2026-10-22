@@ -15,8 +15,10 @@
 //! - Follow: the anchor row sits at [`ANCHOR_AT`] of the viewport, tweened over [`SCROLL`]. A
 //!   user scroll stops following and shows the resync button; the button, new lyrics, or
 //!   `resync_after` of no scrolling resume it.
-//! - Depth: rows fade with their distance from the anchor through [`DEPTH_OPACITY`]; lit rows
-//!   draw in the primary ink at full size, the rest in the secondary ink at [`UNLIT_SCALE`].
+//! - Depth: rows fade and blur with their distance from the anchor through [`DEPTH_OPACITY`]
+//!   and [`DEPTH_BLUR`], easing on the theme's slow timing as the anchor moves; lit rows draw
+//!   in the primary ink at full size, the rest in the secondary ink at [`UNLIT_SCALE`]. While
+//!   the user scrolls, every row is sharp and whole; resync brings the depth back.
 //! - Unsynced lyrics are a plain column; a click on a synced row seeks to its start.
 
 use std::sync::Arc;
@@ -45,12 +47,12 @@ pub const ANCHOR_AT: f32 = 0.42;
 /// The follow scroll: 500 ms on a curve that overshoots slightly.
 pub const SCROLL: Duration = Duration::from_millis(500);
 pub const SCROLL_CURVE: [f32; 4] = [0.38, 1.21, 0.22, 1.0];
-/// Lit and unlit rows change size over this long.
-pub const SCALE_ANIM: Duration = Duration::from_millis(350);
 pub const UNLIT_SCALE: f32 = 0.85;
 /// Opacity by distance from the anchor in viewport spans: on the anchor, then a third, two
 /// thirds and a full span away.
 pub const DEPTH_OPACITY: [f32; 4] = [1.0, 0.7, 0.45, 0.25];
+/// Blur radius in points on the same steps: the lit line sharp, the rest out of focus.
+pub const DEPTH_BLUR: [f32; 4] = [0.0, 1.5, 3.0, 4.5];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LyricWord {
@@ -346,13 +348,32 @@ pub fn lit_at(rows: &[Row], t: f64, previous: usize) -> Lit {
 /// The opacity of a row `distance` rows from the anchor, with `span` rows filling the side of
 /// the viewport it is on.
 pub fn depth_opacity(distance: usize, span: f32) -> f32 {
+    depth_step(&DEPTH_OPACITY, distance, span)
+}
+
+/// The blur radius, in points, of a row `distance` rows from the anchor: the depth of field
+/// around the line being sung.
+pub fn depth_blur(distance: usize, span: f32) -> f32 {
+    depth_step(&DEPTH_BLUR, distance, span)
+}
+
+fn depth_step(steps: &[f32; 4], distance: usize, span: f32) -> f32 {
     let at = (distance as f32 * 3. / span.max(1.)).min(3.);
     let i = at.floor() as usize;
     if i >= 3 {
-        return DEPTH_OPACITY[3];
+        return steps[3];
     }
     let f = at - i as f32;
-    DEPTH_OPACITY[i] + (DEPTH_OPACITY[i + 1] - DEPTH_OPACITY[i]) * f
+    steps[i] + (steps[i + 1] - steps[i]) * f
+}
+
+/// A synced row's opacity and blur. While the user scrolls every row is sharp and whole, so the
+/// lyrics read as a page; following brings the depth of field back.
+pub fn row_depth(lit: bool, distance: usize, span: f32, following: bool) -> (f32, f32) {
+    if lit || !following {
+        return (1., 0.);
+    }
+    (depth_opacity(distance, span), depth_blur(distance, span))
 }
 
 /// Where the anchor row's top sits in the viewport, for a viewport `height` points tall.

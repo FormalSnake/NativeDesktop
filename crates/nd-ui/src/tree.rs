@@ -12,10 +12,10 @@ use std::mem;
 use std::rc::Rc;
 
 use nd_core::{NodeId, Rect, Size, WindowId};
-use nd_gpui::gpui::{KeyBinding, StyleRefinement};
+use nd_gpui::gpui::{KeyBinding, Refineable, StyleRefinement};
 use nd_gpui::taffy::{self, TaffyTree, prelude::TaffyMaxContent};
 
-use crate::animation::{self, MotionSpec, MotionState, Transform, Values};
+use crate::animation::{self, MotionSpec, MotionState, MotionTokens, Transform, Values};
 use crate::app::{AnyView, App, EntityId};
 use crate::backend::{AvailableSpace, Backend, BoundaryInsets, Constraint, NodeKind, Props, PropsPatch};
 use crate::canvas::{self, CanvasProps, PaintFn};
@@ -97,6 +97,53 @@ fn present_div(props: &Props, layout: &StyleRefinement, values: &Values) -> (Pro
     (Rc::new(div), layout)
 }
 
+/// A div's props and layout as it shows now: its group hover style while a group lights it,
+/// and on its source's frame while a hero goes back.
+fn shown(
+    lit: &HashSet<NodeId>,
+    away: Option<&Values>,
+    id: NodeId,
+    props: &Props,
+    layout: &StyleRefinement,
+) -> (Props, StyleRefinement) {
+    let Some(div) = props.downcast_ref::<DivProps>() else { return (props.clone(), layout.clone()) };
+    let hover = div.group_hover.as_ref().filter(|_| lit.contains(&id)).map(|(_, s)| s);
+    if hover.is_none() && away.is_none() {
+        return (props.clone(), layout.clone());
+    }
+    let mut div = div.clone();
+    let mut layout = layout.clone();
+    if let Some(style) = hover {
+        div.style.refine(style);
+        layout.refine(style);
+    }
+    if let Some(values) = away {
+        animation::present(&mut div.style, &mut div.transform, values);
+        animation::present(&mut layout, &mut Transform::default(), values);
+    }
+    (Rc::new(div), layout)
+}
+
+/// The values that put an element whose frame at rest is `home` (with `targets` there) onto
+/// `source`: its size when given in points, else a scale about its centre.
+fn pose_on(targets: &Values, source: Rect, home: Rect) -> Values {
+    let mut out: Values = [None; 6];
+    let (ox, oy) = (targets[1].unwrap_or(0.), targets[2].unwrap_or(0.));
+    if targets[4].is_some() && targets[5].is_some() {
+        out[1] = Some(ox + f64::from(source.origin.x - home.origin.x));
+        out[2] = Some(oy + f64::from(source.origin.y - home.origin.y));
+        out[4] = Some(f64::from(source.size.width));
+        out[5] = Some(f64::from(source.size.height));
+    } else {
+        let centre = |r: Rect| (r.origin.x + r.size.width / 2., r.origin.y + r.size.height / 2.);
+        let (s, h) = (centre(source), centre(home));
+        out[1] = Some(ox + f64::from(s.0 - h.0));
+        out[2] = Some(oy + f64::from(s.1 - h.1));
+        out[3] = Some(f64::from(source.size.width / home.size.width));
+    }
+    out
+}
+
 struct ViewSlot {
     view: AnyView,
     ident: Ident,
@@ -154,6 +201,19 @@ pub(crate) struct Tree {
     animating: HashSet<NodeId>,
     /// The motion [`Tree::animate`] built for the node being mounted or reconciled.
     pending_motion: Option<Animated>,
+    /// Hover groups the pointer is over, and the nodes under them that take their
+    /// `group_hover` style.
+    hovered_groups: HashSet<NodeId>,
+    lit: HashSet<NodeId>,
+    /// Heroes mounted this frame, hidden until their frame is known and they can start from
+    /// their source's.
+    heroes_pending: Vec<NodeId>,
+    /// Heroes asked to go back whose destination is not worked out yet, and the values that
+    /// put the ones going back on their source's frame.
+    away_pending: Vec<NodeId>,
+    hero_away: HashMap<NodeId, Values>,
+    /// A hero's frame at rest, for going back from mid-flight.
+    hero_home: HashMap<NodeId, Rect>,
     /// Nodes that report their size, laid out at a new one this frame.
     resized: Vec<(NodeId, Size)>,
 }
@@ -302,6 +362,12 @@ impl Tree {
             overlays: Vec::new(),
             animating: HashSet::new(),
             pending_motion: None,
+            hovered_groups: HashSet::new(),
+            lit: HashSet::new(),
+            heroes_pending: Vec::new(),
+            away_pending: Vec::new(),
+            hero_away: HashMap::new(),
+            hero_home: HashMap::new(),
             resized: Vec::new(),
         }
     }
@@ -368,7 +434,12 @@ impl Tree {
     }
 
     pub(crate) fn needs_frame(&self) -> bool {
-        self.needs_layout || !self.tx.is_empty() || !self.reaffirm.is_empty() || !self.animating.is_empty()
+        self.needs_layout
+            || !self.tx.is_empty()
+            || !self.reaffirm.is_empty()
+            || !self.animating.is_empty()
+            || !self.heroes_pending.is_empty()
+            || !self.away_pending.is_empty()
     }
 
     /// `el` as presented at `now`: a div that animates gets its motions started or retargeted
@@ -380,13 +451,25 @@ impl Tree {
         mut el: NodeElement,
         now: f64,
         reduce: bool,
+        tokens: &MotionTokens,
     ) -> NodeElement {
         let previous = node.and_then(|n| self.nodes.get_mut(&n)).and_then(|n| n.motion.take());
-        let (Some(spec), Some(div)) = (el.motion, el.props.downcast_ref::<DivProps>()) else {
+        let (Some(mut spec), Some(div)) = (el.motion, el.props.downcast_ref::<DivProps>()) else {
             self.animating.remove(&id);
             return el;
         };
-        let targets = animation::values(&el.layout, &div.transform);
+        spec.animation = tokens.resolve(spec.animation, reduce);
+        let hero = div.hero.clone();
+        let away = hero.as_ref().is_some_and(|h| h.away) && !reduce;
+        if !away {
+            self.hero_away.remove(&id);
+            self.away_pending.retain(|n| *n != id);
+        } else if node.is_some() && !self.hero_away.contains_key(&id) && !self.away_pending.contains(&id) {
+            self.away_pending.push(id);
+        }
+        let (shown_props, shown_layout) = shown(&self.lit, self.hero_away.get(&id), id, &el.props, &el.layout);
+        let transform = shown_props.downcast_ref::<DivProps>().map_or_else(Transform::default, |d| d.transform);
+        let targets = animation::values(&shown_layout, &transform);
         let mut state = match previous {
             Some(mut previous) => {
                 previous.state.retarget(spec.animation, targets, now, reduce);
@@ -399,13 +482,120 @@ impl Tree {
         state.settle(now);
         let base = (el.props.clone(), el.layout.clone());
         if state.is_moving() {
-            (el.props, el.layout) = present_div(&el.props, &el.layout, &state.sample(now));
+            (el.props, el.layout) = present_div(&shown_props, &shown_layout, &state.sample(now));
             self.animating.insert(id);
         } else {
+            (el.props, el.layout) = (shown_props, shown_layout);
             self.animating.remove(&id);
+        }
+        // A hero mounting shows nothing until its frame is known; then it starts on its source.
+        if node.is_none() && hero.is_some_and(|h| !h.away) && !reduce {
+            let mut hidden = el.props.downcast_ref::<DivProps>().expect("div").clone();
+            hidden.style.opacity = Some(0.);
+            el.props = Rc::new(hidden);
+            self.heroes_pending.push(id);
         }
         self.pending_motion = Some(Animated { state, props: base.0, layout: base.1 });
         el
+    }
+
+    /// The pointer entered or left `node`. A hover group lights or dims the nodes under it.
+    pub(crate) fn hover_changed(&mut self, node: NodeId, hovered: bool, now: f64, reduce: bool) {
+        let is_group =
+            self.nodes.get(&node).and_then(|n| n.props.downcast_ref::<DivProps>()).is_some_and(|d| d.group.is_some());
+        if !is_group {
+            return;
+        }
+        if hovered {
+            self.hovered_groups.insert(node);
+        } else {
+            self.hovered_groups.remove(&node);
+        }
+        self.relight(now, reduce);
+    }
+
+    /// Recomputes which nodes hovered groups light, and moves the ones that changed.
+    fn relight(&mut self, now: f64, reduce: bool) {
+        self.hovered_groups.retain(|g| self.nodes.contains_key(g));
+        let mut lit = HashSet::new();
+        for &group in &self.hovered_groups {
+            let Some(name) = self.nodes[&group].props.downcast_ref::<DivProps>().and_then(|d| d.group.clone()) else {
+                continue;
+            };
+            let mut stack = self.nodes[&group].native.clone();
+            while let Some(n) = stack.pop() {
+                let node = &self.nodes[&n];
+                if node
+                    .props
+                    .downcast_ref::<DivProps>()
+                    .and_then(|d| d.group_hover.as_ref())
+                    .is_some_and(|(g, _)| *g == name)
+                {
+                    lit.insert(n);
+                }
+                stack.extend(node.native.iter().copied());
+            }
+        }
+        let changed: Vec<NodeId> = lit.symmetric_difference(&self.lit).copied().collect();
+        self.lit = lit;
+        for n in changed {
+            self.retarget_shown(n, now, reduce);
+        }
+    }
+
+    /// Starts node `n` towards what it shows now (its group hover and hero state applied).
+    fn retarget_shown(&mut self, n: NodeId, now: f64, reduce: bool) {
+        let away = self.hero_away.get(&n).copied();
+        let Some(node) = self.nodes.get_mut(&n) else { return };
+        let Some(anim) = node.motion.as_mut() else { return };
+        let (props, layout) = shown(&self.lit, away.as_ref(), n, &anim.props, &anim.layout);
+        let transform = props.downcast_ref::<DivProps>().map_or_else(Transform::default, |d| d.transform);
+        let animation = anim.state.animation();
+        anim.state.retarget(animation, animation::values(&layout, &transform), now, reduce);
+        self.animating.insert(n);
+    }
+
+    /// Works out where heroes come from and go back to, from the frames the backend drew last.
+    pub(crate) fn place_heroes(&mut self, backend: &dyn Backend, now: f64, reduce: bool, tokens: &MotionTokens) {
+        for id in mem::take(&mut self.heroes_pending) {
+            let Some(hero) = self.hero_of(id) else { continue };
+            let source = self.source_rect(backend, &hero);
+            let home = backend.probe(id).bounds.filter(|r| r.size.width > 0. && r.size.height > 0.);
+            let Some(node) = self.nodes.get_mut(&id) else { continue };
+            let Some(anim) = node.motion.as_mut() else { continue };
+            if let (Some(source), Some(home)) = (source, home) {
+                self.hero_home.insert(id, home);
+                let from = pose_on(&anim.state.targets(), source, home);
+                anim.state.start_from(&from, now, reduce);
+            }
+            // Shown again: moving from its source, or in place when there is none.
+            self.animating.insert(id);
+        }
+        for id in mem::take(&mut self.away_pending) {
+            let Some(hero) = self.hero_of(id).filter(|h| h.away) else { continue };
+            let Some(source) = self.source_rect(backend, &hero) else { continue };
+            let moving = self.nodes.get(&id).and_then(|n| n.motion.as_ref()).is_some_and(|m| m.state.is_moving());
+            let probed = backend.probe(id).bounds.filter(|r| r.size.width > 0. && r.size.height > 0.);
+            let home = if moving { self.hero_home.get(&id).copied().or(probed) } else { probed };
+            let Some(home) = home else { continue };
+            let Some(anim) = self.nodes.get(&id).and_then(|n| n.motion.as_ref()) else { continue };
+            let mut base = anim.props.downcast_ref::<DivProps>().map_or_else(Transform::default, |d| d.transform);
+            base.scale = 1.;
+            let targets = animation::values(&anim.layout, &base);
+            self.hero_away.insert(id, pose_on(&targets, source, home));
+            // From rest it waits for the view around it to fade, then travels home.
+            let at = if moving { now } else { now + tokens.hero_hold(reduce) };
+            self.retarget_shown(id, at, reduce);
+        }
+    }
+
+    fn hero_of(&self, id: NodeId) -> Option<crate::element::HeroFrom> {
+        self.nodes.get(&id)?.props.downcast_ref::<DivProps>()?.hero.clone()
+    }
+
+    fn source_rect(&self, backend: &dyn Backend, hero: &crate::element::HeroFrom) -> Option<Rect> {
+        let (node, _) = self.keyed(&hero.id)?;
+        backend.probe(node).bounds.filter(|r| r.size.width > 0. && r.size.height > 0.)
     }
 
     /// Advances every motion in flight to `now`: presented values reach the backend as
@@ -427,7 +617,8 @@ impl Tree {
                 ended.push(id);
             }
             let moving = anim.state.is_moving();
-            let (props, layout) = present_div(&anim.props, &anim.layout, &anim.state.sample(now));
+            let (shown_props, shown_layout) = shown(&self.lit, self.hero_away.get(&id), id, &anim.props, &anim.layout);
+            let (props, layout) = present_div(&shown_props, &shown_layout, &anim.state.sample(now));
             if !node.props.props_eq(&*props) {
                 let patch = PropsPatch { old: mem::replace(&mut node.props, props), new: node.props.clone() };
                 self.tx.push(Op::Update { node: id, patch });
@@ -582,7 +773,7 @@ impl Tree {
 
     fn mount_node(&mut self, el: NodeElement, ident: Ident, depth: u32, window: &mut Window, app: &mut App) -> NodeId {
         let id = app.alloc_node();
-        let mut el = self.animate(None, id, el, window.now(), app.reduce_motion);
+        let mut el = self.animate(None, id, el, window.now(), app.reduce_motion, &app.motion);
         let motion = self.pending_motion.take();
         if let Some(paint) = &el.paint {
             let (w, h) = styled_size(&el.layout);
@@ -709,6 +900,10 @@ impl Tree {
                 let _ = self.taffy.remove(node.taffy);
                 self.overlays.retain(|o| *o != n);
                 self.animating.remove(&n);
+                self.lit.remove(&n);
+                self.hovered_groups.remove(&n);
+                self.hero_away.remove(&n);
+                self.hero_home.remove(&n);
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {
                     if let Slot::View(e) = s {
@@ -822,7 +1017,7 @@ impl Tree {
     }
 
     fn reconcile_node(&mut self, n: NodeId, el: NodeElement, depth: u32, window: &mut Window, app: &mut App) {
-        let mut el = self.animate(Some(n), n, el, window.now(), app.reduce_motion);
+        let mut el = self.animate(Some(n), n, el, window.now(), app.reduce_motion, &app.motion);
         let motion = self.pending_motion.take();
         if let Some(paint) = &el.paint {
             let node = &self.nodes[&n];
@@ -1159,6 +1354,7 @@ impl App {
         tree.placed.clear();
         tree.rendered.clear();
         tree.drawn_in = self.frames;
+        tree.place_heroes(&*self.backend, window.now(), self.reduce_motion, &self.motion);
         for node in tree.step_motion(window.now()) {
             if tree.handler(node, std::any::TypeId::of::<crate::AnimationEnded>()).is_some() {
                 self.events().emitter(node).emit(crate::AnimationEnded);
@@ -1199,6 +1395,10 @@ impl App {
                     tree.rerender_view(e, &mut window, self);
                 }
             }
+        }
+        // Nodes mounted under a hovered group this frame take its hover style too.
+        if !tree.hovered_groups.is_empty() {
+            tree.relight(window.now(), self.reduce_motion);
         }
         if self.windows.len() > 1 {
             tree.parked.append(&mut tree.orphans);

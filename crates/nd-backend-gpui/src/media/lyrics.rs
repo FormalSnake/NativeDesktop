@@ -1,14 +1,18 @@
 //! `lyrics_view`: rows from [`LyricsModel`], the anchor row held at [`ANCHOR_AT`] of the view by a
-//! tween over [`SCROLL`], rows fading with their distance from it, the anchor row filling word by
-//! word. A wheel over the view stops following until the resync button, new lyrics or
-//! `resync_after`.
+//! tween over [`SCROLL`], rows fading and blurring with their distance from it, the anchor row
+//! filling word by word. A wheel over the view stops following, with every row sharp, until the
+//! resync button, new lyrics or `resync_after`.
+//!
+//! GPUI has no blur filter for text, so a blurred row is drawn as several copies offset on a
+//! ring around it, each faint, which sums to the row's opacity with soft edges: a box blur of
+//! the row's radius. Only rows on screen get the copies.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use nd_components::{
     LyricClicked, LyricRowKind, LyricsFollowChanged, LyricsModel, LyricsProps, SCROLL, SCROLL_CURVE, TextStyle,
-    UNLIT_SCALE, anchor_y, bezier, depth_opacity, follow_offset, interlude_fill, word_fill,
+    UNLIT_SCALE, anchor_y, bezier, follow_offset, interlude_fill, row_depth, word_fill,
 };
 use nd_core::NodeId;
 use nd_core::time::{Duration, Instant};
@@ -38,8 +42,40 @@ struct Tween {
     start: Instant,
 }
 
+/// A row's opacity and blur, easing to `to` from where it was when the target changed.
+#[derive(Clone, Copy)]
+struct Depth {
+    from: (f32, f32),
+    to: (f32, f32),
+    start: Instant,
+}
+
+impl Depth {
+    fn at(&self, now: Instant, duration: f32, curve: [f32; 4]) -> (f32, f32) {
+        let x = if duration <= 0. { 1. } else { now.saturating_duration_since(self.start).as_secs_f32() / duration };
+        if x >= 1. {
+            return self.to;
+        }
+        let p = bezier(curve, x);
+        (self.from.0 + (self.to.0 - self.from.0) * p, self.from.1 + (self.to.1 - self.from.1) * p)
+    }
+}
+
+/// Where the copies of a row blurred by `radius` points go, centre first.
+fn taps(radius: f32) -> Vec<(f32, f32)> {
+    let ring = if radius < 2. { 4 } else { 8 };
+    let r = radius * 0.75;
+    let mut out = vec![(0., 0.)];
+    out.extend((0..ring).map(|k| {
+        let a = k as f32 / ring as f32 * std::f32::consts::TAU;
+        (r * a.cos(), r * a.sin())
+    }));
+    out
+}
+
 #[derive(Default)]
 pub(crate) struct LyricsState {
+    depth: Vec<Depth>,
     model: LyricsModel,
     offset: f32,
     tween: Option<Tween>,
@@ -85,6 +121,7 @@ pub(super) fn lyrics(
         s.snap = true;
         s.tween = None;
         s.offset = 0.;
+        s.depth.clear();
         *s.measured.borrow_mut() = Measured { column: None, rows: vec![None; s.model.rows.len()] };
     }
     s.model.advance(p, now);
@@ -171,14 +208,29 @@ pub(super) fn lyrics(
         measure(move |b| m.borrow_mut().column = Some(b.origin.y.as_f32()))
     };
     let mut column = div().absolute().left_0().right_0().top(px(-offset)).flex().flex_col().child(column_measure);
+    let motion = theme.motion;
+    let duration = motion.slow.as_secs_f32();
+    let mut depth = std::mem::take(&mut state.borrow_mut().depth);
+    let mut easing = false;
     for (i, row) in rows.iter().enumerate() {
         let is_lit = synced && lit.contains(i);
-        let fade = if synced {
+        let target = if synced {
             let span = if i < lit.anchor { above } else { below };
-            depth_opacity(i.abs_diff(lit.anchor), span)
+            row_depth(is_lit, i.abs_diff(lit.anchor), span, following)
         } else {
-            1.
+            (1., 0.)
         };
+        if depth.len() <= i {
+            depth.push(Depth { from: target, to: target, start: now });
+        } else if depth[i].to != target {
+            depth[i] = Depth { from: depth[i].at(now, duration, motion.ease), to: target, start: now };
+        }
+        let (fade, blur) = depth[i].at(now, duration, motion.ease);
+        easing |= (fade, blur) != target;
+        let on_screen = measured_rows.borrow().rows.get(i).copied().flatten().is_none_or(|(top, h)| {
+            let y = top - offset;
+            y + h > 0. && y < height
+        });
         let ink = |c: Hsla| with_alpha(c, c.a * fade);
         let (row_size, row_weight) = match (row.kind, synced, is_lit) {
             (_, false, _) => (look.type_of(TextStyle::Title3).0, FontWeight::BOLD),
@@ -242,9 +294,20 @@ pub(super) fn lyrics(
             _ => {
                 // Recorded at rest: the depth fade is decoration around the lit line, as the
                 // AppKit view reports it.
-                let c = ink(rest);
                 marks.text(&row.text, rest, &[], row_size, row_weight);
-                el = el.child(div().text_color(c).when(row.opposite, |d| d.text_right()).child(row.text.clone()));
+                let line = |c: Hsla| div().text_color(c).when(row.opposite, |d| d.text_right()).child(row.text.clone());
+                if blur > 0.25 && on_screen {
+                    let taps = taps(blur);
+                    // Each copy's share, so the copies together cover a glyph at the row's opacity.
+                    let alpha = 1. - (1. - (rest.a * fade).min(0.999)).powf(1. / taps.len() as f32);
+                    let mut stack = div().relative().w_full().child(line(gpui::transparent_black()));
+                    for (dx, dy) in taps {
+                        stack = stack.child(line(with_alpha(rest, alpha)).absolute().top(px(dy)).left(px(dx)).w_full());
+                    }
+                    el = el.child(stack);
+                } else {
+                    el = el.child(line(ink(rest)));
+                }
             }
         }
         let m = measured_rows.clone();
@@ -260,6 +323,10 @@ pub(super) fn lyrics(
             el = el.cursor_pointer().on_click(move |_, _, cx| sink.send(LyricClicked { line, start }, cx));
         }
         column = column.child(el);
+    }
+    state.borrow_mut().depth = depth;
+    if easing {
+        window.request_animation_frame();
     }
 
     let wheel = {

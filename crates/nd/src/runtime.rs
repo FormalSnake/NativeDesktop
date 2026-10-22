@@ -44,6 +44,9 @@ pub mod prelude {
         system_item, titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::chrome::{
+        ArtworkActions, Presentation, PresentationExt, artwork_actions, hover_menu_button, presentation,
+    };
+    pub use crate::chrome::{
         Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
         ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,
         LyricsView, NowPlaying, Outgoing, PILL, PastedImage, Person, PlaybackClock, PlayerBar, Reaction, RunPosition,
@@ -60,6 +63,7 @@ pub mod prelude {
         secure_field, segmented, settings_group, sheet_layout, spinner, stepper, switch, switch_row, text_area,
         text_field,
     };
+    pub use crate::chrome::{PlayerLayout, PlayerLayoutState, player_layout};
     pub use crate::chrome::{SidebarRevealed, Tile, TileGrid, TileMoved, tile, tile_grid};
     pub use crate::controls::{
         Canvas, CanvasPath, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas,

@@ -28,6 +28,7 @@ pages = [
   "guides/virtualization",
   "guides/overlays",
   "guides/gestures",
+  "guides/motion",
   "guides/windows-and-tabs",
   "guides/webview",
   "guides/terminal",

@@ -1,6 +1,7 @@
 //! `image`: a picture from the shared pipeline, decoded on its workers at the size the node was
-//! last painted, shown as a GPUI image. Until the decode lands the node is a placeholder of its
-//! final size on the raised surface.
+//! last painted, shown as a GPUI image. Until the first decode lands the node is a placeholder of
+//! its final size on the raised surface; a new source keeps the old picture up until its own
+//! decode lands, so a stream of frames (motion artwork) never flashes the placeholder.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -35,6 +36,8 @@ pub(crate) struct Picture {
     loading: Option<Task<()>>,
     tick: Option<Task<()>>,
     started: Option<Instant>,
+    /// The source changed since `shown` was decoded: the next decode restarts the clock.
+    replaced: bool,
     /// The source whose outcome the app heard.
     reported: Option<ImageSource>,
     /// The node's events; `None` for pictures inside another widget (an avatar).
@@ -101,6 +104,9 @@ impl Picture {
         self.forget_frames(window, cx);
         self.frames = vec![None; decoded.frames.len()];
         self.shown = Some(decoded);
+        if std::mem::take(&mut self.replaced) {
+            self.started = None;
+        }
         self.started.get_or_insert_with(Instant::now);
     }
 
@@ -130,10 +136,12 @@ impl Picture {
         let mut p = this.borrow_mut();
         let source = request.as_ref().map(|r| r.source.clone());
         if p.source != source {
-            p.forget_frames(window, cx);
-            p.shown = None;
             p.loading = None;
-            p.started = None;
+            p.replaced = true;
+            if source.is_none() {
+                p.forget_frames(window, cx);
+                p.shown = None;
+            }
             p.source = source;
         }
         let Some(request) = request else {
@@ -288,8 +296,10 @@ pub(super) fn image(
             (None, None) => (natural.width, natural.height),
         },
     };
-    let request =
-        p.source.clone().map(|s| DecodeRequest::at(s, size.0, size.1, window.scale_factor(), p.fit).tinted(p.tint));
+    let request = p
+        .source
+        .clone()
+        .map(|s| DecodeRequest::at(s, size.0, size.1, p.decode_scale(window.scale_factor()), p.fit).tinted(p.tint));
     picture_state.borrow_mut().attach(Some(ctl.sink.clone()), b.backend.state.borrow().app.clone());
     Picture::want(&picture_state, request, window, cx);
     let crop = (p.fit == ImageFit::Cover).then(|| size.0 / size.1.max(1.));

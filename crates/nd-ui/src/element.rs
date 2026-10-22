@@ -266,10 +266,27 @@ pub struct DivProps {
     pub hover: Option<StyleRefinement>,
     /// Pointer enter and exit are reported as [`HoverChanged`].
     pub tracks_hover: bool,
+    /// Names a hover group: descendants with a matching `group_hover` change while the pointer
+    /// is anywhere over this node.
+    pub group: Option<SharedString>,
+    /// Refines the style while the pointer is over the nearest ancestor `group` of this name,
+    /// animated (see [`Div::group_hover`]).
+    pub group_hover: Option<(SharedString, StyleRefinement)>,
+    /// A shared element: it travels from another element's frame when it mounts, and back to
+    /// it while `away` (see [`Div::hero_from`]).
+    pub hero: Option<HeroFrom>,
     /// Size changes are reported as [`Resized`].
     pub reports_size: bool,
     /// The access key of the first control inside (`.access_key("S")`).
     pub access_key: Option<SharedString>,
+}
+
+/// Where a hero element travels from and back to: the element keyed `id`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeroFrom {
+    pub id: SharedString,
+    /// Going back: the element moves onto the source's frame.
+    pub away: bool,
 }
 
 /// The node was laid out at a new size (`.on_resize`).
@@ -323,6 +340,9 @@ pub struct Div {
     transform: Transform,
     hover: Option<StyleRefinement>,
     tracks_hover: bool,
+    group: Option<SharedString>,
+    group_hover: Option<(SharedString, StyleRefinement)>,
+    hero: Option<HeroFrom>,
     reports_size: bool,
     motion: Option<MotionSpec>,
     drag: crate::drag::DragSpec,
@@ -372,6 +392,9 @@ impl Div {
             transform: Transform::default(),
             hover: None,
             tracks_hover: false,
+            group: None,
+            group_hover: None,
+            hero: None,
             reports_size: false,
             motion: None,
             drag: crate::drag::DragSpec::default(),
@@ -444,6 +467,49 @@ impl Div {
     pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.tracks_hover = true;
         self.on(move |e: &HoverChanged, window, cx| handler(&e.hovered, window, cx))
+    }
+
+    /// Makes the element a hover group named `name`: while the pointer is over it, descendants
+    /// that asked for `.group_hover(name, ..)` take their hover style. A card or a row is the
+    /// group; the actions on it fade in.
+    pub fn group(mut self, name: impl Into<SharedString>) -> Self {
+        self.group = Some(name.into());
+        self.tracks_hover = true;
+        self
+    }
+
+    /// Refines the style while the pointer is over the ancestor `.group(name)`, easing in and
+    /// out with the platform's hover timing (or `.animate`'s animation). Opacity, offset, scale
+    /// and point sizes move; other fields change at once.
+    pub fn group_hover(
+        mut self,
+        name: impl Into<SharedString>,
+        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self {
+        self.group_hover = Some((name.into(), f(StyleRefinement::default())));
+        if self.motion.is_none() {
+            self.motion = Some(MotionSpec { animation: Animation::fast(), enter: None });
+        }
+        self
+    }
+
+    /// Hidden until the pointer is over the ancestor `.group(name)`, then faded in: the play
+    /// and More buttons on a card.
+    pub fn reveal_on_hover(self, name: impl Into<SharedString>) -> Self {
+        self.opacity(0.).group_hover(name, |s| s.opacity(1.))
+    }
+
+    /// A shared element transition. When the element mounts it starts on the frame of the
+    /// element keyed `id` (any element: a player bar's artwork is `"<bar id>.art"`) and moves and resizes onto its own, on the
+    /// platform's spring (or `.animate`'s animation); with `away` it travels back onto that
+    /// frame. Its size animates when given in points, so the element sits in a box of its
+    /// final size (absolute in it) to move nothing else. Reduce motion fades it in place.
+    pub fn hero_from(mut self, id: impl Into<SharedString>, away: bool) -> Self {
+        self.hero = Some(HeroFrom { id: id.into(), away });
+        if self.motion.is_none() {
+            self.motion = Some(MotionSpec { animation: Animation::natural(), enter: None });
+        }
+        self
     }
 
     /// Moves the element by `x`, `y` without moving anything else.
@@ -654,6 +720,9 @@ impl IntoElement for Div {
                 transform: self.transform,
                 hover: self.hover,
                 tracks_hover: self.tracks_hover,
+                group: self.group,
+                group_hover: self.group_hover,
+                hero: self.hero,
                 reports_size: self.reports_size,
                 access_key: self.access_key,
             }),

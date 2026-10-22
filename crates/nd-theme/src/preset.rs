@@ -238,6 +238,9 @@ pub struct Motion {
     pub normal: Duration,
     pub slow: Duration,
     pub spring: Spring,
+    /// The platform's curve for state changes and things coming in, as CSS `cubic-bezier`
+    /// control points.
+    pub ease: [f32; 4],
 }
 
 /// Which material each structural surface uses.
@@ -336,6 +339,8 @@ impl Metrics {
                     normal: ms(250),
                     slow: ms(400),
                     spring: Spring { response: 0.35, damping: 0.86 },
+                    // CAMediaTimingFunction's default.
+                    ease: [0.25, 0.1, 0.25, 1.],
                 },
                 materials: Materials {
                     sidebar: Material::Vibrancy,
@@ -376,6 +381,8 @@ impl Metrics {
                     normal: ms(167),
                     slow: ms(250),
                     spring: Spring { response: 0.3, damping: 0.9 },
+                    // WinUI's entrance curve (Timing and easing).
+                    ease: [0., 0., 0., 1.],
                 },
                 materials: Materials {
                     sidebar: Material::Mica,
@@ -401,6 +408,8 @@ impl Metrics {
                     normal: ms(250),
                     slow: ms(400),
                     spring: Spring { response: 0.2, damping: 1. },
+                    // libadwaita's ease-out-cubic.
+                    ease: [0.215, 0.61, 0.355, 1.],
                 },
                 materials: Materials {
                     sidebar: Material::Opaque,
@@ -421,6 +430,7 @@ impl Metrics {
                     normal: ms(250),
                     slow: ms(400),
                     spring: Spring { response: 0.35, damping: 0.9 },
+                    ease: [0.215, 0.61, 0.355, 1.],
                 },
                 materials: Materials {
                     sidebar: Material::Opaque,

@@ -49,6 +49,17 @@ pub fn update_registry(cx: &mut App, f: impl FnOnce(&mut ThemeRegistry)) {
 pub(crate) fn sync(cx: &mut App) {
     let reduce = cx.try_global::<ThemeState>().is_some_and(|s| s.0.os().metrics.reduce_motion == Some(true));
     cx.set_reduce_motion(reduce);
+    if let Some(state) = cx.try_global::<ThemeState>() {
+        let m = state.0.app_theme().motion;
+        let [a, b, c, d] = m.ease;
+        cx.set_motion(nd_ui::MotionTokens {
+            fast: m.fast,
+            normal: m.normal,
+            slow: m.slow,
+            curve: nd_ui::Curve::Bezier(a, b, c, d),
+            spring: (f64::from(m.spring.response), f64::from(m.spring.damping)),
+        });
+    }
     #[cfg(target_os = "macos")]
     if let Some(state) = cx.try_global::<ThemeState>() {
         let registry = &state.0;

@@ -191,3 +191,137 @@ fn hover_style_reaches_the_backend_and_on_hover_hears_enter_and_exit() {
     cx.run_until_idle();
     assert_eq!(*log.borrow(), [true, false]);
 }
+
+struct Tile;
+
+impl Render for Tile {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("tile")
+            .group("tile")
+            .size(px(100.))
+            .child(div().id("play").size(px(20.)).reveal_on_hover("tile"))
+            .child(div().id("other").size(px(20.)).reveal_on_hover("row"))
+    }
+}
+
+fn hover(cx: &mut TestApp, node: NodeId, hovered: bool) {
+    cx.events().emitter(node).emit(HoverChanged { hovered });
+    cx.drain_events();
+    cx.frame();
+}
+
+#[test]
+fn a_hover_group_fades_its_reveals_in_and_out_on_the_platform_timing() {
+    let mut cx = TestApp::new();
+    cx.open_window(WINDOW, |_, cx| cx.new(|_| Tile));
+    let (tile, play, other) = (node(&cx, "tile"), node(&cx, "play"), node(&cx, "other"));
+    assert!(props(&cx, tile).tracks_hover, "a group hears the pointer");
+    assert_eq!(props(&cx, play).style.opacity, Some(0.));
+    assert!(!cx.needs_frame());
+
+    hover(&mut cx, tile, true);
+    let fast = cx.motion().fast.as_secs_f64();
+    step(&mut cx, fast / 2.);
+    let mid = props(&cx, play).style.opacity.unwrap();
+    assert!(mid > 0.05 && mid < 0.95, "fading in: {mid}");
+    assert_eq!(props(&cx, other).style.opacity, Some(0.), "another group's reveal stays hidden");
+    step(&mut cx, fast);
+    assert_eq!(props(&cx, play).style.opacity, Some(1.));
+    assert!(!cx.needs_frame(), "idle once shown");
+
+    hover(&mut cx, tile, false);
+    step(&mut cx, fast / 2.);
+    assert!(props(&cx, play).style.opacity.unwrap() < 1.);
+    step(&mut cx, fast);
+    assert_eq!(props(&cx, play).style.opacity, Some(0.));
+}
+
+#[test]
+fn a_themed_animation_follows_the_apps_motion_tokens() {
+    let mut cx = TestApp::new();
+    cx.set_motion(MotionTokens { fast: Duration::from_millis(400), curve: Curve::Linear, ..MotionTokens::default() });
+    cx.open_window(WINDOW, |_, cx| cx.new(|_| Tile));
+    let (tile, play) = (node(&cx, "tile"), node(&cx, "play"));
+    hover(&mut cx, tile, true);
+    step(&mut cx, 0.1);
+    let at = props(&cx, play).style.opacity.unwrap();
+    assert!((at - 0.25).abs() < 0.03, "a quarter of 400 ms, linear: {at}");
+}
+
+struct Presented {
+    open: bool,
+    away: bool,
+}
+
+impl Render for Presented {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(div().id("thumb").absolute().left(px(10.)).top(px(250.)).size(px(40.))).when(
+            self.open,
+            |root| {
+                root.child(
+                    div().absolute().left(px(100.)).top(px(20.)).size(px(200.)).child(
+                        div()
+                            .id("cover")
+                            .absolute()
+                            .size(px(200.))
+                            .hero_from("thumb", self.away)
+                            .animate(Animation::linear(Duration::from_millis(200))),
+                    ),
+                )
+            },
+        )
+    }
+}
+
+#[test]
+fn a_hero_comes_in_from_its_source_frame_and_goes_back_to_it() {
+    let mut cx = TestApp::new();
+    let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false }));
+    handle.root().update(&mut cx, |p, cx| {
+        p.open = true;
+        cx.notify();
+    });
+    cx.frame();
+    let cover = node(&cx, "cover");
+    assert_eq!(props(&cx, cover).style.opacity, Some(0.), "hidden until its frame is known");
+    assert!(cx.needs_frame());
+    cx.frame();
+    let start = props(&cx, cover);
+    assert_eq!(start.style.opacity, Some(1.));
+    assert!((start.transform.offset.0 - -90.).abs() < 0.5, "on the thumb: {:?}", start.transform.offset);
+    assert!((start.transform.offset.1 - 230.).abs() < 0.5);
+    assert!((cx.backend().frame(cover).unwrap().size.width - 40.).abs() < 0.5, "at the thumb's size");
+    step(&mut cx, 0.25);
+    cx.run_until_idle();
+    assert_eq!(props(&cx, cover).transform.offset, (0., 0.));
+    assert_eq!(cx.backend().frame(cover).unwrap().size.width, 200.);
+
+    handle.root().update(&mut cx, |p, cx| {
+        p.away = true;
+        cx.notify();
+    });
+    cx.frame();
+    cx.frame();
+    step(&mut cx, 0.1);
+    assert_eq!(props(&cx, cover).transform.offset, (0., 0.), "waits while what surrounds it fades");
+    step(&mut cx, 0.3);
+    let back = props(&cx, cover);
+    assert!((back.transform.offset.0 - -90.).abs() < 0.5, "back on the thumb: {:?}", back.transform.offset);
+    assert!((cx.backend().frame(cover).unwrap().size.width - 40.).abs() < 0.5);
+}
+
+#[test]
+fn reduce_motion_shows_a_hero_in_place() {
+    let mut cx = TestApp::new();
+    cx.set_reduce_motion(true);
+    let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false }));
+    handle.root().update(&mut cx, |p, cx| {
+        p.open = true;
+        cx.notify();
+    });
+    cx.frame();
+    let cover = node(&cx, "cover");
+    assert_eq!(props(&cx, cover).style.opacity, None, "not held back");
+    assert_eq!(props(&cx, cover).transform.offset, (0., 0.));
+}

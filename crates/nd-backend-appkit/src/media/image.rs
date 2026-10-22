@@ -1,5 +1,5 @@
 //! `image()` on AppKit: the decoded frames as a layer's contents (ARCHITECTURE.md 3.7), with
-//! the placeholder fill until they arrive. [`ImageSlot`] is the loader the avatar reuses.
+//! the placeholder fill until the first arrive. [`ImageSlot`] is the loader the avatar reuses.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -153,9 +153,16 @@ impl ImageSlot {
         };
         s.animate.set(animate);
         if *s.source.borrow() != source {
+            // A new source keeps the old picture up until its own decode lands, so a stream of
+            // frames (motion artwork) never flashes the placeholder.
+            let keep = source.is_some() && s.shown.get().is_some();
             *s.source.borrow_mut() = source;
             *s.request.borrow_mut() = None;
-            s.clear();
+            if keep {
+                s.replace();
+            } else {
+                s.clear();
+            }
         }
     }
 
@@ -207,6 +214,14 @@ impl SlotState {
         if let Some(color) = self.placeholder.get() {
             self.layer.setBackgroundColor(Some(&cg(color)));
         }
+    }
+
+    /// Drops the old source's frames and clock but leaves its picture on the layer.
+    fn replace(&self) {
+        *self.decoded.borrow_mut() = None;
+        self.frames.borrow_mut().clear();
+        self.shown.set(None);
+        self.ticker.stop();
     }
 
     fn show(self: &Rc<Self>, request: &DecodeRequest, result: Result<Arc<Decoded>, String>) {
@@ -356,7 +371,7 @@ impl Input for ImageInner {
             self.slot.0.layer.setCornerRadius(radius);
             // SAFETY: the layer is ours and on the main thread; clearing the mask is plain KVC.
             unsafe { self.slot.0.layer.setMask(None) };
-            self.slot.place(bounds, scale_of(&self.view));
+            self.slot.place(bounds, self.props.borrow().decode_scale(scale_of(&self.view) as f32).into());
             return;
         };
         // The picture fills the whole box, the room under it included; the mask cuts the bubble
@@ -379,7 +394,7 @@ impl Input for ImageInner {
         // SAFETY: the mask is a fresh layer used by no other layer.
         unsafe { self.slot.0.layer.setMask(Some(&mask)) };
         objc2_quartz_core::CATransaction::commit();
-        self.slot.place(bounds, scale_of(&self.view));
+        self.slot.place(bounds, self.props.borrow().decode_scale(scale_of(&self.view) as f32).into());
     }
 }
 

@@ -1,7 +1,8 @@
 //! `lyrics_view` on AppKit: an `NSScrollView` (the OS's momentum and rubber band) over a column
 //! of text layers. Following, the clip view is animated so the anchor row sits at the anchor
-//! line; any scroll that is not ours ends following and shows the resync button. Rows fade with
-//! distance and shrink when unlit; the anchor row fills word by word.
+//! line; any scroll that is not ours ends following and shows the resync button. Rows fade and
+//! blur with distance (a Core Image gaussian blur on each row's layer, its radius animated) and
+//! shrink when unlit; the anchor row fills word by word.
 
 use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
@@ -10,13 +11,14 @@ use std::time::Duration;
 
 use block2::RcBlock;
 use nd_components::media::{
-    LyricClicked, LyricRow, LyricRowKind, LyricsFollowChanged, LyricsModel, LyricsProps, SCALE_ANIM, SCROLL,
-    SCROLL_CURVE, UNLIT_SCALE, anchor_y, depth_opacity, follow_offset, interlude_fill, word_fill,
+    LyricClicked, LyricRow, LyricRowKind, LyricsFollowChanged, LyricsModel, LyricsProps, SCROLL, SCROLL_CURVE,
+    UNLIT_SCALE, anchor_y, follow_offset, interlude_fill, row_depth, word_fill,
 };
 use nd_core::Size;
 use nd_core::time::Instant;
 use nd_theme::Theme;
 use nd_ui::events::Emit;
+use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::{
@@ -30,7 +32,8 @@ use objc2_foundation::{
     NSRange, NSRect, NSSize, NSString,
 };
 use objc2_quartz_core::{
-    CAMediaTimingFunction, CATextLayer, CATransaction, CATransform3D, kCAAlignmentLeft, kCAAlignmentRight,
+    CABasicAnimation, CAMediaTiming, CAMediaTimingFunction, CATextLayer, CATransaction, CATransform3D,
+    kCAAlignmentLeft, kCAAlignmentRight,
 };
 
 use super::{Input, NdMediaView, Ticker, cg, ns, reduce_motion, scale_of};
@@ -55,6 +58,9 @@ impl CustomWidget for LyricsWidget {
             NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
         let document = NdMediaView::new(mtm);
+        // Row layers carry Core Image blur filters, which a layer-backed view draws only when
+        // it opts in.
+        document.setLayerUsesCoreImageFilters(true);
         scroll.setDocumentView(Some(&document));
         view.addSubview(&scroll);
         let resync = NSButton::new(mtm);
@@ -203,6 +209,7 @@ impl LyricsInner {
         }
         let ended = self.model.borrow_mut().follow.user_scrolled(Instant::now());
         if ended {
+            self.style_rows(true);
             self.resync.setHidden(false);
             self.emit.emit(LyricsFollowChanged { following: false });
             self.wake.wake();
@@ -211,6 +218,7 @@ impl LyricsInner {
 
     fn resync(self: &Rc<Self>) {
         if self.model.borrow_mut().follow.resync() {
+            self.style_rows(true);
             self.resync.setHidden(true);
             self.emit.emit(LyricsFollowChanged { following: true });
             self.wake.wake();
@@ -243,6 +251,9 @@ impl LyricsInner {
             layer.setWrapped(true);
             unsafe { layer.setAlignmentMode(if row.opposite { kCAAlignmentRight } else { kCAAlignmentLeft }) };
             layer.setAnchorPoint(NSPoint::new(if row.opposite { 1. } else { 0. }, 0.5));
+            if let Some(blur) = blur_filter() {
+                unsafe { layer.setFilters(Some(&objc2_foundation::NSArray::from_retained_slice(&[blur]))) };
+            }
             root.addSublayer(&layer);
             rows.push(RowLayer { layer, top: 0., height: 0., filled: Cell::new(None) });
         }
@@ -367,7 +378,8 @@ impl LyricsInner {
         CATransaction::commit();
     }
 
-    /// Opacity and size by lit state and distance from the anchor.
+    /// Opacity, blur and size by lit state and distance from the anchor; whole and sharp while
+    /// the user scrolls.
     fn style_rows(&self, animated: bool) {
         let model = self.model.borrow();
         if !model.synced() {
@@ -380,19 +392,25 @@ impl LyricsInner {
         let above = (anchor_y(height) / pitch).max(1.);
         let below = ((height - anchor_y(height)) / pitch).max(1.);
         let animate = animated && !reduce_motion();
+        let motion = self.theme.borrow().motion;
+        let duration = motion.slow.as_secs_f64();
+        let [a, b, c, d] = motion.ease;
+        let curve = CAMediaTimingFunction::functionWithControlPoints(a, b, c, d);
         CATransaction::begin();
         CATransaction::setDisableActions(!animate);
-        CATransaction::setAnimationDuration(SCALE_ANIM.as_secs_f64());
+        CATransaction::setAnimationDuration(duration);
+        CATransaction::setAnimationTimingFunction(Some(&curve));
         let anchor = model.lit.anchor;
+        let following = model.follow.following();
         for (i, row) in rows.iter().enumerate() {
             let lit = model.lit.contains(i);
-            let distance = i.abs_diff(anchor);
             let span = if i < anchor { above } else { below };
-            let mut opacity = if lit { 1. } else { depth_opacity(distance, span) };
+            let (mut opacity, blur) = row_depth(lit, i.abs_diff(anchor), span, following);
             if model.rows[i].kind == LyricRowKind::Background {
                 opacity *= 0.7;
             }
             row.layer.setOpacity(opacity);
+            set_blur(&row.layer, f64::from(blur), animate.then_some((duration, &*curve)));
             let s = if lit { 1. } else { f64::from(UNLIT_SCALE) };
             row.layer.setTransform(CATransform3D::new_scale(s, s, 1.));
         }
@@ -487,6 +505,7 @@ impl LyricsInner {
         let now = Instant::now();
         let resync_after = self.props.borrow().resync_after;
         if self.model.borrow_mut().follow.tick(now, resync_after) {
+            self.style_rows(true);
             self.resync.setHidden(true);
             self.emit.emit(LyricsFollowChanged { following: true });
             self.wake.wake();
@@ -511,6 +530,55 @@ impl LyricsInner {
         let row = &model.rows[i];
         self.emit.emit(LyricClicked { line: row.line, start: Duration::from_secs_f64(row.start.max(0.)) });
         self.wake.wake();
+    }
+}
+
+const BLUR: &str = "blur";
+const BLUR_RADIUS: &str = "filters.blur.inputRadius";
+
+/// A Core Image gaussian blur named so its radius animates by key path; `None` when Core Image
+/// is not loaded.
+fn blur_filter() -> Option<Retained<AnyObject>> {
+    let class = objc2::runtime::AnyClass::get(c"CIFilter")?;
+    let name = NSString::from_str("CIGaussianBlur");
+    let filter: Option<Retained<AnyObject>> = unsafe { msg_send![class, filterWithName: &*name] };
+    let filter = filter?;
+    let zero = objc2_foundation::NSNumber::new_f64(0.);
+    unsafe {
+        let _: () = msg_send![&*filter, setName: &*NSString::from_str(BLUR)];
+        let _: () = msg_send![&*filter, setValue: &*zero, forKey: &*NSString::from_str("inputRadius")];
+    }
+    Some(filter)
+}
+
+/// Sets a row's blur radius, easing from the radius on screen when `animate` gives a duration
+/// and curve.
+fn set_blur(layer: &CATextLayer, radius: f64, animate: Option<(f64, &CAMediaTimingFunction)>) {
+    if layer.filters().is_none() {
+        return;
+    }
+    let path = NSString::from_str(BLUR_RADIUS);
+    let to = objc2_foundation::NSNumber::new_f64(radius);
+    let current: Option<Retained<AnyObject>> = unsafe { msg_send![layer, valueForKeyPath: &*path] };
+    let current = current.and_then(|v| v.downcast::<objc2_foundation::NSNumber>().ok()).map(|n| n.doubleValue());
+    if current.is_some_and(|c| (c - radius).abs() < 0.01) {
+        return;
+    }
+    let shown = unsafe { layer.presentationLayer() }
+        .and_then(|p| -> Option<Retained<AnyObject>> { unsafe { msg_send![&*p, valueForKeyPath: &*path] } })
+        .and_then(|v| v.downcast::<objc2_foundation::NSNumber>().ok());
+    unsafe {
+        let _: () = msg_send![layer, setValue: &*to, forKeyPath: &*path];
+    }
+    if let (Some((duration, curve)), Some(from)) = (animate, shown) {
+        let anim = CABasicAnimation::animationWithKeyPath(Some(&path));
+        unsafe {
+            anim.setFromValue(Some(&from));
+            anim.setToValue(Some(&to));
+        }
+        anim.setDuration(duration);
+        anim.setTimingFunction(Some(curve));
+        layer.addAnimation_forKey(&anim, Some(&NSString::from_str(BLUR)));
     }
 }
 

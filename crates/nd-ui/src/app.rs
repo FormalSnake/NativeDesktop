@@ -232,6 +232,8 @@ pub struct App {
     retitled: HashMap<WindowId, SharedString>,
     /// The user asked for less motion: element animations jump instead of moving.
     pub(crate) reduce_motion: bool,
+    /// The platform's timings, which themed animations resolve through.
+    pub(crate) motion: crate::animation::MotionTokens,
     /// The drag and drop running now.
     pub(crate) drag: Option<crate::drag::Session>,
 }
@@ -266,6 +268,7 @@ impl App {
             frames: 0,
             retitled: HashMap::new(),
             reduce_motion: false,
+            motion: crate::animation::MotionTokens::default(),
             drag: None,
         }
     }
@@ -278,6 +281,16 @@ impl App {
 
     pub fn reduce_motion(&self) -> bool {
         self.reduce_motion
+    }
+
+    /// The platform's motion timings ([`Animation::Themed`](crate::Animation::Themed)). Hosts
+    /// set them from the theme.
+    pub fn set_motion(&mut self, motion: crate::animation::MotionTokens) {
+        self.motion = motion;
+    }
+
+    pub fn motion(&self) -> crate::animation::MotionTokens {
+        self.motion
     }
 
     /// A backend laid canvas `node` out at `width` x `height`: it paints again for that size.
@@ -849,6 +862,16 @@ impl App {
             }
             if self.drag_event(event.node, any) {
                 continue;
+            }
+            if let Some(hover) = any.downcast_ref::<crate::HoverChanged>() {
+                let reduce = self.reduce_motion;
+                for slot in self.windows.values_mut() {
+                    if let (Some(tree), Some(window)) = (slot.tree.as_mut(), slot.window.as_ref())
+                        && tree.contains(event.node)
+                    {
+                        tree.hover_changed(event.node, hover.hovered, window.now(), reduce);
+                    }
+                }
             }
             let type_id = any.type_id();
             let found = self.windows.iter().find_map(|(id, slot)| {

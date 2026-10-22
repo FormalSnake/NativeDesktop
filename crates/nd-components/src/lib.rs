@@ -21,6 +21,7 @@ pub mod menu;
 pub mod overrides;
 pub mod palette;
 pub mod panes;
+pub mod presentation;
 pub mod rich;
 pub mod scaffold;
 pub mod services;
@@ -50,6 +51,7 @@ pub use palette::{
     PaletteCancelled, PaletteEvent, PaletteItem, PaletteKey, PaletteMetrics, PaletteModel, PaletteQueryChanged,
     PaletteSubmitted, command_palette, emit_palette_event, palette_item,
 };
+pub use presentation::{Presentation, PresentationExt, PresentationView, presentation};
 pub use scaffold::{
     Pane, PaneCollapsed, PaneProps, PaneRole, REVEAL_EDGE, Scaffold, ScaffoldProps, SidebarRevealed, inspector,
     scaffold, sidebar,

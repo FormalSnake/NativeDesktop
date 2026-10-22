@@ -190,9 +190,16 @@ pub struct DecodeRequest {
 impl DecodeRequest {
     /// The request for showing `source` in a `width` x `height` point box at `scale`.
     pub fn at(source: ImageSource, width: f32, height: f32, scale: f32, fit: ImageFit) -> Self {
+        // Below one pixel per point only for a blurred picture, which wants its few pixels as
+        // they are: rounding up to the step would sharpen it again.
+        let scale = if scale > 0. { scale } else { 1. };
         let step = |v: f32| -> u32 {
-            let px = (v.max(0.) * scale.max(1.)).ceil() as u32;
-            if px == 0 { 0 } else { px.div_ceil(EDGE_STEP) * EDGE_STEP }
+            let px = (v.max(0.) * scale).ceil() as u32;
+            match px {
+                0 => 0,
+                _ if scale < 1. => px,
+                _ => px.div_ceil(EDGE_STEP) * EDGE_STEP,
+            }
         };
         Self { source, width: step(width), height: step(height), fit, tint: None }
     }
