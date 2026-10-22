@@ -14,12 +14,13 @@
 //! platform's own controls. Commands map one to one onto the OS media session's
 //! (`nd-system`'s `MediaCommand`), so one handler serves the bar and the media keys.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use nd_core::time::{Duration, Instant};
 use nd_ui::prelude::*;
 use nd_ui::semantics::{Response, SemanticAction, Semantics, WidgetSemantics};
-use nd_ui::{Bezel, Key, RichText, Role, StyleRefinement, span};
+use nd_ui::{Bezel, Key, Resized, RichText, Role, StyleRefinement, WindowId, span};
 
 use super::clock::{PlaybackClock, format_clock, parse_clock};
 use super::image::image;
@@ -466,6 +467,38 @@ impl TransportLayout {
     }
 }
 
+/// How much of a bar fits its width. Music's mini player drops the volume slider first, then
+/// everything but the song and its transport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Room {
+    /// Previous, play and next, the song, mute and the open button. Repeat, shuffle, the queue
+    /// and the song's own buttons are gone.
+    Narrow,
+    /// Everything but the volume slider and the controls beside the transport.
+    Medium,
+    Wide,
+}
+
+impl Room {
+    /// The bar widths in points each tier needs, from the controls' own sizes: the pill's are
+    /// smaller and its volume slider shorter.
+    fn of(layout: TransportLayout, width: Option<f32>) -> Self {
+        let (medium, wide) = match layout {
+            TransportLayout::Pill => (400., 540.),
+            _ => (440., 640.),
+        };
+        match width {
+            Some(w) if w < medium => Self::Narrow,
+            Some(w) if w < wide => Self::Medium,
+            _ => Self::Wide,
+        }
+    }
+}
+
+/// Each bar's last measured width, by window and id: a bar is rebuilt every render.
+#[derive(Default)]
+struct BarWidths(HashMap<(WindowId, SharedString), f32>);
+
 type OnCommand = Rc<dyn Fn(&TransportCommand, &mut Window, &mut App)>;
 type OnOpen = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -478,6 +511,7 @@ pub struct PlayerBar {
     on_open: Option<OnOpen>,
     accessories: Vec<AnyElement>,
     trailing: Vec<AnyElement>,
+    open_button: Option<AnyElement>,
     before_transport: Vec<AnyElement>,
     after_transport: Vec<AnyElement>,
     style: StyleRefinement,
@@ -492,6 +526,7 @@ pub fn player_bar(id: impl Into<SharedString>, now: NowPlaying) -> PlayerBar {
         on_open: None,
         accessories: Vec::new(),
         trailing: Vec::new(),
+        open_button: None,
         before_transport: Vec::new(),
         after_transport: Vec::new(),
         style: StyleRefinement::default(),
@@ -532,6 +567,14 @@ impl PlayerBar {
         self
     }
 
+    /// The button that opens the now-playing view, after the trailing controls. Unlike them it
+    /// stays at every width: a narrow bar keeps a way into the expanded player. Full and pill
+    /// layouts.
+    pub fn open_button(mut self, element: impl IntoElement) -> Self {
+        self.open_button = Some(element.into_any_element());
+        self
+    }
+
     /// A control before previous, where Music keeps shuffle. Full and pill layouts.
     pub fn before_transport(mut self, element: impl IntoElement) -> Self {
         self.before_transport.push(element.into_any_element());
@@ -566,6 +609,28 @@ pub fn volume_icon(volume: f32, muted: bool) -> Icon {
 
 impl IntoElement for PlayerBar {
     fn into_any_element(self) -> AnyElement {
+        deferred(move |window, app| self.build(window, app))
+    }
+}
+
+impl PlayerBar {
+    fn build(self, window: &mut Window, app: &mut App) -> AnyElement {
+        if !app.has_global::<BarWidths>() {
+            app.set_global(BarWidths::default());
+        }
+        let key = (window.id(), self.id.clone());
+        let layout = self.layout;
+        let room = Room::of(layout, app.global::<BarWidths>().0.get(&key).copied());
+        let view = app.rendering_view();
+        let measure = move |e: &Resized, _: &mut Window, app: &mut App| {
+            let before = Room::of(layout, app.global::<BarWidths>().0.get(&key).copied());
+            app.global_mut::<BarWidths>().0.insert(key.clone(), e.width);
+            if Room::of(layout, Some(e.width)) != before
+                && let Some(view) = view
+            {
+                app.notify(view);
+            }
+        };
         let PlayerBar {
             id,
             now,
@@ -574,10 +639,15 @@ impl IntoElement for PlayerBar {
             on_open,
             accessories,
             trailing,
+            open_button,
             before_transport,
             after_transport,
             style,
         } = self;
+        let (before_transport, after_transport) =
+            if room == Room::Wide { (before_transport, after_transport) } else { (Vec::new(), Vec::new()) };
+        let (accessories, trailing) =
+            if room == Room::Narrow { (Vec::new(), Vec::new()) } else { (accessories, trailing) };
         let send = move |command: TransportCommand| {
             let on = on_command.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -734,7 +804,16 @@ impl IntoElement for PlayerBar {
                             .children(after_transport),
                     )
                     .child(h_flex().flex_1().min_w_0().when(!idle, |row| row.child(song)))
-                    .child(h_flex().flex_none().gap_1().items_center().children(trailing).child(mute).child(volume))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .items_center()
+                            .children(trailing)
+                            .child(mute)
+                            .when(room == Room::Wide, |row| row.child(volume))
+                            .children(open_button),
+                    )
             }
             TransportLayout::Full => {
                 let previous = icon_button(child("previous"), Icon::SkipBack)
@@ -795,10 +874,18 @@ impl IntoElement for PlayerBar {
                                 .children(after_transport),
                         )
                         .child(center)
-                        .child(side().justify_end().child(mute).child(volume).children(trailing)),
+                        .child(
+                            side()
+                                .justify_end()
+                                .child(mute)
+                                .when(room == Room::Wide, |row| row.child(volume))
+                                .children(trailing)
+                                .children(open_button),
+                        ),
                 )
             }
         };
+        root = root.on_resize(measure);
         nd_gpui::gpui::Refineable::refine(root.style(), &style);
         root.into_any_element()
     }
