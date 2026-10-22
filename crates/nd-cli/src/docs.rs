@@ -213,11 +213,16 @@ fn check(repo: &Path, args: &CheckArgs) -> Result<ExitCode> {
     for os in Os::ALL {
         let of_os: Vec<_> = report.iter().filter(|(_, o, _)| *o == os).collect();
         let fresh = of_os.iter().filter(|(_, _, s)| matches!(s, State::Fresh(_))).count();
+        let omitted = of_os.iter().filter(|(_, _, s)| matches!(s, State::Omitted { .. })).count();
+        let of_os: Vec<_> = of_os.into_iter().filter(|(_, _, s)| !matches!(s, State::Omitted { .. })).collect();
         let stale: Vec<&str> =
             of_os.iter().filter(|(_, _, s)| matches!(s, State::Stale { .. })).map(|(n, _, _)| n.as_str()).collect();
         let missing: Vec<&str> =
             of_os.iter().filter(|(_, _, s)| matches!(s, State::Missing)).map(|(n, _, _)| n.as_str()).collect();
-        println!("  {}: {fresh}/{} fresh", os.label(), of_os.len());
+        match omitted {
+            0 => println!("  {}: {fresh}/{} fresh", os.label(), of_os.len()),
+            n => println!("  {}: {fresh}/{} fresh, {n} without a capture by design", os.label(), of_os.len()),
+        }
         if !stale.is_empty() {
             println!("    stale: {}", stale.join(", "));
         }
@@ -566,6 +571,7 @@ mod capture {
             .iter()
             .filter(|e| !e.headless)
             .filter(|e| args.examples.is_empty() || args.examples.contains(&e.name))
+            .filter(|e| !matches!(manifest.state(e, os), State::Omitted { .. }))
             .filter(|e| !args.stale || !matches!(manifest.state(e, os), State::Fresh(_)))
             .collect();
         if chosen.is_empty() {
@@ -687,6 +693,7 @@ mod capture {
             ("ND_APP_DATA_DIR".into(), run.join("data").display().to_string()),
             ("ND_THEME_TOML".into(), theme.display().to_string()),
             ("ND_THEME_JSON".into(), String::new()),
+            ("ND_CLIENT_DECORATIONS".into(), "1".into()),
         ]);
         let app = launch(session, bin, &env, &socket, Duration::from_secs(30))?;
         let result = (|| -> Result<bool> {
@@ -726,10 +733,12 @@ mod capture {
         line.split("ND_AUTOMATION_LISTENING path=").nth(1).map(|path| PathBuf::from(path.trim()))
     }
 
-    /// Linux captures run in a private headless Hyprland, so they draw nothing on the user's session,
-    /// work over ssh, and get the same output and scale on every run.
+    /// Linux captures run in a private headless labwc, so they draw nothing on the user's session,
+    /// work over ssh, and get the same output and scale on every run. The app asks for client-side
+    /// decorations (`ND_CLIENT_DECORATIONS`), which labwc grants, so it draws its own title bar
+    /// and controls as it does on GNOME.
     #[cfg(target_os = "linux")]
-    type Session = ndshell::hyprland::Hyprland;
+    type Session = ndshell::labwc::Labwc;
     #[cfg(target_os = "macos")]
     struct Session;
     /// Windows: processes ssh starts have no desktop to show a window on, so `ndshell agent`, which
@@ -746,7 +755,7 @@ mod capture {
 
     #[cfg(target_os = "linux")]
     fn session() -> Result<Session> {
-        ndshell::hyprland::Hyprland::start(Default::default()).map_err(|e| anyhow::anyhow!("headless Hyprland: {e}"))
+        ndshell::labwc::Labwc::start().map_err(|e| anyhow::anyhow!("headless labwc: {e}"))
     }
 
     #[cfg(target_os = "macos")]
@@ -915,28 +924,43 @@ mod capture {
         made
     }
 
-    /// The window's rectangle cut from a frame of the headless output. GPUI draws the whole window,
-    /// chrome included, so the client area is the picture; the app's own `screenshot` needs GPUI's
-    /// test-support readback, which only headless GPUI windows have.
+    /// The window cut from a frame of the headless output: everything that differs from the
+    /// output's background, so the drawn frame is in and its shadow, black over black, is out.
+    /// The app's own `screenshot` needs GPUI's test-support readback, which only headless GPUI
+    /// windows have.
     #[cfg(target_os = "linux")]
     fn composited(
         session: &Session,
-        pid: u32,
+        _pid: u32,
         png: &Path,
         _client: &mut Rpc,
         _window: Option<u64>,
         _motion: Option<(&nd_docs::examples::Motion, &Path)>,
     ) -> Result<bool> {
-        let window = session.wait_for_client(pid, Duration::from_secs(5)).map_err(anyhow::Error::msg)?;
-        // A frame or two for the window to present at its settled size.
-        std::thread::sleep(Duration::from_millis(400));
-        let frame = ndshell::wayland::screenshot(session).map_err(anyhow::Error::msg)?;
-        let (x, y) = (window.at.0.max(0) as u32, window.at.1.max(0) as u32);
-        let width = (window.size.0.max(0) as u32).min(frame.width.saturating_sub(x));
-        let height = (window.size.1.max(0) as u32).min(frame.height.saturating_sub(y));
+        // A few frames for the window to present at its settled size.
+        std::thread::sleep(Duration::from_millis(600));
+        let frame = ndshell::wayland::screenshot_socket(&session.wayland_socket()).map_err(anyhow::Error::msg)?;
+        let (x, y, width, height) = content_bounds(frame.width, frame.height, |x, y| frame.rgb(x, y))
+            .context("nothing but background on the output")?;
         let image = image::RgbImage::from_fn(width, height, |dx, dy| image::Rgb(frame.rgb(x + dx, y + dy)));
         image.save(png).with_context(|| format!("writing {}", png.display()))?;
         Ok(false)
+    }
+
+    /// The smallest rectangle (x, y, width, height) holding every pixel that differs from the one
+    /// at the origin.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn content_bounds(width: u32, height: u32, rgb: impl Fn(u32, u32) -> [u8; 3]) -> Option<(u32, u32, u32, u32)> {
+        let background = rgb(0, 0);
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+        for y in 0..height {
+            for x in 0..width {
+                if rgb(x, y) != background {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        (x0 <= x1).then(|| (x0, y0, x1 - x0 + 1, y1 - y0 + 1))
     }
 
     /// The window as DWM composes it (Windows.Graphics.Capture through the agent), frame
@@ -1062,7 +1086,7 @@ mod capture {
                     .find_map(|l| l.strip_prefix("PRETTY_NAME="))
                     .map(|v| v.trim_matches('"').to_owned())
                     .unwrap_or_else(|| "Linux".into());
-                format!("{name}, Hyprland")
+                format!("{name}, labwc")
             }
             Os::Windows => windows_version(
                 &run("reg", &["query", r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"]).unwrap_or_default(),
@@ -1114,6 +1138,14 @@ mod capture {
     fn civil_dates() {
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(20_740), "2026-10-14");
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn content_bounds_skip_the_background() {
+        let window = |x: u32, y: u32| if (3..7).contains(&x) && (2..4).contains(&y) { [200, 10, 10] } else { [0; 3] };
+        assert_eq!(content_bounds(10, 10, window), Some((3, 2, 4, 2)));
+        assert_eq!(content_bounds(10, 10, |_, _| [0; 3]), None);
     }
 
     #[cfg(test)]

@@ -69,6 +69,7 @@ title = "Browser"
 summary = "A small browser: tabs in the sidebar, an address field in the toolbar, devtools and downloads, on WKWebView or CEF."
 web_reason = "Embeds the platform web engine."
 env = { BROWSER_URL = "about:blank" }
+no_capture = { windows = "Web views on Windows need WebView2, which nd does not implement yet." }
 
 [[example]]
 name = "terminal"

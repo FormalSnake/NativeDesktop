@@ -70,6 +70,7 @@ impl Render for Editor {
                     .bind(&self.text)
                     .min_lines(3)
                     .flex_1()
+                    .w_full()
                     .px(theme.spacing.content_margin)
                     .py_4()
                     .text_size(font_size)

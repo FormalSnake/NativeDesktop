@@ -42,6 +42,10 @@ pub struct Example {
     /// No window to capture (a plugin or a command line demo); the embed shows only source.
     #[serde(default)]
     pub headless: bool,
+    /// OS key (`macos`, `linux`, `windows`) to why that OS gets no capture, such as an engine nd
+    /// does not implement there yet. Its tab shows the reason instead.
+    #[serde(default)]
+    pub no_capture: BTreeMap<String, String>,
     /// A short recording beside the stills, for examples whose point is motion.
     #[serde(default)]
     pub motion: Option<Motion>,
@@ -109,6 +113,9 @@ pub fn load(repo: &Path, framework_version: &str) -> Result<Vec<Example>> {
             bail!("docs/examples.toml: `{}` has no examples/{}/Cargo.toml", example.name, example.name);
         }
         example.hash = source_hash(&dir, framework_version)?;
+        if let Some(os) = example.no_capture.keys().find(|k| crate::captures::Os::parse(k).is_none()) {
+            bail!("docs/examples.toml: `{}` has no_capture for `{os}`, not macos, linux or windows", example.name);
+        }
     }
     for entry in std::fs::read_dir(repo.join("examples"))? {
         let entry = entry?;

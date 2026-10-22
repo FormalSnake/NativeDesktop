@@ -116,17 +116,24 @@ fn web_tab(example: &Example, key: &str, theme: &Theme) -> AnyElement {
 }
 
 fn os_tab(example: &Example, os: Os, state: &State, theme: &Theme) -> AnyElement {
-    let State::Fresh(capture) = state else {
-        return v_flex()
+    let note = |title: String, detail: String| {
+        v_flex()
             .w_full()
             .items_center()
             .gap(theme.spacing.xs)
             .p(theme.spacing.xl)
             .rounded(theme.radius.md)
             .bg(theme.surface.raised)
-            .child(label("Not captured yet").font_weight(FontWeight::SEMIBOLD))
-            .child(label(format!("Run `nd docs capture` on {} to add it.", os.label())).wraps().secondary())
-            .into_any_element();
+            .child(label(title).font_weight(FontWeight::SEMIBOLD))
+            .child(label(detail).wraps().secondary())
+            .into_any_element()
+    };
+    let capture = match state {
+        State::Fresh(capture) => capture,
+        State::Omitted { reason } => return note(format!("Not available on {}", os.label()), reason.clone()),
+        State::Stale { .. } | State::Missing => {
+            return note("Not captured yet".into(), format!("Run `nd docs capture` on {} to add it.", os.label()));
+        }
     };
     let still = if theme.scheme.is_dark() { &capture.dark } else { &capture.light };
     let alt = format!("{} on {}", example.title, os.label());

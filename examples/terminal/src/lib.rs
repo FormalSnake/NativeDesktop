@@ -150,6 +150,11 @@ fn shell_command() -> Command {
     }
     let home = std::env::temp_dir().join("nd-terminal-demo");
     let _ = std::fs::create_dir_all(&home);
+    if cfg!(windows) {
+        // cmd prints its version banner first and titles the console with its own path; `cls`
+        // clears the one and `title` replaces the other. `$$$S` is cmd's "$ ".
+        return Command::new("cmd.exe").args(["/d", "/q", "/k", "title Shell & cls"]).cwd(&home).env("PROMPT", "$$$S");
+    }
     Command::new("/bin/sh").cwd(&home).env("HOME", &home).env("PS1", "$ ").env("ENV", "")
 }
 

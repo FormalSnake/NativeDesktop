@@ -86,6 +86,10 @@ pub enum State {
         captured: String,
     },
     Missing,
+    /// The example opts this OS out (`no_capture` in examples.toml), with the reason.
+    Omitted {
+        reason: String,
+    },
 }
 
 impl Manifest {
@@ -113,6 +117,9 @@ impl Manifest {
     }
 
     pub fn state(&self, example: &Example, os: Os) -> State {
+        if let Some(reason) = example.no_capture.get(os.key()) {
+            return State::Omitted { reason: reason.clone() };
+        }
         match self.0.get(&example.name).and_then(|m| m.get(&os)) {
             Some(c) if c.hash == example.hash => State::Fresh(c.clone()),
             Some(c) => State::Stale { captured: c.date.clone() },
@@ -160,6 +167,8 @@ mod tests {
         assert_eq!(manifest.state(&example, Os::Macos), State::Stale { captured: "2026-10-14".into() });
         manifest.set("hello", Os::Macos, Capture { hash: "aa".into(), ..capture });
         assert!(matches!(manifest.state(&example, Os::Macos), State::Fresh(_)));
+        let opted_out = Example { no_capture: [("macos".into(), "no engine".into())].into(), ..example };
+        assert_eq!(manifest.state(&opted_out, Os::Macos), State::Omitted { reason: "no engine".into() });
         let text = toml::to_string_pretty(&manifest).unwrap();
         assert_eq!(toml::from_str::<Manifest>(&text).unwrap(), manifest);
     }
