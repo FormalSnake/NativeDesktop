@@ -1,9 +1,9 @@
 # Written by `nd docs capture`; do not edit by hand.
 
 [browser.macos]
-hash = "78c135df3d1033e1"
+hash = "732ef183506f2b8a"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -17,7 +17,7 @@ dark = "linux-dark.png"
 [chrome.macos]
 hash = "c9ee87e95a12bc1d"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -29,9 +29,9 @@ light = "linux-light.png"
 dark = "linux-dark.png"
 
 [gallery.macos]
-hash = "8b244276e8ad9ed2"
+hash = "dad3a4c4367dd490"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -45,7 +45,7 @@ dark = "linux-dark.png"
 [hello.macos]
 hash = "2cad3d4a9b1ff64d"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -59,7 +59,7 @@ dark = "linux-dark.png"
 [native-widget.macos]
 hash = "7586d6e61679bc44"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -71,9 +71,9 @@ light = "linux-light.png"
 dark = "linux-dark.png"
 
 [notes.macos]
-hash = "5270afff598f74dd"
+hash = "a6600ac061ae0b3f"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -87,7 +87,7 @@ dark = "linux-dark.png"
 [overlays.macos]
 hash = "e385f14a49b66c39"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -101,7 +101,7 @@ dark = "linux-dark.png"
 [overrides.macos]
 hash = "9acab60293bb3206"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -115,7 +115,7 @@ dark = "linux-dark.png"
 [pacing.macos]
 hash = "668d517fbe4eb40a"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -129,7 +129,7 @@ dark = "linux-dark.png"
 [scroll.macos]
 hash = "f0f74a78aecccb6d"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 recording = "macos.gif"
@@ -144,7 +144,7 @@ dark = "linux-dark.png"
 [system.macos]
 hash = "aa3c75af705c7435"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -158,7 +158,7 @@ dark = "linux-dark.png"
 [tabs.macos]
 hash = "9e31409bfaddeff4"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
@@ -172,7 +172,7 @@ dark = "linux-dark.png"
 [terminal.macos]
 hash = "551f9b3dde4d3a93"
 captured_on = "macOS 27.0"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
