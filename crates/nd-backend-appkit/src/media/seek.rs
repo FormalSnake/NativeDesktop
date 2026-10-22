@@ -116,9 +116,10 @@ impl SeekInner {
 
     fn restyle(&self) {
         let theme = self.theme.borrow();
+        let line = self.props.borrow().line;
         self.track.setBackgroundColor(Some(&cg(theme.border.subtle)));
-        self.buffered.setBackgroundColor(Some(&cg(theme.text.tertiary)));
-        self.played.setBackgroundColor(Some(&cg(theme.accent)));
+        self.buffered.setBackgroundColor(Some(&cg(if line { theme.border.subtle } else { theme.text.tertiary })));
+        self.played.setBackgroundColor(Some(&cg(if line { theme.text.secondary } else { theme.accent })));
         self.thumb.setBackgroundColor(Some(&cg(theme.accent)));
         let font = times_font(&theme);
         for t in [&self.elapsed, &self.remaining] {
@@ -175,7 +176,12 @@ impl SeekInner {
         drop(props);
         let r = self.track_rect();
         let props = self.props.borrow();
-        let thick = f64::from(if active { SEEK.track_active } else { SEEK.track });
+        let thick = f64::from(match (props.line, active) {
+            (true, true) => SEEK.track,
+            (true, false) => SEEK.line,
+            (false, true) => SEEK.track_active,
+            (false, false) => SEEK.track,
+        });
         let y = (r.origin.y + (r.size.height - thick) / 2.).round();
         let (x0, w) = (r.origin.x, r.size.width);
         CATransaction::begin();
@@ -193,7 +199,7 @@ impl SeekInner {
             NSSize::new(t, t),
         ));
         self.thumb.setCornerRadius(t / 2.);
-        self.thumb.setHidden(!active);
+        self.thumb.setHidden(!active || props.line);
         let scale = scale_of(&self.view);
         let show_times = props.show_times;
         let (elapsed, remaining) = model.times(&props, now);

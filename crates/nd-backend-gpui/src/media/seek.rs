@@ -66,9 +66,15 @@ pub(super) fn seek_bar(
     }
     let played = p.fraction(shown);
     let buffered = p.buffered_fraction(played);
-    let thickness = if active { SEEK.track_active } else { SEEK.track };
-    let accent = if p.enabled { theme.accent } else { theme.disabled(theme.accent) };
-    let (track, loaded) = (theme.border.subtle, theme.border.strong);
+    let thickness = match (p.line, active) {
+        (true, true) => SEEK.track,
+        (true, false) => SEEK.line,
+        (false, true) => SEEK.track_active,
+        (false, false) => SEEK.track,
+    };
+    let fill = if p.line { theme.text.secondary } else { theme.accent };
+    let accent = if p.enabled { fill } else { theme.disabled(fill) };
+    let (track, loaded) = (theme.border.subtle, if p.line { theme.border.subtle } else { theme.border.strong });
     marks.fill("seek track", track, &[]);
     if buffered > played {
         marks.fill("seek buffered", loaded, &[track]);
@@ -93,7 +99,7 @@ pub(super) fn seek_bar(
             .when(buffered > played, |t| t.child(bar_fill(buffered, loaded)))
             .when(played > 0., |t| t.child(bar_fill(played, accent))),
     );
-    if active {
+    if active && !p.line {
         marks.fill("seek thumb", accent, &[]);
         bar = bar.child(
             div()
