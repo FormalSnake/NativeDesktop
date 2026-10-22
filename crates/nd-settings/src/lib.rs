@@ -2,14 +2,16 @@
 //!
 //! A settings struct is the single source: `#[derive(Settings, Serialize, Deserialize,
 //! JsonSchema)]` with `#[serde(default, deny_unknown_fields)]`. From it this crate derives the
-//! JSON Schema, the metadata a settings form needs ([`SettingsSchema`]) and the typed options of
-//! the home-manager module ([`nix`]). At runtime [`SettingsHandle`] loads the layers (defaults,
-//! Nix-managed file, user `config.toml`, `config.d/*.toml`, `config.local.toml`, environment,
-//! command line), watches the files, and writes edits with `toml_edit` so comments survive.
-//! [`Store`] keeps versioned machine state. On the web every file is a `localStorage` key.
+//! JSON Schema, the metadata a settings form needs ([`SettingsSchema`]), the typed options of
+//! the home-manager module ([`nix`]) and the app's fspec module ([`fspec`]). At runtime
+//! [`SettingsHandle`] loads the layers (defaults, Nix-managed file, user `config.toml`,
+//! `config.d/*.toml`, `fspec.toml`, `config.local.toml`, environment, command line), watches the
+//! files, and writes edits with `toml_edit` so comments survive. [`Store`] keeps versioned
+//! machine state. On the web every file is a `localStorage` key.
 #![cfg_attr(target_arch = "wasm32", allow(unused_imports, dead_code))]
 
 mod edit;
+pub mod fspec;
 mod handle;
 mod layers;
 pub mod nix;

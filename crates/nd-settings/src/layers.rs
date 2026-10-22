@@ -1,6 +1,7 @@
 //! Layered load: defaults < Nix-managed file < user `config.toml` < `config.d/*.toml` <
-//! `config.local.toml` < environment < command line (ARCHITECTURE.md 11.3). Every key remembers
-//! which layer set it, so the form can say "Managed by Nix" or "Set by the environment".
+//! `fspec.toml` < `config.local.toml` < environment < command line (ARCHITECTURE.md 11.3). Every
+//! key remembers which layer set it, so the form can say "Managed by Nix" or "Set by the
+//! environment".
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -21,6 +22,10 @@ pub enum LayerKind {
     Nix,
     User,
     DropIn,
+    /// `fspec.toml`, written by fspec from the app's spec. It sits above the user's files: the
+    /// file is an ordinary copy, so unlike the Nix layer it can coexist with a `config.toml` that
+    /// sets the same key, and the spec has to win.
+    Fspec,
     /// The writable overlay used when the main file is read-only.
     Local,
     Env,
@@ -48,16 +53,19 @@ pub struct Paths {
     pub managed: Option<PathBuf>,
     pub user: PathBuf,
     pub drop_in_dir: PathBuf,
+    /// Written by fspec; its keys are read-only in the app.
+    pub fspec: PathBuf,
     pub local: PathBuf,
 }
 
 impl Paths {
-    /// `config.toml`, `config.d/` and `config.local.toml` inside `dir`.
+    /// `config.toml`, `config.d/`, `fspec.toml` and `config.local.toml` inside `dir`.
     pub fn in_dir(dir: &Path) -> Self {
         Self {
             managed: None,
             user: dir.join("config.toml"),
             drop_in_dir: dir.join("config.d"),
+            fspec: dir.join("fspec.toml"),
             local: dir.join("config.local.toml"),
         }
     }
@@ -166,6 +174,7 @@ pub(crate) fn candidate_files(ctx: &Context<'_>) -> Vec<(LayerKind, PathBuf)> {
         .collect();
     drop_ins.sort();
     out.extend(drop_ins.into_iter().map(|p| (LayerKind::DropIn, p)));
+    out.push((LayerKind::Fspec, ctx.paths.fspec.clone()));
     out.push((LayerKind::Local, ctx.paths.local.clone()));
     out
 }
