@@ -91,6 +91,15 @@ Disabled controls take 0.4 opacity. Layers: Mica window, opaque content layer `#
   (`FormLook::{selection, selection_text}`). A TextBox header is Body, regular, 8 px above the
   control (`form_field`).
 
+## Inactive window
+
+WinUI's TitleBar (`TitleBar.xaml`, `TitleBar_themeresources.xaml`): while the window is
+deactivated the title and the back and pane buttons turn TextFillColorTertiary, and the icon, the
+headers and the content sit at `TitleBarDeactivatedOpacity` 0.5, switched at once. nd draws its
+title row's content at half opacity (primary text at 50% lands within a step of tertiary) and
+leaves the navigation pane as it is; Mica's inactive fallback is the OS's. `drawn.rs` (Toolbar),
+`Build::inactive`.
+
 ## Focus visual
 
 Two rings outside the control, each 2 px: FocusStrokeColorOuter (`#E4000000` light, `#FFFFFF`

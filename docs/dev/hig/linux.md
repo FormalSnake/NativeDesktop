@@ -76,6 +76,7 @@ Fills are the text colour (`currentColor`) at a share, so they work on any surfa
 - Alert dialog: 372 px wide, heading `title-2` 32 px from the top, body 10 px below it, 24 px
   sides, responses 44 px high (padding 10x20), radius 12, 12 px apart, 24 px bottom.
   `dialogs.rs` `adw_alert`.
+- Header bar: 47 px, flat (a toolbar view's top bar draws no shade under it). `drawn.rs` Toolbar.
 - Window controls: 24 px circles at 10/15/30% of the text colour (close included, never red),
   16 px symbolic icons. `nd-os-linux/src/hooks.rs` `window_controls`.
 
@@ -92,6 +93,16 @@ render at 400.
 
 Links are the standalone accent (`#0461be` light, `#81d0ff` dark), underlined at rest.
 `forms/display.rs` `link`.
+
+## Backdrop (inactive window)
+
+libadwaita's `:backdrop` rules, all easing in over 200 ms (CSS `ease-out`): a header bar goes to
+`--headerbar-backdrop-color` (the window colour) and its content (`windowhandle`) to 50% opacity, as
+do tab bars, search bars, action bars and banners; a sidebar pane goes to
+`--sidebar-backdrop-color` (`#f2f2f4` light, `#28282c` dark, halfway between sidebar and window).
+Labels, icons and selections outside those bars keep their colours: 1.9 has no `:selected:backdrop`
+or `label:backdrop` rule. nd: `Build::inactive` drives the title row's opacity and a group window's
+tab bar (`drawn.rs`, `render.rs`), `Theme::sidebar_backdrop` the sidebar (`drawn.rs` Pane).
 
 ## Focus
 

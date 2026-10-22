@@ -452,6 +452,7 @@ fn tokens(theme: &Theme) -> Vec<nd_ui::prelude::Hsla> {
     let base = [
         t.surface.base,
         t.surface.sidebar,
+        t.sidebar_backdrop(),
         t.surface.raised,
         t.surface.raised_hover,
         t.surface.overlay,

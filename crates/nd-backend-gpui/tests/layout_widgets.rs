@@ -1,7 +1,7 @@
 //! Tier 2: the drawn layout and window widgets on the GPUI backend inside GPUI's headless app:
 //! the split's divider drag, `visibility: Hidden`, the status page, drawn alerts and the about
-//! panel, with input through the window's own pointer and key paths; and their goldens, light
-//! and dark, captured from the host's own window.
+//! panel, with input through the window's own pointer and key paths; a window's chrome active
+//! and inactive; and their goldens, light and dark, captured from the host's own window.
 //!
 //! `ND_UPDATE_GOLDENS=1` rewrites the goldens: `tests/goldens/<os>/layout-<view>-<scheme>.png`.
 
@@ -58,6 +58,8 @@ enum Kind {
     },
     /// A toolbar with a centred item that takes taps, a short leading run and a long trailing one.
     Centered,
+    /// A window's chrome: a titled toolbar over a sidebar with a source list and the content.
+    Chrome,
 }
 
 #[derive(Default)]
@@ -130,6 +132,24 @@ impl Render for Scene {
                     .item(button("catch-up", "Catch Me Up"))
                     .item(button("call", "Call"));
                 return scaffold().toolbar(bar).content(text("Body")).into_any_element();
+            }
+            Kind::Chrome => {
+                let folders = source_list("folders")
+                    .section(
+                        "Library",
+                        [
+                            source_item("inbox", "Inbox").icon(Icon::Inbox).badge("12"),
+                            source_item("work", "Work").icon(Icon::Folder),
+                        ],
+                    )
+                    .selected(SharedString::from("inbox"));
+                return scaffold()
+                    .toolbar(
+                        toolbar().title("Notes").sidebar_toggle().flexible_space().item(button("search", "Search")),
+                    )
+                    .sidebar(sidebar().min_w(px(220.)).child(folders))
+                    .content(text("Body"))
+                    .into_any_element();
             }
             Kind::Bar { title, leading_item } => {
                 let bar = toolbar().sidebar_toggle();
@@ -269,6 +289,53 @@ impl Opened {
 
     fn theme(&self) -> Theme {
         registry(Scheme::Light).app_theme().clone()
+    }
+
+    /// Makes the window the active one, as the compositor does when it takes focus.
+    fn activate(&mut self) {
+        let handle = self.host.window_handle(self.window).expect("gpui window");
+        self.cx.update(|cx| {
+            let _ = handle.update(cx, |_, window, _| window.activate_window());
+        });
+        self.past_backdrop_fade();
+    }
+
+    /// Past libadwaita's 200 ms backdrop transition.
+    fn past_backdrop_fade(&mut self) {
+        for _ in 0..6 {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            settle(&mut self.cx, &self.host);
+        }
+    }
+
+    fn is_active(&mut self) -> bool {
+        let handle = self.host.window_handle(self.window).expect("gpui window");
+        self.cx.update(|cx| handle.update(cx, |_, window, _| window.is_window_active())).expect("window")
+    }
+
+    /// Another app window takes focus, leaving this one inactive.
+    fn deactivate(&mut self) {
+        let other = self.cx.update(|cx| {
+            let mut other = None;
+            self.host.update(cx, |app| {
+                let handle = app.open_window(WindowOptions::main("other").size(size(px(200.), px(100.))), |_, cx| {
+                    cx.new(|_| Scene { kind: Kind::Plain, log: Rc::default(), ratio: 0.5, refuse: false })
+                });
+                other = Some(handle.id());
+            });
+            other
+        });
+        settle(&mut self.cx, &self.host);
+        let handle = self.host.window_handle(other.expect("other window")).expect("gpui window");
+        self.cx.update(|cx| {
+            let _ = handle.update(cx, |_, window, _| window.activate_window());
+        });
+        self.past_backdrop_fade();
+    }
+
+    fn pane_fill(&self) -> Hsla {
+        let paints = self.host.backend().paints(self.window).expect("paints");
+        paints.iter().find(|p| p.label == "pane").expect("the sidebar's fill").color
     }
 }
 
@@ -483,6 +550,21 @@ mod gate_m6 {
         assert_eq!(o.showing(), None, "Esc closes it");
     }
 
+    /// libadwaita's backdrop state: an inactive window's sidebar goes halfway to the window's
+    /// colour, and it comes back once the window is active again.
+    pub fn gpui_an_inactive_window_takes_the_backdrop_look() {
+        let mut o = open(Kind::Chrome);
+        o.activate();
+        assert!(o.is_active());
+        let theme = o.theme();
+        assert_eq!(o.pane_fill(), theme.surface.sidebar, "active: the sidebar colour");
+        o.deactivate();
+        assert!(!o.is_active());
+        assert_eq!(o.pane_fill(), theme.sidebar_backdrop(), "inactive: the backdrop sidebar");
+        o.activate();
+        assert_eq!(o.pane_fill(), theme.surface.sidebar, "active again");
+    }
+
     pub fn gpui_layout_goldens() {
         // GPUI renders headless only on macOS (Metal) and Linux (wgpu); Windows captures arrive
         // with the Fluent goldens (M3).
@@ -492,14 +574,14 @@ mod gate_m6 {
         }
         let mut failed = Vec::new();
         for scheme in [Scheme::Light, Scheme::Dark] {
-            for view in ["split", "status", "alert", "about"] {
+            for view in ["split", "status", "alert", "about", "chrome", "chrome-backdrop"] {
                 if let Err(e) = golden(view, scheme) {
                     failed.push(e);
                 }
             }
             // WinUI's ContentDialog, drawn on Linux as `ND_PRESET=fluent` shows it.
             if cfg!(target_os = "linux") {
-                for view in ["alert-fluent", "about-fluent"] {
+                for view in ["alert-fluent", "about-fluent", "chrome-fluent", "chrome-backdrop-fluent"] {
                     if let Err(e) = golden(view, scheme) {
                         failed.push(e);
                     }
@@ -524,6 +606,7 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
     let kind = match view {
         "split" => Kind::Split,
         "status" => Kind::Status,
+        v if v.starts_with("chrome") => Kind::Chrome,
         _ => Kind::Plain,
     };
     let (shown, preset) = match view.strip_suffix("-fluent") {
@@ -532,6 +615,8 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
     };
     let mut o = open_in(kind, preset, scheme);
     match shown {
+        "chrome" => o.activate(),
+        "chrome-backdrop" => o.deactivate(),
         "alert" => o.alert(
             Alert::confirm("Delete the note?", "Delete").message("The note and its attachments are removed for good."),
         ),
@@ -609,6 +694,10 @@ fn main() {
         ("gate_m6::gpui_alert_queues_and_blocks_input", gate_m6::gpui_alert_queues_and_blocks_input),
         ("gate_m6::gpui_alert_modal_covers_every_window", gate_m6::gpui_alert_modal_covers_every_window),
         ("gate_m6::gpui_alert_about_opens_and_closes", gate_m6::gpui_alert_about_opens_and_closes),
+        (
+            "gate_m6::gpui_an_inactive_window_takes_the_backdrop_look",
+            gate_m6::gpui_an_inactive_window_takes_the_backdrop_look,
+        ),
         ("gate_m6::gpui_layout_goldens", gate_m6::gpui_layout_goldens),
     ];
     let has = |flag: &str| args.iter().any(|a| a == flag);
