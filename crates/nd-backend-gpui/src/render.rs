@@ -18,7 +18,7 @@ use nd_gpui::gpui::{
     Refineable, StatefulInteractiveElement, StyleRefinement, Styled, WindowControlArea, div, px,
 };
 use nd_theme::color::{over, with_alpha};
-use nd_theme::{Theme, ThemeRefinement, ThemeRegistry};
+use nd_theme::{Preset, Theme, ThemeRefinement, ThemeRegistry};
 use nd_ui::backend::NodeKind;
 use nd_ui::overlay::Overlay;
 use nd_ui::semantics::{Paint, PaintKind};
@@ -336,6 +336,25 @@ impl<'a> Build<'a> {
         Look::of(&self.top().theme)
     }
 
+    /// How far the window is into its inactive look: 0 while it is the active window, 1 once
+    /// it is not. libadwaita's backdrop state eases in over its 200 ms state change, WinUI's
+    /// deactivated title bar switches at once, and the other looks keep no inactive state.
+    /// The fade is kept under `key`, the node that draws it.
+    pub(crate) fn inactive(&self, key: NodeId, window: &mut gpui::Window) -> f32 {
+        let theme = self.theme();
+        let duration = match theme.preset {
+            Preset::Adwaita if self.backend.platform_reduce_motion() != Some(true) => theme.motion.fast.as_secs_f64(),
+            Preset::Adwaita | Preset::Fluent => 0.,
+            _ => return 0.,
+        };
+        let target = with_alpha(gpui::black(), if window.is_window_active() { 0. } else { 1. });
+        let (shown, moving) = self.backend.fades.sample(key, target, self.time, duration, crate::fade::EASE_OUT);
+        if moving {
+            window.request_animation_frame();
+        }
+        shown.a
+    }
+
     /// Records a fill under `node` and builds what `inside` returns over it, with `text` as
     /// the colour text inside inherits.
     pub fn painted<R>(
@@ -447,6 +466,9 @@ impl<'a> Build<'a> {
         if crate::window_tabs::is_title_row(node)
             && let Some(bar) = self.under_title.borrow_mut().take()
         {
+            // A tab bar under the title row dims with it in an inactive window, as libadwaita's
+            // tab bar does.
+            let bar = div().w_full().opacity(1. - 0.5 * self.inactive(id, window)).child(bar);
             return div().w_full().flex_none().flex().flex_col().child(tracked).child(bar).into_any_element();
         }
         tracked

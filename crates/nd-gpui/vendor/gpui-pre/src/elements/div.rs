@@ -2847,11 +2847,20 @@ impl Interactivity {
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
         {
             let hitbox = hitbox.clone();
-            let hover_state = self.hover_style.as_ref().and_then(|_| {
+            // An element without an id keeps no state across frames, so it starts from how this
+            // frame painted it; without that its hover style only changed when something else
+            // redrew the window.
+            let hover_state = self.hover_style.as_ref().map(|_| {
                 element_state
                     .as_ref()
                     .and_then(|state| state.hover_state.as_ref())
                     .cloned()
+                    .unwrap_or_else(|| {
+                        Rc::new(RefCell::new(ElementHoverState {
+                            group: false,
+                            element: !window.last_input_was_touch() && hitbox.is_hovered(window),
+                        }))
+                    })
             });
             let current_view = window.current_view();
 
@@ -4443,7 +4452,8 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, GestureTuning, InputEvent, Keystroke,
-        MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
+        Hsla, MouseMoveEvent, TestAppContext, TouchEvent, TouchId, black, canvas, red,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -4544,6 +4554,71 @@ mod tests {
         assert_eq!(render_count.get(), initial_render_count + 2);
         assert_eq!(anonymous_paint_count.get(), 1);
         assert_eq!(stateful_width.get(), px(10.));
+    }
+
+    struct AnonymousHoverTestView {
+        render_count: Rc<Cell<usize>>,
+        color: Rc<Cell<Hsla>>,
+    }
+
+    // Without an id an element's hover style only applies once it is painted (layout has no
+    // hitbox to ask), so the test reads the hovered text colour its child paints under.
+    impl Render for AnonymousHoverTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            let color = self.color.clone();
+            div().size_full().child(
+                div()
+                    .ml(px(20.))
+                    .mt(px(20.))
+                    .size(px(50.))
+                    .text_color(black())
+                    .hover(|style| style.text_color(red()))
+                    .child(canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| color.set(window.text_style().color),
+                    )),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn hover_style_without_an_id_follows_the_mouse(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let color = Rc::new(Cell::new(Hsla::default()));
+        let window = cx.add_window({
+            let render_count = render_count.clone();
+            let color = color.clone();
+            move |_, _| AnonymousHoverTestView {
+                render_count,
+                color,
+            }
+        });
+        let window = AnyWindowHandle::from(window);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(color.get(), black());
+
+        let move_mouse = |cx: &mut TestAppContext, position| {
+            cx.update_window(window, |_, window, cx| {
+                window.simulate_mouse_move(position, cx)
+            })
+            .unwrap();
+        };
+        let initial_render_count = render_count.get();
+        move_mouse(cx, point(px(30.), px(30.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+        assert_eq!(color.get(), red());
+
+        move_mouse(cx, point(px(35.), px(35.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+
+        move_mouse(cx, point(px(5.), px(5.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
+        assert_eq!(color.get(), black());
+
+        move_mouse(cx, point(px(8.), px(8.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
     }
 
     struct HoverListenerLayoutTestView {

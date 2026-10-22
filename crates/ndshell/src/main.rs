@@ -130,7 +130,8 @@ fn run(args: &[String]) -> Result<(), String> {
 
 /// `ndshell shot <out.png> <seconds> <scale> -- <command>...` runs the command in a private
 /// headless Hyprland at `scale`, waits `seconds`, and writes its first window (the whole output
-/// when it opened none) to `out.png`, so nd and real GTK apps are captured the same way.
+/// when it opened none) to `out.png`, so nd and real GTK apps are captured the same way. The
+/// window the compositor focuses draws as active; a later window takes the focus from it.
 #[cfg(target_os = "linux")]
 fn shot(args: &[&str]) -> Result<(), String> {
     let [out, seconds, scale, "--", program, rest @ ..] = args else {
@@ -152,6 +153,9 @@ fn shot(args: &[&str]) -> Result<(), String> {
         options.refresh
     );
     let hyprland = ndshell::hyprland::Hyprland::start(ndshell::hyprland::Options { extra_config, ..options })?;
+    // A seat without a keyboard never gives a window keyboard focus, so every app would draw its
+    // inactive (backdrop) look; the virtual keyboard stands in for the one a desktop has.
+    let _keyboard = ndshell::wayland::VirtualInput::connect(&hyprland)?;
     let mut child = hyprland.command(program).args(rest).spawn().map_err(|e| format!("{program}: {e}"))?;
     std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
     let frame = ndshell::wayland::screenshot(&hyprland);

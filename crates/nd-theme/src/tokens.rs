@@ -235,6 +235,13 @@ impl Theme {
         }
     }
 
+    /// The sidebar of a window that is not the active one: halfway to the window's colour, as
+    /// libadwaita's backdrop sidebar is (`#f2f2f4` between `#ebebed` and `#fafafb`, `#28282c`
+    /// between `#2e2e32` and `#222226`).
+    pub fn sidebar_backdrop(&self) -> Hsla {
+        crate::color::mix(self.surface.sidebar, self.surface.base, 0.5)
+    }
+
     /// `color` under the pointer.
     pub fn hover(&self, color: Hsla) -> Hsla {
         self.shift(color, 0.08)

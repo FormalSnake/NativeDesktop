@@ -69,6 +69,9 @@ fn progress(start: f64, now: f64, duration: f64) -> f64 {
 /// A straight fade, as Fluent's opacity and colour fades are.
 pub(crate) const LINEAR: [f32; 4] = [0., 0., 1., 1.];
 
+/// CSS `ease-out`, libadwaita's curve for its backdrop transitions.
+pub(crate) const EASE_OUT: [f32; 4] = [0., 0., 0.58, 1.];
+
 fn at(fade: &Fade, now: f64, duration: f64, curve: [f32; 4]) -> Hsla {
     let t = progress(fade.start, now, duration) as f32;
     if t >= 1. { fade.to } else { mix(fade.from, fade.to, crate::forms::look::cubic_bezier(curve, t)) }

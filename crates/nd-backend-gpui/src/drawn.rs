@@ -128,7 +128,12 @@ impl Build<'_> {
             let rail = rail && !gone;
             let pane = styled(&p.style);
             let pane = if rail { pane.w(px(48.)).min_w(px(48.)).flex_none() } else { pane };
-            let sidebar = theme.surface.sidebar;
+            let adwaita = theme.preset == nd_theme::Preset::Adwaita;
+            let sidebar = match self.inactive(id, window) {
+                share if !adwaita || p.role == PaneRole::Content || share <= 0. => theme.surface.sidebar,
+                share if share >= 1. => theme.sidebar_backdrop(),
+                share => nd_theme::color::mix(theme.surface.sidebar, theme.sidebar_backdrop(), share),
+            };
             // Over an OS backdrop (Mica) a see-through sidebar is the bare material, one surface
             // with the title row, and the content beside it sits on an opaque layer whose leading
             // corner takes the window's radius, as Windows' own apps lay it out.
@@ -166,7 +171,12 @@ impl Build<'_> {
             // Defaults, then the app's style, then the OS insets added on top of both: the
             // insets pad out from whatever padding the row ends up with.
             let s = &theme.spacing;
-            let mut row = div().id(ElementId::Integer(id.0)).p(s.sm).min_h(theme.control.regular + s.sm * 2.);
+            // libadwaita's header bar is 47 px whether or not it draws its shade.
+            let min_h = match theme.preset {
+                nd_theme::Preset::Adwaita => px(47.),
+                _ => theme.control.regular + s.sm * 2.,
+            };
+            let mut row = div().id(ElementId::Integer(id.0)).p(s.sm).min_h(min_h);
             if let Some(p) = props::<TitlebarProps>(node) {
                 row.style().refine(&p.style);
             }
@@ -210,13 +220,18 @@ impl Build<'_> {
                 }
                 None => items,
             };
-            row.flex()
+            // libadwaita's title row is a toolbar view's flat top bar, with no shade under it.
+            let edge = theme.preset != nd_theme::Preset::Adwaita && !self.backdrop_shows(theme.materials.toolbar);
+            // In an inactive window libadwaita draws a title row's content at half opacity, as
+            // WinUI draws its deactivated title bar's.
+            let content = 1. - 0.5 * self.inactive(id, window);
+            let row = row
+                .flex()
                 .flex_row()
                 .items_center()
                 .gap(s.sm)
                 .w_full()
-                .flex_none()
-                .when(!self.backdrop_shows(theme.materials.toolbar), |row| row.border_b_1().border_color(look.border))
+                .opacity(content)
                 .window_control_area(WindowControlArea::Drag)
                 .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
@@ -226,7 +241,12 @@ impl Build<'_> {
                         crate::render::start_window_move(window);
                     }
                 })
-                .children(items)
+                .children(items);
+            div()
+                .w_full()
+                .flex_none()
+                .when(edge, |d| d.border_b_1().border_color(look.border))
+                .child(row)
                 .into_any_element()
         } else if is::<ToolbarItem>(kind) {
             // The item occludes the title row under it, so a press on it is never a window drag

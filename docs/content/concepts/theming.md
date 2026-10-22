@@ -126,7 +126,8 @@ Your app never runs matugen. When the desktop runs matugen, it renders nd's temp
 `~/.config/<app>/theme.json`, and the app watches that file. Register the template in matugen's
 `config.toml` with `input_path` pointing at the template and `output_path` at
 `~/.config/<app>/theme.json`. The Material You roles map to tokens as `surface` to
-`surface.base`, `surface_container_low` to `surface.sidebar`, `primary` to `accent`, `error` to
+`surface.base`, `surface_container` to `surface.sidebar` and `surface.raised` (where the desktop's
+GTK colours put sidebars and cards), `primary` to `accent`, `error` to
 `danger`, and so on (the full table is `ROLE_MAP` in
 [matugen.rs](../../../crates/nd-theme/src/matugen.rs)). Material has no success or warning role,
 so those two come from the `green` and `yellow` custom colors.

@@ -19,10 +19,12 @@ use crate::color::parse_hex;
 use crate::palette::{PaletteRefinement, Scheme, SchemePalettes};
 
 /// Material You role to nd token. `green` and `yellow` are matugen `custom_colors`, since
-/// Material has no success or warning role.
+/// Material has no success or warning role. Sidebars sit on `surface_container` beside cards,
+/// as the GTK colours the same desktop renders place them (FormalShell's
+/// `gtk-colors.css.tmpl`), so a sidebar matches the GNOME apps next to it.
 pub const ROLE_MAP: &[(&str, &str)] = &[
     ("surface", "surface.base"),
-    ("surface_container_low", "surface.sidebar"),
+    ("surface_container", "surface.sidebar"),
     ("surface_container", "surface.raised"),
     ("surface_container_high", "surface.overlay"),
     ("outline_variant", "separator"),
@@ -41,9 +43,10 @@ pub const ROLE_MAP: &[(&str, &str)] = &[
 
 /// FormalShell's shadcn key to nd token. Only keys that carry the same Material role are
 /// mapped: its `warning` is the tertiary colour and `accent` a hover fill, so neither is read.
+/// `secondary` and `popover` are `surface_container`, placed as [`ROLE_MAP`] places it.
 pub const SHADCN_MAP: &[(&str, &str)] = &[
     ("background", "surface.base"),
-    ("card", "surface.sidebar"),
+    ("secondary", "surface.sidebar"),
     ("popover", "surface.raised"),
     ("secondary", "surface.overlay"),
     ("border", "separator"),
@@ -54,8 +57,8 @@ pub const SHADCN_MAP: &[(&str, &str)] = &[
     ("destructive", "danger"),
 ];
 
-fn token_for(role: &str) -> Option<&'static str> {
-    ROLE_MAP.iter().find(|(r, _)| *r == role).map(|(_, t)| *t)
+fn tokens_for(role: &str) -> impl Iterator<Item = &'static str> {
+    ROLE_MAP.iter().filter(move |(r, _)| *r == role).map(|(_, t)| *t)
 }
 
 /// A parsed `theme.json`.
@@ -109,7 +112,8 @@ fn color(value: &Value) -> Option<nd_gpui::gpui::Hsla> {
 }
 
 fn set(palette: &mut PaletteRefinement, role: &str, value: &Value) {
-    if let (Some(token), Some(color)) = (token_for(role), color(value)) {
+    let Some(color) = color(value) else { return };
+    for token in tokens_for(role) {
         palette.set(token, color);
     }
 }
@@ -201,6 +205,9 @@ mod tests {
         assert_eq!(t.palettes.dark.accent, parse_hex("#aabbcc"));
         assert_eq!(t.palettes.dark.surface, parse_hex("#101010"));
         assert!(t.palettes.light.is_empty());
+        let t = MatugenTheme::parse(r##"{"mode":"dark","colors":{"surface_container":"#282726"}}"##).unwrap();
+        assert_eq!(t.palettes.dark.surface_sidebar, parse_hex("#282726"), "sidebars on surface_container, as GTK's");
+        assert_eq!(t.palettes.dark.surface_raised, parse_hex("#282726"));
         assert!(t.palettes.dark.success.is_none());
     }
 
@@ -235,6 +242,9 @@ mod tests {
         .unwrap();
         assert_eq!(t.mode, Some(Scheme::Dark));
         assert_eq!(t.palettes.dark.surface, parse_hex("#111318"));
+        // As the desktop's GTK colours place them: the sidebar on `secondary`.
+        assert_eq!(t.palettes.dark.surface_sidebar, parse_hex("#282a2f"));
+        assert_eq!(t.palettes.dark.surface_raised, parse_hex("#1e1f25"));
         assert_eq!(t.palettes.dark.accent, parse_hex("#adc6ff"));
         assert_eq!(t.palettes.dark.danger, parse_hex("#ffb4ab"));
         assert!(t.palettes.dark.warning.is_none());

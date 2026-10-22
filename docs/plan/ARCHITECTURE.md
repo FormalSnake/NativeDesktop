@@ -280,7 +280,7 @@ Apps declare intent; the backend maps it.
 
 | Intent | macOS (AppKit) | Windows (GPUI, Fluent skin) | Linux (GPUI) |
 | --- | --- | --- | --- |
-| `scaffold().sidebar()` | `NSSplitViewItem(sidebarWithViewController:)` hosting a source-list `NSOutlineView`, `NSBackgroundExtensionView` | Nav pane on Mica | Sidebar on `surface_container_low` |
+| `scaffold().sidebar()` | `NSSplitViewItem(sidebarWithViewController:)` hosting a source-list `NSOutlineView`, `NSBackgroundExtensionView` | Nav pane on Mica | Sidebar on `surface_container`, GTK's sidebar colour |
 | `scaffold().inspector()` | `NSSplitViewItem(inspectorWithViewController:)` | Right pane on Mica | Right pane |
 | `toolbar()` | `NSToolbar` with system items (`toggleSidebar`, `sidebarTrackingSeparator`, `NSSearchToolbarItem`) and native item views | Title row with caption buttons (variant from the M2 spike, 5.4) | Header row; no controls under server decorations |
 | `titlebar()` (custom titlebar) | Content under a transparent titlebar; leading inset for the traffic lights | Trailing inset for the caption buttons | Insets from `button-layout` when client-decorated, none on Hyprland |
