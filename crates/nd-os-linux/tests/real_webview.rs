@@ -24,6 +24,12 @@
 //!   the test extension and then 20 times from a cold start: each time its content script runs
 //!   in the page's first document and fills it through a native messaging host.
 //!
+//! - `real_store_popups_cef_chrome`: the Web Store packages named in `ND_STORE_CRX` (`.crx`
+//!   paths, comma separated) installed, and each one's toolbar button opening its popup in the
+//!   app's popover: the popup's page sizes itself past Chrome's 25 by 25 minimum and closes on a
+//!   second click. Each open popup is written to `ND_CAPTURE_DIR` as a BMP. Skipped without
+//!   `ND_STORE_CRX`.
+//!
 //! - `real_adblock_cef`: `BROWSER_SCENE=adblock`, uBlock Origin's default lists on the request
 //!   filter: the 0.5.11 adblock fixture's requests blocked and redirected as that build did, a
 //!   `$csp=` rule's policy in the document, and the filter never on the main thread.
@@ -326,6 +332,100 @@ mod gate_m8_webview {
         println!("{COLD_STARTS} cold starts; {}", run.marker("EXTENSIONS"));
     }
 
+    #[test]
+    fn real_store_popups_cef_chrome() {
+        let Some(packages) = std::env::var("ND_STORE_CRX").ok().filter(|s| !s.is_empty()) else {
+            println!("ND_STORE_CRX names no packages: skipped");
+            return;
+        };
+        let count = packages.split(',').count();
+        let captures = std::env::var_os("ND_CAPTURE_DIR").map(PathBuf::from);
+        let run = Run::start("chrome");
+        let dir = std::env::temp_dir().join(format!("nd-webview-store-popups-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        fn buttons(node: &SemanticNode, out: &mut Vec<String>) {
+            if let Some(id) = node.test_id.as_deref().filter(|t| t.starts_with("ext-") && !t.starts_with("ext-anchor-"))
+            {
+                out.push(id.to_owned());
+            }
+            for child in &node.children {
+                buttons(child, out);
+            }
+        }
+        let launch = |packages: &str| {
+            let socket = dir.join(format!("a{}.sock", packages.len()));
+            let mut command = run.command();
+            command
+                .env("ND_WEBVIEW_ENGINE", "cef")
+                .env("BROWSER_PACKAGES", packages)
+                .env("NATIVE_AUTOMATION", "1")
+                .env("ND_AUTOMATION_SOCKET", &socket)
+                .env("ND_CEF_CACHE", dir.join("cef"))
+                .stdout(Stdio::null());
+            let probe = Probe::launch(command, &[]);
+            let start = Instant::now();
+            let session = loop {
+                if let Ok(session) = connect_app(&socket) {
+                    break session;
+                }
+                assert!(start.elapsed() < Duration::from_secs(30), "no automation socket:\n{}", probe.log());
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            let client = run.hyprland.wait_for_client(probe.child.id(), Duration::from_secs(10)).expect("a window");
+            let app = App { probe, session, origin: (f64::from(client.at.0), f64::from(client.at.1)) };
+            assert_chrome_style(&run, &app.probe);
+            let start = Instant::now();
+            let ids = loop {
+                let mut ids = Vec::new();
+                buttons(&app.root(), &mut ids);
+                if ids.len() >= count {
+                    break ids;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(90),
+                    "{} of {count} extension buttons; status {:?}\n{}",
+                    ids.len(),
+                    app.status(),
+                    app.probe.log()
+                );
+                std::thread::sleep(Duration::from_millis(200));
+            };
+            (app, ids)
+        };
+        // The install launch: extensions open their welcome tabs as Chromium windows of their
+        // own, which would cover the app in the captures, so the popups open in a second one.
+        let (mut app, _) = launch(&packages);
+        let _ = app.probe.child.kill();
+        let _ = app.probe.child.wait();
+        let (app, ids) = launch("");
+        let popup = |app: &App| find(&app.root(), "extension-popup-page").and_then(|n| n.bounds);
+        let mut sizes = Vec::new();
+        for id in &ids {
+            app.click_node(id);
+            let none = format!("extension {} has no popup", id.trim_start_matches("ext-"));
+            app.wait("the popup sized past the minimum, or no popup for the page", |a| {
+                popup(a).is_some_and(|b| b.size.width > 30. && b.size.height > 30.) || a.status().contains(&none)
+            });
+            if popup(&app).is_none() {
+                sizes.push(format!("{id}=no-popup"));
+                continue;
+            }
+            // Its content has a moment to paint before the capture.
+            std::thread::sleep(Duration::from_millis(3000));
+            let b = popup(&app).expect("the popup");
+            let title = find(&app.root(), "extension-popup-page").map(|n| n.name.clone()).unwrap_or_default();
+            sizes.push(format!("{id}={}x{} {title:?}", b.size.width, b.size.height));
+            if let Some(dir) = &captures {
+                std::fs::create_dir_all(dir).unwrap();
+                let shot = ndshell::wayland::screenshot(&run.hyprland).unwrap();
+                shot.write_bmp(&dir.join(format!("{id}.bmp"))).unwrap();
+            }
+            app.click_node(id);
+            app.wait("the popup closed", |a| popup(a).is_none());
+        }
+        println!("{}; {}", sizes.join(" "), run.marker("STORE_POPUPS"));
+    }
+
     fn find<'a>(node: &'a SemanticNode, test_id: &str) -> Option<&'a SemanticNode> {
         if node.test_id.as_deref() == Some(test_id) {
             return Some(node);
@@ -341,7 +441,11 @@ mod gate_m8_webview {
 
     impl App {
         fn root(&self) -> SemanticNode {
-            self.session.tree(None).expect("tree").windows.into_iter().next().expect("a window").root
+            let tree = self.session.tree(None).unwrap_or_else(|e| {
+                std::thread::sleep(Duration::from_millis(500));
+                panic!("tree: {e:?}\n{}", self.probe.log())
+            });
+            tree.windows.into_iter().next().expect("a window").root
         }
 
         /// A point of the node in output coordinates, at fractions of its box.

@@ -68,3 +68,16 @@ path a click waits on, so the popup is the one that matters.
 Where to file: the CEF issue tracker (github.com/chromiumembedded/cef/issues), as a bug with
 the timing (popup visible about 2 s after `ExecuteUserAction`, the `LOG(ERROR) Timeout of new
 browser info response` line in the browser log) and this diff as a PR.
+
+On Linux nd shows an extension's popup in a page of its own (`run_action_in_view` in
+`crates/nd-cef/src/extensions.rs`), which is a CEF browser, so the hold applies to macOS only.
+
+### The timeout logged at every Chrome-style launch
+
+Every launch with a Chrome-style page logs one `Timeout of new browser info response` about two
+seconds after the first page is created, with no extension involved (seen in examples/browser
+on macOS and in Lynk Browser on Linux). It is not the page itself: a test page's script ran
+20 ms after its request. It is not Chromium's omnibox popup WebUI either, nor nd's hidden
+`chrome://extensions` page: turning the first off and timing the second left it in place. No
+DevTools target carries the frame's token, so it is contents Chromium makes alongside the
+browser window, and nothing on screen waits on it. nd leaves it as is.

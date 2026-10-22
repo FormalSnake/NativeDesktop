@@ -567,7 +567,7 @@ impl Chrome {
             (!std::mem::replace(&mut track.reported, true)).then(|| track.id.clone())
         };
         if let (Some(id), Some(page)) = (report, self.page()) {
-            page.page.emit(nd_webview::ExtensionPopupOpened { id, bounds });
+            page.page.emit(nd_webview::ExtensionPopupOpened { id, bounds, page: None });
         }
     }
 

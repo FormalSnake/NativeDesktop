@@ -6,7 +6,8 @@
 //!
 //! With Chromium in Chrome style (`ND_WEBVIEW_ENGINE=cef ND_CEF_STYLE=chrome`) each installed
 //! extension with an action gets a toolbar button that opens its popup under the toolbar, and
-//! `BROWSER_INSTALL` (extension ids, comma separated) installs from the Chrome Web Store at launch.
+//! `BROWSER_INSTALL` (extension ids, comma separated) installs from the Chrome Web Store at launch,
+//! and `BROWSER_PACKAGES` (`.crx` paths, comma separated) installs those packages.
 //!
 //! `BROWSER_SCENE` picks a gate scene instead: `overlays` (popover, panel and context menu over a
 //! page that counts its input), `resize` (a page filling the window), `input` (a text field in a
@@ -37,8 +38,8 @@ use nd::prelude::*;
 use nd::webview::extensions::{self as webext, Anchor, Extension};
 use nd::webview::{
     BrowserCommand, ChromeCommand, ContextMenuItemClicked, Contexts, DownloadRequested, DownloadState, DownloadUpdated,
-    LoadFailed, LoadProgress, LoadingChanged, MenuItem, Navigate, NewWindow, TitleChanged, WebView, WebViewOptions,
-    WindowClosed, resolve_address, webview,
+    ExtensionPopupClosed, ExtensionPopupOpened, ExtensionPopupResized, LoadFailed, LoadProgress, LoadingChanged,
+    MenuItem, Navigate, NewWindow, TitleChanged, WebView, WebViewOptions, WindowClosed, resolve_address, webview,
 };
 
 actions!(browser, [NewTab, CloseTab, Reload, Back, Forward, DevTools, NextTab, Print]);
@@ -65,6 +66,14 @@ pub struct Browser {
     status: SharedString,
     /// Installed extensions with a toolbar action.
     extensions: Vec<Extension>,
+    /// An extension popup the engine left for the app to show (Linux), under its button.
+    popup: Option<ExtensionPopup>,
+}
+
+struct ExtensionPopup {
+    id: String,
+    page: WebView,
+    size: (f64, f64),
 }
 
 // docs:begin options
@@ -82,6 +91,7 @@ impl Browser {
             address: url.into(),
             status: "".into(),
             extensions: Vec::new(),
+            popup: None,
         };
         let page = WebView::with_options(options());
         page.load(url);
@@ -120,9 +130,8 @@ impl Browser {
         let this = cx.weak_entity();
         webext::list(move |list, cx| {
             let _ = this.update(cx, |this, cx| this.listed(list, cx));
-            for id in std::env::var("BROWSER_INSTALL").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
-                let this = this.clone();
-                webext::install_from_store(id, move |r, cx| {
+            let installed = |this: WeakEntity<Self>| {
+                move |r: Result<String, String>, cx: &mut App| {
                     let _ = this.update(cx, |this, cx| {
                         this.status = match r {
                             Ok(id) => format!("Installed {id}"),
@@ -131,7 +140,13 @@ impl Browser {
                         .into();
                         cx.notify();
                     });
-                });
+                }
+            };
+            for id in std::env::var("BROWSER_INSTALL").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
+                webext::install_from_store(id, installed(this.clone()));
+            }
+            for path in std::env::var("BROWSER_PACKAGES").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
+                webext::install_package(path, installed(this.clone()));
             }
         });
     }
@@ -266,6 +281,25 @@ impl Browser {
                 cx.notify();
             }))
             // docs:end downloads
+            .on_extension_popup_opened(cx.listener(|this, e: &ExtensionPopupOpened, _, cx| {
+                if let Some(page) = &e.page {
+                    let size = (e.bounds.width, e.bounds.height);
+                    this.popup = Some(ExtensionPopup { id: e.id.clone(), page: page.clone(), size });
+                    cx.notify();
+                }
+            }))
+            .on_extension_popup_resized(cx.listener(|this, e: &ExtensionPopupResized, _, cx| {
+                if let Some(popup) = this.popup.as_mut().filter(|p| p.id == e.id) {
+                    popup.size = (e.width, e.height);
+                    cx.notify();
+                }
+            }))
+            .on_extension_popup_closed(cx.listener(|this, e: &ExtensionPopupClosed, _, cx| {
+                if this.popup.as_ref().is_some_and(|p| p.id == e.id) {
+                    this.popup = None;
+                    cx.notify();
+                }
+            }))
             .on_context_menu_item_clicked(cx.listener(|this, e: &ContextMenuItemClicked, _, cx| {
                 match e.id.as_str() {
                     "open-link-tab" => {
@@ -332,14 +366,39 @@ impl Render for Browser {
                     })),
             )
             .flexible_space();
-        let bar = self.extensions.iter().fold(bar, |bar, e| {
-            let id = e.id.clone();
-            bar.item(
-                icon_button(SharedString::from(format!("ext-{}", e.id)), Icon::Star)
-                    .tooltip(SharedString::from(e.name.clone()))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.run_extension(&id, window, cx))),
-            )
-        });
+        let bar =
+            self.extensions.iter().fold(bar, |bar, e| {
+                let id = e.id.clone();
+                let popup = self.popup.as_ref().filter(|p| p.id == e.id);
+                bar.item(
+                    div()
+                        .id(SharedString::from(format!("ext-anchor-{}", e.id)))
+                        .child(
+                            icon_button(SharedString::from(format!("ext-{}", e.id)), Icon::Star)
+                                .tooltip(SharedString::from(e.name.clone()))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    this.run_extension(&id, window, cx)
+                                })),
+                        )
+                        .when_some(popup, |d, popup| {
+                            d.child(
+                                popover("extension-popup")
+                                    .child(
+                                        webview("extension-popup-page", &popup.page)
+                                            .w(px(popup.size.0 as f32))
+                                            .h(px(popup.size.1 as f32)),
+                                    )
+                                    .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
+                                        if let Some(page) = this.current() {
+                                            page.close_extension_popup();
+                                        }
+                                        this.popup = None;
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
+                )
+            });
         let bar = bar
             .item(icon_button("devtools", Icon::Code).tooltip("Developer Tools").dispatch(DevTools))
             .item(icon_button("new-tab", Icon::Plus).tooltip("New Tab").dispatch(NewTab));

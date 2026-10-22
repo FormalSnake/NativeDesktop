@@ -125,6 +125,7 @@ impl WebViewElement {
         on_chrome_command => ChromeCommand;
         on_extension_popup_opened => ExtensionPopupOpened;
         on_extension_popup_closed => ExtensionPopupClosed;
+        on_extension_popup_resized => ExtensionPopupResized;
     }
 }
 

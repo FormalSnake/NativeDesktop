@@ -10,8 +10,8 @@
 //! `ND_EXTENSIONS_OK` with the timings, or `ND_EXTENSIONS_FAILED` and why, and exits.
 //! `ND_CEF_CACHE` names the profile, so a gate can run it on one profile many times.
 //!
-//! On Linux nd's Chrome-style pages have no toolbar for an action to run in, so the page asks
-//! its content script for the fill and the popup checks are skipped.
+//! On Linux nd hands the popup to the app as a page of its own
+//! ([`ExtensionPopupOpened::page`]), which the scene shows in a popover under its button.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -19,15 +19,14 @@ use std::time::Instant;
 use nd::prelude::*;
 use nd::webview::extensions::{self, ActionOutcome, Anchor};
 use nd::webview::{
-    CefStyle, ExtensionPopupClosed, ExtensionPopupOpened, TitleChanged, WebView, WebViewOptions, webview,
+    CefStyle, ExtensionPopupClosed, ExtensionPopupOpened, ExtensionPopupResized, TitleChanged, WebView, WebViewOptions,
+    webview,
 };
 
 /// The test extension's id, fixed by the key in its manifest.
 pub const ID: &str = "bgbfijgfnneimkgfdaggpdpfmidadeen";
 const HOST: &str = "dev.formalsnake.nd_test_host";
 const SECRET: &str = "nd-secret-42";
-/// Whether the scene clicks the action: see the module docs.
-const CLICKS: bool = cfg!(target_os = "macos");
 /// Where the toolbar button sits, in the window's content.
 const BUTTON: Anchor = Anchor { x: 16., y: 16., width: 28., height: 28. };
 
@@ -36,6 +35,8 @@ struct Scene {
     start: Instant,
     clicked_ms: Option<u128>,
     popup: Option<(u128, Anchor)>,
+    /// The popup's page and size, when the app shows it.
+    shown: Option<(WebView, (f64, f64))>,
     filled_ms: Option<u128>,
     closed: bool,
     checking: bool,
@@ -111,14 +112,6 @@ impl Scene {
     fn click(&mut self) {
         self.clicked_ms = Some(self.ms());
         eprintln!("ND_EXTENSIONS click at {} ms", self.ms());
-        if !CLICKS {
-            self.page.execute_javascript("postMessage('nd-fill', '*'), true", |r, _cx| {
-                if let Err(e) = r {
-                    fail(format!("asking the page for a fill: {e}"));
-                }
-            });
-            return;
-        }
         self.page.run_extension_action(ID, BUTTON, |outcome, _cx| match outcome {
             Ok(ActionOutcome::PopupOpened) => {}
             other => fail(format!("the click did {other:?}, not open the popup")),
@@ -127,7 +120,11 @@ impl Scene {
 
     fn popup_opened(&mut self, e: &ExtensionPopupOpened, cx: &mut Context<Self>) {
         let b = e.bounds;
-        eprintln!("ND_EXTENSIONS popup at {b:?}, {} ms", self.ms());
+        eprintln!("ND_EXTENSIONS popup at {b:?}, {} ms, shown by the app: {}", self.ms(), e.page.is_some());
+        if let Some(page) = &e.page {
+            self.shown = Some((page.clone(), (b.width, b.height)));
+            cx.notify();
+        }
         let under = (b.x - BUTTON.x).abs() <= 2. && (b.y - (BUTTON.y + BUTTON.height)).abs() <= 2.;
         if e.id != ID || !under {
             fail(format!("popup {} at {b:?}, not under the button {BUTTON:?}", e.id));
@@ -145,7 +142,7 @@ impl Scene {
     }
 
     fn check(&mut self, cx: &mut Context<Self>) {
-        let popup_done = !CLICKS || (self.popup.is_some() && self.closed);
+        let popup_done = self.popup.is_some() && self.closed;
         if !popup_done || self.filled_ms.is_none() || self.checking {
             return;
         }
@@ -188,9 +185,28 @@ impl Render for Scene {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .child(h_flex().p(px(BUTTON.x as f32)).child(
-                div().id("extension-button").w(px(BUTTON.width as f32)).h(px(BUTTON.height as f32)).bg(rgb(0x2f8f5b)),
-            ))
+            .child(
+                h_flex().p(px(BUTTON.x as f32)).child(
+                    div()
+                        .id("extension-button")
+                        .w(px(BUTTON.width as f32))
+                        .h(px(BUTTON.height as f32))
+                        .bg(rgb(0x2f8f5b))
+                        .when_some(self.shown.as_ref(), |d, (page, size)| {
+                            d.child(
+                                popover("extension-popup")
+                                    .child(
+                                        webview("extension-popup-page", page).w(px(size.0 as f32)).h(px(size.1 as f32)),
+                                    )
+                                    .on_dismiss(cx.listener(|this, _: &Dismissed, _, cx| {
+                                        this.page.close_extension_popup();
+                                        this.shown = None;
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
+                ),
+            )
             .child(
                 webview("web", &self.page)
                     .flex_1()
@@ -198,9 +214,17 @@ impl Render for Scene {
                     .on_extension_popup_opened(
                         cx.listener(|this, e: &ExtensionPopupOpened, _, cx| this.popup_opened(e, cx)),
                     )
+                    .on_extension_popup_resized(cx.listener(|this, e: &ExtensionPopupResized, _, cx| {
+                        eprintln!("ND_EXTENSIONS popup sized {}x{} at {} ms", e.width, e.height, this.ms());
+                        if let Some(shown) = this.shown.as_mut() {
+                            shown.1 = (e.width, e.height);
+                            cx.notify();
+                        }
+                    }))
                     .on_extension_popup_closed(cx.listener(|this, e: &ExtensionPopupClosed, _, cx| {
                         if e.id == ID {
                             eprintln!("ND_EXTENSIONS popup closed at {} ms", this.ms());
+                            this.shown = None;
                             this.closed = true;
                             this.check(cx);
                         }
@@ -227,7 +251,16 @@ pub fn open(cx: &mut App) {
             extensions::list(move |list, cx| {
                 let _ = this.update(cx, |this, cx| this.listed(list, false, cx));
             });
-            Scene { page, start, clicked_ms: None, popup: None, filled_ms: None, closed: false, checking: false }
+            Scene {
+                page,
+                start,
+                clicked_ms: None,
+                popup: None,
+                shown: None,
+                filled_ms: None,
+                closed: false,
+                checking: false,
+            }
         })
     });
 }

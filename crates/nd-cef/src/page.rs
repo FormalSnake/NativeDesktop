@@ -62,6 +62,7 @@ pub(crate) fn closed(id: u64, browser: Option<i32>) {
         page.browser.borrow_mut().take();
         page.view.browser_closed();
     }
+    crate::extensions::page_closed(id);
     #[cfg(target_os = "linux")]
     crate::platform::chrome::released(id);
 }
@@ -258,6 +259,9 @@ impl CefPage {
                 let muted = self.st.borrow().muted;
                 self.page.emit(AudioStateChanged { playing: body["playing"].as_bool().unwrap_or(false), muted });
             }
+            return;
+        }
+        if world.is_empty() && crate::extensions::view_popup_message(&self.page, &name, &body) {
             return;
         }
         if self.st.borrow().handlers.contains_key(&(name.clone(), world.clone())) {
