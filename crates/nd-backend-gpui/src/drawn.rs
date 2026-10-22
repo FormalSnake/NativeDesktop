@@ -94,19 +94,17 @@ impl Build<'_> {
             // Toolbar first as the title row, then the panes side by side.
             let (bars, panes): (Vec<NodeId>, Vec<NodeId>) =
                 node.children.iter().partition(|c| self.nodes.get(c).is_some_and(is_kind::<Toolbar>));
+            let split = self.split_headers(id, node, &bars);
+            let outer = self.split.replace(split);
+            let bars: Vec<AnyElement> = bars.iter().map(|c| self.node(*c, window, cx)).collect();
+            let panes: Vec<AnyElement> = panes.iter().map(|c| self.node(*c, window, cx)).collect();
+            self.split.replace(outer);
             div()
                 .size_full()
                 .flex()
                 .flex_col()
-                .children(bars.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>())
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_1()
-                        .min_h_0()
-                        .children(panes.iter().map(|c| self.node(*c, window, cx)).collect::<Vec<_>>()),
-                )
+                .children(bars)
+                .child(div().flex().flex_row().flex_1().min_h_0().children(panes))
                 .into_any_element()
         } else if is::<Pane>(kind) {
             let p = props::<PaneProps>(node)?;
@@ -147,7 +145,18 @@ impl Build<'_> {
                 }
                 PaneRole::Content | PaneRole::Overlay => (pane, None),
             };
-            let pane = self.painted(id, fill, None, "pane", || pane.children(children(window, cx)).into_any_element());
+            let header = self.take_pane_header(node, p.role);
+            let pane = self.painted(id, fill, None, "pane", || match header {
+                // The pane's own header bar over its body, as in libadwaita's split views; the
+                // body keeps the pane's column so a full-height child fills what is left.
+                Some(header) => pane
+                    .child(header)
+                    .child(
+                        div().flex_1().min_h_0().w_full().flex().flex_col().relative().children(children(window, cx)),
+                    )
+                    .into_any_element(),
+                None => pane.children(children(window, cx)).into_any_element(),
+            });
             match slide {
                 // Clipped to the share of its width shown, the pane held at full width against
                 // the edge that meets the content, so it slides in from the window's edge.
@@ -167,36 +176,50 @@ impl Build<'_> {
                 None => pane,
             }
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
-            // The window's title row: it moves the window and keeps clear of the OS controls.
-            // Defaults, then the app's style, then the OS insets added on top of both: the
-            // insets pad out from whatever padding the row ends up with.
-            let s = &theme.spacing;
-            // libadwaita's header bar is 47 px whether or not it draws its shade.
-            let min_h = match theme.preset {
-                nd_theme::Preset::Adwaita => px(47.),
-                _ => theme.control.regular + s.sm * 2.,
-            };
-            let mut row = div().id(ElementId::Integer(id.0)).p(s.sm).min_h(min_h);
-            if let Some(p) = props::<TitlebarProps>(node) {
-                row.style().refine(&p.style);
-            }
-            let merged = row.style().clone();
-            // A centred item (Messages' conversation) sits at the middle of the window: the
-            // items before and after it go in two groups that share what is left equally, each
-            // holding its own OS inset, so the centre stays put on resize and the groups never
-            // shrink under their content (the centre gives way instead of overlapping them).
-            let centered = node.children.iter().position(|c| {
+            let mut items = children(window, cx);
+            // A centred item (Messages' conversation) sits at the middle of its row.
+            let mut centered = node.children.iter().position(|c| {
                 self.nodes.get(c).and_then(|n| n.props.downcast_ref::<ToolbarItemProps>()).is_some_and(|p| p.centered)
             });
-            let insets = if centered.is_some() {
-                nd_ui::TitlebarInsets { leading: 0., trailing: 0., ..self.insets }
-            } else {
-                self.insets
-            };
-            *row.style() = with_titlebar_insets(&merged, insets);
-            let mut items = children(window, cx);
-            let mut centered = centered;
-            if let Some((at, title)) = self.toolbar_title(id, node) {
+            let title = self.toolbar_title(id, node);
+            if self.split.borrow().as_ref().is_some_and(|s| node.parent == Some(s.scaffold)) {
+                // Split over the panes: what sits over the sidebar heads the sidebar, the title
+                // and the rest head the content. The bar itself takes no room.
+                let over_sidebar = self.over_sidebar(node);
+                let mut rest = items.split_off(over_sidebar);
+                let mut centered = centered.and_then(|c| c.checked_sub(over_sidebar));
+                if let Some((_, title)) = title {
+                    rest.insert(0, title);
+                    centered = centered.map(|c| c + 1);
+                }
+                let mut split = self.split.borrow_mut();
+                let split = split.as_mut().expect("split headers");
+                let (sidebar, content, inspector) = split.insets(self.insets);
+                split.sidebar = Some(self.title_row(
+                    id,
+                    ElementId::NamedInteger("sidebar".into(), id.0),
+                    node,
+                    items,
+                    None,
+                    sidebar,
+                    window,
+                ));
+                split.content =
+                    Some(self.title_row(id, ElementId::Integer(id.0), node, rest, centered, content, window));
+                if let Some(insets) = inspector {
+                    split.inspector = Some(self.title_row(
+                        id,
+                        ElementId::NamedInteger("inspector".into(), id.0),
+                        node,
+                        Vec::new(),
+                        None,
+                        insets,
+                        window,
+                    ));
+                }
+                return Some(div().into_any_element());
+            }
+            if let Some((at, title)) = title {
                 if let Some(c) = centered.as_mut()
                     && at <= *c
                 {
@@ -204,50 +227,7 @@ impl Build<'_> {
                 }
                 items.insert(at, title);
             }
-            let items = match centered {
-                Some(c) => {
-                    let after: Vec<AnyElement> = items.split_off(c + 1);
-                    let center = items.pop().expect("the centred item");
-                    let side = || div().flex().flex_row().items_center().gap(s.sm).flex_1().flex_basis(px(0.));
-                    // The insets are spacers, not padding: a group's padding would add to its
-                    // flex basis and push the centre off the middle by half the inset.
-                    let inset = |w: f32| div().flex_none().w(px(w));
-                    vec![
-                        side().child(inset(self.insets.leading)).children(items).into_any_element(),
-                        div().flex_none().child(center).into_any_element(),
-                        side().justify_end().children(after).child(inset(self.insets.trailing)).into_any_element(),
-                    ]
-                }
-                None => items,
-            };
-            // libadwaita's title row is a toolbar view's flat top bar, with no shade under it.
-            let edge = theme.preset != nd_theme::Preset::Adwaita && !self.backdrop_shows(theme.materials.toolbar);
-            // In an inactive window libadwaita draws a title row's content at half opacity, as
-            // WinUI draws its deactivated title bar's.
-            let content = 1. - 0.5 * self.inactive(id, window);
-            let row = row
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(s.sm)
-                .w_full()
-                .opacity(content)
-                .window_control_area(WindowControlArea::Drag)
-                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    if event.click_count >= 2 {
-                        window.zoom_window();
-                    } else {
-                        crate::render::start_window_move(window);
-                    }
-                })
-                .children(items);
-            div()
-                .w_full()
-                .flex_none()
-                .when(edge, |d| d.border_b_1().border_color(look.border))
-                .child(row)
-                .into_any_element()
+            self.title_row(id, ElementId::Integer(id.0), node, items, centered, self.insets, window)
         } else if is::<ToolbarItem>(kind) {
             // The item occludes the title row under it, so a press on it is never a window drag
             // (on Windows, never the caption). That also hides it from the window root's pointer
@@ -632,6 +612,136 @@ impl Build<'_> {
             .into_any_element()
     }
 
+    /// A title row: it moves the window and keeps clear of the OS controls by `insets`.
+    #[allow(clippy::too_many_arguments)]
+    fn title_row(
+        &self,
+        id: NodeId,
+        element_id: ElementId,
+        node: &Node,
+        items: Vec<AnyElement>,
+        centered: Option<usize>,
+        insets: nd_ui::TitlebarInsets,
+        window: &mut gpui::Window,
+    ) -> AnyElement {
+        let theme = self.theme();
+        let look = self.look();
+        // Defaults, then the app's style, then the OS insets added on top of both: the insets
+        // pad out from whatever padding the row ends up with.
+        let s = &theme.spacing;
+        // libadwaita's header bar is 47 px whether or not it draws its shade.
+        let min_h = match theme.preset {
+            nd_theme::Preset::Adwaita => px(47.),
+            _ => theme.control.regular + s.sm * 2.,
+        };
+        let mut row = div().id(element_id).p(s.sm).min_h(min_h);
+        if let Some(p) = props::<TitlebarProps>(node) {
+            row.style().refine(&p.style);
+        }
+        let merged = row.style().clone();
+        // A centred item sits at the middle of the row: the items before and after it go in two
+        // groups that share what is left equally, each holding its own OS inset, so the centre
+        // stays put on resize and the groups never shrink under their content (the centre gives
+        // way instead of overlapping them).
+        let row_insets =
+            if centered.is_some() { nd_ui::TitlebarInsets { leading: 0., trailing: 0., ..insets } } else { insets };
+        *row.style() = with_titlebar_insets(&merged, row_insets);
+        let mut items = items;
+        let items = match centered {
+            Some(c) if c < items.len() => {
+                let after: Vec<AnyElement> = items.split_off(c + 1);
+                let center = items.pop().expect("the centred item");
+                let side = || div().flex().flex_row().items_center().gap(s.sm).flex_1().flex_basis(px(0.));
+                // The insets are spacers, not padding: a group's padding would add to its flex
+                // basis and push the centre off the middle by half the inset.
+                let inset = |w: f32| div().flex_none().w(px(w));
+                vec![
+                    side().child(inset(insets.leading)).children(items).into_any_element(),
+                    div().flex_none().child(center).into_any_element(),
+                    side().justify_end().children(after).child(inset(insets.trailing)).into_any_element(),
+                ]
+            }
+            _ => items,
+        };
+        // libadwaita's title row is a toolbar view's flat top bar, with no shade under it.
+        let edge = theme.preset != nd_theme::Preset::Adwaita && !self.backdrop_shows(theme.materials.toolbar);
+        // In an inactive window libadwaita draws a title row's content at half opacity, as
+        // WinUI draws its deactivated title bar's.
+        let content = 1. - 0.5 * self.inactive(id, window);
+        let row = row
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(s.sm)
+            .w_full()
+            .opacity(content)
+            .window_control_area(WindowControlArea::Drag)
+            .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                if event.click_count >= 2 {
+                    window.zoom_window();
+                } else {
+                    crate::render::start_window_move(window);
+                }
+            })
+            .children(items);
+        div()
+            .w_full()
+            .flex_none()
+            .when(edge, |d| d.border_b_1().border_color(look.border))
+            .child(row)
+            .into_any_element()
+    }
+
+    /// How many of a toolbar's items sit over the sidebar: the sidebar toggle, the tracking
+    /// separator and the leading items, the run the title follows.
+    fn over_sidebar(&self, node: &Node) -> usize {
+        let system =
+            |c: &NodeId| self.nodes.get(c).and_then(|n| n.props.downcast_ref::<SystemItemProps>()).map(|p| p.item);
+        let item = |c: &NodeId| self.nodes.get(c).and_then(|n| n.props.downcast_ref::<ToolbarItemProps>());
+        node.children
+            .iter()
+            .take_while(|c| {
+                matches!(system(c), Some(SystemItem::ToggleSidebar | SystemItem::SidebarTrackingSeparator))
+                    || item(c).is_some_and(|p| p.leading)
+            })
+            .count()
+    }
+
+    /// Whether a scaffold's toolbar splits into a header bar per pane, as libadwaita's
+    /// `AdwNavigationSplitView` and `AdwOverlaySplitView` lay out Files and Settings: only on
+    /// the libadwaita look, with a toolbar and an open sidebar.
+    fn split_headers(&self, id: NodeId, node: &Node, bars: &[NodeId]) -> Option<SplitHeaders> {
+        if self.theme().preset != nd_theme::Preset::Adwaita || bars.is_empty() {
+            return None;
+        }
+        let shown = |role: PaneRole| {
+            node.children.iter().filter_map(|c| self.nodes.get(c)).any(|n| {
+                props::<PaneProps>(n).is_some_and(|p| p.role == role && !p.collapsed)
+                    && !(role == PaneRole::Sidebar && self.sidebar_hidden(n))
+            })
+        };
+        shown(PaneRole::Sidebar).then(|| SplitHeaders {
+            scaffold: id,
+            inspector_shown: shown(PaneRole::Inspector),
+            sidebar: None,
+            content: None,
+            inspector: None,
+        })
+    }
+
+    /// The header bar the split toolbar left for a pane of the scaffold being built.
+    fn take_pane_header(&self, node: &Node, role: PaneRole) -> Option<AnyElement> {
+        let mut split = self.split.borrow_mut();
+        let split = split.as_mut().filter(|s| node.parent == Some(s.scaffold))?;
+        match role {
+            PaneRole::Sidebar => split.sidebar.take(),
+            PaneRole::Content => split.content.take(),
+            PaneRole::Inspector => split.inspector.take(),
+            PaneRole::Overlay => None,
+        }
+    }
+
     /// A toolbar's title and the child index it goes in at: after the sidebar toggle and the
     /// leading items. The toolbar's own `title` shows whatever else it holds (empty hides it);
     /// without one, the window's title fills the leading run when the app put nothing before the
@@ -654,14 +764,7 @@ impl Build<'_> {
         if title.is_empty() {
             return None;
         }
-        let at = node
-            .children
-            .iter()
-            .take_while(|c| {
-                matches!(system(c), Some(SystemItem::ToggleSidebar | SystemItem::SidebarTrackingSeparator))
-                    || item(c).is_some_and(|p| p.leading)
-            })
-            .count();
+        let at = self.over_sidebar(node);
         // A WinUI title bar sets the title in the 12 pt Caption style, regular weight.
         let theme = self.theme();
         let fluent = theme.preset == nd_theme::Preset::Fluent;
@@ -670,6 +773,32 @@ impl Build<'_> {
         let label = div().min_w_0().truncate().font_weight(weight).text_color(color).child(title);
         let label = if fluent { label.text_size(theme.type_scale.caption) } else { label };
         Some((at, label.into_any_element()))
+    }
+}
+
+/// A scaffold's header bars while its toolbar splits over its panes, each taken by its pane.
+pub(crate) struct SplitHeaders {
+    scaffold: NodeId,
+    inspector_shown: bool,
+    sidebar: Option<AnyElement>,
+    content: Option<AnyElement>,
+    inspector: Option<AnyElement>,
+}
+
+impl SplitHeaders {
+    /// The OS insets each header keeps clear of: the start controls over the sidebar, the end
+    /// ones over the last pane. The inspector's header exists only when the inspector shows.
+    fn insets(
+        &self,
+        window: nd_ui::TitlebarInsets,
+    ) -> (nd_ui::TitlebarInsets, nd_ui::TitlebarInsets, Option<nd_ui::TitlebarInsets>) {
+        let sidebar = nd_ui::TitlebarInsets { trailing: 0., ..window };
+        let middle = nd_ui::TitlebarInsets { leading: 0., ..window };
+        if self.inspector_shown {
+            (sidebar, nd_ui::TitlebarInsets { trailing: 0., ..middle }, Some(middle))
+        } else {
+            (sidebar, middle, None)
+        }
     }
 }
 
