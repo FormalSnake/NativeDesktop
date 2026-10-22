@@ -266,6 +266,8 @@ pub(crate) struct Build<'a> {
     pub(crate) under_title: RefCell<Option<AnyElement>>,
     /// Bottom edge of the title rows (toolbar or titlebar) as last laid out, 0 without one.
     pub(crate) title_bottom: Cell<f32>,
+    /// The header bars of the scaffold being built when its toolbar splits over its panes.
+    pub(crate) split: RefCell<Option<crate::drawn::SplitHeaders>>,
     /// Drawing a closed overlay's last subtree as it animates out: its nodes are released, so
     /// controls keep no state for them and start nothing (a video would play on unheard).
     pub(crate) ghost: bool,
@@ -304,6 +306,7 @@ impl<'a> Build<'a> {
             paints: RefCell::default(),
             under_title: RefCell::default(),
             title_bottom: Cell::default(),
+            split: RefCell::default(),
             ghost: false,
         }
     }

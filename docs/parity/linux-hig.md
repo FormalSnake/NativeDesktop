@@ -37,6 +37,7 @@ Sans 11). nd's side: the Linux goldens in `crates/nd-backend-gpui/tests/goldens/
 - [x] Alert dialog: radius 18, `title-2` heading, 32/24 px padding, 44 px responses at radius 12, destructive as red tint, dark dimming at 50% (layout-alert goldens next to dialog references)
 - [x] Backdrop: an inactive window's header bar content fades to 50% and its sidebar goes to the backdrop colour (halfway to the window's), over 200 ms ease-out; selections and labels elsewhere keep their colours as in libadwaita 1.9 (`gpui_an_inactive_window_takes_the_backdrop_look`, layout-chrome and layout-chrome-backdrop goldens)
 - [x] Header bar: 47 px and flat, no line under it, as Nautilus' content header draws (layout-chrome golden next to a Nautilus capture)
+- [x] Split header bars: with an open sidebar the toolbar splits as in AdwNavigationSplitView (Files, Settings). The sidebar runs the full height with its own header bar in the sidebar colour, holding the sidebar toggle and the leading items with the start window controls; the content header holds the title, the other items and the end window controls (the inspector's header takes them when it shows). A hidden or collapsed sidebar brings the single bar back (layout-chrome goldens next to Nautilus captures, light and dark, focused and backdrop)
 - [x] Matugen surfaces: the sidebar and cards take `surface_container`, the colour FormalShell's GTK theme gives Nautilus' sidebar, instead of `surface_container_low` (unit test `formalshell_shape`)
 - [ ] Window controls: neutral 10/15/30% circles (close not red) with symbolic minimize, maximize and close icons instead of text glyphs (built and unit-tested; not captured yet: headless goldens draw no window chrome, needs an `ndshell shot` of hello)
 
@@ -48,8 +49,9 @@ Sans 11). nd's side: the Linux goldens in `crates/nd-backend-gpui/tests/goldens/
 - Kinetic scrolling and overshoot: libadwaita only applies them to touch input, which nd's GPUI backend does not receive on Linux yet.
 - Body text is 14 px; Adwaita Sans 11 pt is 14.67 px at 96 dpi. Changing the scale moves every golden of every lane, so it waits for a coordinated pass.
 - Contrast: libadwaita's suggested buttons put white on `#3584e4` (3.8:1) and dim text on a selected sidebar row (4.3:1). nd's appearance audit requires 4.5:1, so the suggested fill is `accent_fill` (darkened just enough), dim text on selected rows darkens slightly, and coloured text stays legible on its own 15% tint (dark destructive `#ff9b94` rather than `#ff938c`).
-- Split header: Nautilus' sidebar runs the full window height with its own header bar (AdwNavigationSplitView); nd's toolbar spans the window above both panes. Splitting it changes every scaffold app's layout, so it needs its own pass.
 - Sidebar section headings: libadwaita uses `.heading` (bold, body size) with 12 px margins; nd keeps its caption-style section label.
 - Backdrop sidebar under a matugen palette: nd mixes sidebar and window 50/50, as libadwaita's own palette does; FormalShell's GTK theme sets `sidebar_backdrop_color` to the window colour, so Nautilus goes all the way.
+- Content colour: Nautilus' content pane and its header bar sit on the view colour (`#ffffff`, FormalShell `#1c1b1a`); nd's content pane draws on the window colour (`#fafafb`, `#100f0f`) unless the app fills it. Header and body match either way, with no step between them.
+- Sidebar header title: libadwaita's sidebar header bar carries the app's title (Files); nd puts the window title in the content header and leaves the sidebar header to the toggle and leading items.
 - Dropdown arrow: libadwaita uses the filled `pan-down` triangle; Lucide has no filled triangle, nd keeps its chevron.
 

@@ -550,6 +550,18 @@ mod gate_m6 {
         assert_eq!(o.showing(), None, "Esc closes it");
     }
 
+    /// libadwaita's split view: an open sidebar runs the full height under its own header bar,
+    /// and the content's header bar holds the title and the trailing items.
+    pub fn gpui_toolbar_splits_into_a_header_bar_per_pane() {
+        let o = open(Kind::Chrome);
+        let sidebar = o.node("nd-sidebar").bounds.expect("sidebar laid out");
+        let content = o.node("nd-content").bounds.expect("content laid out");
+        let search = o.node("search").bounds.expect("search laid out");
+        assert_eq!(sidebar.origin.y, 0., "the sidebar starts at the window's top");
+        assert_eq!(content.origin.y, 0., "the content's header bar is its own");
+        assert!(search.origin.x >= content.origin.x && search.origin.y < 47., "search heads the content");
+    }
+
     /// libadwaita's backdrop state: an inactive window's sidebar goes halfway to the window's
     /// colour, and it comes back once the window is active again.
     pub fn gpui_an_inactive_window_takes_the_backdrop_look() {
@@ -694,6 +706,10 @@ fn main() {
         ("gate_m6::gpui_alert_queues_and_blocks_input", gate_m6::gpui_alert_queues_and_blocks_input),
         ("gate_m6::gpui_alert_modal_covers_every_window", gate_m6::gpui_alert_modal_covers_every_window),
         ("gate_m6::gpui_alert_about_opens_and_closes", gate_m6::gpui_alert_about_opens_and_closes),
+        (
+            "gate_m6::gpui_toolbar_splits_into_a_header_bar_per_pane",
+            gate_m6::gpui_toolbar_splits_into_a_header_bar_per_pane,
+        ),
         (
             "gate_m6::gpui_an_inactive_window_takes_the_backdrop_look",
             gate_m6::gpui_an_inactive_window_takes_the_backdrop_look,

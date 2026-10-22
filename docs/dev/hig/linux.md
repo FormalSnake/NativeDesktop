@@ -77,6 +77,10 @@ Fills are the text colour (`currentColor`) at a share, so they work on any surfa
   sides, responses 44 px high (padding 10x20), radius 12, 12 px apart, 24 px bottom.
   `dialogs.rs` `adw_alert`.
 - Header bar: 47 px, flat (a toolbar view's top bar draws no shade under it). `drawn.rs` Toolbar.
+- Split view: with an open sidebar each pane gets its own header bar, as AdwNavigationSplitView
+  and AdwOverlaySplitView do: the sidebar's (sidebar colour, start window controls, the toggle and
+  leading items) and the content's (title, the other items, end window controls). `drawn.rs`
+  `split_headers`.
 - Window controls: 24 px circles at 10/15/30% of the text colour (close included, never red),
   16 px symbolic icons. `nd-os-linux/src/hooks.rs` `window_controls`.
 
