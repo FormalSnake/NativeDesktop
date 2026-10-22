@@ -6,7 +6,8 @@
 //!   web example in headless Chrome and fails on a blank canvas, `--require macos` fails on a
 //!   missing or stale macOS capture.
 //! - `build`: the static site (an HTML page and the raw markdown per page, `llms.txt`,
-//!   `llms-full.txt`) with the docs app's web bundle under `app/`. `serve` builds and serves it.
+//!   `llms-full.txt`) with the docs app's web bundle under `app/`, code blocks highlighted by
+//!   `scripts/docs-highlight` (Node). `serve` builds and serves it.
 //! - `capture`: runs each example through the test harness on this OS, light and dark, and
 //!   records the captures with the example's source hash. On Windows the examples are launched
 //!   and captured by `ndshell agent` in the desktop session, so it also runs over ssh.
@@ -131,7 +132,32 @@ fn build(repo: &Path, out: Option<PathBuf>, debug: bool) -> Result<PathBuf> {
     let project = in_dir(repo, || WebProject::load(Some(APP_PACKAGE)))?;
     web::build_web(&project, &out.join("app"), debug)?;
     nd_docs::export(&site, &Manifest::load(repo)?, &out)?;
+    highlight(repo, &out)?;
     Ok(out)
+}
+
+/// Highlights the exported pages' code blocks with `scripts/docs-highlight`, a Node script around
+/// @pierre/highlights.
+fn highlight(repo: &Path, out: &Path) -> Result<()> {
+    let dir = repo.join("scripts/docs-highlight");
+    let mut install = system_command("npm");
+    install.arg("ci").arg("--prefix").arg(&dir).args([
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--loglevel=error",
+    ]);
+    let mut run = system_command("node");
+    run.arg(dir.join("highlight.mjs")).arg(out);
+    for mut command in [install, run] {
+        let program = command.get_program().to_string_lossy().into_owned();
+        let status =
+            command.status().with_context(|| format!("running {program}: the docs build needs Node.js and npm"))?;
+        if !status.success() {
+            bail!("{program} failed ({status})");
+        }
+    }
+    Ok(())
 }
 
 /// Runs `f` with the current directory at `dir`, for helpers that ask cargo about "here".

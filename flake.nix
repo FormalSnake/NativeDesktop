@@ -104,6 +104,8 @@
               # cef-dll-sys builds CEF's C++ wrapper with CMake and Ninja.
               cmake
               ninja
+              # `nd docs build` highlights code blocks with a Node script (scripts/docs-highlight).
+              nodejs
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux (
               [
