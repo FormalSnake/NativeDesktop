@@ -601,14 +601,11 @@ impl Build<'_> {
                                 if shown {
                                     row = row.bg(hovered);
                                     if let Some(sub) = child.take() {
-                                        // The submenu's top row lines up with this one.
-                                        row = row.child(
-                                            div().absolute().top(px(-5.)).right_0().child(
-                                                anchored()
-                                                    .snap_to_window_with_margin(px(8.))
-                                                    .child(Occluding::surface(sub)),
-                                            ),
-                                        );
+                                        // From the row to the menu's outer edge: the row's inset
+                                        // and the border.
+                                        let edge = if fluent.is_some() { px(5.) } else { px(1.) };
+                                        row = row
+                                            .child(Beside { edge, child: Occluding::surface(sub).into_any_element() });
                                     }
                                 }
                                 row.into_any_element()
@@ -954,5 +951,148 @@ impl Build<'_> {
             }
         }
         out
+    }
+}
+
+/// A submenu beside its row: past the menu's trailing edge, or past its leading edge when the
+/// window has no room there, never over the menu itself. Its first row lines up with the row it
+/// opens from, and it stays inside the window vertically.
+struct Beside {
+    /// From the row's sides to the menu's outer edges.
+    edge: Pixels,
+    child: AnyElement,
+}
+
+impl Beside {
+    /// How far the submenu reaches back over the menu's edge.
+    const OVERLAP: Pixels = px(2.);
+    /// From the submenu's top to its first row's top: the list's padding and border.
+    const LEAD: Pixels = px(5.);
+    const MARGIN: Pixels = px(8.);
+
+    /// The submenu's origin for a row at `row`, in a window of `viewport`.
+    fn place(
+        row: Bounds<Pixels>,
+        size: gpui::Size<Pixels>,
+        edge: Pixels,
+        viewport: gpui::Size<Pixels>,
+    ) -> gpui::Point<Pixels> {
+        let (left, right) = (Self::MARGIN, viewport.width - Self::MARGIN);
+        let after = row.right() + edge - Self::OVERLAP;
+        let before = row.left() - edge + Self::OVERLAP - size.width;
+        let x = if after + size.width <= right {
+            after
+        } else if before >= left {
+            before
+        } else if right - row.right() >= row.left() {
+            // Room on neither side: the wider one, kept inside the window.
+            (right - size.width).max(left).min(after)
+        } else {
+            left.max(before)
+        };
+        let y = (row.top() - Self::LEAD).min(viewport.height - Self::MARGIN - size.height).max(Self::MARGIN);
+        point(x, y)
+    }
+}
+
+impl gpui::Element for Beside {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    // Laid out as the row's own box; the submenu is laid out on its own in prepaint, at its
+    // natural size, so the row's width does not squeeze it.
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        let mut style = gpui::Style { position: gpui::Position::Absolute, ..Default::default() };
+        style.inset = gpui::Edges::all(px(0.).into());
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let size = self.child.layout_as_root(
+            gpui::Size::new(gpui::AvailableSpace::MaxContent, gpui::AvailableSpace::MaxContent),
+            window,
+            cx,
+        );
+        let inset = window.client_inset().unwrap_or_default();
+        let mut viewport = window.viewport_size();
+        viewport.width -= inset * 2.;
+        viewport.height -= inset * 2.;
+        let row = Bounds { origin: bounds.origin - point(inset, inset), size: bounds.size };
+        let at = Self::place(row, size, self.edge, viewport) + point(inset, inset);
+        self.child.prepaint_at(at, window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
+impl IntoElement for Beside {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nd_gpui::gpui::{Bounds, point, px, size};
+
+    use super::Beside;
+
+    const WINDOW: nd_gpui::gpui::Size<nd_gpui::gpui::Pixels> = size(px(800.), px(600.));
+
+    #[test]
+    fn a_submenu_opens_past_the_trailing_edge_when_it_fits() {
+        let row = Bounds { origin: point(px(100.), px(200.)), size: size(px(180.), px(28.)) };
+        let at = Beside::place(row, size(px(200.), px(120.)), px(1.), WINDOW);
+        assert_eq!(at, point(px(279.), px(195.)));
+    }
+
+    #[test]
+    fn a_submenu_with_no_room_after_opens_before_the_menu_not_over_it() {
+        let row = Bounds { origin: point(px(560.), px(200.)), size: size(px(180.), px(28.)) };
+        let at = Beside::place(row, size(px(200.), px(120.)), px(1.), WINDOW);
+        assert_eq!(at, point(px(561.) - px(200.), px(195.)));
+        assert!(at.x + px(200.) <= row.left() + px(2.), "it ends at the menu's edge, overlapping by 2 px at most");
+    }
+
+    #[test]
+    fn a_submenu_near_the_bottom_stays_in_the_window() {
+        let row = Bounds { origin: point(px(100.), px(560.)), size: size(px(180.), px(28.)) };
+        let at = Beside::place(row, size(px(200.), px(120.)), px(1.), WINDOW);
+        assert_eq!(at.y, px(600. - 8. - 120.));
     }
 }
