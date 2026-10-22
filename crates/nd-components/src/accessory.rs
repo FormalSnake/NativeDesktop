@@ -3,7 +3,6 @@
 //! content scrolling under it, as Music and Podcasts do. GNOME and WinUI dock it below a
 //! separator.
 
-use nd_theme::GlassVariant;
 use nd_ui::prelude::*;
 
 use crate::controls::separator;
@@ -61,7 +60,6 @@ impl IntoElement for BottomAccessory {
                         div().absolute().left(px(SIDE_INSET)).right(px(SIDE_INSET)).bottom(px(FOOT_INSET)).child(
                             glass()
                                 .id(format!("{id}.glass"))
-                                .variant(GlassVariant::Frosted)
                                 .h(px(PILL.height))
                                 .rounded(px(PILL.height / 2.))
                                 .px_3()
