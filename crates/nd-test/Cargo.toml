@@ -16,7 +16,6 @@ serde_json.workspace = true
 regex = "1.13.1"
 
 [target.'cfg(windows)'.dependencies]
-interprocess = "2.4.5"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
 
 [dev-dependencies]

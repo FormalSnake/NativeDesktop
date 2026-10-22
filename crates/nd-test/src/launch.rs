@@ -81,33 +81,15 @@ impl LaunchOptions {
     }
 }
 
-#[cfg(unix)]
-type LocalStream = std::os::unix::net::UnixStream;
-#[cfg(windows)]
-type LocalStream = interprocess::local_socket::Stream;
-
-#[cfg(unix)]
-fn connect_local(path: &Path) -> std::io::Result<LocalStream> {
-    LocalStream::connect(path)
-}
-
-/// The app listens on a named pipe ([`nd_automation::server::pipe_path`]).
-#[cfg(windows)]
-fn connect_local(path: &Path) -> std::io::Result<LocalStream> {
-    use interprocess::local_socket::GenericFilePath;
-    use interprocess::local_socket::prelude::*;
-    let pipe = nd_automation::server::pipe_path(path);
-    LocalStream::connect(pipe.as_path().to_fs_name::<GenericFilePath>()?)
-}
-
 struct SocketDriver {
-    stream: RefCell<LocalStream>,
+    stream: RefCell<nd_automation::protocol::Stream>,
     next_id: Cell<u64>,
 }
 
 impl SocketDriver {
     fn connect(path: &Path) -> Result<Self> {
-        let stream = connect_local(path).map_err(|e| Error::Launch(format!("connect {}: {e}", path.display())))?;
+        let stream = nd_automation::protocol::connect(path)
+            .map_err(|e| Error::Launch(format!("connect {}: {e}", path.display())))?;
         Ok(Self { stream: RefCell::new(stream), next_id: Cell::new(1) })
     }
 }
