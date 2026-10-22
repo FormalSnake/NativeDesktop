@@ -155,6 +155,9 @@ fn settle(cx: &mut HeadlessAppContext, host: &GpuiHost) {
     cx.run_until_parked();
 }
 
+/// The scene window's width: room for a menu and its submenu side by side.
+const WIDTH: f32 = 600.;
+
 fn open() -> Opened {
     let mut cx = headless();
     let mut opened = None;
@@ -163,7 +166,7 @@ fn open() -> Opened {
             let backend = app.backend_as::<GpuiBackend>().expect("GPUI backend").clone();
             app.set_global(Chrome(GpuiChrome::new(backend)));
             app.bind_keys([KeyBinding::new("ctrl-k", Chosen, None)]);
-            let handle = app.open_window(WindowOptions::main("main").size(size(px(480.), px(360.))), |_, cx| {
+            let handle = app.open_window(WindowOptions::main("main").size(size(px(WIDTH), px(360.))), |_, cx| {
                 cx.new(|_| Scene::default())
             });
             opened = Some((handle.id(), handle.root().clone()));
@@ -372,7 +375,7 @@ mod gate_m4_overlays {
         let button = center(&o.host, o.window, "under");
         set(&mut o, |s| s.cover = true);
         let bounds = by_test_id(&o.host, o.window, "cover").and_then(|n| n.bounds).expect("cover bounds");
-        assert_eq!((bounds.size.width, bounds.size.height), (480., 360.), "the cover fills the window");
+        assert_eq!((bounds.size.width, bounds.size.height), (WIDTH, 360.), "the cover fills the window");
         post(&mut o, click(button, GpuiButton::Left));
         assert_eq!(under(&o), 0, "nothing under the cover takes a press");
         assert_eq!(o.host.read(|app| o.scene.read(app).cover_taps), 1, "a tap inside the cover reaches its content");
@@ -433,8 +436,10 @@ mod gate_m4_overlays {
     /// A submenu opens beside its row on hover, and its items dispatch like the menu's own.
     pub fn gpui_context_submenu_opens_on_hover() {
         let mut o = open();
-        let surface = center(&o.host, o.window, "surface");
-        let open_at = nd_ui::Point { x: surface.x - 50., y: surface.y - 90. };
+        let surface = by_test_id(&o.host, o.window, "surface").and_then(|n| n.bounds).expect("surface bounds");
+        // Far enough from the window's edge for the menu and its submenu side by side.
+        let open_at = nd_ui::Point { x: surface.origin.x + 10., y: surface.origin.y + 20. };
+        assert!(open_at.x + 2. * 180. <= WIDTH - 8., "the scene leaves room after the menu");
         post(&mut o, click(open_at, GpuiButton::Right));
         assert!(o.host.backend().menu_open(o.window));
         let drawn = |o: &Opened, label: &str| {
@@ -460,6 +465,40 @@ mod gate_m4_overlays {
         assert!(drawn(&o, "Deeper"));
         post(&mut o, wiggle(nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 14. }));
         assert!(!drawn(&o, "Deeper"), "hovering another row shuts the submenu");
+    }
+
+    /// A submenu with no room past the menu's trailing edge opens past its leading edge, beside
+    /// the menu rather than over it: the menu's own rows stay under the pointer.
+    pub fn gpui_a_submenu_at_the_window_edge_opens_on_the_other_side() {
+        let mut o = open();
+        let surface = by_test_id(&o.host, o.window, "surface").and_then(|n| n.bounds).expect("surface bounds");
+        // A 180 px menu ending near the window's edge leaves no room after it.
+        let x = (WIDTH - 8. - 180. - 10.).min(surface.origin.x + surface.size.width - 10.);
+        let open_at = nd_ui::Point { x, y: surface.origin.y + 20. };
+        assert!(
+            open_at.x + 2. * 180. > WIDTH - 8. && open_at.x - 180. >= 8.,
+            "the scene leaves room only before the menu"
+        );
+        post(&mut o, click(open_at, GpuiButton::Right));
+        assert!(o.host.backend().menu_open(o.window));
+        let drawn = |o: &Opened, label: &str| {
+            o.host.backend().paints(o.window).expect("paints").iter().any(|p| p.label == label)
+        };
+        let more = nd_ui::Point { x: open_at.x + 30., y: open_at.y + 5. + 28. + 9. + 28. + 14. };
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"), "hovering More opens its submenu");
+        // Again, a row above More: still the menu's own, not covered by the submenu.
+        let again = nd_ui::Point { x: open_at.x + 30., y: more.y - 28. };
+        post(&mut o, wiggle(again));
+        assert!(!drawn(&o, "Deeper"), "the menu's rows stay uncovered, so hovering Again shuts the submenu");
+        post(&mut o, wiggle(more));
+        assert!(drawn(&o, "Deeper"));
+        // The submenu's first row, level with More, before the menu's leading edge.
+        let deeper = nd_ui::Point { x: open_at.x - 60., y: more.y };
+        post(&mut o, wiggle(deeper));
+        post(&mut o, click(deeper, GpuiButton::Left));
+        assert!(!o.host.backend().menu_open(o.window), "choosing a submenu item closes the menu");
+        assert_eq!(o.host.read(|app| o.scene.read(app).chosen), 1, "the submenu item dispatched its action");
     }
 
     /// A closed cover still draws its controls while it animates out, but keeps no state for
@@ -533,6 +572,10 @@ fn main() {
         (
             "gate_m4_overlays::gpui_context_submenu_opens_on_hover",
             gate_m4_overlays::gpui_context_submenu_opens_on_hover,
+        ),
+        (
+            "gate_m4_overlays::gpui_a_submenu_at_the_window_edge_opens_on_the_other_side",
+            gate_m4_overlays::gpui_a_submenu_at_the_window_edge_opens_on_the_other_side,
         ),
         (
             "gate_m4_overlays::gpui_a_closed_cover_keeps_no_control_state",
