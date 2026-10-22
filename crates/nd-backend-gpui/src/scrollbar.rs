@@ -160,6 +160,77 @@ pub(crate) struct Frame<'a> {
     pub reduce_motion: bool,
 }
 
+/// libadwaita's cues at a vertical scroll view's edges, for a view scrolled `offset` of `max`
+/// points: a raised header bar's shadow along the top once content has scrolled under it
+/// (`toolbarview > .top-bar.raised`), and the undershoot shade along the bottom while more
+/// content waits below (`undershoot.bottom`). Nothing on other looks.
+pub(crate) fn adwaita_edges(theme: &Theme, offset: f32, max: f32) -> Vec<AnyElement> {
+    let Some((raised, shade)) = adwaita_edge_colors(theme) else { return Vec::new() };
+    if max <= 0. {
+        return Vec::new();
+    }
+    let edge = |color: Hsla, top: bool| {
+        let line = div().h(px(1.)).w_full().bg(color);
+        let fade = div().h(px(4.)).w_full().bg(gpui::linear_gradient(
+            if top { 180. } else { 0. },
+            gpui::linear_color_stop(color, 0.),
+            gpui::linear_color_stop(with_alpha(color, 0.), 1.),
+        ));
+        let strip = div().absolute().left_0().right_0().flex().flex_col();
+        if top { strip.top_0().child(line).child(fade) } else { strip.bottom_0().child(fade).child(line) }
+            .into_any_element()
+    };
+    let mut edges = Vec::new();
+    if offset > 0.5 {
+        edges.push(edge(raised, true));
+    }
+    if offset < max - 0.5 {
+        edges.push(edge(shade, false));
+    }
+    edges
+}
+
+/// The raised header bar's shadow and the undershoot shade, under the Adwaita preset only.
+pub(crate) fn adwaita_edge_colors(theme: &Theme) -> Option<(Hsla, Hsla)> {
+    if theme.preset != Preset::Adwaita {
+        return None;
+    }
+    let dark = theme.is_dark();
+    // --headerbar-shade-color and --shade-color: RGB(0 0 6) at 12% and 7% light, 36% and 25% dark.
+    let tint = |alpha: f32| -> Hsla { with_alpha(gpui::rgb(0x000006).into(), alpha) };
+    Some((tint(if dark { 0.36 } else { 0.12 } * 0.5), tint(if dark { 0.25 } else { 0.07 } * 0.75)))
+}
+
+/// [`adwaita_edges`] painted straight into `view`, for an element that scrolls itself (a
+/// virtualized list) and is not rebuilt as it scrolls.
+pub(crate) fn paint_adwaita_edges(
+    window: &mut Window,
+    view: gpui::Bounds<gpui::Pixels>,
+    (raised, shade): (Hsla, Hsla),
+    offset: f32,
+    max: f32,
+) {
+    if max <= 0. {
+        return;
+    }
+    let band =
+        |y: gpui::Pixels, h: f32| gpui::Bounds::new(gpui::point(view.origin.x, y), gpui::size(view.size.width, px(h)));
+    let fade = |color: Hsla, angle: f32| {
+        let clear = with_alpha(color, 0.);
+        gpui::linear_gradient(angle, gpui::linear_color_stop(color, 0.), gpui::linear_color_stop(clear, 1.))
+    };
+    if offset > 0.5 {
+        let top = view.origin.y;
+        window.paint_quad(gpui::fill(band(top, 1.), raised));
+        window.paint_quad(gpui::fill(band(top + px(1.), 4.), fade(raised, 180.)));
+    }
+    if offset < max - 0.5 {
+        let bottom = view.origin.y + view.size.height;
+        window.paint_quad(gpui::fill(band(bottom - px(1.), 1.), shade));
+        window.paint_quad(gpui::fill(band(bottom - px(5.), 4.), fade(shade, 0.)));
+    }
+}
+
 /// The vertical bar for a scroll view `height` tall, or `None` while it shows nothing.
 pub(crate) fn vertical(look: ScrollbarLook, f: Frame<'_>, window: &mut Window) -> Option<AnyElement> {
     let (offset, max) = match &f.source {
@@ -398,8 +469,18 @@ impl crate::render::Build<'_> {
                 Fit::Flex => e.flex_1().min_h_0(),
             }
         }
-        let Some(look) = ScrollbarLook::of(&self.theme()) else {
-            return place(view, fit).into_any_element();
+        let theme = self.theme();
+        let Some(look) = ScrollbarLook::of(&theme) else {
+            let handle = self.backend.scrollbars.handle(id);
+            let edges = adwaita_edges(&theme, -handle.offset().y.as_f32(), handle.max_offset().y.as_f32());
+            if edges.is_empty() && theme.preset != Preset::Adwaita {
+                return place(view, fit).into_any_element();
+            }
+            return place(div(), fit)
+                .relative()
+                .child(view.track_scroll(&handle).size_full())
+                .children(edges)
+                .into_any_element();
         };
         let bars = self.backend.scrollbars.clone();
         let handle = bars.handle(id);

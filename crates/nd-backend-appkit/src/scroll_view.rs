@@ -6,7 +6,7 @@
 use nd_gesture::Axes;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSScrollView};
-use objc2_foundation::{MainThreadMarker, NSSize};
+use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSSize};
 
 use crate::look::ViewLook;
 use crate::views::NdLayerView;
@@ -69,6 +69,16 @@ impl ScrollBox {
     /// Sizes the document to its children's extent, never smaller than the visible area, and
     /// pinned to it on an axis that does not scroll.
     pub fn fit_document(&self) {
+        // A vertical scroller under the window's bars or a bar floating over the pane's foot
+        // starts and ends clear of them, and scrolls under them.
+        if self.scroll.hasVerticalScroller() {
+            let safe = self.scroll.safeAreaInsets();
+            let insets = NSEdgeInsets { top: safe.top.max(0.), left: 0., bottom: safe.bottom.max(0.), right: 0. };
+            let current = self.scroll.contentInsets();
+            if (current.top - insets.top).abs() > 0.25 || (current.bottom - insets.bottom).abs() > 0.25 {
+                self.scroll.setContentInsets(insets);
+            }
+        }
         let visible = self.scroll.contentSize();
         let (mut w, mut h) = (0f64, 0f64);
         for child in self.document.subviews().iter() {
@@ -78,7 +88,12 @@ impl ScrollBox {
         }
         let size = NSSize::new(
             if self.scroll.hasHorizontalScroller() { w.max(visible.width) } else { visible.width },
-            if self.scroll.hasVerticalScroller() { h.max(visible.height) } else { visible.height },
+            if self.scroll.hasVerticalScroller() {
+                let insets = self.scroll.contentInsets();
+                h.max(visible.height - insets.top - insets.bottom)
+            } else {
+                visible.height
+            },
         );
         if self.document.frame().size != size {
             self.document.setFrameSize(size);

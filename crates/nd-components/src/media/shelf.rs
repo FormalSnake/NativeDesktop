@@ -130,6 +130,8 @@ pub struct ShelfProps {
     pub snap: bool,
     /// Accessible name ("Recently played").
     pub label: SharedString,
+    /// Points the shelf reaches past its box on either side, see [`Shelf::bleed`].
+    pub bleed: f32,
     pub style: StyleRefinement,
 }
 
@@ -160,6 +162,7 @@ pub fn shelf(id: impl Into<SharedString>, handle: &ShelfHandle) -> Shelf {
         arrows: ShelfArrows::Hover,
         snap: true,
         label: SharedString::default(),
+        bleed: 0.,
         style: StyleRefinement::default(),
     };
     let mut el = ContainerElement::new::<ShelfKind>(Key::Id(id.into()), props).flex().flex_row().w_full();
@@ -182,6 +185,17 @@ impl Shelf {
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.0.props_mut().label = label.into();
+        self
+    }
+
+    /// Runs the shelf `points` past its box on both sides, out over the page's margins, with
+    /// its cards inset by as much: at rest the first card lines up with the page's headings,
+    /// and scrolled, cards pass to the content's edges instead of being cut at the margin, as
+    /// Music's and the App Store's shelves do. The paging arrows sit in the margins. The shelf
+    /// takes its width from its parent, so the parent lays it out as a block or a column.
+    pub fn bleed(mut self, points: f32) -> Self {
+        self.0.props_mut().bleed = points;
+        self.0 = self.0.w_auto().ml(px(-points)).mr(px(-points)).pl(px(points)).pr(px(points));
         self
     }
 

@@ -1781,6 +1781,9 @@ impl Backend for AppKitBackend {
                 if p.props.under_toolbar {
                     insets.top = 0.;
                 }
+                if p.props.bottom_bar > 0. {
+                    insets.bottom = 0.;
+                }
                 insets
             }
             _ => nd_ui::backend::BoundaryInsets::default(),

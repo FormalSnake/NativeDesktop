@@ -681,6 +681,7 @@ impl<'a> Build<'a> {
             hover_color,
             sidebar,
             disclosure_color: self.top().text,
+            edges: crate::scrollbar::adwaita_edge_colors(&theme),
         }
         .into_any_element()
     }
@@ -739,6 +740,15 @@ impl<'a> Build<'a> {
                     style.position = Some(gpui::Position::Relative);
                 }
                 shifted.extend(crate::scrollbar::vertical(look, frame, window));
+            }
+            if props.gestures.scroll.vertical
+                && let Some((offset, max)) = gestures.scroll_metrics(self.window_id, id)
+            {
+                let edges = crate::scrollbar::adwaita_edges(&self.theme(), offset.y, max.y);
+                if !edges.is_empty() && style.position.is_none() {
+                    style.position = Some(gpui::Position::Relative);
+                }
+                shifted.extend(edges);
             }
             shifted
         } else {
