@@ -35,7 +35,7 @@ nd-docs.workspace = true
 # Only the wire protocol: `nd docs capture` drives examples over their automation socket.
 nd-automation = { workspace = true, default-features = false }
 # `nd docs capture`: the machine-wide window lock and composited window captures. Off for the
-# Pages build of the docs site, whose image has no libxkbcommon.
+# Workers Builds build of the docs site, whose image has no libxkbcommon.
 ndshell = { workspace = true, optional = true }
 clap = { version = "4", features = ["derive", "env"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }

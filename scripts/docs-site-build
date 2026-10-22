@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the docs site in Cloudflare Pages' build image (Ubuntu, no Rust): the project's build
+# Builds the docs site in Cloudflare's Workers Builds image (Ubuntu, no Rust): the project's build
 # command, with the output in target/nd/docs-site. Installs rustup and the toolchain pinned in
 # rust-toolchain.toml, and takes the release wasm-bindgen matching the lockfile instead of
 # compiling it, plus a pinned binaryen for wasm-opt. nd-cli builds without `capture`, which links libxkbcommon.
@@ -22,7 +22,7 @@ if [ ! -x "$bindgen" ]; then
     tar xz -C "$tools"
 fi
 
-# nd-cli runs wasm-opt -Oz when it is on PATH; without it the docs wasm nears Pages' 25 MiB file limit.
+# nd-cli runs wasm-opt -Oz when it is on PATH; without it the docs wasm nears the 25 MiB static asset limit.
 binaryen=version_133
 wasmopt="$tools/binaryen-$binaryen"
 if [ ! -x "$wasmopt/bin/wasm-opt" ]; then
