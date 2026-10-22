@@ -7,9 +7,16 @@ use nd_gpui::gpui::{self, App, Window, WindowButton, WindowButtonLayout, WindowD
 
 use crate::chrome::{ButtonLayout, Capabilities, ChromePlan, ChromeState, Control, ControlMetrics, Decorations};
 
-/// What nd asks the compositor for. Server-side wherever the compositor offers it; the answer in
-/// `configure` wins either way, and [`chrome_state`] reports that answer, never this request.
-pub const REQUESTED_DECORATIONS: WindowDecorations = WindowDecorations::Server;
+/// What nd asks the compositor for. Server-side wherever the compositor offers it, unless
+/// `ND_CLIENT_DECORATIONS=1` asks for the frame GNOME gets (docs captures, chrome checks under a
+/// compositor that would otherwise decorate). The answer in `configure` wins either way, and
+/// [`chrome_state`] reports that answer, never this request.
+pub fn requested_decorations() -> WindowDecorations {
+    match std::env::var_os("ND_CLIENT_DECORATIONS").is_some_and(|v| v == "1") {
+        true => WindowDecorations::Client,
+        false => WindowDecorations::Server,
+    }
+}
 
 pub fn chrome_state(window: &Window, layout: &ButtonLayout) -> ChromeState {
     let decorations = match window.window_decorations() {

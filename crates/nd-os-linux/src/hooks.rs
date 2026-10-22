@@ -4,7 +4,9 @@
 //!   rules on it (Hyprland's `class`) see the app's name.
 //! - The titlebar insets and the drawn controls follow [`crate::chrome::plan`]: nothing at all
 //!   under server-side decorations (Hyprland), and under client-side ones only the controls
-//!   `wm_capabilities` offers, on the sides the desktop's `button-layout` puts them.
+//!   `wm_capabilities` offers, on the sides the desktop's `button-layout` puts them.  They are
+//!   drawn over every window at the header bar's ends, as every libadwaita window has them, so
+//!   a `window_controls()` node draws nothing: the buttons have one place, as on Windows.
 //! - Frame times come from `wp_presentation` (the fork's `Window::last_presentation`): the
 //!   timestamp is when the previous frame turned into light and the target is the next refresh
 //!   after now on the compositor's predicted cadence, rather than "now plus one interval".
@@ -16,7 +18,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use nd_backend_gpui::{ChromeContext, FrameRequest, OsHooks, icon_glyph};
+use nd_backend_gpui::{ChromeContext, FrameRequest, Look, OsHooks, icon_glyph};
 use nd_core::{FrameTime, WindowId};
 use nd_gpui::gpui::{
     self, AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement, StatefulInteractiveElement, Styled,
@@ -27,7 +29,7 @@ use nd_theme::color::with_alpha;
 use nd_ui::TitlebarInsets;
 
 use crate::chrome::{self, ButtonLayout, Control, ControlMetrics};
-use crate::window::{REQUESTED_DECORATIONS, button_layout, chrome_state, perform};
+use crate::window::{button_layout, chrome_state, perform, requested_decorations};
 
 /// The header bar height the controls centre in, libadwaita's 46 px.
 pub const TITLEBAR_HEIGHT: f32 = 46.;
@@ -65,51 +67,10 @@ impl LinuxHooks {
         }
         plan
     }
-}
 
-impl OsHooks for LinuxHooks {
-    fn window_options(&self, _window: WindowId, options: &mut gpui::WindowOptions) {
-        options.window_decorations = Some(REQUESTED_DECORATIONS);
-        if options.app_id.is_none() {
-            options.app_id = Some(self.app_id.clone());
-        }
-    }
-
-    /// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), which
-    /// libadwaita honours; a desktop without the schema gives no answer.
-    fn reduce_motion(&self) -> Option<bool> {
-        match interface_setting("enable-animations")?.as_str() {
-            "false" => Some(true),
-            "true" => Some(false),
-            _ => None,
-        }
-    }
-
-    /// GNOME's accent colour (`org.gnome.desktop.interface accent-color`), which libadwaita
-    /// apps take; a matugen palette or `theme.toml` above it in the chain still wins.
-    fn os_palettes(&self) -> nd_theme::SchemePalettes {
-        interface_setting("accent-color").and_then(|name| accent_palettes(&name)).unwrap_or_default()
-    }
-
-    fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
-        *self.layout.borrow_mut() = button_layout(cx);
-    }
-
-    fn titlebar_insets(&self, window: WindowId, gpui_window: &gpui::Window) -> Option<TitlebarInsets> {
-        let plan = self.plan(window, gpui_window);
-        if plan.is_empty() {
-            return Some(TitlebarInsets::default());
-        }
-        Some(TitlebarInsets { leading: plan.leading_inset, trailing: plan.trailing_inset, height: TITLEBAR_HEIGHT })
-    }
-
-    fn window_controls(&self, cx: &ChromeContext, gpui_window: &mut gpui::Window) -> Option<AnyElement> {
-        let plan = self.plan(cx.window, gpui_window);
-        if plan.is_empty() {
-            return Some(div().absolute().into_any_element());
-        }
+    /// The plan's buttons at the header bar's leading and trailing ends.
+    fn controls(&self, plan: &chrome::ChromePlan, look: Look) -> AnyElement {
         let m = self.metrics;
-        let look = cx.look;
         // libadwaita's window buttons: a circle of the text colour at 10% (15% hovered, 30%
         // pressed) behind a 16 px symbolic icon, close included.
         let tint = move |share: f32| with_alpha(look.text, look.text.a * share);
@@ -145,24 +106,69 @@ impl OsHooks for LinuxHooks {
                 .gap(px(m.spacing))
                 .children(controls.iter().map(|c| button(*c)))
         };
-        let element = match cx.at {
-            Some(at) => {
-                let all: Vec<Control> = plan.controls().collect();
-                row(&all).absolute().left(px(at.x)).top(px(at.y)).into_any_element()
-            }
-            None => div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .child(row(&plan.leading))
-                .child(row(&plan.trailing))
-                .into_any_element(),
-        };
-        Some(element)
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .flex()
+            .flex_row()
+            .justify_between()
+            .child(row(&plan.leading))
+            .child(row(&plan.trailing))
+            .into_any_element()
+    }
+}
+
+impl OsHooks for LinuxHooks {
+    fn window_options(&self, _window: WindowId, options: &mut gpui::WindowOptions) {
+        options.window_decorations = Some(requested_decorations());
+        if options.app_id.is_none() {
+            options.app_id = Some(self.app_id.clone());
+        }
+    }
+
+    /// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), which
+    /// libadwaita honours; a desktop without the schema gives no answer.
+    fn reduce_motion(&self) -> Option<bool> {
+        match interface_setting("enable-animations")?.as_str() {
+            "false" => Some(true),
+            "true" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// GNOME's accent colour (`org.gnome.desktop.interface accent-color`), which libadwaita
+    /// apps take; a matugen palette or `theme.toml` above it in the chain still wins.
+    fn os_palettes(&self) -> nd_theme::SchemePalettes {
+        interface_setting("accent-color").and_then(|name| accent_palettes(&name)).unwrap_or_default()
+    }
+
+    fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
+        *self.layout.borrow_mut() = button_layout(cx);
+    }
+
+    fn titlebar_insets(&self, window: WindowId, gpui_window: &gpui::Window) -> Option<TitlebarInsets> {
+        let plan = self.plan(window, gpui_window);
+        if plan.is_empty() {
+            return Some(TitlebarInsets::default());
+        }
+        Some(TitlebarInsets { leading: plan.leading_inset, trailing: plan.trailing_inset, height: TITLEBAR_HEIGHT })
+    }
+
+    fn window_controls(&self, _cx: &ChromeContext, _gpui_window: &mut gpui::Window) -> Option<AnyElement> {
+        Some(div().absolute().into_any_element())
+    }
+
+    fn window_overlay(
+        &self,
+        window: WindowId,
+        look: Look,
+        _title_height: f32,
+        gpui_window: &mut gpui::Window,
+    ) -> Option<AnyElement> {
+        let plan = self.plan(window, gpui_window);
+        (!plan.is_empty()).then(|| self.controls(&plan, look))
     }
 
     fn frame_time(&self, frame: &FrameRequest, gpui_window: &gpui::Window) -> Option<FrameTime> {
