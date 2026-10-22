@@ -14,6 +14,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[browser.windows]
+hash = "732ef183506f2b8a"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [chrome.macos]
 hash = "c9ee87e95a12bc1d"
 captured_on = "macOS 27.0"
@@ -27,6 +34,13 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[chrome.windows]
+hash = "c9ee87e95a12bc1d"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
 
 [gallery.macos]
 hash = "dad3a4c4367dd490"
@@ -42,6 +56,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[gallery.windows]
+hash = "dad3a4c4367dd490"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [hello.macos]
 hash = "2cad3d4a9b1ff64d"
 captured_on = "macOS 27.0"
@@ -55,6 +76,13 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[hello.windows]
+hash = "2cad3d4a9b1ff64d"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
 
 [native-widget.macos]
 hash = "7586d6e61679bc44"
@@ -70,6 +98,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[native-widget.windows]
+hash = "7586d6e61679bc44"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [notes.macos]
 hash = "a6600ac061ae0b3f"
 captured_on = "macOS 27.0"
@@ -83,6 +118,13 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[notes.windows]
+hash = "a6600ac061ae0b3f"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
 
 [overlays.macos]
 hash = "e385f14a49b66c39"
@@ -98,6 +140,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[overlays.windows]
+hash = "e385f14a49b66c39"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [overrides.macos]
 hash = "9acab60293bb3206"
 captured_on = "macOS 27.0"
@@ -112,6 +161,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[overrides.windows]
+hash = "9acab60293bb3206"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [pacing.macos]
 hash = "668d517fbe4eb40a"
 captured_on = "macOS 27.0"
@@ -125,6 +181,13 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[pacing.windows]
+hash = "668d517fbe4eb40a"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
 
 [scroll.macos]
 hash = "f0f74a78aecccb6d"
@@ -141,6 +204,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[scroll.windows]
+hash = "f0f74a78aecccb6d"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [system.macos]
 hash = "aa3c75af705c7435"
 captured_on = "macOS 27.0"
@@ -154,6 +224,13 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[system.windows]
+hash = "aa3c75af705c7435"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
 
 [tabs.macos]
 hash = "9e31409bfaddeff4"
@@ -169,6 +246,13 @@ date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
+[tabs.windows]
+hash = "9e31409bfaddeff4"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
+
 [terminal.macos]
 hash = "551f9b3dde4d3a93"
 captured_on = "macOS 27.0"
@@ -182,3 +266,10 @@ captured_on = "NixOS 26.11 (Zokor), Hyprland"
 date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
+
+[terminal.windows]
+hash = "551f9b3dde4d3a93"
+captured_on = "Windows 11 26H2"
+date = "2026-10-22"
+light = "windows-light.png"
+dark = "windows-dark.png"
