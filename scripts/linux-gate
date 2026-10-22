@@ -37,6 +37,9 @@ dir="Developer/nativedesktop-$branch"
 buildroot=${ND_LINUX_BUILD_ROOT:-/mnt/steamlib/nd-build}
 targets="$buildroot/targets"
 target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
+# The dev shell's cargo is rustup's proxy, which reads rust-toolchain.toml from the working
+# directory: pinned here so a run that cds into an app checkout without one still finds a toolchain.
+toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 cap=${ND_LINUX_TARGET_CAP_GB:-80}
 floor=${ND_LINUX_FREE_FLOOR_GB:-30}
 rootfloor=${ND_LINUX_ROOT_FLOOR_GB:-5}
@@ -73,7 +76,7 @@ done
 echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / \"$buildroot\" | tail -2"
   body="printf '%s | %s | since %s\\n' $branch $(printf %q "$desc") \"\$(date +%T)\" > ~/.cache/nd-build/build.holder
 $evict
-timeout --kill-after=30 ${limit}m nice -n 19 ionice -c3 nix develop --profile \"$profiles/${branch//\//-}\" \"path:\$HOME/$dir\" -c env CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"$buildroot/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")
+timeout --kill-after=30 ${limit}m nice -n 19 ionice -c3 nix develop --profile \"$profiles/${branch//\//-}\" \"path:\$HOME/$dir\" -c env RUSTUP_TOOLCHAIN=$toolchain CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"$buildroot/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")
 rc=\$?
 rm -f ~/.cache/nd-build/build.holder
 if [ \$rc = 124 ] || [ \$rc = 137 ]; then echo \"ND_GATE_TIMEOUT after $limit min\"; fi
