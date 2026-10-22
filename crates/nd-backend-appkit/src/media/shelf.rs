@@ -398,9 +398,12 @@ impl ShelfInner {
         if self.document.frame().size != size {
             self.document.setFrameSize(size);
         }
+        // In a bleeding shelf the arrows sit centred in the margins, clear of the cards at rest.
+        let bleed = f64::from(self.props.borrow().bleed);
         let side = |button: &NSButton, leading: bool| {
             let s = button.fittingSize();
-            let x = if leading { 8. } else { b.size.width - s.width - 8. };
+            let inset = if bleed >= s.width + 8. { ((bleed - s.width) / 2.).round() } else { 8. };
+            let x = if leading { inset } else { b.size.width - s.width - inset };
             button.setFrame(NSRect::new(NSPoint::new(x, ((b.size.height - s.height) / 2.).round()), s));
         };
         side(&self.back, true);

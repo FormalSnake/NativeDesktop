@@ -135,7 +135,9 @@ pub(super) fn shelf(
         let handle = p.handle.clone();
         let hover = theme.hover(fill);
         let strip = div().absolute().top_0().bottom_0().flex().items_center();
-        let strip = if direction < 0 { strip.left(px(ARROW_INSET)) } else { strip.right(px(ARROW_INSET)) };
+        // In a bleeding shelf the arrows sit centred in the margins, clear of the cards at rest.
+        let inset = if p.bleed >= ARROW + ARROW_INSET { ((p.bleed - ARROW) / 2.).round() } else { ARROW_INSET };
+        let strip = if direction < 0 { strip.left(px(inset)) } else { strip.right(px(inset)) };
         strip.child(
             div()
                 .id(key)
