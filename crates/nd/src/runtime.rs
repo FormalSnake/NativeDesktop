@@ -29,10 +29,10 @@ pub mod prelude {
     };
     pub use crate::chrome::{
         ActionVisibility, Banner, BannerActionClicked, CommandPalette, DismissReason, PaletteActivated,
-        PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SourceAction, SourceActionClicked,
-        SourceActivated, SourceCollapsed, SourceExpanded, SourceNode, SourceTree, Toast, ToastActionClicked,
-        ToastDismissed, ToastOverlay, banner, command_palette, palette_item, source_action, source_node,
-        source_section, source_tree, toast, toast_overlay,
+        PaletteCancelled, PaletteItem, PaletteQueryChanged, PaletteSubmitted, SOURCE_ART, SourceAction,
+        SourceActionClicked, SourceActivated, SourceCollapsed, SourceExpanded, SourceNode, SourceTree, Toast,
+        ToastActionClicked, ToastDismissed, ToastOverlay, banner, command_palette, palette_item, source_action,
+        source_node, source_section, source_tree, toast, toast_overlay,
     };
     pub use crate::chrome::{
         Alert, AlertResponse, AlertStyle, BottomAccessory, ButtonExt, ContextMenu, Glass, GlassGroup, Icon, IconView,
@@ -43,7 +43,6 @@ pub mod prelude {
         menu_button, open_settings, select, separator, set_menus, sidebar, slider, source_item, source_list,
         system_item, titlebar, toolbar_sidebar_toggle,
     };
-    pub use crate::chrome::{SidebarRevealed, Tile, TileGrid, TileMoved, tile, tile_grid};
     pub use crate::chrome::{
         Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,
         ImageFailed, ImageFit, ImageLoaded, ImagesPasted, LyricClicked, LyricLine, Lyrics, LyricsFollowChanged,
@@ -61,6 +60,7 @@ pub mod prelude {
         secure_field, segmented, settings_group, sheet_layout, spinner, stepper, switch, switch_row, text_area,
         text_field,
     };
+    pub use crate::chrome::{SidebarRevealed, Tile, TileGrid, TileMoved, tile, tile_grid};
     pub use crate::controls::{
         Canvas, CanvasPath, DragMoveEvent, Gestures, ImageCache, ImageSource, Painter, Processor, canvas,
     };

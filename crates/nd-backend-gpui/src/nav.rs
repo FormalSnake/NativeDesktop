@@ -9,11 +9,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::forms::glyph::{Glyph, glyph};
 use nd_components::{
-    BANNER, BannerProps, CommandPaletteProps, FieldSelection, PALETTE, PaletteKey, PaletteModel, SourceIndex,
-    SourceTreeProps, TOAST, Toast, ToastOverlayProps, ToastQueue,
+    BANNER, BannerProps, CommandPaletteProps, DecodeRequest, FieldSelection, ImageFit, PALETTE, PaletteKey,
+    PaletteModel, SourceIndex, SourceTreeProps, TOAST, Toast, ToastOverlayProps, ToastQueue,
 };
 use nd_core::{NodeId, WindowId};
 use nd_gpui::gpui::{
@@ -354,6 +355,7 @@ pub fn source_tree_view(
     theme: &Theme,
     compact: bool,
     on_input: Option<OnInput<TreeInput>>,
+    art: &HashMap<SharedString, Arc<gpui::RenderImage>>,
     marks: &Marks,
 ) -> gpui::Stateful<gpui::Div> {
     let (body, footnote) = (theme.type_scale.body, theme.type_scale.footnote);
@@ -592,10 +594,24 @@ pub fn source_tree_view(
                 .pl(lead + indent * depth as f32)
                 .pr(trail)
                 .children(leading)
-                .children(match icon {
-                    Some(icon) => Some(icon.mr(icon_gap).into_any_element()),
+                .children(match (art.get(&node.id), icon) {
+                    // A cover in the icon's place, at the sidebar's icon size with Music's corners.
+                    (Some(image), _) => {
+                        let gap = if fluent { icon_gap } else { theme.spacing.md };
+                        let mut corners = div().rounded(px(4.));
+                        let corners = corners.style().clone();
+                        Some(
+                            div()
+                                .flex_none()
+                                .size(px(nd_components::SOURCE_ART))
+                                .mr(gap)
+                                .child(crate::media::image::picture(image.clone(), ImageFit::Cover, &corners))
+                                .into_any_element(),
+                        )
+                    }
+                    (None, Some(icon)) => Some(icon.mr(icon_gap).into_any_element()),
                     // A symbolic icon in the text colour, 12 px before the title on libadwaita.
-                    None => icon_glyph(node.icon).map(|g| {
+                    (None, None) => icon_glyph(node.icon).map(|g| {
                         let (gap, ink) = if adwaita { (theme.spacing.md, fg) } else { (theme.spacing.sm, secondary) };
                         div().flex_shrink_0().pr(gap).child(glyph(g, px(16.), ink, px(1.5))).into_any_element()
                     }),
@@ -1221,6 +1237,8 @@ pub(crate) struct TreeDrawn {
     pub rows: HashMap<SharedString, gpui::Bounds<Pixels>>,
     /// The line marking where a drag over the list lands: its left end and width.
     pub slot: Option<(gpui::Point<Pixels>, Pixels)>,
+    /// Each row's artwork load, by id, while the row has artwork.
+    pub art: HashMap<SharedString, Rc<RefCell<crate::media::image::Picture>>>,
 }
 
 pub(crate) struct RowPress {
@@ -1478,6 +1496,36 @@ impl GpuiBackend {
 }
 
 impl Build<'_> {
+    /// The source tree's row artwork decoded so far, by row id, asking the pipeline for the rest.
+    /// A row whose picture has not landed draws its icon.
+    fn source_art(
+        &self,
+        drawn: &Rc<RefCell<Drawn>>,
+        props: &SourceTreeProps,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> HashMap<SharedString, Arc<gpui::RenderImage>> {
+        use crate::media::image::Picture;
+        let Drawn::Tree(tree) = &mut *drawn.borrow_mut() else { return HashMap::new() };
+        let side = nd_components::SOURCE_ART;
+        let app = self.backend.state.borrow().app.clone();
+        let wanted: HashMap<&SharedString, &nd_components::ImageSource> =
+            props.nodes.iter().filter(|n| !n.section).filter_map(|n| n.artwork.as_ref().map(|a| (&n.id, a))).collect();
+        tree.art.retain(|id, _| wanted.contains_key(id));
+        let mut shown = HashMap::new();
+        for (id, source) in wanted {
+            let picture =
+                tree.art.entry(id.clone()).or_insert_with(|| Rc::new(RefCell::new(Picture::default()))).clone();
+            picture.borrow_mut().attach(None, app.clone());
+            let request = DecodeRequest::at(source.clone(), side, side, window.scale_factor(), ImageFit::Cover);
+            Picture::want(&picture, Some(request), window, cx);
+            if let Some(image) = Picture::current(&picture, false, Some(1.), window, cx) {
+                shown.insert(id.clone(), image);
+            }
+        }
+        shown
+    }
+
     /// The drawn palette, source tree, toast overlay and banner; `None` for any other kind.
     pub(crate) fn nav(
         &self,
@@ -1485,11 +1533,12 @@ impl Build<'_> {
         kind: WidgetKind,
         node: &Node,
         window: &mut gpui::Window,
+        cx: &mut gpui::App,
     ) -> Option<AnyElement> {
         let theme = self.theme();
         let theme = &*theme;
         let marks = Marks::default();
-        let element = self.nav_element(id, kind, node, theme, &marks, window);
+        let element = self.nav_element(id, kind, node, theme, &marks, window, cx);
         self.record_marks(id, marks.take());
         element
     }
@@ -1502,6 +1551,7 @@ impl Build<'_> {
         theme: &Theme,
         marks: &Marks,
         window: &mut gpui::Window,
+        cx: &mut gpui::App,
     ) -> Option<AnyElement> {
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
@@ -1588,6 +1638,7 @@ impl Build<'_> {
                 _ => (None, None, None),
             };
             let listener = props.drag_kind.is_some().then(|| row_drag_listener(&drawn, &emit, &wake));
+            let art = self.source_art(&drawn, props, window, cx);
             let tree = drawn.clone();
             let on_input: OnInput<TreeInput> = Rc::new(move |input, window, cx| {
                 match input {
@@ -1637,6 +1688,7 @@ impl Build<'_> {
                 theme,
                 self.in_hidden_sidebar(node),
                 Some(on_input),
+                &art,
                 marks,
             );
             return Some(

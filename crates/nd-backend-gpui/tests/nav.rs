@@ -290,6 +290,7 @@ impl gpui::Render for Golden {
                 &theme,
                 false,
                 None,
+                &Default::default(),
                 &Marks::default(),
             )))
             .child(

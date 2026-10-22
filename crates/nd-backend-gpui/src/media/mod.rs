@@ -5,7 +5,7 @@
 //! controls' (`Build::ctl`), so a released node drops it.
 
 mod chat;
-mod image;
+pub(crate) mod image;
 mod lyrics;
 pub(crate) mod paint;
 mod seek;

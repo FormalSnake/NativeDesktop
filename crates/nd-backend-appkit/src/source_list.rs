@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use nd_components::{
-    ActionVisibility, SourceAction, SourceActionClicked, SourceActivated, SourceCollapsed, SourceExpanded, SourceIndex,
-    SourceNode, SourceSelected, SourceTreeProps,
+    ActionVisibility, ImageFit, SOURCE_ART, SourceAction, SourceActionClicked, SourceActivated, SourceCollapsed,
+    SourceExpanded, SourceIndex, SourceNode, SourceSelected, SourceTreeProps,
 };
 use nd_ui::events::Emit;
 use nd_ui::prelude::SharedString;
@@ -41,6 +41,7 @@ use objc2_foundation::{
 };
 
 use crate::events::Wake;
+use crate::media::image::{ImageSlot, Loaded};
 
 /// What the data source answers from.
 #[derive(Default)]
@@ -392,6 +393,9 @@ impl NdSourceRowView {
 pub struct CellIvars {
     tree: Weak<Shared>,
     icon: Retained<NSImageView>,
+    /// The row's artwork, in the icon's place; the icon shows over it until a picture lands.
+    art: Retained<NSView>,
+    slot: ImageSlot,
     caption: Retained<NSTextField>,
     badge: Retained<NSTextField>,
     actions: Retained<NSView>,
@@ -448,6 +452,8 @@ impl NdSourceCell {
         let ivars = CellIvars {
             tree,
             icon: NSImageView::new(mtm),
+            art: NSView::new(mtm),
+            slot: ImageSlot::new(),
             caption: label(),
             badge: label(),
             actions: NSView::new(mtm),
@@ -462,13 +468,26 @@ impl NdSourceCell {
         unsafe { this.setTextField(Some(&title)) };
         let iv = this.ivars();
         iv.icon.setTranslatesAutoresizingMaskIntoConstraints(false);
+        iv.art.setTranslatesAutoresizingMaskIntoConstraints(false);
+        iv.art.setWantsLayer(true);
+        if let Some(layer) = iv.art.layer() {
+            layer.addSublayer(&iv.slot.0.layer);
+        }
+        // Music's playlist covers: a small square with softly rounded corners.
+        iv.slot.0.layer.setCornerRadius(4.);
+        let icon = iv.icon.clone();
+        iv.slot.on_load(move |loaded| {
+            if matches!(loaded, Loaded::Ready(_)) {
+                icon.setHidden(true);
+            }
+        });
         iv.caption.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
         iv.badge
             .setFont(Some(&NSFont::monospacedDigitSystemFontOfSize_weight(NSFont::smallSystemFontSize(), unsafe {
                 NSFontWeightRegular
             })));
         iv.actions.setTranslatesAutoresizingMaskIntoConstraints(false);
-        for v in [&*iv.icon as &NSView, &iv.caption, &iv.badge, &iv.actions] {
+        for v in [&*iv.art as &NSView, &iv.icon, &iv.caption, &iv.badge, &iv.actions] {
             this.addSubview(v);
         }
         unsafe { this.setImageView(Some(&iv.icon)) };
@@ -487,7 +506,10 @@ impl NdSourceCell {
         title.setStringValue(&NSString::from_str(&node.title));
         let image = node.icon.filter(|_| !node.section).and_then(|i| crate::icons::symbol(i.lucide()));
         iv.icon.setImage(image.as_deref());
-        iv.icon.setHidden(image.is_none());
+        let artwork = node.artwork.clone().filter(|_| !node.section);
+        iv.art.setHidden(artwork.is_none());
+        iv.slot.set_source(artwork, ImageFit::Cover, false);
+        iv.icon.setHidden(image.is_none() || (!iv.art.isHidden() && iv.slot.is_showing()));
         let caption = node.caption.as_deref().filter(|_| !node.section);
         iv.caption.setStringValue(&NSString::from_str(caption.unwrap_or("")));
         iv.caption.setHidden(caption.is_none());
@@ -550,6 +572,10 @@ impl NdSourceCell {
         }
         *iv.buttons.borrow_mut() = buttons;
         self.constrain(node.section);
+        if !iv.art.isHidden() {
+            let side = f64::from(SOURCE_ART);
+            iv.slot.place(NSRect::new(NSPoint::ZERO, NSSize::new(side, side)), crate::media::scale_of(self));
+        }
         self.recolour(self.backgroundStyle());
         // Alpha, never hidden: a hidden button would hand its width to the title and the row
         // would shift under the pointer.
@@ -583,9 +609,23 @@ impl NdSourceCell {
         let title = self.title();
         NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&iv.constraints.borrow()));
         let mut c: Vec<Retained<NSLayoutConstraint>> = Vec::new();
+        let has_art = !iv.art.isHidden();
         let has_icon = !iv.icon.isHidden();
         let has_caption = !iv.caption.isHidden();
-        if has_icon {
+        if has_art {
+            let side = f64::from(SOURCE_ART);
+            c.push(iv.art.leadingAnchor().constraintEqualToAnchor(&self.leadingAnchor()));
+            c.push(iv.art.centerYAnchor().constraintEqualToAnchor(&self.centerYAnchor()));
+            c.push(iv.art.widthAnchor().constraintEqualToConstant(side));
+            c.push(iv.art.heightAnchor().constraintEqualToConstant(side));
+            c.push(iv.icon.centerXAnchor().constraintEqualToAnchor(&iv.art.centerXAnchor()));
+            c.push(iv.icon.centerYAnchor().constraintEqualToAnchor(&iv.art.centerYAnchor()));
+            c.push(
+                title
+                    .leadingAnchor()
+                    .constraintEqualToSystemSpacingAfterAnchor_multiplier(&iv.art.trailingAnchor(), 1.),
+            );
+        } else if has_icon {
             c.push(iv.icon.leadingAnchor().constraintEqualToAnchor(&self.leadingAnchor()));
             c.push(iv.icon.centerYAnchor().constraintEqualToAnchor(&self.centerYAnchor()));
             c.push(

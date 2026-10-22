@@ -159,6 +159,11 @@ impl ImageSlot {
         }
     }
 
+    /// A picture is on screen, not the placeholder.
+    pub fn is_showing(&self) -> bool {
+        self.0.shown.get().is_some()
+    }
+
     /// Lays the layer out at `frame` (in its superlayer) and loads at that size.
     pub fn place(&self, frame: objc2_foundation::NSRect, scale: f64) {
         let s = &self.0;

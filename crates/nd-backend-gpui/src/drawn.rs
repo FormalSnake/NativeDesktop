@@ -78,7 +78,7 @@ impl Build<'_> {
         let children = |w: &mut gpui::Window, cx: &mut gpui::App| -> Vec<AnyElement> {
             node.children.iter().map(|c| self.node(*c, w, cx)).collect()
         };
-        if let Some(element) = self.nav(id, kind, node, window) {
+        if let Some(element) = self.nav(id, kind, node, window, cx) {
             return Some(element);
         }
         if let Some(control) = self.form_control(id, kind, node, window, cx) {

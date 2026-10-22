@@ -25,6 +25,11 @@ use nd_ui::prelude::*;
 use nd_ui::{DragEnded, DragItem, DragOver, DropSlot, Dropped, Key, NativeElement, StyleRefinement};
 
 use crate::icon::Icon;
+use crate::media::ImageSource;
+
+/// The side of a row's artwork, in points: the sidebar's medium icon size, as Music's playlist
+/// covers.
+pub const SOURCE_ART: f32 = 20.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceNode {
@@ -34,6 +39,9 @@ pub struct SourceNode {
     /// A second, smaller line under the title.
     pub caption: Option<SharedString>,
     pub icon: Option<Icon>,
+    /// A picture in the icon's place, such as a playlist's cover, drawn at [`SOURCE_ART`] points
+    /// with rounded corners. The icon stands in while it loads and when it fails.
+    pub artwork: Option<ImageSource>,
     pub badge: Option<SharedString>,
     /// A group row: a section header, never selectable, no disclosure.
     pub section: bool,
@@ -55,6 +63,7 @@ pub fn source_node(id: impl Into<SharedString>, title: impl Into<SharedString>) 
         title: title.into(),
         caption: None,
         icon: None,
+        artwork: None,
         badge: None,
         section: false,
         has_children: false,
@@ -83,6 +92,11 @@ impl SourceNode {
 
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn artwork(mut self, source: impl Into<Option<ImageSource>>) -> Self {
+        self.artwork = source.into();
         self
     }
 
