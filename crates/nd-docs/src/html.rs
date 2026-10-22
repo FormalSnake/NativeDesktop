@@ -1,15 +1,19 @@
 //! The static site: one HTML page per docs page, rendered from the same blocks the docs app
 //! draws, so readers and crawlers without wasm (agents included) get every page. Page `a/b` is
 //! written to `a/b.html` and linked as `/a/b`; `a/index` is linked as `/a/`. The docs app itself
-//! sits under `/app/`, and capture images are loaded from its bundle.
+//! sits under `/app/`; the pages show its capture images through content-hashed copies under
+//! `/shots/`.
 
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::Result;
 
 use crate::captures::{Manifest, Os, State};
-use crate::examples::Example;
+use crate::examples::{Example, Fnv};
 use crate::model::{Block, Inline, Link, Page, Site, SourceRef};
 
 pub const SITE_URL: &str = "https://native.formalsnake.dev";
@@ -59,15 +63,33 @@ fn esc(text: &str) -> String {
     out
 }
 
+/// What rendering needs beyond the site: the capture manifest, the published shots, and whether
+/// the page being rendered has shown an example yet (the first one loads eagerly, it is often
+/// the largest paint).
+struct Ctx<'a> {
+    captures: &'a Manifest,
+    shots: HashMap<String, Shot>,
+    eager: Cell<bool>,
+}
+
+/// A capture as the pages reference it, with its pixel size so the page reserves its box.
+struct Shot {
+    href: String,
+    width: u32,
+    height: u32,
+}
+
 /// Writes every page, `404.html`, `robots.txt`, `sitemap.xml` and the `_headers` file for
-/// Cloudflare's static assets.
+/// Cloudflare's static assets. Expects the docs app bundle, captures included, in `out/app`.
 pub fn write(site: &Site, captures: &Manifest, out: &Path) -> Result<()> {
+    let ctx = Ctx { captures, shots: shots(site, captures, out)?, eager: Cell::new(true) };
     for page in &site.pages {
         let path = out.join(format!("{}.html", page.id));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, render_page(site, captures, page))?;
+        ctx.eager.set(true);
+        std::fs::write(&path, render_page(site, &ctx, page))?;
     }
     std::fs::write(out.join("404.html"), not_found(site))?;
     std::fs::write(out.join("robots.txt"), format!("User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n"))?;
@@ -83,7 +105,90 @@ pub fn write(site: &Site, captures: &Manifest, out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Publishes every fresh capture under `/shots/` with its content hash in the name, as lossless
+/// WebP when `cwebp` is on PATH (about a quarter of the PNG's bytes) and as the PNG otherwise.
+/// Keyed by `example/file`.
+fn shots(site: &Site, captures: &Manifest, out: &Path) -> Result<HashMap<String, Shot>> {
+    let mut sources = Vec::new();
+    for example in &site.examples {
+        for os in Os::ALL {
+            if let State::Fresh(c) = captures.state(example, os) {
+                for file in [&c.light, &c.dark] {
+                    let png = out.join("app/assets/captures").join(&example.name).join(file);
+                    if png.is_file() {
+                        sources.push((example.name.as_str(), file.clone(), png));
+                    }
+                }
+            }
+        }
+    }
+    let dir = out.join("shots");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    let webp = Command::new("cwebp").arg("-version").output().is_ok_and(|o| o.status.success());
+    let jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut shots = HashMap::new();
+    for chunk in sources.chunks(jobs) {
+        let mut encoded = Vec::new();
+        if webp {
+            let children = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, (_, _, png))| {
+                    // Lossless, keeping the ICC profile: captures carry the display's.
+                    Command::new("cwebp")
+                        .args(["-quiet", "-lossless", "-z", "6", "-metadata", "icc"])
+                        .arg(png)
+                        .arg("-o")
+                        .arg(dir.join(format!(".{i}.webp")))
+                        // libpng warns about every capture's iCCP chunk; the exit status is checked.
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            for (i, mut child) in children.into_iter().enumerate() {
+                let status = child.wait()?;
+                anyhow::ensure!(status.success(), "cwebp failed on {} ({status})", chunk[i].2.display());
+                let tmp = dir.join(format!(".{i}.webp"));
+                encoded.push(std::fs::read(&tmp)?);
+                std::fs::remove_file(tmp)?;
+            }
+        }
+        for (i, (example, file, png)) in chunk.iter().enumerate() {
+            let png_bytes = std::fs::read(png)?;
+            let (width, height) = png_size(&png_bytes).unwrap_or_default();
+            let (bytes, ext) = match encoded.get(i) {
+                Some(webp) => (webp.as_slice(), "webp"),
+                None => (png_bytes.as_slice(), "png"),
+            };
+            let mut hash = Fnv::default();
+            hash.write(bytes);
+            let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
+            let name = format!("{example}/{stem}-{:016x}.{ext}", hash.0);
+            let path = dir.join(&name);
+            std::fs::create_dir_all(path.parent().unwrap_or(&dir))?;
+            std::fs::write(&path, bytes)?;
+            shots.insert(format!("{example}/{file}"), Shot { href: format!("/shots/{name}"), width, height });
+        }
+    }
+    Ok(shots)
+}
+
+/// Width and height from a PNG's IHDR chunk.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let be = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    Some((be(16)?, be(20)?))
+}
+
+/// Shots are content-hashed, so they never change under their name.
 const HEADERS: &str = "\
+/shots/*
+  Cache-Control: public, max-age=31536000, immutable
 /*.md
   Content-Type: text/markdown; charset=utf-8
 /llms.txt
@@ -92,14 +197,14 @@ const HEADERS: &str = "\
   Content-Type: text/plain; charset=utf-8
 ";
 
-fn render_page(site: &Site, captures: &Manifest, page: &Page) -> String {
+fn render_page(site: &Site, ctx: &Ctx, page: &Page) -> String {
     let mut body = String::new();
     let _ = writeln!(body, "<h1>{}</h1>", esc(&page.title));
     if !page.description.is_empty() {
         let _ = writeln!(body, "<p class=\"lede\">{}</p>", esc(&page.description));
     }
     for block in &page.blocks {
-        render_block(&mut body, site, captures, block);
+        render_block(&mut body, site, ctx, block);
     }
     let _ = writeln!(
         body,
@@ -149,6 +254,7 @@ fn shell(site: &Site, current: Option<&Page>, title: &str, description: &str, bo
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 {head}<style>{CSS}</style>
+<script type="speculationrules">{SPECULATION}</script>
 </head>
 <body>
 <header class="top"><a class="brand" href="/">NativeDesktop</a><nav class="links"><a class="to-pages" href="#pages">Pages</a><a href="/app/">Docs app</a><a href="/llms.txt">llms.txt</a><a href="{REPO_URL}">GitHub</a></nav></header>
@@ -186,7 +292,7 @@ fn inlines(out: &mut String, runs: &[Inline]) {
     }
 }
 
-fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Block) {
+fn render_block(out: &mut String, site: &Site, ctx: &Ctx, block: &Block) {
     match block {
         Block::Heading { level, anchor, text } => {
             let level = (*level).clamp(2, 6);
@@ -219,7 +325,7 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
                 // A tight item is one paragraph: no <p> around it.
                 match item.as_slice() {
                     [Block::Paragraph(runs)] => inlines(out, runs),
-                    blocks => blocks.iter().for_each(|b| render_block(out, site, captures, b)),
+                    blocks => blocks.iter().for_each(|b| render_block(out, site, ctx, b)),
                 }
                 out.push_str("</li>\n");
             }
@@ -227,7 +333,7 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
         }
         Block::Quote(blocks) => {
             out.push_str("<blockquote>\n");
-            blocks.iter().for_each(|b| render_block(out, site, captures, b));
+            blocks.iter().for_each(|b| render_block(out, site, ctx, b));
             out.push_str("</blockquote>\n");
         }
         Block::Table { header, rows } => {
@@ -252,13 +358,13 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
         Block::Rule => out.push_str("<hr>\n"),
         Block::Example(name) => {
             if let Some(example) = site.example(name) {
-                render_example(out, captures, example);
+                render_example(out, ctx, example);
             }
         }
     }
 }
 
-fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
+fn render_example(out: &mut String, ctx: &Ctx, example: &Example) {
     let _ = writeln!(
         out,
         "<figure class=\"example\">\n<figcaption><strong>Example: {}.</strong> {} Source in <a href=\"{}\">examples/{}</a>.",
@@ -271,16 +377,30 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
         out.push_str(" It also runs live in the <a href=\"/app/\">docs app</a>.");
     }
     out.push_str("</figcaption>\n<div class=\"shots\">\n");
+    // The first example on a page is often above the fold and its largest paint.
+    let eager = ctx.eager.replace(false);
+    let mut first = eager;
     for os in Os::ALL {
-        if let State::Fresh(c) = captures.state(example, os) {
-            let dir = format!("/app/assets/captures/{}", example.name);
+        if let State::Fresh(c) = ctx.captures.state(example, os) {
+            let shot = |file: &str| ctx.shots.get(&format!("{}/{file}", example.name));
+            let href = |file: &str| match shot(file) {
+                Some(s) => s.href.clone(),
+                None => format!("/app/assets/captures/{}/{file}", example.name),
+            };
+            let size =
+                shot(&c.light).map_or(String::new(), |s| format!(" width=\"{}\" height=\"{}\"", s.width, s.height));
+            let loading = match (eager, std::mem::take(&mut first)) {
+                (true, true) => " fetchpriority=\"high\"",
+                (true, false) => "",
+                _ => " loading=\"lazy\" decoding=\"async\"",
+            };
             let _ = writeln!(
                 out,
-                "<div class=\"shot\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{dark}\">\
-                 <img src=\"{dir}/{light}\" alt=\"{title} on {os}\" loading=\"lazy\"></picture>\
+                "<div class=\"shot\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dark}\">\
+                 <img src=\"{light}\"{size} alt=\"{title} on {os}\"{loading}></picture>\
                  <p class=\"source\">Captured on {on}, {date}.</p></div>",
-                dark = esc(&c.dark),
-                light = esc(&c.light),
+                dark = esc(&href(&c.dark)),
+                light = esc(&href(&c.light)),
                 title = esc(&example.title),
                 os = os.label(),
                 on = esc(&c.captured_on),
@@ -290,6 +410,10 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
     }
     out.push_str("</div>\n</figure>\n");
 }
+
+/// Prerenders a docs page when the pointer rests on its link (or on pointerdown on touch), so
+/// the click lands on a page that is already drawn. The app, Markdown and text files are left out.
+const SPECULATION: &str = r#"{"prerender":[{"where":{"and":[{"href_matches":"/*"},{"not":{"href_matches":"/app/*"}},{"not":{"href_matches":"/*.md"}},{"not":{"href_matches":"/*.txt"}}]},"eagerness":"moderate"}]}"#;
 
 /// Colours are `nd-theme`'s baked palette (`palette.rs`), light and dark.
 const CSS: &str = r#"
@@ -373,7 +497,9 @@ mod tests {
             ..Default::default()
         };
         let site = Site { pages: vec![page.clone()], ..Default::default() };
-        let html = render_page(&site, &Manifest::default(), &page);
+        let manifest = Manifest::default();
+        let ctx = Ctx { captures: &manifest, shots: HashMap::new(), eager: Cell::new(true) };
+        let html = render_page(&site, &ctx, &page);
         assert!(html.contains("<h1>A &lt;b&gt;</h1>"));
         assert!(html.contains("<h2 id=\"x\">"));
         assert!(html.contains("<code class=\"language-rust\">a &lt; b</code>"));
