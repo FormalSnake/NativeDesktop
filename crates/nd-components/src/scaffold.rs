@@ -49,8 +49,8 @@ pub struct PaneProps {
     /// The edge effect under the toolbar shows only while the pointer is over the toolbar.
     pub edge_on_hover: bool,
     /// Points a bar floating over the pane's foot takes (Music's mini player): the pane runs
-    /// down under it, its scroll views scroll under the bar and rest clear of it, behind the
-    /// system's scroll edge effect on macOS.
+    /// down under it, its scroll views scroll under the bar and rest clear of it. Nothing is
+    /// drawn behind the bar.
     pub bottom_bar: f32,
     /// While the sidebar is collapsed, the pointer at the window's leading edge slides it in
     /// over the content as a floating panel.

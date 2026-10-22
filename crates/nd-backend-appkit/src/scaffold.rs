@@ -222,19 +222,15 @@ impl PaneNative {
                 item.setTitlebarSeparatorStyle(objc2_app_kit::NSTitlebarSeparatorStyle::None);
             }
         }
-        if props.role != PaneRole::Overlay
-            && props.bottom_bar > 0.
-            && let Some(item) = &this.item
-        {
-            // An empty band at the foot, as Music's mini player sits in: AppKit grows the pane's
-            // safe area by it and draws its scroll edge effect under it (Music's automatic style);
-            // the bar is the content's own.
-            let accessory = objc2_app_kit::NSSplitViewItemAccessoryViewController::new(mtm);
-            accessory.setAutomaticallyAppliesContentInsets(false);
-            let band = NdBandView::new(mtm);
-            band.heightAnchor().constraintEqualToConstant(f64::from(props.bottom_bar)).setActive(true);
-            accessory.setView(&band);
-            item.addBottomAlignedAccessoryViewController(&accessory);
+        if props.role != PaneRole::Overlay && props.bottom_bar > 0. && this.item.is_some() {
+            // Content scrolls under a floating bar, which is Liquid Glass on its own as Music's
+            // mini player is: no band or scroll edge effect behind it. The pane's safe area grows
+            // by the bar, so scroll views come to rest clear of it.
+            let insets = this.content.additionalSafeAreaInsets();
+            this.content.setAdditionalSafeAreaInsets(objc2_foundation::NSEdgeInsets {
+                bottom: f64::from(props.bottom_bar),
+                ..insets
+            });
         }
         this
     }
@@ -387,30 +383,6 @@ impl ScaffoldNative {
         let split = self.panes.iter().filter(|(_, r)| *r != PaneRole::Overlay);
         let index = split.clone().position(|(_, r)| *r == PaneRole::Inspector)?;
         (index > 0).then(|| index as isize - 1)
-    }
-}
-
-define_class!(
-    /// A floating bar's band: room in the pane's safe area, never a target, so presses reach the
-    /// bar the content draws over it.
-    // SAFETY: NSView has no subclassing requirements and this type does not implement Drop.
-    #[unsafe(super(NSView, NSResponder))]
-    #[thread_kind = MainThreadOnly]
-    struct NdBandView;
-
-    impl NdBandView {
-        #[unsafe(method(hitTest:))]
-        fn hit_test(&self, _point: objc2_foundation::NSPoint) -> *mut NSView {
-            std::ptr::null_mut()
-        }
-    }
-);
-
-impl NdBandView {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let view: Retained<Self> = unsafe { msg_send![Self::alloc(mtm), initWithFrame: NSRect::ZERO] };
-        view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        view
     }
 }
 
