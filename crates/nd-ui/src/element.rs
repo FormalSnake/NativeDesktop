@@ -268,6 +268,8 @@ pub struct DivProps {
     pub tracks_hover: bool,
     /// Size changes are reported as [`Resized`].
     pub reports_size: bool,
+    /// The access key of the first control inside (`.access_key("S")`).
+    pub access_key: Option<SharedString>,
 }
 
 /// The node was laid out at a new size (`.on_resize`).
@@ -324,6 +326,7 @@ pub struct Div {
     reports_size: bool,
     motion: Option<MotionSpec>,
     drag: crate::drag::DragSpec,
+    access_key: Option<SharedString>,
 }
 
 #[track_caller]
@@ -372,7 +375,15 @@ impl Div {
             reports_size: false,
             motion: None,
             drag: crate::drag::DragSpec::default(),
+            access_key: None,
         }
+    }
+
+    /// Gives the first control inside an access key, for controls that take no key of their own
+    /// (a checkbox, a text field); see [`Button::access_key`].
+    pub fn access_key(mut self, key: impl Into<SharedString>) -> Self {
+        self.access_key = Some(key.into());
+        self
     }
 
     /// Names the container's role and accessible name in the semantic tree (a tab page is a
@@ -644,6 +655,7 @@ impl IntoElement for Div {
                 hover: self.hover,
                 tracks_hover: self.tracks_hover,
                 reports_size: self.reports_size,
+                access_key: self.access_key,
             }),
             layout: self.style,
             measured: false,
@@ -910,6 +922,9 @@ pub struct ButtonProps {
     /// The element's style: a background becomes the bezel colour, a text colour and font
     /// the title's, where the native control can express them.
     pub style: StyleRefinement,
+    /// Pressed by Alt and this key, or by typing it while the key tips show (WinUI's
+    /// `AccessKey`). Backends without access keys ignore it.
+    pub access_key: Option<SharedString>,
 }
 
 impl ButtonProps {
@@ -923,6 +938,7 @@ impl ButtonProps {
             enabled: true,
             checked: None,
             style: StyleRefinement::default(),
+            access_key: None,
         }
     }
 }
@@ -964,6 +980,13 @@ impl Button {
     /// Greys the button out; it takes no clicks and automation reports it disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.0.props_mut().enabled = !disabled;
+        self
+    }
+
+    /// One or two letters or digits that press the button from the keyboard: Alt and the key,
+    /// or the key while Alt's key tips show. Drawn by the Fluent look.
+    pub fn access_key(mut self, key: impl Into<SharedString>) -> Self {
+        self.0.props_mut().access_key = Some(key.into());
         self
     }
 

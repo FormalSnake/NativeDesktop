@@ -117,6 +117,18 @@ Toggles move over 167 ms; flyouts and tooltips rise 8 px over 167 ms. Reduced mo
 system's client area animation setting. nd: `preset.rs` (`motion`), `FormLook::toggle_*`,
 `overlay.rs`.
 
+## Access keys
+
+A lone Alt shows a key tip on each control with an `AccessKey`; typing the key presses it, Esc,
+Alt, Enter, Tab or an arrow hides the tips, a key no tip starts with is ignored. Alt with a
+one-letter key presses without tips. Tip: `#767676` (SystemChromeGrayColor) with white 12 px
+text, padding 4, 1 px transparent border, square corners, light and dark alike (generic.xaml
+`KeyTip*`); centred under the control. Sources:
+[access keys](https://learn.microsoft.com/windows/apps/design/input/access-keys),
+[generic.xaml](https://github.com/microsoft/microsoft-ui-xaml/blob/main/dxaml/xcp/dxaml/themes/generic.xaml),
+[KeytipAutomaticPlacementAlgorithm.cpp](https://github.com/microsoft/microsoft-ui-xaml/blob/main/dxaml/xcp/components/AccessKeys/KeyTips/KeytipAutomaticPlacementAlgorithm.cpp).
+nd: `Button::access_key`, `div().access_key` (nd-ui `element.rs`), `access_keys.rs`.
+
 ## Verifying
 
 1. `ssh g815 'sudo systemctl start windows-vm'` (only with 30 GB or more free on g815); the guest

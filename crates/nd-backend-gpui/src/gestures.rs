@@ -587,6 +587,7 @@ mod tests {
             hover: None,
             tracks_hover: false,
             reports_size: false,
+            access_key: None,
         };
         Node { kind: NodeKind::View, props: Rc::new(props), parent, children }
     }

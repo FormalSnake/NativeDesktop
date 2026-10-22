@@ -31,7 +31,7 @@ impl Render for Counter {
             .focusable()
             .on_action(move |_: &Bump, _, _| bumps.set(bumps.get() + 1))
             .child(text(self.count.to_string()).id("count").tabular_nums())
-            .child(button("add", "Add one").on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .child(button("add", "Add one").access_key("A").on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.count += 1;
                 cx.notify();
             })))
@@ -198,6 +198,52 @@ mod gate_m2 {
         cx.update(|cx| host.update(cx, |app| app.synthesize(window, &SyntheticInput::Key(key)))).expect("posted");
         settle(&mut cx, &host);
         assert_eq!(bumps.get(), 1, "the nd binding fired through GPUI's keystroke path");
+    }
+
+    pub fn fluent_access_keys_press_buttons() {
+        let Opened { mut cx, host, window, .. } = open_counter();
+        let mut alt = Keystroke::parse("a").expect("keystroke");
+        alt.key = "alt".into();
+        let send = |cx: &mut HeadlessAppContext, keys: &[Keystroke]| {
+            cx.update(|cx| {
+                host.update(cx, |app| {
+                    for key in keys {
+                        app.synthesize(window, &SyntheticInput::Key(key.clone())).expect("posted");
+                    }
+                })
+            });
+            settle(cx, &host);
+        };
+        let key = |k: &str| Keystroke::parse(k).expect("keystroke");
+        send(&mut cx, &[key("alt-a")]);
+        assert_eq!(count_text(&host, window), "0", "access keys are the Fluent look's");
+
+        host.backend().set_theme(nd_theme::ThemeRegistry::new(nd_theme::Preset::Fluent));
+        settle(&mut cx, &host);
+        send(&mut cx, &[alt.clone()]);
+        let add = by_test_id(&host, window, "add").bounds.expect("add");
+        let tip = (add.origin.x + add.size.width / 2., add.origin.y + add.size.height + 3.);
+        let fill = |host: &GpuiHost| {
+            nd_gpui::gpui_platform::current_headless_renderer().ok().flatten()?;
+            let capture = host.job(|app| app.capture(window)).expect("capture");
+            let image = image::load_from_memory(&capture.png).expect("png").to_rgba8();
+            let scale = capture.width as f32 / 320.;
+            Some(image.get_pixel((tip.0 * scale) as u32, (tip.1 * scale) as u32).0)
+        };
+        if let Some(p) = fill(&host) {
+            assert!(p[..3].iter().all(|c| c.abs_diff(0x76) <= 2), "the key tip sits under the button: {p:?}");
+        }
+        send(&mut cx, &[key("a")]);
+        assert_eq!(count_text(&host, window), "1", "typing the key presses the button");
+        if let Some(p) = fill(&host) {
+            assert!(p[..3].iter().any(|c| c.abs_diff(0x76) > 2), "the press hid the tips: {p:?}");
+        }
+        send(&mut cx, &[key("alt-a")]);
+        assert_eq!(count_text(&host, window), "2", "Alt+A presses it without the tips");
+        send(&mut cx, &[alt.clone(), key("escape"), key("a")]);
+        assert_eq!(count_text(&host, window), "2", "Esc hides the tips and the key goes nowhere");
+        send(&mut cx, &[alt, key("x"), key("a")]);
+        assert_eq!(count_text(&host, window), "3", "a key no tip has is rejected and the tips stay");
     }
 
     pub fn windows_open_and_close_with_the_app() {
@@ -446,6 +492,7 @@ fn main() {
             gate_m2::a_pointer_click_goes_through_the_window_input_path,
         ),
         ("gate_m2::keys_reach_nd_dispatch_before_gpui", gate_m2::keys_reach_nd_dispatch_before_gpui),
+        ("gate_m2::fluent_access_keys_press_buttons", gate_m2::fluent_access_keys_press_buttons),
         ("gate_m2::windows_open_and_close_with_the_app", gate_m2::windows_open_and_close_with_the_app),
         ("gate_m2::titlebar_insets_come_from_the_os_hooks", gate_m2::titlebar_insets_come_from_the_os_hooks),
         ("gate_m2::capture_renders_the_window", gate_m2::capture_renders_the_window),

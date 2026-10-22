@@ -89,6 +89,7 @@ impl Render for Gallery {
             .gap(px(12.))
             .child(
                 row()
+                    .access_key("N")
                     .child(
                         text_field("text")
                             .text(self.text.clone())
@@ -151,6 +152,7 @@ impl Render for Gallery {
             )
             .child(
                 row()
+                    .access_key("C")
                     .child(checkbox("check", "Check").checked(self.check).on_toggle(on!(
                         cx,
                         Toggled,
@@ -423,6 +425,20 @@ mod forms {
         quiet(&mut rig);
         rig.click("mixed");
         assert_eq!(rig.take(), ["mixed:true"], "a mixed checkbox checks");
+    }
+
+    pub fn access_keys_toggle_and_focus_the_first_control() {
+        let mut rig = open_in(Preset::Fluent, WindowAppearance::Light, false);
+        let mut alt = Keystroke::parse("a").expect("keystroke");
+        alt.key = "alt".into();
+        rig.input(vec![SyntheticInput::Key(alt.clone())]);
+        rig.keys(&["c"]);
+        assert_eq!(rig.take(), ["check:true"], "C toggles the checkbox its row's key reaches");
+        rig.keys(&["alt-c"]);
+        assert_eq!(rig.take(), ["check:false"]);
+        rig.input(vec![SyntheticInput::Key(alt)]);
+        rig.keys(&["n", "k"]);
+        assert_eq!(rig.take(), ["text:k"], "N focuses the text field, which a press does not act on");
     }
 
     pub fn switch_click_and_space_toggle() {
@@ -718,6 +734,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let tests: Vec<(&str, fn())> = vec![
         ("forms::checkbox_click_and_space_toggle", forms::checkbox_click_and_space_toggle),
+        (
+            "forms::access_keys_toggle_and_focus_the_first_control",
+            forms::access_keys_toggle_and_focus_the_first_control,
+        ),
         ("forms::switch_click_and_space_toggle", forms::switch_click_and_space_toggle),
         ("forms::typing_arrives_as_text_changed", forms::typing_arrives_as_text_changed),
         ("forms::an_app_write_replaces_the_text", forms::an_app_write_replaces_the_text),

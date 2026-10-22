@@ -105,6 +105,8 @@ pub struct GpuiBackend {
     /// The button whose click the app is answering, by window, so a picker it asks for opens at
     /// that button. The window's next press or key clears it.
     pub(crate) invoker: Rc<RefCell<HashMap<WindowId, NodeId>>>,
+    /// Windows showing access key tips ([`crate::access_keys`]).
+    pub(crate) key_tips: crate::access_keys::Showing,
     /// Pointer input each native surface received, written by its paint-time listeners.
     pub(crate) surface_counts: Rc<RefCell<HashMap<NodeId, InputCounts>>>,
     /// The app's menus, drawn above the windows of a single canvas.
@@ -188,6 +190,7 @@ impl GpuiBackend {
             focus_requests: Rc::default(),
             platform_focus: Rc::default(),
             invoker: Rc::default(),
+            key_tips: Rc::default(),
             surface_counts: Rc::default(),
             deferred: Rc::default(),
             menu_bar: Rc::default(),

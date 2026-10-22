@@ -71,10 +71,15 @@ The rules and values are in [docs/dev/hig/windows.md](../dev/hig/windows.md).
 
 ## Interaction
 
-- [ ] Access keys (Alt shows key tips). Deferred: nd has no access-key property on elements yet.
-  It needs one in nd-ui (set per control, as WinUI's `AccessKey`), carried to the GPUI backend,
-  plus a key-tip overlay shown on a lone Alt press and dispatching the matching control's press
-  action. Not something the skin can add on its own.
+- [x] Access keys. `Button::access_key` and `div().access_key` (for the first control inside)
+  in nd-ui; the Fluent look shows WinUI key tips on a lone Alt, presses the control on its key
+  (a text field takes focus) and on Alt with a one-letter key. Checked on macOS GPUI with
+  `ND_PRESET`'s Fluent look: `gate_m2::fluent_access_keys_press_buttons` (headless) and
+  `forms::access_keys_toggle_and_focus_the_first_control`. Cut: WinUI's cost-based tip
+  placement (nd puts a tip under its control, above it at the window's bottom edge), access key
+  scopes, and UIA's `AccessKey` property.
+- [ ] Access keys on Windows: a VM run checking a lone Alt reaches GPUI as the `alt` keystroke
+  and `DefWindowProc`'s `SC_KEYMENU` for it neither beeps nor takes the next key.
 - [ ] Flyout and page transitions against WinUI's.
 
 ## Tooling

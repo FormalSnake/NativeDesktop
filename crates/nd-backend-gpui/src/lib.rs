@@ -4,6 +4,7 @@
 //! window per app window, nd-owned key dispatch (3.12), a display clock per window (5.3) and the
 //! automation and diagnostics hooks. OS crates plug in through [`OsHooks`].
 
+mod access_keys;
 mod backend;
 mod budget;
 mod canvas;

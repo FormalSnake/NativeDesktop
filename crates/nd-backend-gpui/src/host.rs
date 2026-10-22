@@ -425,6 +425,12 @@ impl Inner {
                 (inner.wake())(cx);
                 return;
             }
+            if inner.backend.access_key_input(id, &event.keystroke) {
+                cx.stop_propagation();
+                window.refresh();
+                (inner.wake())(cx);
+                return;
+            }
             if inner.tab_key_first(id, &event.keystroke) {
                 cx.stop_propagation();
                 window.refresh();
@@ -1148,6 +1154,7 @@ impl Inner {
             div().size_full().child(element).children(ghosts).into_any_element()
         };
         let menu = state.menus.get(&id).map(|m| build.menu(m, window));
+        let key_tips = self.backend.key_tip_layer(id, window.viewport_size().height.as_f32());
         let body_font = state.theme.window_theme(id).fonts.body.clone();
         // Text nothing sized is the look's body style (Adwaita and Fluent set it at 14 px), not
         // GPUI's 16 px rem. The macOS preset keeps the rem its goldens were drawn at.
@@ -1193,6 +1200,9 @@ impl Inner {
             .capture_any_mouse_down(move |_, window, cx| {
                 fresh.clear_swallow(id);
                 fresh.invoker.borrow_mut().remove(&id);
+                if fresh.hide_key_tips(id) {
+                    window.refresh();
+                }
                 *holding.borrow_mut() = window.focused(cx);
             })
             .capture_key_down(move |_, _, _| {
@@ -1303,6 +1313,7 @@ impl Inner {
                 _ => d.child(element),
             })
             .children(overlay)
+            .children(key_tips)
             .children(menu)
             .into_any_element()
     }
