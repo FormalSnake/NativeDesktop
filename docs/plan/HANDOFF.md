@@ -1,75 +1,62 @@
-# Handoff, 2026-10-21
+# Handoff, 2026-10-22
 
-Parked at the user's request. Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request
-plus every dated decision), `docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md`
-(machine rules), and the platform guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
+Resume from here. Read first: `docs/plan/PROMPT.md` (verbatim request plus every dated decision),
+`docs/plan/STATUS.md`, `docs/plan/TODO.md`, `docs/dev/setup.md` (machine rules), and the platform
+guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
 
 ## Where things are
 
-`main` on GitHub (FormalStudio/NativeDesktop, moved from FormalSnake on 2026-10-21) is at
-`ec44b91d`. Merged today: nd-tabs (tab drag across lists and windows, edge-revealed sidebar),
-windows-hig (Fluent look, field headers, selection), macos-hig (Show/Hide Sidebar menu role on
-control-command-S, F9 elsewhere, `nd::ToggleSidebar`; palette keeps the keyboard on refocus),
-cef-extensions-2 (Web Store installs by id, button and cancel; Origin fix; `docs/plan/upstream-cef.md`),
-msg-linux-2 (drawn submenus, colour emoji patch 0013, video release, scroll in popovers, pane
-slides), formalmusic-ui (player bar and shelf work), gate-hardening, cef-webview-more (print,
-print_to_pdf). The FormalStudio repoint of links, badges, CI and docs is done in nd and the app repos.
+`main` on GitHub (FormalStudio/NativeDesktop) is at `8249438c`. Merged since the last handoff:
+fmui-pill-clear (macOS player pill is plain system Liquid Glass again, no tint), msg-linux-4
+(drawn submenus open beside their parent, flip, clamp), docs-captures (all 13 examples captured on
+macOS, Linux and Windows, light and dark; Windows transport for `nd docs capture`; Windows frame
+follows the app theme), gnome-polish (gpui patch 0014: hover on elements without an id, which fixed
+the lagging track-row hover; libadwaita backdrop and WinUI inactive title row; 47 px header, Nautilus
+sidebar colour; `ndshell shot` seat has a keyboard). The media golden is green again.
 
-Known red on main: `cargo test -p nd-backend-gpui --test media` (macOS golden `media-light`,
-2.88% off). The new player bar squeezes the now-playing title and artist to "Pap..." and
-"The...". The FormalMusic lane owns the fix (centre block takes the free width, then re-record
-the media goldens on all three OSes).
+Deployed on g815: Messages `c965067d` (nd 786b1692, submenu fix confirmed in a demo instance),
+FormalMusic `3a89e939` (sidebar playlist covers, confirmed by the user).
 
 ## Open lanes (each in its own worktree, branch named after the lane)
 
-- **FormalMusic UI** (`youtubemusic-nd`, nd worktree `nativedesktop-wt-fmui`): fix the media
-  golden squeeze above; match Apple Music on macOS (macOS 26 and 27 references, floating Liquid
-  Glass player pill as an nd capability, Linux keeps a docked GNOME bar, Windows a WinUI bar);
-  player bar: artwork and the title/artist block aligned as Music.app, and the whole centre block
-  (artwork, text, seek line) vertically centred in the pill (user, 2026-10-21: it sits low).
-  Report measured gaps and side-by-side crops. Then commit (fixes, then `chore: clippy`), point
-  FormalMusic's nd deps at `git = "https://github.com/FormalStudio/NativeDesktop", branch = "main"`
-  (local commit `build: take nativedesktop from github...` exists on nd-port, still on branch
-  `formalmusic-ui`; switch to main), check a fresh clone builds (macOS and g815), pin the flake,
-  push nd-port and main. Source URLs for the references go in `docs/parity.md`.
-- **Messages** (`messages-nd` macOS, `messages-nd-linux` Linux; nd `nativedesktop-wt-msg-linux-2`):
-  staged, uncommitted in `messages-nd`: nd deps and gpui patches on git main, `nix/package.nix`
-  fetching nd from the `Cargo.lock` rev. Next: `cargo update -p nd` and the gpui crates,
-  fresh-clone build on macOS and g815, flake pin, push nd-port and main. Local commit aa842f5 on
-  nd-port-linux drops `MESSAGES_ICON_PATH`. The tray "?" fix (nd looks the icon name up in the
-  icon themes including the app's nix share dir, else sends its own icon as pixmap; fixes every
-  nix-installed nd app) is uncommitted in both worktrees and needs one gate run (tray against
-  waybar, video test, cold start 597), then commit. Remaining parity: colour emoji stills,
-  drag-to-attach by hand, rustls, Linux CSD and app id.
-- **nativebrowser** (lynk-browser): local commit `ff4aaae` points nd and the 10 gpui patches at
-  NativeDesktop main (no tag, user 2026-10-21; `Cargo.lock` pins `108d728d`, newer via
-  `cargo update -p`). `dev.star` and `fspec.lock` unchanged. Fresh-clone build: macOS running in
-  `~/Developer/tmp-fresh/nb-mac2`, Linux under the gate on steamlib. Push main when both pass.
-- **linux-hig** (`nativedesktop-wt-linux-hig`): seven local commits (theme, variable-font weight
-  fix for Adwaita Sans in the vendored cosmic text system, window controls, GPUI controls,
-  ndshell, docs, goldens), rebased on 2180ccf4, needs a rebase on main and one gate (clippy,
-  re-record GPUI goldens, `nextest --workspace`), then push. Nautilus captures show g815's
-  "FormalDisk" volume and stay out of the commit.
-- **cef-extensions-2**: Linux extension popups (uncommitted, `crates/nd-cef/src/linux/chrome.rs`
-  reports the popup on placement) need one gate run, then commit
-  `feat(cef): extension popups on linux in views-hosted pages`. The 20-cold-start macOS gate needs
-  a rerun at low load. 1Password popup, desktop-app link and fill need the user to unlock
-  1Password and approve the browser (may need a Developer ID signed `nd package`).
-- **windows-hig**: Alt access keys (needs an nd-ui access-key property, key-tip overlay and
-  dispatch; plan in the tracker) and the window menu when title-bar setup fails (needs a VM run
-  forcing the failure). VM captures pending in `docs/parity/windows-hig.md`.
+- **FormalMusic UI** (`youtubemusic-nd` nd-port, nd branches `fmui-*`): pin FormalMusic to nd
+  `8249438c`, nix build, push, then deploy to g815. `fmui-pill-progress`: thin grey seek line on the
+  pill (2 pt, 4 pt on hover, no accent) as Music.app, capture light and dark. Then scrolling, framework
+  level: content scrolls under the toolbar and the pill with the macOS scroll edge effect (likely by
+  hosting the pill as a bottom split-view accessory), last row clears the pill, GNOME header shade and
+  undershoot, WinUI equivalent; full-bleed horizontal shelves and chip rows (scroll to the edge,
+  first card aligned with the page title at rest). Check every main page, before/after captures.
+- **FormalMusic motion** (`formalmusic-wt-motion` branch motion, `nativedesktop-wt-fm-motion` branch
+  fm-motion, uncommitted): hover affordances, lyrics depth of field, expanded-player hero transition
+  (overlapped open, reverse close), artwork-blur backdrop (`image().blur()`), `player_layout` for
+  narrow windows (art header under 760 pt), `ND_ANIMATION_SLOWDOWN`, no black frames in animated art
+  (image keeps the old picture until the new decode lands), macOS shelf hover tracking fix. macOS done;
+  Linux run on g815 next (widths down to the minimum, 240 Hz black-frame check), then rebase on
+  main, push both, merge, deploy.
+- **Messages**: bump to nd `8249438c`, push main, nd-port, nd-port-linux, deploy to g815. Remaining
+  parity: colour emoji stills, drag-to-attach by hand, rustls, Linux CSD and app id.
+- **cef-extensions-2**: Linux extension popups redesigned (user, 2026-10-22: "Popup in nd view"): the
+  action popup page opens in an nd webview popover anchored to the app's button, sized from the page,
+  `chrome.tabs.query` sees the app's active tab. Test 1Password, uBlock Origin, Dark Reader on g815.
+  The X-window approach (local wip `37b4d281`) is dropped. macOS 20-cold-start gate passed. The CEF
+  "Timeout of new browser info response" is Chromium's own, once per launch, harmless; noted in
+  `docs/plan/upstream-cef.md`.
+- **docs-captures**: notes editor column is a narrow card on Linux and Windows; Linux shots lack
+  CSD window controls; Windows browser/terminal shots show placeholders (omit browser on Windows
+  until WebView2, open a terminal tab). Recapture, push, merge.
+- **windows-hig**: access keys merged; a VM check that a lone Alt reaches GPUI, and the window menu
+  when title-bar setup fails.
 
 ## Queued, not started
 
-1. docs-captures lane: a Windows transport for `nd docs capture` (Unix socket only today,
-   `crates/nd-cli/src`), then recapture every example on macOS, Linux and Windows into
-   `docs/app/assets/captures/<example>/`.
-2. nd main stabilisation: fix broken tests (the media golden first), bring the 47-minute suite
-   under 10 minutes.
-3. Update STATUS.md to today; close draft PR #1.
-4. After the user's next Windows login: verify `messages-install.log`, install FormalMusic there.
-5. Deploy every modified app to every machine: flake update, rebuild the macbook, g815, e1504g
-   (from g815 with `--target-host`), and the real Windows install.
+1. nd main stabilisation: bring the 47-minute suite under 10 minutes.
+2. Update STATUS.md to today; close draft PR #1.
+3. After the user's next Windows login: verify `messages-install.log`, install FormalMusic there.
+4. Deploy every modified app to every machine: macbook, g815, e1504g (from g815 with
+   `--target-host`), and the real Windows install.
+5. The nd repo's committed `.cargo/config.toml` still sets `build-dir` on `/Volumes/Kyan Drive`
+   (removed from nativebrowser in 88f258c); offered to move it to the ecosystem-level config, no
+   answer yet.
 
 ## Upstream GPUI PRs (zed-industries/zed, user's account)
 
@@ -86,8 +73,7 @@ Replies on these PRs are the user's to write.
   5 GB floor on root, and a 30-minute hold per run (`ND_LINUX_GATE_TIMEOUT_MIN`, prints
   `ND_GATE_TIMEOUT`). Waiters print the holder. Root is shared with FormalSpec work
   (`~/fspec-*`, `~/build/formalspec-iso*`, the growing `~/fspec-bootc-vm/disk.raw`): never touch
-  it; when root runs out because of it, stop and tell the user. At parking: root 22 GB free,
-  steamlib 114 GB. The Windows VM starts only with 45 GB free on root.
+  it; when root runs out because of it, stop and tell the user. Last check: root 31 GB free. The Windows VM starts only with 45 GB free on root.
 - Nights (user sleeps next to g815): both Linux hosts in FormalShell overnight mode and `power-saver` (`sudo -n powerprofilesctl set power-saver`; plain powerprofilesctl over ssh is refused), set 2026-10-20. Work continues as normal at nice 19, two cargo jobs.
 - Compile on g815 by default (user, 2026-10-20): the macbook runs other projects' iOS simulators and our builds slow them. The macbook builds only what must be AppKit or Swift, under `taskpolicy -c utility` with `CARGO_BUILD_JOBS=2`, one at a time (user, 2026-10-21: `-b` starved builds to 1 min CPU per 38 min wall).
 - macbook: low priority, macOS crates only, `-p`, one heavy build at a time.
@@ -102,9 +88,9 @@ Replies on these PRs are the user's to write.
 - Windows VM on g815 (the same bare-metal install as a KVM guest, so Windows work no longer
   needs a reboot): `ssh g815 'sudo systemctl start windows-vm'`, then
   `ssh -J g815 -p 2222 kyan@127.0.0.1`; VNC on g815's 127.0.0.1:5901. Its writes land in an
-  overlay recreated on every start, so nothing copied in survives a stop. Monitor disk space
-  throughout: the overlay grows in `/var/lib/windows-vm` on g815's root (shared with the Linux
-  target dir), and the launcher refuses to start under 15 GB free. Check
+  overlay recreated on every start, so nothing copied in survives a stop. The overlay lives on
+  `/mnt/steamlib/windows-vm` (nix config `ac1b1022`), is deleted on stop, needs 45 GB free there to
+  start and powers off below 30 GB. Guest TRIM does not shrink it (ntfs3). Check
   `ssh g815 'df -h / ; du -sh /var/lib/windows-vm'` and the guest's `Get-PSDrive C` before and
   after every build or copy; stop and report rather than clean when it runs low.
   About 12 minutes after a start `windows-vm-prep` reboots the guest into a local admin `ndvm`
