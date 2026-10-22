@@ -6,8 +6,8 @@ Status legend: `[ ]` open, `[~]` in progress, `[x]` done and verified.
 - [x] Old main renamed to `zig`, orphan `main` at `~/Developer/ecosystem/nativedesktop`
 - [x] Record verbatim prompt (`docs/plan/PROMPT.md`)
 - [x] Build cache dir on `/Volumes/Kyan Drive/dev-cache.noindex/`
-- [ ] Move nativebrowser, FormalShell, nothingctl, meshtop, messages, youtubemusic into `~/Developer/ecosystem/` once their panes are idle; `git worktree repair` after
-- [~] Repo-wide cargo config pointing target dir + sccache at the external drive; nix dev shell (build-dir and mount guard done; sccache chains through `ND_RUSTC_WRAPPER`, not installed; nix shell open)
+- [x] Move nativebrowser, FormalShell, nothingctl, meshtop, messages, youtubemusic into `~/Developer/ecosystem/`; worktree links repaired (2026-10-14)
+- [~] Repo-wide cargo config pointing target dir + sccache at the external drive; nix dev shell (build-dir and mount guard done; sccache chains through `ND_RUSTC_WRAPPER`, not installed; nix shell open); open: the committed `.cargo/config.toml` still sets `build-dir` on `/Volumes/Kyan Drive` (removed from nativebrowser in 88f258c), move it to the ecosystem-level config
 
 ## Phase 1: research (reports in `docs/research/`)
 - [x] GPUI: platforms (macOS, Linux Wayland/X11, Windows, web), multi-monitor refresh, a11y, IME, gestures, virtualization, blur, native view embedding (JaceThings tweet), gpui-component, gpui-kit.com
@@ -56,16 +56,16 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
   - Windows hardware run: `scripts/windows/native-run.ps1` on the machine. C: is nearly full there; use `-Root F:\nd-native`; a dev `hello.exe` needs its source tree next to it (assets). Old agent copies, 26 `nd-*` scheduled tasks and temp dirs were removed on 2026-10-14, then this run's own files.
 
 ## Phase 4: look, input, lists, components
-- [ ] M3 theme, skins, patterns: tokens resolved from the OS, Fluent skin, `glass()`, matugen watcher + template, intents, override layers; gate: goldens for Linux and macOS looks, Fluent goldens and metric comparison on the Windows host, matugen live recolour
+- [~] M3 theme, skins, patterns: tokens resolved from the OS, Fluent skin, `glass()`, matugen watcher + template, intents, override layers; gate: goldens for Linux and macOS looks, Fluent goldens and metric comparison on the Windows host, matugen live recolour
   - [x] Lanes tokens + matugen and mac chrome (`m3-mac`): `nd-theme` (tokens, presets, palette chain, app/window/subtree/element overrides, matugen and `theme.toml` watchers, template in `crates/nd-theme/templates/matugen/`), `nd-components` intent types (scaffold, toolbar, sidebar, inspector, titlebar, glass, source list, form, menus, alerts, pickers), their AppKit mappings, `examples/overrides` and `examples/chrome`. Gate on the macbook: `just gate m3` (5/5: goldens light and dark, matugen write to recolour worst 63 ms, chrome intents, settings window, native mapping lint). Goldens and the chrome shots capture with `screencapture -l`, so CI needs Screen Recording for the runner.
-  - Open for other lanes: GPUI/Fluent/Linux mappings of the same intent kinds (`nd-components` holds no platform code); `Pattern::Drawn` context menus still show an `NSMenu` until M4 overlays; `examples/notes` still uses the M5 `source_list` with a `ListState` and needs the data-driven one.
+  - [x] Lanes libadwaita and Fluent skins (2026-10-18 to 10-22): Linux palette, radii, motion, controls, popovers, toast, banner, alerts, backdrop title row, neutral window controls and GNOME accent; Windows WinUI 3 look, access keys with key tips, deactivated title row, frame and Mica following the app theme. Goldens for the active and backdrop chrome recorded on macOS.
+  - Open: `Pattern::Drawn` context menus still show an `NSMenu`; `examples/notes` still uses the M5 `source_list` with a `ListState` and needs the data-driven one.
 - [ ] M4 input, overlays, native surfaces: gestures on both backend kinds, haptics, focus rules, in-window overlays on macOS, promotion on GPUI, `NativeSurface` with minimal WKWebView and WebView2 composition hosts, Linux test GPU surface; gate: overlay leak test over a native surface on three OSes, resize gate with webview and GPU surface, pinch and page swipe on macOS
   - [x] Lanes gestures + focus (`m4-gestures`): `nd-gesture` (pointer arena for tap, double tap, long press and drag; two-finger scroll arbitration with direction lock, so rows, pages and nested scrollers each take their axis; momentum at 0.998/ms in closed form, rubber band, critically damped spring back; row and page swipe trackers), `.on_tap/.on_double_tap/.on_long_press/.on_drag/.on_pinch/.on_rotate/.on_swipe_page/.on_force_click/.on_smart_magnify`, `overflow_*_scroll()`, `cx.haptic(..)` (`NSHapticFeedbackManager` at `DrawCompleted`, no-op elsewhere), focus scopes with save and restore, trapped Tab, Return to the default button (`takes_return` opts out), Escape dismissing the innermost scope (`DismissRequested`), focus rings by input modality. AppKit: OS recognition for pinch, rotate, smart zoom, force click and `trackSwipeEvent` page swipes, the arena for pointer gestures. GPUI: nd hit testing over painted bounds, framework momentum (OS momentum inferred from post-lift deltas takes over on macOS), scroll views painted shifted by the router's offset. Gate on the macbook: `just gate m4` covers 20 tier 1 tests in `nd-gesture`, 5 in `nd-ui/tests/focus.rs`, 2 tier 2 GPUI tests and `real_gestures_gate` (pinch and page swipe through real HID events from `ndshell`, `ND_M4_GESTURES_OK`).
   - Open: AppKit scroll views for a plain `overflow_y_scroll()` div (lists get `NSScrollView` from M5 presenters), row actions as NSTableView row actions (M5), Windows DirectManipulation and Wayland swipe/hold (fork patches), typing queued until a newly opened field focuses (needs M6 text fields). A synthesized page swipe never commits under AppKit's tracker, so the commit path is tier 1 only.
   - [x] Lanes overlays + surfaces (`m4-overlays`): `popover`/`panel`/`tooltip` overlay elements (modality, placement, `on_dismiss`, focus scopes from the focus lane), `NativeSurface` (`webview`, `native_surface` with `Url`/`Html`/`TestPattern`, `count_input()` for gates). AppKit: `NSPopover` and child `NSPanel` windows with one event monitor (outside press consumed with its release, Esc in overlay windows), context menus stay `NSMenu`, minimal `WKWebView` host, main menu key equivalents before embedded views; the M6 command palette and toasts moved off the window's frame view into `WindowLayer` child panels (palette key, forwarding shortcuts to nd dispatch; toasts click-through), the interim key-capture hook is gone. GPUI: deferred overlay layer with backdrops, drawn context menus (`GpuiChrome`), overlay-aware gesture hit testing, GPU test pattern surface counting its input. Gates: 4 tier 1 tests (`nd-ui/tests/overlay.rs`), 3 in-process GPUI leak tests (`nd-backend-gpui/tests/overlays.rs`), tier 3 `real_overlay_leak_appkit` (`ND_M4_OVERLAY_LEAK_OK`, HID input over a live page and a native button, with a negative control that fails when the monitor stops consuming), `real_resize_with_webview` (`ND_M4_RESIZE_WEBVIEW_GATE_OK`: no frame shows the window background), and on g815 `real_overlay_leak_hyprland` (`ND_M4_OVERLAY_LEAK_HYPRLAND_OK`, examples/overlays on GPUI in the headless Hyprland runner with the virtual pointer and keyboard, 3/3 runs). Overlay and drawn-menu colours are theme tokens recorded for the appearance audit, which now covers an overlays window.
   - Open: while the palette's panel has the keyboard, the owner draws as main but not key (grey sidebar accents, as with any key panel); the dark palette golden was re-recorded for it. The macOS leak gate fails when another process activates its own window mid-run (the popover closes on deactivation by design); it says so first.
   - Open: WebKit paints page content on its own timeline, so in a fast live resize the web view's own background shows for a frame at a growing edge (reported by the webview resize gate, about 1 frame in 4, 4 pt); the resize gate's frame-count check fails under heavy machine load. WebView2 composition host waits for the Windows reboot; WPE and native-surface promotion under `nd-gpui/fast` are M8.
-- [ ] M5 virtualization: `nd-virtual` with height tree, row cache and versions, NSTableView/NSOutlineView/NSCollectionView presenters (AppKit estimation off), GPUI presenter; gate: conformance suite on GPUI (tier 1) and a real NSTableView (tier 2), 100k rows on e1504g
 - [~] M5 virtualization: `nd-virtual` with height tree, row cache and versions, NSTableView/NSOutlineView/NSCollectionView presenters (AppKit estimation off), GPUI presenter; gate: conformance suite on GPUI (tier 1) and a real NSTableView (tier 2), 100k rows on e1504g
   - Lane `m5-virtual`: `nd-virtual` (`Core`: Fenwick height tree in `f64`, position as an anchor row plus offset, clamping only once visible rows are measured, keyed diff with moves as remove plus insert, `Follow::Tail`, jump targets that settle after measuring, grid lanes, tree metadata; `ListState` with versioned keys, per-row views so clean rows never render, `list`/`table`/`grid`/`tree`, selection, near-start/end, `row_actions`). GPUI presenter (`nd-backend-gpui/src/virtual_list.rs`): our own element, rows measured at the list's width before placement, scroll motion from the window's nd-gesture router (`Scroller::shift` added so a fling survives rows above changing height), drawn header, disclosure and selection. AppKit (`nd-backend-appkit/src/virtual_list.rs`): `NSTableView` for lists and tables, `NSOutlineView` for trees, `NSCollectionView` for grids, a snapshot the data source answers from, one `beginUpdates` per commit with the clip origin restored from the anchor, native `NSTableViewRowAction`s; plain `overflow_*_scroll()` divs are `NSScrollView`s (`scroll_view.rs`). The conformance suite (`nd-virtual/src/conformance.rs`, 12 checks incl. the last-row cases) is green on the model, on the GPUI presenter in GPUI's headless app and on a real NSTableView; plus kinds, row actions and scroll-div tests on both backends. `nd diag scroll --rows N` runs `examples/scroll` (`scroll-bench`).
   - Budget: e1504g ran `nd diag scroll` once on 0c485261 and was over (p95 52 to 100 ms at 60 Hz, 10k and 100k alike). Profiling found the flight recorder serializing the whole semantic tree to JSON every frame and the presenter laying out overscan rows; both fixed (d377a89c, 148454c0). Rerun on e1504g from main 3bebe63b (2026-10-14): 100k rows p95 17.0 ms, 1 to 2 missed of about 600 at 60 Hz; 10k the same; within budget. Fallback on g815 (displays off by instruction, so no window): `gate_m5::gpui_scroll_budget` in GPUI's headless app, release, 100k rows: p95 0.89 ms per frame at 40 pt per frame, 1.69 ms at 400 pt, none over 16.7 ms (`docs/plan/baselines.md`). A separate headless Hyprland on g815 could not open a render device over ssh (seatd), so the windowed fallback was not run.
@@ -105,11 +105,11 @@ Milestones below match ARCHITECTURE.md section 16. Each closes only when `just g
   - Linux and Windows captures 13/13 (2026-10-22: Linux in headless Hyprland through `scripts/linux-gate`, Windows over the named pipe with `ndshell agent` launching and capturing). Open: the OS-release diff job; rich text (paragraph links render as a row of links under the paragraph); Swift widgets cannot emit events yet.
 
 ## Phase 7: ports
-- [ ] M13 messages (can start after M7)
-- [ ] M14 youtubemusic (after M7; on the Kopuz daemon, see the 2026-10-20 decision in PROMPT.md)
-- [ ] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
+- [~] M13 messages (can start after M7)
+- [~] M14 youtubemusic (after M7; on the Kopuz daemon, see the 2026-10-20 decision in PROMPT.md)
+- [~] M15 nativebrowser (after M9; gate includes extensions and 1Password on Hyprland)
   - [x] Prep lane (`browser`, 2026-10-20): plan and parity checklist on nativebrowser's `nd-port` branch (`docs/nd-port-plan.md`, `docs/nd-parity.md`, 187 items), and a skeleton workspace there on this branch (`crates/lynk`: a window with a sidebar and one CEF page, built and run on the macbook).
-  - The old app runs CEF in Chrome style (extensions, the Web Store, `chrome://` pages, picture-in-picture, 1Password); nd-cef is off-screen Alloy only, and `[webview.cef] style = "chrome"` is read by nothing. nd lanes the port waits on, each with its done criterion in the plan: `cef-chrome-style` (windowed Chrome-style pages, an `NSView` on macOS, an X11 child under XWayland on Hyprland, Chrome UI hidden and its commands routed to the app), `cef-extensions` (installed list, action popups, Web Store install), `cef-request-filter` (synchronous allow, block or redirect on the IO thread for adblock-rust), `webview-private-window` (one `Profile::Private` per window), `cef-user-gesture-js` (picture-in-picture), `nd-tab-drag` (source list and tile grid reorder, live page between windows), `nd-sidebar-reveal` (edge reveal with the traffic lights riding it), `webview-print`.
+  - [x] nd lanes the port waited on, all merged: `cef-chrome-style`, `cef-extensions` and `cef-extensions-2` (installed list, action popups, Web Store install, popups on Linux in an nd view), `cef-request-filter`, `webview-private-window`, `cef-user-gesture-js`, `nd-tab-drag`, `nd-sidebar-reveal`, `webview-print`. Still open: the XWayland path on Hyprland for 1Password.
 - [ ] Files/Finder prep along the way: grid/table at 100k entries, column view, file drag with promises, preview overlay, file watcher, thumbnails, volumes source list, breadcrumb
 
 ## Port gaps (branch port-gaps)
@@ -126,14 +126,11 @@ green, `clippy --workspace` clean on g815.
 - Font override: `ThemeRefinement::font/mono_font`, `theme.toml` keys.
 - `window.focus(id)` and `App::focus_id`, both falling through to the first focusable descendant.
 - Automation: `Probe.visible`, semantic click on AppKit list rows.
-- `video()`: AVPlayerLayer on AppKit; GPUI draws the placeholder and reports `VideoFailed` (no
-  GStreamer or Media Foundation surface yet).
+- `video()`: AVPlayerLayer on AppKit; GPUI plays through Media Foundation and GStreamer since v0.6.1.
 - `nd new --nd-path` builds outside nd's tree: patch table without `--standalone`, nd's
   `Cargo.lock`, `/usr/bin/clang` for Apple targets (gate_m1 generates into the temp dir).
 
-Open: a GPUI video surface; tier 2 for the font override and automation rows on AppKit; GPUI
-goldens (forms, media, nav) fail on g815; their re-record is
-also open on main (HANDOFF, `m2-windows-2`), so it was not done here.
+Open: tier 2 for the font override and automation rows on AppKit. Done since: GPUI video (Media Foundation, GStreamer; v0.6.1) and the golden re-records.
 
 ## Messages port gaps (branch msg-gaps)
 
@@ -149,3 +146,26 @@ What the messages parity pass needed on top of port-gaps. AppKit tier 2 in
 - AppKit panels fade in and out; reactions landing on a shown bubble fade in.
 - `WindowOptions::background()`: opens without taking focus or activating the app.
 
+## Open lanes (HANDOFF, 2026-10-22)
+
+Each runs in its own worktree on a branch named after the lane. Every FormalMusic branch is checked on g815, macOS and the Windows 11 VM before merging.
+- [~] FormalMusic Linux motion (`fm-hero-linux`): the expanded player opens without animation and the cover slides behind the bar on close.
+  - [ ] fm-lyrics-motion: smooth glides, unblur on hover or scroll, match FormalShell and Kopuz
+  - [ ] fm-bar-narrow: bar controls overflow at 480 wide; clippy `too_many_arguments` at `nd-backend-gpui` nav.rs:351 and :1546
+- [~] FormalMusic now playing (`fmui-now-playing`): equalizer bars on the playing row, "Playing from" header, darkened backdrop. macOS done; g815 Adwaita and the Windows 11 VM next, then merge.
+- [~] FormalMusic title (`fm-title`): on Linux the content header keeps "FormalMusic" on every page; set statically at `crates/app/src/root.rs:821`.
+- [ ] docs-captures-2 (held, 6934bbf4): Linux window controls follow the system button layout (GNOME default is close only) and sit in the gnome-split headers; check whether `real_adblock_cef` fails on main too; recapture browser on macOS; make the Windows VM zig cache copy a setup step.
+- [ ] Kopuz MPRIS identity: Kopuz-org/kopuz `mpris-app-identity` (`67d504c8`); the user decides on a PR and release, then the flake moves past v0.22.0.
+- [ ] Messages: bump to each new nd main when asked. Remaining parity: colour emoji stills, drag-to-attach by hand, rustls, Linux CSD and app id.
+- [ ] windows-hig: VM check that a lone Alt reaches GPUI, and the window menu when title-bar setup fails.
+- [ ] FormalMusic automation tree: on g815 `getTree` lists 2 nodes before the library loads, and the installed build lacks the `capture` feature.
+
+## Queue
+
+1. nd main stabilisation: bring the 47-minute suite under 10 minutes.
+2. Close draft PR #1.
+3. After the user's next Windows login: verify `messages-install.log`, install FormalMusic there.
+4. Deploy every modified app to macbook, g815, e1504g (from g815 with `--target-host`) and the real Windows install.
+5. Linux CI: the headless Chrome embed render check.
+6. OS-release diff job (M12).
+7. Docs site rebuilds on push, after the Cloudflare GitHub app is installed and the Pages project reconnected.

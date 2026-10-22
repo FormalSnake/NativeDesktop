@@ -1,57 +1,65 @@
-# Status, 2026-10-18
+# Status, 2026-10-22
 
-v0.6.1 is tagged (e319443e) and the docs site runs it. Since 2026-10-14: video playback on
-Windows (Media Foundation) and Linux (GStreamer), emoji pickers on all three platforms, Wayland
-touchpad scroll phases, per-platform scroll physics and Fluent motion with exit animations, the
-macOS Messages fixes (hover header, progressive search blur, details slide, pinned grid,
-double-click Quick Look), the docs prose rewrite, and v0.6.0 itself on 2026-10-16. CI: macOS
-green; Linux fails only the headless Chrome embed render check (see HANDOFF).
+v0.6.1 (e319443e, 2026-10-18) is the latest tag and the docs site runs it at native.formalsnake.dev.
+`main` at `30e8e952`: 34 crates, 14 examples, 161 commits since 2026-10-18. Merged lanes passed their
+own gates. The full test suite still takes 47 minutes.
 
-The rest of this file is the 2026-10-14 snapshot.
+## Per platform
 
-# Status, 2026-10-14 morning
+| Platform | Works today |
+| --- | --- |
+| macOS | Real AppKit controls throughout. Stock NSToolbar, sidebar split item, inspector and settings as system components; `glass()`; the floating bottom accessory is plain Liquid Glass, content scrolls under it behind the system scroll edge effect; source list rows with artwork, size-following rows and animated inserts; mini switches in forms; window tabs; tab drag across lists, tile grids and windows; edge-revealed sidebar; command palette with fade; WKWebView and CEF (Chrome-style pages, extensions, Web Store installs, request filter, private sessions, print) |
+| Linux | GPUI with a libadwaita skin: palette, radii, motion, controls, popovers, toast, banner, alerts, backdrop title row, raised shadow and undershoot at scroll edges, a header bar per pane, neutral window controls with the GNOME accent. Matugen live recolour, headless Hyprland runner, CEF off-screen with extension popups in an nd view, GStreamer video, built-in emoji picker, tray icons, print through the desktop portal, apps that outlive their windows |
+| Windows | GPUI with a WinUI 3 skin: Mica, drawn caption buttons with Snap Layouts, NavigationView rows, Segoe Fluent glyphs, ContentDialog alerts and about panel, access keys with key tips, deactivated title row, Fluent motion, frame and Mica following the app theme. Media Foundation video, system emoji panel, per-monitor vblank pacing (240/144 Hz). Workspace tests and clippy pass in the VM. Resize gate fails only the frame check, 1 to 3 of 100 frames one drag step behind |
+| Web | Wasm GPUI backend with the plain GPUI look; every example runs in headless Chrome. The `webview()` iframe is not built |
 
-`main` at dc2430f6: 32 crates, 14 examples, 172 commits since last evening. Merged lanes all
-passed their own gates; `main` itself is being stabilized right now (see "Open").
+## Per crate group
 
-## Done
+- Core: `nd`, `nd-core`, `nd-ui` (apps can run with no window open and quit on their own), `nd-theme`, `nd-components` (scaffold, shelves, bottom accessory, conditional builders), `nd-virtual`, `nd-gesture`.
+- Backends: `nd-backend-appkit`, `nd-backend-gpui`, `nd-os-linux`, `nd-os-windows`, `nd-os-web`, `nd-gpui` (fork patches up to 0010).
+- Content: `nd-webview`, `nd-cef`, `nd-terminal`, `nd-icons`.
+- System and app services: `nd-system`, `nd-config`, `nd-settings`, `nd-data`, `nd-ipc`, `nd-plugin`, `nd-update`.
+- Tooling: `nd-cli`, `nd-diag` (a panic off the main thread exits 101 without running exit handlers), `nd-automation`, `nd-test`, `nd-mcp`, `ndshell` (shot command, libadwaita reference captures, Windows capture over the named pipe), `nd-docs`.
+
+## Apps
+
+| App | State |
+| --- | --- |
+| Examples (14) | Run on all three native platforms and the web. Docs captures: Linux and Windows 13/13, macOS recaptured for v0.6.1 |
+| FormalMusic (youtubemusic port) | Runs on macOS, g815 and the Windows VM; deployed on g815 and the macbook with nd `30e8e952`. Pill player bar, lyrics depth of field, hero and presentation motion, Kopuz daemon underneath. Linux lacks the expanded player open animation and a per-page header title |
+| Messages | Runs on macOS and Linux (Linux CSD and app id open). Idle until the next nd bump |
+| nativebrowser | Skeleton (`crates/lynk`: sidebar and one CEF page) on its `nd-port` branch; the nd lanes it waited on (Chrome-style pages, extensions, request filter, private windows, tab drag, sidebar reveal, print) are merged |
+
+## Milestones
 
 | Milestone | State |
 | --- | --- |
-| M0 skeleton, first mac window | done: resize gate with real HID drag, traffic lights by coordinates |
-| M1 diagnostics + harness | done: crash/hang bundles with UI tree, `nd diagnose`, locators, MCP, `nd new/check/test` |
-| M2 backends + pacing | macOS and Linux done (Hyprland no controls, headless Hyprland test runner, per-monitor pacing 144/241 Hz on g815); Windows run on hardware 2026-10-14: per-monitor vblank pacing (240/144), resize gate all but 1 to 3 of 100 frames |
-| M3 theme + mac chrome | done on macOS: tokens, matugen live reload (under 70 ms), `glass()`, sidebar/toolbar/inspector/settings as system components |
-| M4 input + overlays | done: gestures with momentum and rubber band, haptics, focus rules, overlays that never leak input (proven over a live webview on macOS and Hyprland) |
-| M5 virtualization | done: one list/table/grid/tree API, NSTableView natively, last-row bug class covered by tests; e1504g rerun pending |
-| M6 components | navigation (your command palette, ported exactly), forms, media (player bar plays audio), tabs/panes/dialogs |
-| M7 settings + system | done: TOML settings with Nix read-only mode and generated home-manager module, plugins + Discord RPC example, IPC, SQLite, dialogs/clipboard/notifications/keychain/tray/media keys/audio |
-| M8 webviews | WKWebView and CEF (off-screen, part of the window) on macOS with full zig parity; Linux/Windows engines stubbed |
-| M9 terminal | done on macOS and GPUI via libghostty-vt |
-| M10 packaging + updates | macOS .app/.pkg/.dmg, signed delta updates from a self-hostable feed; Linux/Windows packages build but untested on their OS |
-| M11 web | done: examples run in headless Chrome unchanged |
-
-Also fixed along the way: dark-mode text colours (your e1504g report) plus a contrast/token audit
-in `nd check`; your Nix direnv shells no longer leak Nix's SDK/xcrun/strip on macOS
-(`~/.config/nix` 26032a31); daily disk cleanup timer on g815/e1504g (8c995a3a).
-
-## Ecosystem move
-
-All seven repos now live in `~/Developer/ecosystem/` (nativedesktop, nativebrowser, FormalShell,
-nothingctl, meshtop, messages, youtubemusic). Worktree links repaired; messages' Find My launch
-agent reinstalled at the new path and healthy. Old Zig code stays at `~/Developer/NativeDesktop`
-on branch `zig`.
+| M0 to M1 | done |
+| M2 backends + pacing | macOS and Linux done; Windows on hardware and in the VM, resize frame check at 1 to 3 of 100 |
+| M3 theme + chrome | done on macOS, Linux (libadwaita) and Windows (Fluent) |
+| M4 input + overlays | done on macOS and GPUI; WebView2 host not written |
+| M5 virtualization | done; e1504g 100k rows p95 17.0 ms at 60 Hz |
+| M6 components | done: navigation, forms, media, tabs, panes, dialogs |
+| M7 settings + system | done |
+| M8 webviews | WKWebView and CEF on macOS and Linux; WebView2 and WPE not written |
+| M9 terminal + CEF | done on macOS and GPUI; Linux and Windows terminal runs open |
+| M10 packaging + updates | macOS done; Linux and Windows packages build but untested on their OS |
+| M11 web | done |
+| M12 docs | site live; push-triggered rebuilds wait on the Cloudflare GitHub app (see below) |
+| M13 to M15 ports | messages and FormalMusic running; nativebrowser at skeleton |
 
 ## Open
 
-- `main` stabilization agent running: a few tests broke after the last merges, and the full suite
-  takes 47 min; target under 10.
-- Windows: hardware run and the first WinUI pass merged 2026-10-14; open is the rest of the Fluent skin and a Windows build of main.
-- e1504g: 100k-row scroll rerun pending (was offline).
-- Not started: M12 docs site, agent docs and README template polish, ports of messages,
-  youtubemusic and nativebrowser.
+- Open lanes: FormalMusic Linux motion, now playing, Linux title; docs-captures-2; Kopuz MPRIS identity; windows-hig Alt and window menu checks (HANDOFF).
+- Test suite: 47 minutes, target under 10.
+- Linux CI fails only the headless Chrome embed render check.
+- FormalMusic automation tree on g815 lists 2 nodes before the library loads, and the installed build lacks the `capture` feature.
+- Not started: OS-release diff job, NSScrollView-driven scroll for terminal and CEF surfaces, cross-label text selection on GPUI.
 
 ## Needs you
 
-1. OK to push `~/.config/nix` (26032a31, 8c995a3a) so e1504g can pull its cleanup script.
-2. Windows code signing choice, needed only at Windows packaging.
+1. Install the Cloudflare Workers and Pages GitHub app on the FormalStudio org and reconnect the `nativedesktop` Pages project to FormalStudio/NativeDesktop.
+2. Kopuz-org/kopuz branch `mpris-app-identity` (`67d504c8`): PR and release decision.
+3. Move the nd repo's `build-dir` in `.cargo/config.toml` (still on `/Volumes/Kyan Drive`) to the ecosystem-level config?
+4. Replies on upstream GPUI PRs #65728, #65729, #65730.
+5. Windows code signing choice, needed only at Windows packaging.
