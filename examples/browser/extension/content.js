@@ -7,7 +7,3 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   document.title = "filled:" + message.fill;
   reply({ ok: !!field });
 });
-// The page asks for a fill itself where the app has no toolbar button to click.
-window.addEventListener("message", (e) => {
-  if (e.source === window && e.data === "nd-fill") chrome.runtime.sendMessage({ want: "fill" });
-});

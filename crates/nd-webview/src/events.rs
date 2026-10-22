@@ -306,10 +306,25 @@ pub struct ExternalProtocol {
 
 /// An extension popup that [`WebView::run_extension_action`] opened for this page is on screen,
 /// at `bounds` in the page's window (logical pixels from the content's top left).
+///
+/// With `page`, the engine leaves showing it to the app (nd-cef on Linux): mount `page` in a
+/// popover under the extension's button, sized by [`ExtensionPopupResized`], and call
+/// [`WebView::close_extension_popup`] when the popover is dismissed. `bounds` is then only where
+/// the popup would start.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExtensionPopupOpened {
     pub id: String,
     pub bounds: crate::extensions::Anchor,
+    pub page: Option<WebView>,
+}
+
+/// The popup [`ExtensionPopupOpened::page`] holds wants this size (logical pixels), as Chrome
+/// sizes a popup: its content, kept within 25 by 25 and 800 by 600.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionPopupResized {
+    pub id: String,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// An extension popup that [`WebView::run_extension_action`] opened for this page closed: a

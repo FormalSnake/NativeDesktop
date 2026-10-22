@@ -97,6 +97,14 @@ struct State {
     watching_store: bool,
     /// Store page targets with the install hook, and their sessions.
     store_pages: HashMap<String, String>,
+    /// The popup nd shows in a page of its own (`run_action_in_view`).
+    view_popup: Option<ViewPopup>,
+}
+
+struct ViewPopup {
+    id: String,
+    page: u64,
+    view: nd_webview::WebView,
 }
 
 struct Popup {
@@ -953,9 +961,13 @@ fn parse_action(v: &Value) -> ActionState {
 
 /// `chrome.action`'s state of extension `id` for `page`'s tab.
 pub(crate) fn action_state(page: &CefPage, id: String, done: Then<ActionState>) {
+    action_raw(page.id, id, Box::new(move |r| done(r.map(|(_, v)| parse_action(&v)))));
+}
+
+/// [`action_state_code`]'s answer for page `page_id`, with the page's Chrome window.
+fn action_raw(page_id: u64, id: String, done: Then<(i64, Value)>) {
     let done = Rc::new(RefCell::new(Some(done)));
     let d2 = done.clone();
-    let page_id = page.id;
     when_started(
         move || {
             let Some(p) = page::get(page_id) else { return Err("the page closed".into()) };
@@ -979,9 +991,9 @@ pub(crate) fn action_state(page: &CefPage, id: String, done: Then<ActionState>) 
                     probe(&id, move |r| {
                         let Some(done) = d2.borrow_mut().take() else { return };
                         match r {
-                            Ok(session) => evaluate(&session, &action_state_code(window), move |r| {
-                                done(r.map(|v| parse_action(&v)))
-                            }),
+                            Ok(session) => {
+                                evaluate(&session, &action_state_code(window), move |r| done(r.map(|v| (window, v))))
+                            }
                             Err(e) => done(Err(e)),
                         }
                     });
@@ -1012,6 +1024,9 @@ fn discover(then: impl FnOnce() + 'static) {
 /// A click on extension `id`'s action for `page`, its popup placed under `anchor`.
 pub(crate) fn run_action(page: &CefPage, id: String, anchor: Anchor, done: Then<ActionOutcome>) {
     let page_id = page.id;
+    if cfg!(target_os = "linux") {
+        return run_action_in_view(page, id, anchor, done);
+    }
     if let Err(e) = page.view.extension_actions() {
         return done(Err(e));
     }
@@ -1196,7 +1211,272 @@ fn close_target(target: &str) {
 
 /// Closes the popup a click opened for `page`, if one is open.
 pub(crate) fn close_popup(page: u64) {
+    let shown = ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.view_popup.as_ref().is_some_and(|p| p.page == page) { s.view_popup.take() } else { None }
+    });
+    if let Some(popup) = shown {
+        point_worker(&popup.id, None, || {});
+        ST.with(|s| s.borrow_mut().last_close = Some((popup.id.clone(), page, Instant::now())));
+        if let Some(p) = page::get(page) {
+            p.page.emit(nd_webview::ExtensionPopupClosed { id: popup.id });
+        }
+    }
     if let Some(target) = ST.with(|s| s.borrow().popup.as_ref().filter(|p| p.page == page).map(|p| p.target.clone())) {
         close_target(&target);
     }
+}
+
+/// Script messages from a popup nd shows in a page of its own.
+const VIEW_POPUP_MESSAGE: &str = "ndExtensionPopup";
+/// Chrome's bounds for a popup's size.
+const POPUP_MIN: f64 = 25.;
+const POPUP_MAX: (f64, f64) = (800., 600.);
+
+/// A click on extension `id`'s action where Chromium cannot show the popup (Linux, where a
+/// Chrome-style page has no toolbar): nd loads the action's popup page in a page of its own, and
+/// the app shows it ([`nd_webview::ExtensionPopupOpened::page`]). The popup is told the clicked
+/// page's tab and window, which Chrome gives a popup and a page of its own would not have.
+fn run_action_in_view(page: &CefPage, id: String, anchor: Anchor, done: Then<ActionOutcome>) {
+    let page_id = page.id;
+    let reclick = ST.with(|s| {
+        let s = s.borrow();
+        s.last_close.as_ref().is_some_and(|(i, p, at)| *i == id && *p == page_id && at.elapsed() < RECLICK)
+    });
+    if reclick {
+        return done(Ok(ActionOutcome::PopupClosed));
+    }
+    let open = ST.with(|s| s.borrow().view_popup.as_ref().filter(|p| p.page == page_id).map(|p| p.id.clone()));
+    if let Some(open) = open {
+        close_popup(page_id);
+        if open == id {
+            return done(Ok(ActionOutcome::PopupClosed));
+        }
+    }
+    let profile = page.page.options().profile.clone();
+    view_popup_url(
+        page_id,
+        id.clone(),
+        Instant::now() + POPUP_WAKE,
+        Box::new(move |r| {
+            let (window, url) = match r {
+                Ok((window, Some(url))) => (window, url),
+                // Chromium fires `onClicked` through the window's toolbar, which a Chrome-style page
+                // here has none of: `Extensions.triggerAction` crashes the browser process.
+                Ok((_, None)) => {
+                    return done(Err(format!(
+                        "extension {id} has no popup for this page, and its `onClicked` needs Chromium's toolbar"
+                    )));
+                }
+                Err(e) => return done(Err(e)),
+            };
+            let Some(parent) = page::get(page_id) else { return done(Err("the page closed".into())) };
+            crate::native_messaging::link_hosts(&crate::runtime::root_cache());
+            let id2 = id.clone();
+            point_worker(&id2, Some(window), move || {
+                let options = nd_webview::WebViewOptions::default()
+                    .profile(profile)
+                    .engine(nd_webview::Engine::Cef)
+                    .cef_style(nd_webview::CefStyle::Chrome);
+                let view = nd_webview::WebView::with_options(options);
+                let shim = nd_webview::UserScript::new("nd-extension-popup", popup_shim(window))
+                    .at_start()
+                    .allow([format!("chrome-extension://{id}/*")]);
+                // The handler first: the shim posts to it as soon as it runs.
+                view.register_script_message(VIEW_POPUP_MESSAGE, None);
+                view.add_user_script(shim);
+                view.load(url);
+                ST.with(|s| {
+                    s.borrow_mut().view_popup = Some(ViewPopup { id: id.clone(), page: page_id, view: view.clone() })
+                });
+                let bounds = Anchor::new(anchor.x, anchor.y + anchor.height, POPUP_MIN, POPUP_MIN);
+                parent.page.emit(nd_webview::ExtensionPopupOpened { id, bounds, page: Some(view) });
+                done(Ok(ActionOutcome::PopupOpened));
+            });
+        }),
+    );
+}
+
+/// Page `id`'s browser is gone: a popup shown for it goes with it.
+pub(crate) fn page_closed(id: u64) {
+    close_popup(id);
+}
+
+/// How long a click waits for an extension's service worker to set its popup: many set it with
+/// `chrome.action.setPopup` when they start, and a click may be what starts them.
+const POPUP_WAKE: Duration = Duration::from_secs(3);
+
+/// The popup URL of extension `id`'s action on page `page_id`, with the page's Chrome window.
+/// Without one yet, the extension's service worker is woken and asked again until `end`.
+fn view_popup_url(page_id: u64, id: String, end: Instant, done: Then<(i64, Option<String>)>) {
+    action_raw(
+        page_id,
+        id.clone(),
+        Box::new(move |r| {
+            let (window, v) = match r {
+                Ok(r) => r,
+                Err(e) => return done(Err(e)),
+            };
+            if let Some(url) = v["popup"].as_str().filter(|p| !p.is_empty()) {
+                return done(Ok((window, Some(url.to_owned()))));
+            }
+            if Instant::now() > end {
+                return done(Ok((window, None)));
+            }
+            probe(&id.clone(), move |r| {
+                if let Ok(session) = r {
+                    evaluate(&session, "chrome.runtime.sendMessage('nd-wake').catch(() => 0), true", |_| {});
+                }
+                crate::runtime::later(Duration::from_millis(150), move || view_popup_url(page_id, id, end, done));
+            });
+        }),
+    );
+}
+
+/// The popup's page took Chromium's last focused window, which an extension's background asks
+/// for as the clicked page's (`lastFocusedWindow`), so the clicked page's window takes it back.
+fn refocus(page: u64, id: String) {
+    let Some(p) = page::get(page) else { return };
+    p.target_id(move |r| {
+        let Ok(target) = r else { return };
+        pipe::call("Target.activateTarget", json!({ "targetId": target }), None, move |r| {
+            if let Err(e) = r {
+                tracing::warn!("nd-cef: activating the page under extension {id}'s popup: {e}");
+            }
+        });
+    });
+}
+
+/// Points extension `id`'s service worker at the clicked page's Chrome window while its popup is
+/// open (`None` once it closed): the worker asks for the active tab of the last focused (or a
+/// `normal`) window, and a Chrome-style page here is a `popup` window Chromium may not count as
+/// focused. Best effort: an extension without a worker is left as it is.
+fn point_worker(id: &str, window: Option<i64>, then: impl FnOnce() + 'static) {
+    let prefix = format!("chrome-extension://{id}/");
+    let opening = window.is_some();
+    let window = window.map_or("null".to_owned(), |w| w.to_string());
+    let code = format!(
+        r#"(() => {{
+  globalThis.__ndPopupWindow = {window};
+  if (globalThis.__ndPopupPatched || !globalThis.chrome || !chrome.tabs) return true;
+  globalThis.__ndPopupPatched = true;
+  const query = chrome.tabs.query.bind(chrome.tabs);
+  chrome.tabs.query = (info, cb) => {{
+    const w = globalThis.__ndPopupWindow;
+    if (w != null && info && (info.lastFocusedWindow || info.currentWindow)) {{
+      info = Object.assign({{}}, info);
+      delete info.lastFocusedWindow; delete info.currentWindow; delete info.windowType; info.windowId = w;
+    }}
+    return query(info, cb);
+  }};
+  return true;
+}})()"#
+    );
+    let patch = move |then: Box<dyn FnOnce()>| {
+        pipe::call("Target.getTargets", json!({}), None, move |r| {
+            let worker = r.ok().and_then(|v| {
+                v["targetInfos"].as_array()?.iter().find_map(|t| {
+                    let ours = t["type"] == "service_worker" && t["url"].as_str()?.starts_with(&prefix);
+                    ours.then(|| t["targetId"].as_str().map(str::to_owned)).flatten()
+                })
+            });
+            let Some(target) = worker else { return then() };
+            pipe::call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None, move |r| {
+                let Some(session) = r.ok().and_then(|v| v["sessionId"].as_str().map(str::to_owned)) else {
+                    return then();
+                };
+                evaluate(&session.clone(), &code, move |r| {
+                    if let Err(e) = r {
+                        tracing::debug!("nd-cef: pointing an extension's worker at the page: {e}");
+                    }
+                    pipe::call("Target.detachFromTarget", json!({ "sessionId": session }), None, |_| {});
+                    then();
+                });
+            });
+        });
+    };
+    if !opening {
+        return patch(Box::new(then));
+    }
+    // A worker asleep wakes for the message, and is patched before the popup can ask it.
+    probe(id, move |r| match r {
+        Ok(session) => {
+            let wake = "Promise.race([chrome.runtime.sendMessage('nd-wake'), new Promise((ok) => setTimeout(ok, 300))]).then(() => true, () => true)";
+            evaluate(&session, wake, move |_| patch(Box::new(then)));
+        }
+        Err(_) => patch(Box::new(then)),
+    });
+}
+
+/// A script message from `from`: whether it was a shown popup's, which this handled.
+pub(crate) fn view_popup_message(from: &nd_webview::Page, name: &str, body: &Value) -> bool {
+    if name != VIEW_POPUP_MESSAGE {
+        return false;
+    }
+    let Some(view) = from.handle() else { return false };
+    let Some((id, page)) =
+        ST.with(|s| s.borrow().view_popup.as_ref().filter(|p| p.view == view).map(|p| (p.id.clone(), p.page)))
+    else {
+        return false;
+    };
+    if body["close"].as_bool() == Some(true) {
+        close_popup(page);
+    } else if body["hello"].as_bool() == Some(true) {
+        refocus(page, id);
+    } else if let (Some(width), Some(height)) = (body["width"].as_f64(), body["height"].as_f64())
+        && let Some(p) = page::get(page)
+    {
+        let width = width.clamp(POPUP_MIN, POPUP_MAX.0);
+        let height = height.clamp(POPUP_MIN, POPUP_MAX.1);
+        p.page.emit(nd_webview::ExtensionPopupResized { id, width, height });
+    }
+    true
+}
+
+/// What a popup page shown by nd needs to act as Chrome's popup does: `currentWindow` and
+/// `lastFocusedWindow` are the clicked page's window (a page of its own is its own window),
+/// `tabs.getCurrent` is no tab, `window.close()` closes the popover, and its content's size is
+/// reported as Chrome's auto-resize would size it.
+fn popup_shim(window: i64) -> String {
+    format!(
+        r#"(() => {{
+  if (window.top !== window || window.__ndPopup) return;
+  window.__ndPopup = true;
+  const WIN = {window};
+  const post = (b) => {{ const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.{VIEW_POPUP_MESSAGE}; if (h) h.postMessage(b); }};
+  const wrap = (obj, name, f) => {{ try {{ const orig = obj && obj[name]; if (typeof orig === 'function') obj[name] = f(orig.bind(obj)); }} catch (e) {{}} }};
+  const fix = (q) => {{
+    if (!q || !(q.currentWindow || q.lastFocusedWindow)) return q;
+    const out = Object.assign({{}}, q);
+    delete out.currentWindow; delete out.lastFocusedWindow; delete out.windowType; out.windowId = WIN;
+    return out;
+  }};
+  const c = globalThis.chrome || {{}};
+  wrap(c.tabs, 'query', (q) => (info, cb) => q(fix(info), cb));
+  wrap(c.tabs, 'getCurrent', () => (cb) => {{ if (cb) {{ setTimeout(() => cb(undefined)); return; }} return Promise.resolve(undefined); }});
+  for (const name of ['getCurrent', 'getLastFocused']) {{
+    wrap(c.windows, name, () => (a, b) => {{ const [opts, cb] = typeof a === 'function' ? [{{}}, a] : [a || {{}}, b]; return c.windows.get(WIN, opts, cb); }});
+  }}
+  window.close = () => post({{ close: true }});
+  post({{ hello: true }});
+  let last = '';
+  const measure = () => {{
+    const d = document.documentElement, b = document.body;
+    if (!d || !b) return;
+    const style = getComputedStyle(b);
+    const width = Math.ceil(Math.max(d.scrollWidth, b.scrollWidth + parseFloat(style.marginLeft) + parseFloat(style.marginRight)));
+    const height = Math.ceil(Math.max(d.getBoundingClientRect().height, b.getBoundingClientRect().bottom + parseFloat(style.marginBottom)));
+    const key = width + 'x' + height;
+    if (key !== last) {{ last = key; post({{ width, height }}); }}
+  }};
+  const start = () => {{
+    const r = new ResizeObserver(measure);
+    r.observe(document.documentElement);
+    if (document.body) r.observe(document.body);
+    measure();
+  }};
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  addEventListener('load', measure);
+}})();"#
+    )
 }

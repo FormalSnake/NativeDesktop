@@ -19,8 +19,8 @@ async function fill(tabId) {
   throw new Error("the page's content script never answered");
 }
 
-chrome.runtime.onMessage.addListener((message, sender, reply) => {
+chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message.want !== "fill") return;
-  fill(message.tabId ?? sender.tab.id).then((r) => reply({ ok: true, r }), (e) => reply({ ok: false, error: String(e) }));
+  fill(message.tabId).then((r) => reply({ ok: true, r }), (e) => reply({ ok: false, error: String(e) }));
   return true;
 });

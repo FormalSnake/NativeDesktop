@@ -32,6 +32,8 @@ thread_local! {
     /// Surfaces drawn this frame, and those drawn the frame before.
     static SHOWN: RefCell<HashMap<gpui::WindowId, HashMap<u64, Hide>>> = RefCell::default();
     static LIVE: RefCell<HashMap<gpui::WindowId, HashMap<u64, Hide>>> = RefCell::default();
+    /// The overlay whose content is painting, as its index in the frame's list.
+    static PAINTING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// A window's frame starts: its overlays record themselves afresh, and once it is drawn the
@@ -62,9 +64,16 @@ pub fn shown(window: &gpui::Window, key: u64, hide: impl FnOnce() + 'static) {
     SHOWN.with(|s| s.borrow_mut().entry(id).or_default().insert(key, Box::new(hide)));
 }
 
-/// What the overlay layer covers in `window` this frame.
+/// What the overlay layer covers in `window` this frame, above what is painting: a surface
+/// inside an overlay (a page in a popover) is covered only by the overlays over that one.
 pub fn occluders(window: &gpui::Window) -> Vec<Occluder> {
-    FRAME.with(|f| f.borrow().get(&window.window_handle().window_id()).cloned().unwrap_or_default())
+    let above = PAINTING.with(|p| p.get()).map_or(0, |i| i + 1);
+    FRAME.with(|f| {
+        f.borrow()
+            .get(&window.window_handle().window_id())
+            .map(|o| o[above.min(o.len())..].to_vec())
+            .unwrap_or_default()
+    })
 }
 
 /// Records its child's bounds as an occluder of its window.
@@ -101,7 +110,8 @@ impl IntoElement for Occluding {
 
 impl gpui::Element for Occluding {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    /// The occluder's index in the frame's list, which is the order overlays paint in.
+    type PrepaintState = usize;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -129,10 +139,16 @@ impl gpui::Element for Occluding {
         _: &mut (),
         window: &mut gpui::Window,
         cx: &mut App,
-    ) {
+    ) -> usize {
         let occluder = Occluder { bounds, draws: self.draws, blocks_input: self.blocks_input };
-        FRAME.with(|f| f.borrow_mut().entry(window.window_handle().window_id()).or_default().push(occluder));
+        let index = FRAME.with(|f| {
+            let mut f = f.borrow_mut();
+            let list = f.entry(window.window_handle().window_id()).or_default();
+            list.push(occluder);
+            list.len() - 1
+        });
         self.inner.prepaint(window, cx);
+        index
     }
 
     fn paint(
@@ -141,10 +157,12 @@ impl gpui::Element for Occluding {
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut (),
-        _: &mut (),
+        index: &mut usize,
         window: &mut gpui::Window,
         cx: &mut App,
     ) {
+        let outer = PAINTING.with(|p| p.replace(Some(*index)));
         self.inner.paint(window, cx);
+        PAINTING.with(|p| p.set(outer));
     }
 }
