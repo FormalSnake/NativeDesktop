@@ -409,6 +409,14 @@ impl Diag {
                 Ok(dir) => eprintln!("nd: incident bundle {}", dir.display()),
                 Err(e) => eprintln!("nd: incident bundle failed: {e}"),
             }
+            // `_exit`, not `exit`: exit runs atexit handlers and C++ static destructors, the GPU
+            // driver's among them, while the main thread keeps drawing. A panic on a worker
+            // thread then dies as a SIGSEGV inside vkAcquireNextImageKHR with no status 101.
+            #[cfg(not(target_arch = "wasm32"))]
+            unsafe {
+                libc::_exit(101)
+            };
+            #[cfg(target_arch = "wasm32")]
             std::process::exit(101);
         }));
     }

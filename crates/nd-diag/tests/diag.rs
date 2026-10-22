@@ -130,6 +130,35 @@ fn input_ring_keeps_the_last_200() {
     assert_eq!(diag.snapshot().inputs[0].t, 50.);
 }
 
+/// A panic on a worker thread ends the process with status 101 and runs no exit handlers: those
+/// tear down libraries, the GPU driver among them, that the main thread is still drawing with.
+#[cfg(unix)]
+#[test]
+fn worker_panic_exits_101_without_exit_handlers() {
+    const CHILD: &str = "ND_DIAG_PANIC_CHILD";
+    if let Some(dir) = std::env::var_os(CHILD) {
+        extern "C" fn handler() {
+            eprintln!("exit handler ran");
+        }
+        let diag: &'static Diag = Box::leak(Box::new(diag(Path::new(&dir), Duration::from_secs(5))));
+        diag.install_panic_hook();
+        assert_eq!(unsafe { libc::atexit(handler) }, 0);
+        std::thread::spawn(|| panic!("worker"));
+        std::thread::sleep(Duration::from_secs(10));
+        return;
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "worker_panic_exits_101_without_exit_handlers", "--nocapture", "--test-threads=1"])
+        .env(CHILD, tmp.path())
+        .output()
+        .expect("child runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(101), "{stderr}");
+    assert!(!stderr.contains("exit handler ran"), "{stderr}");
+    assert_eq!(bundles(&diag(tmp.path(), Duration::from_secs(5)), "panic").len(), 1);
+}
+
 mod gate_m1 {
     use super::*;
 
