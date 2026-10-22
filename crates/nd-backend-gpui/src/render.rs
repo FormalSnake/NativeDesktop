@@ -681,6 +681,7 @@ impl<'a> Build<'a> {
             hover_color,
             sidebar,
             disclosure_color: self.top().text,
+            edges: crate::scrollbar::adwaita_edge_colors(&theme),
         }
         .into_any_element()
     }

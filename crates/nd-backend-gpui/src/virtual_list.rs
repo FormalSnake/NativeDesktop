@@ -88,6 +88,8 @@ pub(crate) struct VirtualList {
     pub hover_color: Hsla,
     pub sidebar: SidebarSelection,
     pub disclosure_color: Hsla,
+    /// libadwaita's raised and undershoot shades at the scroll edges, under that look.
+    pub edges: Option<(Hsla, Hsla)>,
 }
 
 /// How an inset list (a sidebar's) draws its selection.
@@ -107,6 +109,8 @@ pub(crate) struct Prepainted {
     selected: Vec<Bounds<Pixels>>,
     disclosures: Vec<(Bounds<Pixels>, bool)>,
     header: Option<Bounds<Pixels>>,
+    /// The router's offset and scrollable range this frame.
+    scrolled: (f32, f32),
 }
 
 impl IntoElement for VirtualList {
@@ -307,7 +311,7 @@ impl gpui::Element for VirtualList {
         let state = presenters.entry(self.node).or_default();
         state.painted = painted;
         state.viewport = rect(view);
-        Prepainted { hitbox, placed, selected: sel, disclosures, header }
+        Prepainted { hitbox, placed, selected: sel, disclosures, header, scrolled: (synced, range) }
     }
 
     fn paint(
@@ -435,6 +439,10 @@ impl gpui::Element for VirtualList {
             }
             for (i, _) in &prepainted.placed {
                 self.rows[*i].element.paint(window, cx);
+            }
+            if let Some(edges) = self.edges {
+                let (offset, max) = prepainted.scrolled;
+                crate::scrollbar::paint_adwaita_edges(window, view, edges, offset, max);
             }
         });
     }
