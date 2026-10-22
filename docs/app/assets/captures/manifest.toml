@@ -8,9 +8,9 @@ light = "macos-light.png"
 dark = "macos-dark.png"
 
 [browser.linux]
-hash = "78c135df3d1033e1"
+hash = "732ef183506f2b8a"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -24,7 +24,7 @@ dark = "macos-dark.png"
 [chrome.linux]
 hash = "c9ee87e95a12bc1d"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -36,9 +36,9 @@ light = "macos-light.png"
 dark = "macos-dark.png"
 
 [gallery.linux]
-hash = "8b244276e8ad9ed2"
+hash = "dad3a4c4367dd490"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -52,7 +52,7 @@ dark = "macos-dark.png"
 [hello.linux]
 hash = "2cad3d4a9b1ff64d"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -66,7 +66,7 @@ dark = "macos-dark.png"
 [native-widget.linux]
 hash = "7586d6e61679bc44"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -78,9 +78,9 @@ light = "macos-light.png"
 dark = "macos-dark.png"
 
 [notes.linux]
-hash = "5270afff598f74dd"
+hash = "a6600ac061ae0b3f"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -94,7 +94,7 @@ dark = "macos-dark.png"
 [overlays.linux]
 hash = "e385f14a49b66c39"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -108,7 +108,7 @@ dark = "macos-dark.png"
 [overrides.linux]
 hash = "9acab60293bb3206"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -122,7 +122,7 @@ dark = "macos-dark.png"
 [pacing.linux]
 hash = "668d517fbe4eb40a"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -137,7 +137,7 @@ recording = "macos.gif"
 [scroll.linux]
 hash = "f0f74a78aecccb6d"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -151,7 +151,7 @@ dark = "macos-dark.png"
 [system.linux]
 hash = "aa3c75af705c7435"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -165,7 +165,7 @@ dark = "macos-dark.png"
 [tabs.linux]
 hash = "9e31409bfaddeff4"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -179,6 +179,6 @@ dark = "macos-dark.png"
 [terminal.linux]
 hash = "551f9b3dde4d3a93"
 captured_on = "NixOS 26.11 (Zokor), Hyprland"
-date = "2026-10-18"
+date = "2026-10-22"
 light = "linux-light.png"
 dark = "linux-dark.png"
