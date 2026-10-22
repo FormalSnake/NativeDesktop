@@ -32,6 +32,8 @@ use crate::icon::Icon;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SeekMetrics {
     pub track: f32,
+    /// A [`SeekBar::line`]'s thickness; it takes `track` while hovered or dragged.
+    pub line: f32,
     /// Track thickness while hovered or dragged.
     pub track_active: f32,
     pub thumb: f32,
@@ -84,6 +86,7 @@ pub const PILL: PillMetrics = PillMetrics {
 
 pub const SEEK: SeekMetrics = SeekMetrics {
     track: 4.,
+    line: 2.,
     track_active: 6.,
     thumb: 12.,
     hit: 16.,
@@ -122,6 +125,9 @@ pub struct SeekBarProps {
     /// The times sit on the track's row instead, elapsed before it and the length after it:
     /// a player bar's seek row, as GNOME Music and Music's mini player lay it out.
     pub times_beside: bool,
+    /// A progress line: thin, the played part in the secondary label colour over a faint track,
+    /// with no accent, buffered range or thumb, as under the song in Music's mini player.
+    pub line: bool,
     /// What one arrow key moves.
     pub step: Duration,
     /// Accessible name.
@@ -301,6 +307,7 @@ pub fn seek_bar(id: impl Into<SharedString>, clock: PlaybackClock) -> SeekBar {
         buffered: None,
         show_times: false,
         times_beside: false,
+        line: false,
         step: Duration::from_secs(5),
         label: "Playback position".into(),
         enabled: true,
@@ -331,6 +338,11 @@ impl SeekBar {
         let props = self.0.props_mut();
         props.show_times = true;
         props.times_beside = true;
+        self
+    }
+
+    pub fn line(mut self) -> Self {
+        self.0.props_mut().line = true;
         self
     }
 
@@ -653,53 +665,52 @@ impl IntoElement for PlayerBar {
                 // after it and centred against it, the title semibold, the progress line 4 pt
                 // under both from the art's leading edge to the end of the song's own buttons,
                 // the block taking the width between transport and the trailing controls.
-                let song =
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .justify_center()
-                        .gap(px(PILL.seek_gap))
-                        .child(
-                            h_flex()
-                                .id(child("now"))
-                                .w_full()
-                                .min_w_0()
-                                .gap(px(PILL.art_gap))
-                                .items_center()
-                                .child(art(PILL.art).rounded(px(PILL.art_radius)))
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap(px(PILL.line_gap))
-                                        .child(
-                                            label(now.title.clone())
-                                                .rich(RichText::new([span(now.title.clone()).semibold()]))
+                let song = v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_center()
+                    .gap(px(PILL.seek_gap))
+                    .child(
+                        h_flex()
+                            .id(child("now"))
+                            .w_full()
+                            .min_w_0()
+                            .gap(px(PILL.art_gap))
+                            .items_center()
+                            .child(art(PILL.art).rounded(px(PILL.art_radius)))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(PILL.line_gap))
+                                    .child(
+                                        label(now.title.clone())
+                                            .rich(RichText::new([span(now.title.clone()).semibold()]))
+                                            .text_style(TextStyle::Subheadline)
+                                            .truncate(),
+                                    )
+                                    .when_some(now.subtitle.clone(), |el, s| {
+                                        el.child(
+                                            label(s)
                                                 .text_style(TextStyle::Subheadline)
+                                                .tone(LabelTone::Secondary)
                                                 .truncate(),
                                         )
-                                        .when_some(now.subtitle.clone(), |el, s| {
-                                            el.child(
-                                                label(s)
-                                                    .text_style(TextStyle::Subheadline)
-                                                    .tone(LabelTone::Secondary)
-                                                    .truncate(),
-                                            )
-                                        }),
-                                )
-                                .when_some(on_open, |row, open| {
-                                    row.role(Role::Button, format!("{}, open player", now.title))
-                                        .on_tap(move |_, w, cx| open(w, cx))
-                                })
-                                .when(!accessories.is_empty(), |row| {
-                                    row.child(h_flex().flex_none().gap_1().items_center().children(accessories))
-                                }),
-                        )
-                        // The seek bar's hit area is taller than its track; the block counts the track
-                        // only, so art, titles and track centre as one unit in the capsule.
-                        .child(div().relative().w_full().h(px(SEEK.track)).child(
-                            div().absolute().left_0().right_0().top(px((SEEK.track - SEEK.hit) / 2.)).child(seek),
-                        ));
+                                    }),
+                            )
+                            .when_some(on_open, |row, open| {
+                                row.role(Role::Button, format!("{}, open player", now.title))
+                                    .on_tap(move |_, w, cx| open(w, cx))
+                            })
+                            .when(!accessories.is_empty(), |row| {
+                                row.child(h_flex().flex_none().gap_1().items_center().children(accessories))
+                            }),
+                    )
+                    // The seek bar's hit area is taller than its track; the block counts the track
+                    // only, so art, titles and track centre as one unit in the capsule.
+                    .child(div().relative().w_full().h(px(SEEK.line)).child(
+                        div().absolute().left_0().right_0().top(px((SEEK.line - SEEK.hit) / 2.)).child(seek.line()),
+                    ));
                 // Music draws play larger than skip, and the transport in the label colour.
                 let play = play.text_size(px(PILL.play_glyph)).bezel(Bezel::Plain);
                 let previous = previous.text_size(px(PILL.skip_glyph)).bezel(Bezel::Plain);

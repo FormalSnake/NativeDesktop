@@ -307,6 +307,7 @@ fn seek_props(position: u64) -> SeekBarProps {
         buffered: Some(Duration::from_secs(120)),
         show_times: true,
         times_beside: false,
+        line: false,
         step: Duration::from_secs(5),
         label: "Playback position".into(),
         enabled: true,
