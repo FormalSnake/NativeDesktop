@@ -11,8 +11,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use nd_components::{
-    LyricClicked, LyricRowKind, LyricsFollowChanged, LyricsModel, LyricsProps, SCROLL, SCROLL_CURVE, TextStyle,
-    UNLIT_SCALE, anchor_y, bezier, follow_offset, interlude_fill, row_depth, word_fill,
+    LIT_SCALE, LIT_SCALE_CURVE, LyricClicked, LyricRowKind, LyricsFollowChanged, LyricsModel, LyricsProps, SCROLL,
+    SCROLL_CURVE, TextStyle, UNLIT_SCALE, anchor_y, bezier, follow_offset, interlude_fill, row_depth, word_fill,
 };
 use nd_core::NodeId;
 use nd_core::time::{Duration, Instant};
@@ -40,6 +40,13 @@ struct Tween {
     from: f32,
     to: f32,
     start: Instant,
+}
+
+impl Tween {
+    fn at(&self, now: Instant, duration: Duration, curve: [f32; 4]) -> f32 {
+        let x = now.saturating_duration_since(self.start).as_secs_f32() / duration.as_secs_f32();
+        if x >= 1. { self.to } else { self.from + (self.to - self.from) * bezier(curve, x) }
+    }
 }
 
 /// A row's opacity and blur, easing to `to` from where it was when the target changed.
@@ -76,9 +83,15 @@ fn taps(radius: f32) -> Vec<(f32, f32)> {
 #[derive(Default)]
 pub(crate) struct LyricsState {
     depth: Vec<Depth>,
+    /// Each row's size as a fraction of the lit size, growing as it lights.
+    scale: Vec<Tween>,
+    /// The row under the pointer, drawn sharp.
+    hovered: Option<usize>,
     model: LyricsModel,
     offset: f32,
     tween: Option<Tween>,
+    /// The anchor row the follow tween is heading for.
+    tween_anchor: usize,
     /// The next frame with measured rows jumps straight to the anchor.
     snap: bool,
     /// The scroll range: the first and last rows at the anchor line.
@@ -122,6 +135,8 @@ pub(super) fn lyrics(
         s.tween = None;
         s.offset = 0.;
         s.depth.clear();
+        s.scale.clear();
+        s.hovered = None;
         *s.measured.borrow_mut() = Measured { column: None, rows: vec![None; s.model.rows.len()] };
     }
     s.model.advance(p, now);
@@ -144,13 +159,20 @@ pub(super) fn lyrics(
             follow_offset(top(rows.len() - 1), height).max(follow_offset(top(0), height)),
         );
         if synced && s.model.follow.following() {
-            let target = follow_offset(top(lit.anchor.min(rows.len() - 1)), height);
+            let anchor = lit.anchor.min(rows.len() - 1);
+            let target = follow_offset(top(anchor), height);
+            let same_line = s.tween_anchor == anchor;
             if s.snap {
                 s.offset = target;
                 s.tween = None;
                 s.snap = false;
-            } else if s.tween.as_ref().map_or((s.offset - target).abs() > 0.5, |t| (t.to - target).abs() > 0.5) {
+            } else if let Some(tween) = s.tween.as_mut().filter(|_| same_line) {
+                // Rows above grow and shrink while the column moves: the glide keeps its pace
+                // and lands where the line ends up.
+                tween.to = target;
+            } else if s.tween.is_some() || (s.offset - target).abs() > 0.5 {
                 s.tween = Some(Tween { from: s.offset, to: target, start: now });
+                s.tween_anchor = anchor;
             }
         } else if !synced {
             s.range = (0., (top(rows.len() - 1) - height / 2.).max(0.));
@@ -159,11 +181,9 @@ pub(super) fn lyrics(
     } else if !rows.is_empty() {
         window.request_animation_frame();
     }
-    if let Some(&Tween { from, to, start }) = s.tween.as_ref() {
-        let x = now.saturating_duration_since(start).as_secs_f32() / SCROLL.as_secs_f32();
-        s.offset = from + (to - from) * bezier(SCROLL_CURVE, x.min(1.));
-        if x >= 1. {
-            s.offset = to;
+    if let Some(tween) = s.tween {
+        s.offset = tween.at(now, SCROLL, SCROLL_CURVE);
+        if now.saturating_duration_since(tween.start) >= SCROLL {
             s.tween = None;
         } else {
             window.request_animation_frame();
@@ -174,6 +194,7 @@ pub(super) fn lyrics(
     }
     let offset = s.offset;
     let following = s.model.follow.following();
+    let hovered = s.hovered;
     let measured_rows = s.measured.clone();
     drop(s);
 
@@ -211,12 +232,13 @@ pub(super) fn lyrics(
     let motion = theme.motion;
     let duration = motion.slow.as_secs_f32();
     let mut depth = std::mem::take(&mut state.borrow_mut().depth);
+    let mut scale = std::mem::take(&mut state.borrow_mut().scale);
     let mut easing = false;
     for (i, row) in rows.iter().enumerate() {
         let is_lit = synced && lit.contains(i);
         let target = if synced {
             let span = if i < lit.anchor { above } else { below };
-            row_depth(is_lit, i.abs_diff(lit.anchor), span, following)
+            row_depth(is_lit, i.abs_diff(lit.anchor), span, following, hovered == Some(i))
         } else {
             (1., 0.)
         };
@@ -232,11 +254,18 @@ pub(super) fn lyrics(
             y + h > 0. && y < height
         });
         let ink = |c: Hsla| with_alpha(c, c.a * fade);
-        let (row_size, row_weight) = match (row.kind, synced, is_lit) {
-            (_, false, _) => (look.type_of(TextStyle::Title3).0, FontWeight::BOLD),
-            (LyricRowKind::Background, _, _) => (size * 0.7, FontWeight::MEDIUM),
-            (_, true, true) => (size, weight),
-            (_, true, false) => (size * UNLIT_SCALE, weight),
+        let grown = if is_lit { 1. } else { UNLIT_SCALE };
+        if scale.len() <= i {
+            scale.push(Tween { from: grown, to: grown, start: now });
+        } else if scale[i].to != grown {
+            scale[i] = Tween { from: scale[i].at(now, LIT_SCALE, LIT_SCALE_CURVE), to: grown, start: now };
+        }
+        let grow = scale[i].at(now, LIT_SCALE, LIT_SCALE_CURVE);
+        easing |= grow != grown;
+        let (row_size, row_weight) = match (row.kind, synced) {
+            (_, false) => (look.type_of(TextStyle::Title3).0, FontWeight::BOLD),
+            (LyricRowKind::Background, _) => (size * 0.7, FontWeight::MEDIUM),
+            (_, true) => (size * grow, weight),
         };
         let mut el = div()
             .id(ElementId::Integer(i as u64))
@@ -320,11 +349,23 @@ pub(super) fn lyrics(
         }));
         if synced {
             let (sink, line, start) = (ctl.sink.clone(), row.line, Duration::from_secs_f64(row.start.max(0.)));
-            el = el.cursor_pointer().on_click(move |_, _, cx| sink.send(LyricClicked { line, start }, cx));
+            let state = state.clone();
+            el = el.cursor_pointer().on_click(move |_, _, cx| sink.send(LyricClicked { line, start }, cx)).on_hover(
+                move |over: &bool, window, _| {
+                    let mut s = state.borrow_mut();
+                    if *over {
+                        s.hovered = Some(i);
+                    } else if s.hovered == Some(i) {
+                        s.hovered = None;
+                    }
+                    window.refresh();
+                },
+            );
         }
         column = column.child(el);
     }
     state.borrow_mut().depth = depth;
+    state.borrow_mut().scale = scale;
     if easing {
         window.request_animation_frame();
     }

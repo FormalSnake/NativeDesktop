@@ -88,6 +88,7 @@ impl CustomWidget for LyricsWidget {
             observers: RefCell::new(Vec::new()),
             target: RefCell::new(None),
             document_input: RefCell::new(None),
+            hovered: Cell::new(None),
             emit: cx.emitter(),
             wake: cx.waker(),
         });
@@ -133,6 +134,8 @@ struct LyricsInner {
     observers: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
     target: RefCell<Option<Retained<crate::forms::NdControlTarget>>>,
     document_input: RefCell<Option<Rc<Document>>>,
+    /// The row under the pointer, drawn sharp.
+    hovered: Cell<Option<usize>>,
     emit: Emit,
     wake: Waker,
 }
@@ -232,6 +235,7 @@ impl LyricsInner {
         drop(props);
         if changed {
             self.snapped.set(false);
+            self.hovered.set(None);
             self.resync.setHidden(true);
             self.model.borrow_mut().advance(&self.props.borrow(), Instant::now());
             self.build_rows();
@@ -405,7 +409,8 @@ impl LyricsInner {
         for (i, row) in rows.iter().enumerate() {
             let lit = model.lit.contains(i);
             let span = if i < anchor { above } else { below };
-            let (mut opacity, blur) = row_depth(lit, i.abs_diff(anchor), span, following);
+            let hovered = self.hovered.get() == Some(i);
+            let (mut opacity, blur) = row_depth(lit, i.abs_diff(anchor), span, following, hovered);
             if model.rows[i].kind == LyricRowKind::Background {
                 opacity *= 0.7;
             }
@@ -520,13 +525,24 @@ impl LyricsInner {
         }
     }
 
+    /// The row at document point `at`.
+    fn row_at(&self, at: NSPoint) -> Option<usize> {
+        self.rows.borrow().iter().position(|r| at.y >= r.top && at.y < r.top + r.height)
+    }
+
+    fn hover(&self, at: Option<NSPoint>) {
+        let row = at.and_then(|at| self.row_at(at));
+        if self.hovered.replace(row) != row {
+            self.style_rows(true);
+        }
+    }
+
     fn click(&self, at: NSPoint) {
         let model = self.model.borrow();
         if !model.synced() {
             return;
         }
-        let rows = self.rows.borrow();
-        let Some(i) = rows.iter().position(|r| at.y >= r.top && at.y < r.top + r.height) else { return };
+        let Some(i) = self.row_at(at) else { return };
         let row = &model.rows[i];
         self.emit.emit(LyricClicked { line: row.line, start: Duration::from_secs_f64(row.start.max(0.)) });
         self.wake.wake();
@@ -601,7 +617,7 @@ impl Input for LyricsInner {
     }
 }
 
-/// Clicks on the document view seek to the row under the pointer.
+/// Clicks on the document view seek to the row under the pointer, which is drawn sharp.
 struct Document(Weak<LyricsInner>);
 
 impl Input for Document {
@@ -612,6 +628,12 @@ impl Input for Document {
     fn mouse_up(&self, at: NSPoint, _event: &NSEvent) {
         if let Some(inner) = self.0.upgrade() {
             inner.click(at);
+        }
+    }
+
+    fn hover(&self, inside: bool, at: NSPoint) {
+        if let Some(inner) = self.0.upgrade() {
+            inner.hover(inside.then_some(at));
         }
     }
 }

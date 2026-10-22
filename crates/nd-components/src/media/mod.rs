@@ -33,7 +33,7 @@ pub use image::{Image, ImageFailed, ImageKind, ImageLoaded, ImageProps, UNKNOWN_
 pub use lyrics::{
     ANCHOR_AT, DEPTH_BLUR, DEPTH_OPACITY, Follow, Lit, LyricClicked, LyricLine, LyricWord, Lyrics, LyricsFollowChanged,
     LyricsKind, LyricsModel, LyricsProps, LyricsView, Row as LyricRow, RowKind as LyricRowKind,
-    RowWord as LyricRowWord, SCROLL, SCROLL_CURVE, UNLIT_SCALE, anchor_y, bezier, depth_blur, depth_opacity,
+    RowWord as LyricRowWord, LIT_SCALE, LIT_SCALE_CURVE, SCROLL, SCROLL_CURVE, UNLIT_SCALE, anchor_y, bezier, depth_blur, depth_opacity,
     follow_offset, interlude_fill, lit_at, lyrics_view, row_depth, rows as lyric_rows, word_fill,
 };
 pub use pipeline::{DecodeRequest, Decoded, ImageFit, ImagePipeline, ImageSource};
