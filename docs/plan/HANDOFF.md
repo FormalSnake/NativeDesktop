@@ -27,6 +27,22 @@ Cloudflare projects building from FormalStudio repos may need reconnecting). The
 The previous orchestrator session stopped on a rate limit (2026-10-22 15:00); its lanes were
 restarted from their worktrees the same evening.
 
+## Stopped on the usage limit (2026-10-22 night)
+
+Lanes in flight, each in its own worktree with work saved there:
+- FormalMusic deploy: `formalmusic-wt-deploy2` branch deploy-hero (hero-linux merged onto 41eed81, locks
+  pinned to nd 48b07503, uncommitted); next: test, nix build, push main and nd-port, nix bump, switches.
+- Motion: `fm-lyrics-glide` 184e9a83 local (stacked on 48b07503), `fm-bar-narrow` rebased; Windows check
+  of the hero fix not done.
+- Now playing: nd fmui-now-playing 052ae26b and app now-playing 2d0dcbf rebased locally, not pushed;
+  scrim 60 to 70 percent at app `crates/app/src/root.rs:64` uncommitted, g815 look run queued.
+- docs-captures-2 (list selection, Notes editor, full recapture), toolbar-search (centred search,
+  header padding and centred title on Linux), native-widget-map (Antwerpen, Arrecife, Las Palmas;
+  drawn map), docs-perf then docs-one-site, build-speed (nd and apps), fspec (nd .star generator;
+  formalspec 08549fd has gh: loads and origin(); e1504g needs that fspec first), Kopuz PR
+  `mpris-app-identity` (merge when CI is green and CodeRabbit is resolved).
+Needs Kyan: delete the old Pages project `nativedesktop` (domain already moved), a Kopuz release.
+
 ## Open lanes (each in its own worktree, branch named after the lane)
 
 - **FormalMusic motion** (`nativedesktop-wt-fm-motion` branch fm-hero-linux, `formalmusic-wt-motion`
