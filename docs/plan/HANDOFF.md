@@ -6,57 +6,54 @@ guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
 
 ## Where things are
 
-`main` is at `acc49740`. Later on 2026-10-22: fmui-pill-progress, fm-motion (`player_layout`,
-heroes, `image().blur()`, lyrics depth of field), fmui-scroll (scroll edges, full-bleed shelves;
-media goldens re-recorded), gate-toolchain, fm-blur-edges (blur decodes at 8 px per radius, edges
-replicated), gnome-split (one header bar per pane), cef-ext-popup-view (Linux extension popups in
-an nd view). g815 runs FormalMusic 9fa5817 (nix b80fbe1f; Replay Mix plays the clicked row).
-Open: share crash plus playback with no UI (new lane), fmui-pill-nobar (no blur band behind the
-macOS pill, user 2026-10-22), fmui-now-playing (playing row, Playing from header, Up next
-contrast), motion queue fm-hero-linux, fm-lyrics-motion (match FormalShell and Kopuz), fm-bar-narrow
-(plus nav.rs clippy), docs-captures-2 held (Linux controls must follow button-layout), Windows 11 VM
-check for every FormalMusic branch (user 2026-10-22). Never grim the user's real outputs.
+`main` is at `30e8e952`. Merged late on 2026-10-22: fmui-pill-nobar (`da716faf`, the macOS pill is
+plain Liquid Glass with no scroll edge band behind it; the top toolbar is stock NSToolbar) and
+fix-share-crash (`30e8e952`, nd's panic hook ends with `_exit(101)` so a panic off the main thread
+no longer runs the GPU driver's exit handlers mid-frame). Earlier that day: fmui-pill-progress,
+fm-motion, fmui-scroll, gate-toolchain, fm-blur-edges, gnome-split, cef-ext-popup-view.
 
-Earlier, at `8249438c`. Merged before that:
-fmui-pill-clear (macOS player pill is plain system Liquid Glass again, no tint), msg-linux-4
-(drawn submenus open beside their parent, flip, clamp), docs-captures (all 13 examples captured on
-macOS, Linux and Windows, light and dark; Windows transport for `nd docs capture`; Windows frame
-follows the app theme), gnome-polish (gpui patch 0014: hover on elements without an id, which fixed
-the lagging track-row hover; libadwaita backdrop and WinUI inactive title row; 47 px header, Nautilus
-sidebar colour; `ndshell shot` seat has a keyboard). The media golden is green again.
+Deployed through `~/.config/nix` `4b9c1032` on g815 and the macbook: FormalMusic `9a9d93a` (nd
+`30e8e952`, share crash fixed, kopuzd started with `--app-id`/`--app-name`). The user's running
+instances keep the old build until restarted.
 
-Deployed on g815: Messages `c965067d` (nd 786b1692, submenu fix confirmed in a demo instance),
-FormalMusic `3a89e939` (sidebar playlist covers, confirmed by the user).
+Docs site: native.formalsnake.dev shows all shots again (manual Pages deployment c5c8908a). Pushes
+do not rebuild it until the user installs the Cloudflare Workers and Pages GitHub app on the
+FormalStudio org and reconnects the `nativedesktop` Pages project to FormalStudio/NativeDesktop.
+
+The previous orchestrator session stopped on a rate limit (2026-10-22 15:00); its lanes were
+restarted from their worktrees the same evening.
 
 ## Open lanes (each in its own worktree, branch named after the lane)
 
-- **FormalMusic UI** (`youtubemusic-nd` nd-port, nd branches `fmui-*`): pin FormalMusic to nd
-  `8249438c`, nix build, push, then deploy to g815. `fmui-pill-progress`: thin grey seek line on the
-  pill (2 pt, 4 pt on hover, no accent) as Music.app, capture light and dark. Then scrolling, framework
-  level: content scrolls under the toolbar and the pill with the macOS scroll edge effect (likely by
-  hosting the pill as a bottom split-view accessory), last row clears the pill, GNOME header shade and
-  undershoot, WinUI equivalent; full-bleed horizontal shelves and chip rows (scroll to the edge,
-  first card aligned with the page title at rest). Check every main page, before/after captures.
-- **FormalMusic motion** (`formalmusic-wt-motion` branch motion, `nativedesktop-wt-fm-motion` branch
-  fm-motion, uncommitted): hover affordances, lyrics depth of field, expanded-player hero transition
-  (overlapped open, reverse close), artwork-blur backdrop (`image().blur()`), `player_layout` for
-  narrow windows (art header under 760 pt), `ND_ANIMATION_SLOWDOWN`, no black frames in animated art
-  (image keeps the old picture until the new decode lands), macOS shelf hover tracking fix. macOS done;
-  Linux run on g815 next (widths down to the minimum, 240 Hz black-frame check), then rebase on
-  main, push both, merge, deploy.
-- **Messages**: bump to nd `8249438c`, push main, nd-port, nd-port-linux, deploy to g815. Remaining
-  parity: colour emoji stills, drag-to-attach by hand, rustls, Linux CSD and app id.
-- **cef-extensions-2**: Linux extension popups redesigned (user, 2026-10-22: "Popup in nd view"): the
-  action popup page opens in an nd webview popover anchored to the app's button, sized from the page,
-  `chrome.tabs.query` sees the app's active tab. Test 1Password, uBlock Origin, Dark Reader on g815.
-  The X-window approach (local wip `37b4d281`) is dropped. macOS 20-cold-start gate passed. The CEF
-  "Timeout of new browser info response" is Chromium's own, once per launch, harmless; noted in
-  `docs/plan/upstream-cef.md`.
-- **docs-captures**: notes editor column is a narrow card on Linux and Windows; Linux shots lack
-  CSD window controls; Windows browser/terminal shots show placeholders (omit browser on Windows
-  until WebView2, open a terminal tab). Recapture, push, merge.
-- **windows-hig**: access keys merged; a VM check that a lone Alt reaches GPUI, and the window menu
-  when title-bar setup fails.
+- **FormalMusic motion** (`nativedesktop-wt-fm-motion` branch fm-hero-linux, `formalmusic-wt-motion`
+  branch hero-linux): on Linux the expanded player opens without animation and the cover slides
+  behind the bar on close (user, 2026-10-22, repeated that evening). Fix: start the open the same
+  way as macOS and draw the moving cover above the bar both ways. Then fm-lyrics-motion (smooth
+  glides, unblur on hover or scroll, match FormalShell and Kopuz), then fm-bar-narrow (bar controls
+  overflow at 480 wide) plus clippy too_many_arguments at nd-backend-gpui nav.rs:351 and :1546.
+- **FormalMusic now playing** (`nativedesktop-wt-fmui` branch fmui-now-playing a3fd5e07,
+  `youtubemusic-nd` branch now-playing dfa4496): playing row with equalizer bars, "Playing from"
+  header, darkened player backdrop. macOS done; g815 Adwaita and the Windows 11 VM next, then merge.
+- **FormalMusic title** (`nativedesktop-wt-fm-title` fm-title, `formalmusic-wt-title` fix-title):
+  on Linux the content header keeps "FormalMusic" as its title on every page (user, 2026-10-22).
+  The app sets it statically at `crates/app/src/root.rs:821`.
+- **docs-captures-2** (6934bbf4, held, agent stopped on the rate limit): Linux window controls must
+  follow the system button layout (GNOME default is close only) and sit in the gnome-split headers;
+  check whether `real_adblock_cef` fails on main too; recapture browser on macOS; make the Windows VM
+  zig cache copy a setup step. Not restarted yet.
+- **Kopuz MPRIS identity**: Kopuz-org/kopuz branch `mpris-app-identity` (`67d504c8`) makes kopuzd
+  apply `--app-id`/`--app-name` to MPRIS on Linux. Shared repo: the user decides on a PR and release;
+  the flake moves past kopuz v0.22.0 after that.
+- **Messages**: idle; bump to each new nd main when asked. Remaining parity: colour emoji stills,
+  drag-to-attach by hand, rustls, Linux CSD and app id.
+- **windows-hig**: a VM check that a lone Alt reaches GPUI, and the window menu when title-bar
+  setup fails.
+- **FormalMusic automation tree**: on g815 `getTree` lists 2 nodes before the library loads, and the
+  installed build lacks nd-backend-gpui's `capture` feature, so deploy checks cannot screenshot.
+
+Every FormalMusic branch is checked on g815, macOS and the Windows 11 VM before merging (user,
+2026-10-22). Never grim or click the user's real outputs: visual checks use a separate headless
+output or the app's own screenshot test.
 
 ## Queued, not started
 
