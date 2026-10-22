@@ -755,7 +755,10 @@ mod capture {
 
     #[cfg(target_os = "linux")]
     fn session() -> Result<Session> {
-        ndshell::labwc::Labwc::start().map_err(|e| anyhow::anyhow!("headless labwc: {e}"))
+        let labwc = ndshell::labwc::Labwc::start().map_err(|e| anyhow::anyhow!("headless labwc: {e}"))?;
+        // At scale 2, as the macOS shots are, so the site shows every OS at one size.
+        labwc.set_output(3200, 2000, 2.).map_err(|e| anyhow::anyhow!("headless labwc output: {e}"))?;
+        Ok(labwc)
     }
 
     #[cfg(target_os = "macos")]

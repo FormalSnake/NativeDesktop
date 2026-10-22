@@ -126,6 +126,8 @@
                 # client-decorated case (ndshell::weston).
                 labwc
                 weston
+                # Sets the headless output's mode and scale (ndshell::labwc::Labwc::set_output).
+                wlr-randr
                 # dbus-daemon: each headless run's compositors get a private session bus.
                 dbus
                 # nd-system's audio and the GPUI backend's video() dlopen GStreamer: playbin,

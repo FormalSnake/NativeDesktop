@@ -206,10 +206,6 @@ the repository.
   capture it again.
   On Windows the examples are launched and captured by `ndshell agent`, which runs in the
   logged-in user's session (`ndshell agent install`), so the command also works over ssh.
-  On Linux they run in a private headless labwc with `ND_CLIENT_DECORATIONS=1`, so each window
-  draws its own header bar controls as it does on GNOME. An example lists an OS under
-  `no_capture` in `docs/examples.toml`, with the reason, when it has nothing to show there yet;
-  that OS's tab shows the reason instead of a shot.
 
 ```sh
 nd docs check --require macos && nd docs capture --stale

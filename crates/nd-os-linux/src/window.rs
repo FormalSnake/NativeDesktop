@@ -3,9 +3,9 @@
 //! `set_mode` for the decorations the window was opened with, and stores the compositor's
 //! `configure` answer and `wm_capabilities`. This module only reads those back.
 
-use nd_gpui::gpui::{self, App, Window, WindowButton, WindowButtonLayout, WindowDecorations};
+use nd_gpui::gpui::{self, Window, WindowDecorations};
 
-use crate::chrome::{ButtonLayout, Capabilities, ChromePlan, ChromeState, Control, ControlMetrics, Decorations};
+use crate::chrome::{ButtonLayout, Capabilities, ChromeState, Control, Decorations};
 
 /// What nd asks the compositor for. Server-side wherever the compositor offers it, unless
 /// `ND_CLIENT_DECORATIONS=1` asks for the frame GNOME gets (docs captures, chrome checks under a
@@ -35,31 +35,6 @@ pub fn chrome_state(window: &Window, layout: &ButtonLayout) -> ChromeState {
         layout: layout.clone(),
         fullscreen: window.is_fullscreen(),
     }
-}
-
-pub fn chrome_plan(window: &Window, cx: &App) -> ChromePlan {
-    crate::chrome::plan(&chrome_state(window, &button_layout(cx)), ControlMetrics::default())
-}
-
-/// The desktop's `button-layout` as GPUI read it (from the settings portal on Linux), or GNOME's
-/// default where it has none.
-pub fn button_layout(cx: &App) -> ButtonLayout {
-    cx.button_layout().map(from_gpui).unwrap_or_default()
-}
-
-fn from_gpui(layout: WindowButtonLayout) -> ButtonLayout {
-    let side = |buttons: &[Option<WindowButton>]| {
-        buttons
-            .iter()
-            .flatten()
-            .map(|b| match b {
-                WindowButton::Minimize => Control::Minimize,
-                WindowButton::Maximize => Control::Maximize,
-                WindowButton::Close => Control::Close,
-            })
-            .collect()
-    };
-    ButtonLayout { leading: side(&layout.left), trailing: side(&layout.right) }
 }
 
 /// The OS action of a drawn control.

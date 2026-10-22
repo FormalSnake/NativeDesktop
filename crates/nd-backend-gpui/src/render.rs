@@ -1078,7 +1078,13 @@ impl<'a> Build<'a> {
     /// The OS's own controls where it draws them (macOS traffic lights, server decorations);
     /// drawn buttons only under client-side decorations, for the actions the compositor offers.
     fn window_controls(&self, props: &WindowControlsProps, window: &mut gpui::Window) -> AnyElement {
-        let cx = ChromeContext { window: self.window_id, at: props.at, look: self.look() };
+        let cx = ChromeContext {
+            window: self.window_id,
+            at: props.at,
+            embedded: props.embedded,
+            side: props.side,
+            look: self.look(),
+        };
         if let Some(custom) = self.hooks.window_controls(&cx, window) {
             return custom;
         }

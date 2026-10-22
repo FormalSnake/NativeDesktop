@@ -86,6 +86,24 @@ impl Labwc {
         }
     }
 
+    /// Sets the headless output's size in pixels and its scale, through wlr-output-management
+    /// (`wlr-randr`, `ND_WLR_RANDR` overrides the binary). Windows open at their logical size, so
+    /// at scale 2 they draw at twice the pixels, as on a HiDPI screen.
+    pub fn set_output(&self, width: u32, height: u32, scale: f32) -> Result<(), String> {
+        let binary = std::env::var_os("ND_WLR_RANDR").unwrap_or_else(|| "wlr-randr".into());
+        let mut command = self.command(&binary);
+        let output = command.arg("--json").output().map_err(|e| format!("wlr-randr: {e}"))?;
+        let outputs: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| format!("wlr-randr: {e}"))?;
+        let name = outputs[0]["name"].as_str().ok_or("wlr-randr lists no output")?.to_owned();
+        let status = self
+            .command(&binary)
+            .args(["--output", &name, "--custom-mode", &format!("{width}x{height}"), "--scale", &scale.to_string()])
+            .status()
+            .map_err(|e| format!("wlr-randr: {e}"))?;
+        status.success().then_some(()).ok_or_else(|| format!("wlr-randr exited with {status}"))
+    }
+
     pub fn wayland_socket(&self) -> PathBuf {
         self.runtime_dir.join(&self.wayland_display)
     }

@@ -4,9 +4,12 @@
 //!   rules on it (Hyprland's `class`) see the app's name.
 //! - The titlebar insets and the drawn controls follow [`crate::chrome::plan`]: nothing at all
 //!   under server-side decorations (Hyprland), and under client-side ones only the controls
-//!   `wm_capabilities` offers, on the sides the desktop's `button-layout` puts them.  They are
-//!   drawn over every window at the header bar's ends, as every libadwaita window has them, so
-//!   a `window_controls()` node draws nothing: the buttons have one place, as on Windows.
+//!   `wm_capabilities` offers, on the sides the desktop's `button-layout` puts them. An embedded
+//!   `window_controls()` slot draws its group where it sits (a split header's sidebar and
+//!   content ends); the window overlay draws every group no slot took at the header bar's ends,
+//!   so a window without a slot still has its close button, as every libadwaita window does.
+//!   The layout is `org.gnome.desktop.wm.preferences button-layout`, GNOME's `appmenu:close`
+//!   where it cannot be read.
 //! - Frame times come from `wp_presentation` (the fork's `Window::last_presentation`): the
 //!   timestamp is when the previous frame turned into light and the target is the next refresh
 //!   after now on the compositor's predicted cadence, rather than "now plus one interval".
@@ -26,10 +29,10 @@ use nd_gpui::gpui::{
 };
 use nd_icons::Icon;
 use nd_theme::color::with_alpha;
-use nd_ui::TitlebarInsets;
+use nd_ui::{TitlebarInsets, WindowControlsSide};
 
 use crate::chrome::{self, ButtonLayout, Control, ControlMetrics};
-use crate::window::{button_layout, chrome_state, perform, requested_decorations};
+use crate::window::{chrome_state, perform, requested_decorations};
 
 /// The header bar height the controls centre in, libadwaita's 46 px.
 pub const TITLEBAR_HEIGHT: f32 = 46.;
@@ -41,6 +44,15 @@ pub struct LinuxHooks {
     /// Read when a window opens; the hooks that draw are not handed GPUI's app.
     layout: RefCell<ButtonLayout>,
     reported: RefCell<HashMap<WindowId, String>>,
+    /// The groups embedded slots took, per window: in the frame being built, and in the last
+    /// one, which the insets (asked before the build) go by.
+    claimed: RefCell<HashMap<WindowId, (Claimed, Claimed)>>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Claimed {
+    leading: bool,
+    trailing: bool,
 }
 
 impl LinuxHooks {
@@ -51,6 +63,7 @@ impl LinuxHooks {
             diag: std::env::var_os("ND_DIAG_WINDOW").is_some_and(|v| v == "1"),
             layout: RefCell::default(),
             reported: RefCell::default(),
+            claimed: RefCell::default(),
         }
     }
 
@@ -68,8 +81,15 @@ impl LinuxHooks {
         plan
     }
 
-    /// The plan's buttons at the header bar's leading and trailing ends.
-    fn controls(&self, plan: &chrome::ChromePlan, look: Look) -> AnyElement {
+    /// The groups no slot took in the last frame, at the header bar's ends.
+    fn unclaimed(&self, window: WindowId, plan: &chrome::ChromePlan) -> (Vec<Control>, Vec<Control>) {
+        let last = self.claimed.borrow().get(&window).map(|c| c.1).unwrap_or_default();
+        let keep = |claimed: bool, side: &[Control]| if claimed { Vec::new() } else { side.to_vec() };
+        (keep(last.leading, &plan.leading), keep(last.trailing, &plan.trailing))
+    }
+
+    /// One group of the plan's buttons in a row the header bar's height.
+    fn controls(&self, controls: &[Control], look: Look) -> gpui::Div {
         let m = self.metrics;
         // libadwaita's window buttons: a circle of the text colour at 10% (15% hovered, 30%
         // pressed) behind a 16 px symbolic icon, close included.
@@ -96,27 +116,15 @@ impl LinuxHooks {
                 .on_click(move |_, window, _| perform(control, window))
                 .child(icon_glyph(icon, px(12.), look.text, px(2.)))
         };
-        let row = |controls: &[Control]| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .h(px(TITLEBAR_HEIGHT))
-                .px(px(m.padding))
-                .gap(px(m.spacing))
-                .children(controls.iter().map(|c| button(*c)))
-        };
         div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
             .flex()
             .flex_row()
-            .justify_between()
-            .child(row(&plan.leading))
-            .child(row(&plan.trailing))
-            .into_any_element()
+            .flex_none()
+            .items_center()
+            .h(px(TITLEBAR_HEIGHT))
+            .px(px(m.padding))
+            .gap(px(m.spacing))
+            .children(controls.iter().map(|c| button(*c)))
     }
 }
 
@@ -144,8 +152,8 @@ impl OsHooks for LinuxHooks {
         interface_setting("accent-color").and_then(|name| accent_palettes(&name)).unwrap_or_default()
     }
 
-    fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, cx: &mut gpui::App) {
-        *self.layout.borrow_mut() = button_layout(cx);
+    fn window_opened(&self, _window: WindowId, _gpui_window: &mut gpui::Window, _cx: &mut gpui::App) {
+        *self.layout.borrow_mut() = button_layout();
     }
 
     fn titlebar_insets(&self, window: WindowId, gpui_window: &gpui::Window) -> Option<TitlebarInsets> {
@@ -153,11 +161,40 @@ impl OsHooks for LinuxHooks {
         if plan.is_empty() {
             return Some(TitlebarInsets::default());
         }
-        Some(TitlebarInsets { leading: plan.leading_inset, trailing: plan.trailing_inset, height: TITLEBAR_HEIGHT })
+        let last = self.claimed.borrow().get(&window).map(|c| c.1).unwrap_or_default();
+        let inset = |claimed: bool, inset: f32| if claimed { 0. } else { inset };
+        Some(TitlebarInsets {
+            leading: inset(last.leading, plan.leading_inset),
+            trailing: inset(last.trailing, plan.trailing_inset),
+            height: TITLEBAR_HEIGHT,
+        })
     }
 
-    fn window_controls(&self, _cx: &ChromeContext, _gpui_window: &mut gpui::Window) -> Option<AnyElement> {
-        Some(div().absolute().into_any_element())
+    /// An embedded slot draws its group in place; a pinned or OS-side node leaves the
+    /// controls to the overlay, which keeps them at the header bar's ends.
+    fn window_controls(&self, cx: &ChromeContext, gpui_window: &mut gpui::Window) -> Option<AnyElement> {
+        if !cx.embedded {
+            return Some(div().absolute().into_any_element());
+        }
+        let (leading, trailing) = match cx.side {
+            Some(WindowControlsSide::Leading) => (true, false),
+            Some(WindowControlsSide::Trailing) => (false, true),
+            None => (true, true),
+        };
+        let mut claimed = self.claimed.borrow_mut();
+        let now = &mut claimed.entry(cx.window).or_default().0;
+        now.leading |= leading;
+        now.trailing |= trailing;
+        drop(claimed);
+        let plan = self.plan(cx.window, gpui_window);
+        let mut group = Vec::new();
+        if leading {
+            group.extend(&plan.leading);
+        }
+        if trailing {
+            group.extend(&plan.trailing);
+        }
+        Some(self.controls(&group, cx.look).into_any_element())
     }
 
     fn window_overlay(
@@ -167,8 +204,28 @@ impl OsHooks for LinuxHooks {
         _title_height: f32,
         gpui_window: &mut gpui::Window,
     ) -> Option<AnyElement> {
+        // The overlay is asked after the build, so this frame's slots are all in.
+        if let Some((now, last)) = self.claimed.borrow_mut().get_mut(&window) {
+            *last = std::mem::take(now);
+        }
         let plan = self.plan(window, gpui_window);
-        (!plan.is_empty()).then(|| self.controls(&plan, look))
+        let (leading, trailing) = self.unclaimed(window, &plan);
+        if leading.is_empty() && trailing.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .child(self.controls(&leading, look))
+                .child(self.controls(&trailing, look))
+                .into_any_element(),
+        )
     }
 
     fn frame_time(&self, frame: &FrameRequest, gpui_window: &gpui::Window) -> Option<FrameTime> {
@@ -183,13 +240,25 @@ impl OsHooks for LinuxHooks {
 
     fn window_closed(&self, window: WindowId) {
         self.reported.borrow_mut().remove(&window);
+        self.claimed.borrow_mut().remove(&window);
     }
 }
 
-/// One key of `org.gnome.desktop.interface`, unquoted; `None` without the schema.
+/// GNOME's `button-layout`, the key the settings portal serves and GTK's
+/// `gtk-decoration-layout` follows. GPUI reads it too, but answers Zed's
+/// `minimize,maximize,close` when it is missing, where GNOME would show close alone.
+fn button_layout() -> ButtonLayout {
+    setting("org.gnome.desktop.wm.preferences", "button-layout").map(|l| ButtonLayout::parse(&l)).unwrap_or_default()
+}
+
 fn interface_setting(key: &str) -> Option<String> {
+    setting("org.gnome.desktop.interface", key)
+}
+
+/// One gsettings key, unquoted; `None` without the schema.
+fn setting(schema: &str, key: &str) -> Option<String> {
     let out = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", key])
+        .args(["get", schema, key])
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
