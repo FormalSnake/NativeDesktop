@@ -27,6 +27,9 @@ use crate::transaction::{MeasureCache, Op, Transaction};
 use crate::window::{TitlebarInsets, Window};
 use nd_gpui::layout::MinMax;
 
+/// Frames a mounting hero waits for its own frame before it shows in place instead.
+const HERO_WAIT_FRAMES: u32 = 4;
+
 mod semantic_walk;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -208,6 +211,9 @@ pub(crate) struct Tree {
     /// Heroes mounted this frame, hidden until their frame is known and they can start from
     /// their source's.
     heroes_pending: Vec<NodeId>,
+    heroes_still_pending: Vec<NodeId>,
+    /// Frames each pending hero has waited for its own frame.
+    hero_waits: HashMap<NodeId, u32>,
     /// Heroes asked to go back whose destination is not worked out yet, and the values that
     /// put the ones going back on their source's frame.
     away_pending: Vec<NodeId>,
@@ -365,6 +371,8 @@ impl Tree {
             hovered_groups: HashSet::new(),
             lit: HashSet::new(),
             heroes_pending: Vec::new(),
+            heroes_still_pending: Vec::new(),
+            hero_waits: HashMap::new(),
             away_pending: Vec::new(),
             hero_away: HashMap::new(),
             hero_home: HashMap::new(),
@@ -556,11 +564,33 @@ impl Tree {
     }
 
     /// Works out where heroes come from and go back to, from the frames the backend drew last.
-    pub(crate) fn place_heroes(&mut self, backend: &dyn Backend, now: f64, reduce: bool, tokens: &MotionTokens) {
+    /// Returns the heroes going back that have nowhere to go: they are already done.
+    pub(crate) fn place_heroes(
+        &mut self,
+        backend: &dyn Backend,
+        now: f64,
+        reduce: bool,
+        tokens: &MotionTokens,
+    ) -> Vec<NodeId> {
+        let mut stranded = Vec::new();
         for id in mem::take(&mut self.heroes_pending) {
-            let Some(hero) = self.hero_of(id) else { continue };
+            let Some(hero) = self.hero_of(id) else {
+                self.hero_waits.remove(&id);
+                continue;
+            };
             let source = self.source_rect(backend, &hero);
             let home = backend.probe(id).bounds.filter(|r| r.size.width > 0. && r.size.height > 0.);
+            // A backend that lays out as it paints (GPUI) knows the frame a frame later: the hero
+            // stays hidden until then rather than appearing in place.
+            if source.is_some() && home.is_none() {
+                let tries = self.hero_waits.entry(id).or_insert(0);
+                *tries += 1;
+                if *tries <= HERO_WAIT_FRAMES {
+                    self.heroes_still_pending.push(id);
+                    continue;
+                }
+            }
+            self.hero_waits.remove(&id);
             let Some(node) = self.nodes.get_mut(&id) else { continue };
             let Some(anim) = node.motion.as_mut() else { continue };
             if let (Some(source), Some(home)) = (source, home) {
@@ -571,13 +601,20 @@ impl Tree {
             // Shown again: moving from its source, or in place when there is none.
             self.animating.insert(id);
         }
+        self.heroes_pending.append(&mut self.heroes_still_pending);
         for id in mem::take(&mut self.away_pending) {
             let Some(hero) = self.hero_of(id).filter(|h| h.away) else { continue };
-            let Some(source) = self.source_rect(backend, &hero) else { continue };
+            let Some(source) = self.source_rect(backend, &hero) else {
+                stranded.push(id);
+                continue;
+            };
             let moving = self.nodes.get(&id).and_then(|n| n.motion.as_ref()).is_some_and(|m| m.state.is_moving());
             let probed = backend.probe(id).bounds.filter(|r| r.size.width > 0. && r.size.height > 0.);
             let home = if moving { self.hero_home.get(&id).copied().or(probed) } else { probed };
-            let Some(home) = home else { continue };
+            let Some(home) = home else {
+                stranded.push(id);
+                continue;
+            };
             let Some(anim) = self.nodes.get(&id).and_then(|n| n.motion.as_ref()) else { continue };
             let mut base = anim.props.downcast_ref::<DivProps>().map_or_else(Transform::default, |d| d.transform);
             base.scale = 1.;
@@ -587,6 +624,7 @@ impl Tree {
             let at = if moving { now } else { now + tokens.hero_hold(reduce) };
             self.retarget_shown(id, at, reduce);
         }
+        stranded
     }
 
     fn hero_of(&self, id: NodeId) -> Option<crate::element::HeroFrom> {
@@ -1354,8 +1392,8 @@ impl App {
         tree.placed.clear();
         tree.rendered.clear();
         tree.drawn_in = self.frames;
-        tree.place_heroes(&*self.backend, window.now(), self.reduce_motion, &self.motion);
-        for node in tree.step_motion(window.now()) {
+        let stranded = tree.place_heroes(&*self.backend, window.now(), self.reduce_motion, &self.motion);
+        for node in stranded.into_iter().chain(tree.step_motion(window.now())) {
             if tree.handler(node, std::any::TypeId::of::<crate::AnimationEnded>()).is_some() {
                 self.events().emitter(node).emit(crate::AnimationEnded);
             }

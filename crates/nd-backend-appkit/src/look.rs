@@ -105,6 +105,9 @@ pub(crate) struct ViewLook {
     pub clips: bool,
     /// What it paints while the pointer is over it.
     pub hover: Option<Box<ViewLook>>,
+    /// A shared element (`hero_from`): while its transform moves it, it is drawn above the
+    /// window's content.
+    pub hero: bool,
 }
 
 impl Default for ViewLook {
@@ -118,6 +121,7 @@ impl Default for ViewLook {
             transform: nd_ui::Transform::default(),
             clips: false,
             hover: None,
+            hero: false,
         }
     }
 }
@@ -139,6 +143,7 @@ impl ViewLook {
             transform: nd_ui::Transform::default(),
             clips: style.overflow.x == Some(Overflow::Hidden) && style.overflow.y == Some(Overflow::Hidden),
             hover: None,
+            hero: false,
         }
     }
 
@@ -146,6 +151,7 @@ impl ViewLook {
     pub fn of_div(div: &nd_ui::DivProps, expose: bool) -> Self {
         let mut look = Self::from_style(&div.style, expose);
         look.transform = div.transform;
+        look.hero = div.hero.is_some();
         look.hover = div.hover.as_ref().map(|hover| {
             let mut style = div.style.clone();
             nd_gpui::gpui::Refineable::refine(&mut style, hover);

@@ -1,5 +1,5 @@
 //! An expanded view presented over a region: a now-playing screen over the page, a detail over
-//! its list. Inside it a `.hero_from(..)` element (the artwork) travels from its source and back,
+//! its list. Inside it a `.hero_with(..)` element (the artwork) travels from its source and back,
 //! so the motion says where the view came from, while the backdrop fades in under it on the same
 //! spring. The rest of the view marks itself `.reveal_with(&state)`: it fades in once the hero
 //! has landed and out before the hero leaves, so nothing draws over the hero in flight. The base
@@ -15,7 +15,7 @@
 //!     .bg(cx.theme().surface.base)
 //! // Inside the content, the artwork, and the rest revealed with it:
 //! div().size(px(480.)).child(
-//!     div().absolute().size(px(480.)).hero_from("player.bar.art", expanded.is_closing()).child(art),
+//!     div().absolute().size(px(480.)).hero_with(&expanded, "player.bar.art").child(art),
 //! )
 //! v_flex().reveal_with(&expanded).child(title)
 //! ```
@@ -41,7 +41,16 @@ enum Phase {
 
 /// Whether a presentation is open, kept by the view that shows it. Cheap to clone.
 #[derive(Clone, Debug, Default)]
-pub struct Presentation(Rc<Cell<Phase>>);
+pub struct Presentation(Rc<State>);
+
+#[derive(Debug, Default)]
+struct State {
+    phase: Cell<Phase>,
+    /// While closing: the backdrop has faded out, and the hero (if one rendered) has landed.
+    faded: Cell<bool>,
+    landed: Cell<bool>,
+    hero: Cell<bool>,
+}
 
 impl Presentation {
     pub fn new() -> Self {
@@ -50,36 +59,57 @@ impl Presentation {
 
     /// Opens or closes it; the view renders again to show the change.
     pub fn set_open(&self, open: bool) {
-        let next = match (self.0.get(), open) {
+        let next = match (self.0.phase.get(), open) {
             (Phase::Closed | Phase::Closing, true) => Phase::Opening,
-            (Phase::Opening | Phase::Open, false) => Phase::Closing,
+            (Phase::Opening | Phase::Open, false) => {
+                self.0.faded.set(false);
+                self.0.landed.set(false);
+                Phase::Closing
+            }
             (phase, _) => phase,
         };
-        self.0.set(next);
+        self.0.phase.set(next);
     }
 
     /// Open, or opening.
     pub fn is_open(&self) -> bool {
-        matches!(self.0.get(), Phase::Opening | Phase::Open)
+        matches!(self.0.phase.get(), Phase::Opening | Phase::Open)
     }
 
     /// Going away: a hero inside travels back to its source.
     pub fn is_closing(&self) -> bool {
-        self.0.get() == Phase::Closing
+        self.0.phase.get() == Phase::Closing
     }
 
     /// On screen, coming, staying or going.
     pub fn is_shown(&self) -> bool {
-        self.0.get() != Phase::Closed
+        self.0.phase.get() != Phase::Closed
     }
 
-    fn settled(&self) {
-        let next = match self.0.get() {
-            Phase::Opening => Phase::Open,
-            Phase::Closing => Phase::Closed,
-            phase => phase,
-        };
-        self.0.set(next);
+    /// The backdrop's fade ended. Closing ends once the hero has landed too, so the content
+    /// stays mounted under it the whole way back.
+    fn faded(&self) {
+        match self.0.phase.get() {
+            Phase::Opening => self.0.phase.set(Phase::Open),
+            Phase::Closing => {
+                self.0.faded.set(true);
+                self.close_if_done();
+            }
+            _ => {}
+        }
+    }
+
+    fn landed(&self) {
+        if self.0.phase.get() == Phase::Closing {
+            self.0.landed.set(true);
+            self.close_if_done();
+        }
+    }
+
+    fn close_if_done(&self) {
+        if self.0.faded.get() && (self.0.landed.get() || !self.0.hero.get()) {
+            self.0.phase.set(Phase::Closed);
+        }
     }
 }
 
@@ -136,7 +166,7 @@ impl Styled for PresentationView {
 impl IntoElement for PresentationView {
     fn into_any_element(self) -> AnyElement {
         let PresentationView { id, state, base, backdrop, content, layer } = self;
-        let covered = state.0.get() == Phase::Open;
+        let covered = state.0.phase.get() == Phase::Open;
         let shown = state.is_shown();
         let target = if state.is_open() { 1. } else { 0. };
         // Comes in on the hero's spring, goes out with the hero once the content has faded.
@@ -152,7 +182,7 @@ impl IntoElement for PresentationView {
             .animate(pace)
             .enter_from(|p| p.opacity(0.))
             .on_animation_end(move |_, _, cx| {
-                state.settled();
+                state.faded();
                 cx.refresh_windows();
             })
             .children(backdrop);
@@ -171,11 +201,25 @@ pub trait PresentationExt: Styled + Sized {
     /// Fades in once a presentation's hero has landed and out before it leaves, so it never
     /// draws over the hero in flight.
     fn reveal_with(self, state: &Presentation) -> Self;
+
+    /// The presentation's shared element: it travels from the element keyed `from` as the
+    /// presentation opens and back onto it as it closes ([`Div::hero_from`]), and the
+    /// presentation stays on screen until it has landed.
+    fn hero_with(self, state: &Presentation, from: impl Into<SharedString>) -> Self;
 }
 
 impl PresentationExt for Div {
     fn reveal_with(self, state: &Presentation) -> Self {
         let pace = if state.is_open() { Animation::Themed(Pace::Settled) } else { Animation::fast() };
         self.opacity(if state.is_open() { 1. } else { 0. }).animate(pace).enter_from(|p| p.opacity(0.))
+    }
+
+    fn hero_with(self, state: &Presentation, from: impl Into<SharedString>) -> Self {
+        state.0.hero.set(true);
+        let state = state.clone();
+        self.hero_from(from, state.is_closing()).on_animation_end(move |_, _, cx| {
+            state.landed();
+            cx.refresh_windows();
+        })
     }
 }

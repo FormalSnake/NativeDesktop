@@ -162,6 +162,14 @@ pub struct LayerIvars {
     /// The pointer is over the view, which paints its hover look then.
     hovered: Cell<bool>,
     tracking: RefCell<Option<Retained<objc2_app_kit::NSTrackingArea>>>,
+    /// Where a hero in flight lives in the tree while it is drawn on the window's frame view.
+    lifted: RefCell<Option<Home>>,
+}
+
+/// A lifted hero's place in the tree: its parent, and the sibling above it.
+struct Home {
+    parent: Retained<NSView>,
+    above: Option<Retained<NSView>>,
 }
 
 impl Default for LayerIvars {
@@ -178,6 +186,7 @@ impl Default for LayerIvars {
             hover_emit: RefCell::new(None),
             hovered: Cell::new(false),
             tracking: RefCell::new(None),
+            lifted: RefCell::new(None),
         }
     }
 }
@@ -328,6 +337,16 @@ define_class!(
             self.set_hovered(false);
         }
 
+        // nd frames the view in its parent's space, which a lifted hero has left.
+        #[unsafe(method(setFrame:))]
+        fn set_frame(&self, frame: NSRect) {
+            let frame = match (&*self.ivars().lifted.borrow(), unsafe { self.superview() }) {
+                (Some(home), Some(host)) => host.convertRect_fromView(frame, Some(&home.parent)),
+                _ => frame,
+            };
+            let _: () = unsafe { msg_send![super(self), setFrame: frame] };
+        }
+
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
@@ -439,6 +458,7 @@ impl NdLayerView {
         *self.ivars().props.borrow_mut() = props.clone();
         self.setAlphaValue(self.current_look().opacity.into());
         if moved {
+            self.lift(props.hero && !props.transform.is_identity());
             self.apply_transform();
         }
         if had_hover != self.tracks_hover() {
@@ -493,6 +513,50 @@ impl NdLayerView {
         }
     }
 
+    /// Takes a lifted hero off the frame view, for a node going away.
+    pub(crate) fn land(&self) {
+        if self.ivars().lifted.borrow_mut().take().is_some() {
+            self.removeFromSuperview();
+        }
+    }
+
+    /// Moves a hero in flight onto the window's frame view, and back into its place once it has
+    /// landed. On the content view a Liquid Glass bar it lands in would still draw over it.
+    fn lift(&self, up: bool) {
+        if up == self.ivars().lifted.borrow().is_some() {
+            return;
+        }
+        if up {
+            let Some(home) = (unsafe { self.superview() }) else { return };
+            let Some(content) = self.window().and_then(|w| w.contentView()) else { return };
+            let Some(host) = (unsafe { content.superview() }) else { return };
+            let siblings = home.subviews();
+            let above = siblings
+                .iter()
+                .position(|v| std::ptr::eq(&*v, &**self as &NSView))
+                .and_then(|i| siblings.iter().nth(i + 1));
+            let frame = host.convertRect_fromView(self.frame(), Some(&home));
+            self.removeFromSuperview();
+            *self.ivars().lifted.borrow_mut() = Some(Home { parent: home, above });
+            host.addSubview_positioned_relativeTo(self, objc2_app_kit::NSWindowOrderingMode::Above, None);
+            let _: () = unsafe { msg_send![super(self), setFrame: frame] };
+        } else {
+            let Some(Home { parent: home, above }) = self.ivars().lifted.borrow_mut().take() else { return };
+            let frame = unsafe { self.superview() }
+                .map_or(self.frame(), |host| home.convertRect_fromView(self.frame(), Some(&host)));
+            self.removeFromSuperview();
+            match above.filter(|v| unsafe { v.superview() }.is_some_and(|p| p == home)) {
+                Some(above) => home.addSubview_positioned_relativeTo(
+                    self,
+                    objc2_app_kit::NSWindowOrderingMode::Below,
+                    Some(&above),
+                ),
+                None => home.addSubview(self),
+            }
+            let _: () = unsafe { msg_send![super(self), setFrame: frame] };
+        }
+    }
+
     /// The layer's transform: the offset, and the scale about the view's centre (the layer's
     /// anchor is its origin, as AppKit sets it for a layer-backed view).
     fn apply_transform(&self) {
@@ -500,13 +564,15 @@ impl NdLayerView {
         let t = self.ivars().props.borrow().transform;
         let size = self.bounds().size;
         let s = f64::from(t.scale);
+        // A lifted hero sits on the window's frame view, whose y axis points up.
+        let down = if unsafe { self.superview() }.is_none_or(|p| p.isFlipped()) { 1. } else { -1. };
         layer.setAffineTransform(objc2_core_foundation::CGAffineTransform {
             a: s,
             b: 0.,
             c: 0.,
             d: s,
             tx: f64::from(t.offset.0) + size.width * (1. - s) / 2.,
-            ty: f64::from(t.offset.1) + size.height * (1. - s) / 2.,
+            ty: down * f64::from(t.offset.1) + size.height * (1. - s) / 2.,
         });
     }
 }

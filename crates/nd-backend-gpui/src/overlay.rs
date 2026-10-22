@@ -43,6 +43,8 @@ use crate::render::{Build, Tracked};
 /// Stacking inside GPUI's deferred layer, one order for every overlay kind: toasts lowest (they
 /// never block), framework panels (the command palette) and overlays above them, nested overlays
 /// above their parents, the context menu on top.
+/// Under toasts and panels: a shared element in flight only needs to clear the content.
+pub(crate) const HERO_PRIORITY: usize = 0;
 pub(crate) const TOAST_PRIORITY: usize = 1;
 pub(crate) const PANEL_PRIORITY: usize = 10;
 const MENU_PRIORITY: usize = usize::MAX;

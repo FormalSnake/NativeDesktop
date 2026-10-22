@@ -1672,6 +1672,10 @@ impl Backend for AppKitBackend {
             record.root.set_full_size(false);
         }
         drop(state);
+        // A hero released mid-flight sits on the frame view, outside its parent's subtree.
+        if let Some(Native::Layer(view)) = &native {
+            view.land();
+        }
         drop(native);
     }
 

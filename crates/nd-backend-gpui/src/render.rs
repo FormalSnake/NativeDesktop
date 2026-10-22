@@ -518,6 +518,11 @@ impl<'a> Build<'a> {
                     self.paints.borrow_mut().truncate(painted);
                     return HiddenSubtree(element).into_any_element();
                 }
+                // A hero in flight crosses what is drawn after it (the player bar under an
+                // expanded player), so it paints over the window's content until it lands.
+                if props.hero.is_some() && (x, y) != (0., 0.) {
+                    return gpui::deferred(element).with_priority(crate::overlay::HERO_PRIORITY).into_any_element();
+                }
                 element
             }
             NodeKind::Text => {
