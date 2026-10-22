@@ -2,7 +2,7 @@
 # Builds the docs site in Cloudflare's Workers Builds image (Ubuntu, no Rust): the project's build
 # command, with the output in target/nd/docs-site. Installs rustup and the toolchain pinned in
 # rust-toolchain.toml, and takes the release wasm-bindgen matching the lockfile instead of
-# compiling it, plus a pinned binaryen for wasm-opt. nd-cli builds without `capture`, which links libxkbcommon.
+# compiling it, plus a pinned binaryen for wasm-opt, then highlights code blocks with Node. nd-cli builds without `capture`, which links libxkbcommon.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -36,3 +36,7 @@ export PATH
 # .cargo/config.toml points build-dir at the macbook's external drive.
 CARGO_BUILD_BUILD_DIR="$root/target/build" ND_WASM_BINDGEN="$bindgen" \
   cargo run -p nd-cli --no-default-features -- docs build
+
+# Code blocks are highlighted after the build with @pierre/highlights; the image ships Node and npm.
+npm ci --prefix scripts/docs-highlight --ignore-scripts --no-audit --no-fund
+node scripts/docs-highlight/highlight.mjs target/nd/docs-site

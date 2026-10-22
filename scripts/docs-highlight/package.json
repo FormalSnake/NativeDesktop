@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pierre/highlights": "0.2.0"
+  }
+}
