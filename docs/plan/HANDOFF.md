@@ -16,9 +16,12 @@ Deployed through `~/.config/nix` `4b9c1032` on g815 and the macbook: FormalMusic
 `30e8e952`, share crash fixed, kopuzd started with `--app-id`/`--app-name`). The user's running
 instances keep the old build until restarted.
 
-Docs site: native.formalsnake.dev shows all shots again (manual Pages deployment c5c8908a). Pushes
-do not rebuild it until the user installs the Cloudflare Workers and Pages GitHub app on the
-FormalStudio org and reconnects the `nativedesktop` Pages project to FormalStudio/NativeDesktop.
+Docs site: native.formalsnake.dev is served by the `nativedesktop-docs` Worker (static assets,
+`wrangler.jsonc`), built by Workers Builds from FormalStudio/NativeDesktop main with
+`scripts/docs-site-build` and `npx wrangler deploy`; every push to main redeploys it. The Cloudflare
+GitHub app on FormalStudio was reinstalled from the CanaryCoders account on 2026-10-22 (other
+Cloudflare projects building from FormalStudio repos may need reconnecting). The old Pages project
+`nativedesktop` no longer has the domain and can be deleted.
 
 The previous orchestrator session stopped on a rate limit (2026-10-22 15:00); its lanes were
 restarted from their worktrees the same evening.

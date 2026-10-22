@@ -58,8 +58,7 @@ own gates. The full test suite still takes 47 minutes.
 
 ## Needs you
 
-1. Install the Cloudflare Workers and Pages GitHub app on the FormalStudio org and reconnect the `nativedesktop` Pages project to FormalStudio/NativeDesktop.
-2. Kopuz-org/kopuz branch `mpris-app-identity` (`67d504c8`): PR and release decision.
-3. Move the nd repo's `build-dir` in `.cargo/config.toml` (still on `/Volumes/Kyan Drive`) to the ecosystem-level config?
-4. Replies on upstream GPUI PRs #65728, #65729, #65730.
-5. Windows code signing choice, needed only at Windows packaging.
+1. A Kopuz release after the `mpris-app-identity` PR merges (approved 2026-10-22), so the flake moves past v0.22.0.
+2. Move the nd repo's `build-dir` in `.cargo/config.toml` (still on `/Volumes/Kyan Drive`) to the ecosystem-level config?
+3. Replies on upstream GPUI PRs #65728, #65729, #65730.
+4. Windows code signing choice, needed only at Windows packaging.

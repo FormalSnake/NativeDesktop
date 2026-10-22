@@ -168,4 +168,4 @@ Each runs in its own worktree on a branch named after the lane. Every FormalMusi
 4. Deploy every modified app to macbook, g815, e1504g (from g815 with `--target-host`) and the real Windows install.
 5. Linux CI: the headless Chrome embed render check.
 6. OS-release diff job (M12).
-7. Docs site rebuilds on push, after the Cloudflare GitHub app is installed and the Pages project reconnected.
+7. [x] Docs site rebuilds on push (Worker `nativedesktop-docs`, Workers Builds).
