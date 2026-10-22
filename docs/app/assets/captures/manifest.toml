@@ -1,30 +1,30 @@
 # Written by `nd docs capture`; do not edit by hand.
 
 [browser.macos]
-hash = "732ef183506f2b8a"
+hash = "cacc7d93581c8ec1"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [browser.linux]
-hash = "732ef183506f2b8a"
+hash = "cacc7d93581c8ec1"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
 [chrome.macos]
 hash = "c9ee87e95a12bc1d"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [chrome.linux]
 hash = "c9ee87e95a12bc1d"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -38,14 +38,14 @@ dark = "windows-dark.png"
 [gallery.macos]
 hash = "dad3a4c4367dd490"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [gallery.linux]
 hash = "dad3a4c4367dd490"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -59,14 +59,14 @@ dark = "windows-dark.png"
 [hello.macos]
 hash = "2cad3d4a9b1ff64d"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [hello.linux]
 hash = "2cad3d4a9b1ff64d"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -99,16 +99,16 @@ light = "windows-light.png"
 dark = "windows-dark.png"
 
 [notes.macos]
-hash = "1a22cf8305ace213"
+hash = "152fbb63ae2d4955"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [notes.linux]
-hash = "1a22cf8305ace213"
+hash = "152fbb63ae2d4955"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -122,14 +122,14 @@ dark = "windows-dark.png"
 [overlays.macos]
 hash = "e385f14a49b66c39"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [overlays.linux]
 hash = "e385f14a49b66c39"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -143,14 +143,14 @@ dark = "windows-dark.png"
 [overrides.macos]
 hash = "9acab60293bb3206"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [overrides.linux]
 hash = "9acab60293bb3206"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -164,14 +164,14 @@ dark = "windows-dark.png"
 [pacing.macos]
 hash = "668d517fbe4eb40a"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [pacing.linux]
 hash = "668d517fbe4eb40a"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -185,7 +185,7 @@ dark = "windows-dark.png"
 [scroll.macos]
 hash = "f0f74a78aecccb6d"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 recording = "macos.gif"
@@ -193,7 +193,7 @@ recording = "macos.gif"
 [scroll.linux]
 hash = "f0f74a78aecccb6d"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -207,14 +207,14 @@ dark = "windows-dark.png"
 [system.macos]
 hash = "aa3c75af705c7435"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [system.linux]
 hash = "aa3c75af705c7435"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -228,14 +228,14 @@ dark = "windows-dark.png"
 [tabs.macos]
 hash = "9e31409bfaddeff4"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [tabs.linux]
 hash = "9e31409bfaddeff4"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
@@ -249,14 +249,14 @@ dark = "windows-dark.png"
 [terminal.macos]
 hash = "a0ae94e8fa2fcabb"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
 [terminal.linux]
 hash = "a0ae94e8fa2fcabb"
 captured_on = "NixOS 26.11 (Zokor), labwc"
-date = "2026-10-22"
+date = "2026-10-23"
 light = "linux-light.png"
 dark = "linux-dark.png"
 
