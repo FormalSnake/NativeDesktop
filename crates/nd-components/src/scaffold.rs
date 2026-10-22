@@ -48,6 +48,10 @@ pub struct PaneProps {
     pub toolbar_extension: f32,
     /// The edge effect under the toolbar shows only while the pointer is over the toolbar.
     pub edge_on_hover: bool,
+    /// Points a bar floating over the pane's foot takes (Music's mini player): the pane runs
+    /// down under it, its scroll views scroll under the bar and rest clear of it, behind the
+    /// system's scroll edge effect on macOS.
+    pub bottom_bar: f32,
     /// While the sidebar is collapsed, the pointer at the window's leading edge slides it in
     /// over the content as a floating panel.
     pub edge_reveal: bool,
@@ -81,6 +85,7 @@ pub struct Scaffold {
     content_under_toolbar: bool,
     toolbar_extension: f32,
     content_edge_on_hover: bool,
+    content_bottom_bar: f32,
 }
 
 #[track_caller]
@@ -96,6 +101,7 @@ pub fn scaffold() -> Scaffold {
         content_under_toolbar: false,
         toolbar_extension: 0.,
         content_edge_on_hover: false,
+        content_bottom_bar: 0.,
     }
 }
 
@@ -124,6 +130,13 @@ impl Scaffold {
     /// toolbar on macOS: its lists keep their rows clear of the bar at rest.
     pub fn content_under_toolbar(mut self) -> Self {
         self.content_under_toolbar = true;
+        self
+    }
+
+    /// A bar `points` tall floats over the content's foot: the content's scroll views scroll
+    /// under it and rest clear of it. Zero where the bar docks below the content instead.
+    pub fn content_bottom_bar(mut self, points: f32) -> Self {
+        self.content_bottom_bar = points;
         self
     }
 
@@ -172,11 +185,13 @@ impl IntoElement for Scaffold {
         let under = self.content_under_toolbar;
         let extension = self.toolbar_extension;
         let edge_on_hover = self.content_edge_on_hover;
+        let bottom_bar = self.content_bottom_bar;
         let content = self.content.map(|c| {
             let mut pane = pane_with(Key::Id("nd-content".into()), PaneRole::Content);
             pane.0.props_mut().under_toolbar = under;
             pane.0.props_mut().toolbar_extension = extension;
             pane.0.props_mut().edge_on_hover = edge_on_hover;
+            pane.0.props_mut().bottom_bar = bottom_bar;
             pane.flex_1().min_w_0().h_full().child(c)
         });
         let overlay = self.overlay.map(|o| {

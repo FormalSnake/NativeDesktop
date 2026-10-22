@@ -128,6 +128,8 @@ pub struct Shared {
     /// Points of the list under the window's bars at its top: model offset 0 sits this far down
     /// the clip view, so rows scroll under the bars (which blur them) and rest clear of them.
     bars: Cell<f64>,
+    /// Points of the list under a bar floating over its foot: the last rows scroll up clear of it.
+    foot: Cell<f64>,
     /// A list without selection never highlights a clicked row.
     selection: Cell<Selection>,
 }
@@ -150,6 +152,7 @@ impl Shared {
             asked: RefCell::default(),
             edges: Cell::new((false, false)),
             bars: Cell::new(0.),
+            foot: Cell::new(0.),
             selection: Cell::new(props.selection),
         }
     }
@@ -865,9 +868,11 @@ impl TableNative {
         };
         let bars = bars(&self.scroll);
         shared.bars.set(bars);
+        let foot = foot(&self.scroll);
+        shared.foot.set(foot);
         {
             let mut core = self.props.handle.0.borrow_mut();
-            core.set_viewport(f64::from(self.size.width), (visible.height - header - bars).max(0.));
+            core.set_viewport(f64::from(self.size.width), (visible.height - header - bars - foot).max(0.));
         }
         let generation = self.props.handle.0.borrow().generation();
         let structural = self.generation != Some(generation);
@@ -970,9 +975,10 @@ fn place_clip(scroll: &NSScrollView, shared: &Shared, handle: &ListHandle) {
     let clip = scroll.contentView();
     let bars = shared.bars.get();
     let inset = (-layout.scroll_top).max(0.) + bars;
+    let foot = shared.foot.get();
     let current = scroll.contentInsets();
-    if (current.top - inset).abs() > 0.25 {
-        scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: 0., right: 0. });
+    if (current.top - inset).abs() > 0.25 || (current.bottom - foot).abs() > 0.25 {
+        scroll.setContentInsets(NSEdgeInsets { top: inset, left: 0., bottom: foot, right: 0. });
     }
     if bars > 0.
         && let Some(shown) = crate::scaffold::NdPaneView::edge_shown(scroll)
@@ -1006,6 +1012,11 @@ impl Drop for TableNative {
 /// How far the window's bars (a toolbar over full-size content) reach down over the scroll view.
 fn bars(scroll: &NSScrollView) -> f64 {
     scroll.safeAreaInsets().top.max(0.)
+}
+
+/// How far a bar floating over the pane's foot reaches up over the scroll view.
+fn foot(scroll: &NSScrollView) -> f64 {
+    scroll.safeAreaInsets().bottom.max(0.)
 }
 
 fn index_set(indices: &[usize]) -> Retained<NSIndexSet> {
@@ -1280,7 +1291,9 @@ impl GridNative {
         let clip = self.scroll.contentView().bounds().size;
         let bars = bars(&self.scroll);
         shared.bars.set(bars);
-        self.props.handle.0.borrow_mut().set_viewport(clip.width, (clip.height - bars).max(0.));
+        let foot = foot(&self.scroll);
+        shared.foot.set(foot);
+        self.props.handle.0.borrow_mut().set_viewport(clip.width, (clip.height - bars - foot).max(0.));
         let generation = self.props.handle.0.borrow().generation();
         shared.programmatic(|| {
             if self.generation != Some(generation) {
