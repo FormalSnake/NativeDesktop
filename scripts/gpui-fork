@@ -196,7 +196,7 @@ cmd_bump() {
 
 # The `#[test]` functions a patch adds, one per line.
 patch_tests() {
-  awk '/^\+[[:space:]]*#\[test\]/ { t = 1; next }
+  awk '/^\+[[:space:]]*#\[(gpui::)?test\]/ { t = 1; next }
        t && /^\+[[:space:]]*(pub )?fn [a-z0-9_]+\(/ { match($0, /fn [a-z0-9_]+/); print substr($0, RSTART + 3, RLENGTH - 3) }
        { t = 0 }' "$1"
 }

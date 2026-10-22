@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nd_backend_gpui::GpuiHost;
-use nd_gpui::gpui::{HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput, point};
+use nd_gpui::gpui::{
+    HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
+};
 use nd_ui::WindowId;
 use nd_ui::prelude::*;
 use nd_virtual::{ListState, SortChanged, SortDirection, TreeNode, column, grid, list, table, tree};
@@ -201,6 +203,103 @@ pub fn grid_fills_lanes_and_reaches_the_end() {
     assert!(bottom <= viewport.origin.y + viewport.size.height + 0.5, "last item fully in view: {last:?}");
 }
 
+struct Hovered {
+    list: ListState<u32>,
+}
+
+/// The wash a hovered row paints, which nothing else in the window does.
+const WASH: u32 = 0xff0000;
+
+impl Render for Hovered {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().size_full().child(div().h(px(200.)).w_full().child(list("songs", &self.list, |row: u32, _, _| {
+            // As an app writes a track row: an id, and a hover style on the row itself.
+            div().id(format!("song-{row}")).h(px(40.)).w_full().hover(|s| s.bg(rgb(WASH))).child(format!("song {row}"))
+        })))
+    }
+}
+
+/// Draws the window only when GPUI would: after its root view was notified. A forced draw
+/// repaints hover styles from the current pointer and would hide a move that asked for no frame.
+fn frame_if_asked(cx: &mut HeadlessAppContext, host: &GpuiHost, asked: &Rc<std::cell::Cell<bool>>) {
+    cx.run_until_parked();
+    cx.update(|cx| host.pump(cx));
+    if asked.replace(false) {
+        cx.update(|cx| host.draw(cx));
+    }
+    cx.run_until_parked();
+}
+
+fn move_to(cx: &mut HeadlessAppContext, host: &GpuiHost, window: WindowId, x: f32, y: f32) {
+    let handle = host.window_handle(window).expect("gpui window");
+    let event = MouseMoveEvent { position: point(px(x), px(y)), pressed_button: None, modifiers: Modifiers::default() };
+    cx.update(|cx| {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.dispatch_event(PlatformInput::MouseMove(event), cx);
+        });
+    });
+}
+
+/// The keys of the painted rows that show the hover wash.
+fn washed(cx: &mut HeadlessAppContext, host: &GpuiHost, window: WindowId, state: &ListState<u32>) -> Vec<u32> {
+    let handle = host.window_handle(window).expect("gpui window");
+    let image = cx.capture_screenshot(handle).expect("screenshot");
+    let scale = image.width() as f32 / 300.;
+    let (viewport, rows) = painted(host);
+    rows.iter()
+        .filter(|(_, b)| b.origin.y + b.size.height / 2. < viewport.origin.y + viewport.size.height)
+        .filter(|(_, b)| {
+            let (x, y) = ((b.origin.x + 4.) * scale, (b.origin.y + b.size.height / 2.) * scale);
+            let p = image.get_pixel(x as u32, y as u32).0;
+            p[0] > 200 && p[1] < 60 && p[2] < 60
+        })
+        .filter_map(|(r, _)| state.key_of(*r))
+        .collect()
+}
+
+/// A row's hover style follows the pointer on the frame its move asks for: exactly the row
+/// under the pointer shows it, also after the list scrolled, and none once the pointer leaves.
+pub fn row_hover_follows_the_pointer() {
+    let (mut cx, host, window, view) = open(300., |cx| {
+        let mut list = ListState::new(cx);
+        list.set_items((0..60).collect::<Vec<u32>>(), cx);
+        Hovered { list }
+    });
+    let asked = Rc::new(std::cell::Cell::new(false));
+    let root = host.window_handle(window).expect("gpui window");
+    let flag = asked.clone();
+    cx.update(|cx| {
+        let view = root.update(cx, |root, _, _| root.downcast::<nd_backend_gpui::NdView>()).expect("window");
+        cx.observe(&view.expect("nd root view"), move |_, _| flag.set(true)).detach();
+    });
+    let state = host.read(|app| view.read(app).list.clone());
+    // A headless window starts with its pointer at the origin, over the first row.
+    move_to(&mut cx, &host, window, 150., 260.);
+    frame_if_asked(&mut cx, &host, &asked);
+    assert!(washed(&mut cx, &host, window, &state).is_empty(), "no row is hovered while the pointer is below the list");
+    for (row, y) in [(0, 20.), (1, 60.), (3, 140.), (2, 100.), (4, 180.)] {
+        move_to(&mut cx, &host, window, 150., y);
+        frame_if_asked(&mut cx, &host, &asked);
+        assert_eq!(washed(&mut cx, &host, window, &state), vec![row], "pointer at y {y}");
+    }
+    // The list jumps ten rows under a pointer that stays put.
+    let host2 = host.clone();
+    cx.update(|cx| {
+        host2.update(cx, |app| view.update(app, |this, cx| this.list.jump_to(10, nd_virtual::Align::Start, px(0.), cx)))
+    });
+    frames(&mut cx, &host, 6);
+    asked.set(false);
+    assert_eq!(washed(&mut cx, &host, window, &state), vec![14], "after a scroll, the row now under the pointer");
+    for (row, y) in [(11, 60.), (12, 100.), (10, 20.)] {
+        move_to(&mut cx, &host, window, 150., y);
+        frame_if_asked(&mut cx, &host, &asked);
+        assert_eq!(washed(&mut cx, &host, window, &state), vec![row], "after the scroll, pointer at y {y}");
+    }
+    move_to(&mut cx, &host, window, 150., 260.);
+    frame_if_asked(&mut cx, &host, &asked);
+    assert!(washed(&mut cx, &host, window, &state).is_empty(), "no stale wash once the pointer leaves the list");
+}
+
 struct Plain {
     list: ListState<u32>,
 }
@@ -243,7 +342,8 @@ pub fn scroll_into_view_reaches_a_row_below_the_fold() {
 }
 
 fn main() {
-    let tests: [(&str, fn()); 4] = [
+    let tests: [(&str, fn()); 5] = [
+        ("gate_m5::gpui_kinds::row_hover_follows_the_pointer", row_hover_follows_the_pointer),
         (
             "gate_m5::gpui_kinds::scroll_into_view_reaches_a_row_below_the_fold",
             scroll_into_view_reaches_a_row_below_the_fold,

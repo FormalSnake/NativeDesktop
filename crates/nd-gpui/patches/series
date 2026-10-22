@@ -13,3 +13,4 @@
 0011-gpui_windows-open-the-emoji-panel-at-the-caret-from-.patch
 0012-gpui_linux-keep-an-x11-window-active-while-a-child-wi.patch
 0013-gpui_wgpu-set-emoji-presentation-text-in-the-colour-emo.patch
+0014-gpui-repaint-a-hover-style-on-an-element-without-an-.patch
