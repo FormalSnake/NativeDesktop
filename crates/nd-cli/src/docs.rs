@@ -8,7 +8,8 @@
 //! - `build`: the static site (an HTML page and the raw markdown per page, `llms.txt`,
 //!   `llms-full.txt`) with the docs app's web bundle under `app/`. `serve` builds and serves it.
 //! - `capture`: runs each example through the test harness on this OS, light and dark, and
-//!   records the captures with the example's source hash.
+//!   records the captures with the example's source hash. On Windows the examples are launched
+//!   and captured by `ndshell agent` in the desktop session, so it also runs over ssh.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -503,24 +504,17 @@ fn serve_background(dir: &Path) -> Result<(u16, std::thread::JoinHandle<()>)> {
     Ok((port, handle))
 }
 
-#[cfg(not(unix))]
-fn capture(_repo: &Path, _args: &CaptureArgs) -> Result<ExitCode> {
-    bail!("`nd docs capture` talks to the example over a Unix socket; on Windows it is not written yet")
-}
-
-#[cfg(all(unix, not(feature = "capture")))]
+#[cfg(not(feature = "capture"))]
 fn capture(_repo: &Path, _args: &CaptureArgs) -> Result<ExitCode> {
     bail!("this nd was built without the `capture` feature")
 }
 
-#[cfg(all(unix, feature = "capture"))]
+#[cfg(feature = "capture")]
 use capture::capture;
 
 /// Captures through the test harness: launch with automation on, wait for the window, capture.
-#[cfg(all(unix, feature = "capture"))]
+#[cfg(feature = "capture")]
 mod capture {
-    use std::io::{BufRead, BufReader};
-
     use nd_docs::captures::Capture;
 
     use super::*;
@@ -648,23 +642,21 @@ mod capture {
         crate::project::fresh_dir(&run)?;
         let theme = run.join("theme.toml");
         std::fs::write(&theme, format!("appearance = \"{scheme}\"\n"))?;
-        // Unix socket paths are capped near 104 bytes, which a worktree path can pass.
+        // Unix socket paths are capped near 104 bytes, which a worktree path can pass. On Windows
+        // the app listens on a named pipe named after this path.
         let socket = std::env::temp_dir().join(format!("nd-docs-{}-{scheme}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
-        let mut cmd = launcher(session, bin);
-        cmd.envs(&example.env)
-            .env("NATIVE_AUTOMATION", "1")
-            .env("ND_AUTOMATION_SOCKET", &socket)
-            .env("ND_APP_DATA_DIR", run.join("data"))
-            .env("ND_THEME_TOML", &theme)
-            .env("ND_THEME_JSON", "")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        let mut child = cmd.spawn().with_context(|| format!("launching {}", bin.display()))?;
+        let mut env: Vec<(String, String)> = example.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        env.extend([
+            ("NATIVE_AUTOMATION".into(), "1".into()),
+            ("ND_AUTOMATION_SOCKET".into(), socket.display().to_string()),
+            ("ND_APP_DATA_DIR".into(), run.join("data").display().to_string()),
+            ("ND_THEME_TOML".into(), theme.display().to_string()),
+            ("ND_THEME_JSON".into(), String::new()),
+        ]);
+        let app = launch(session, bin, &env, &socket, Duration::from_secs(30))?;
         let result = (|| -> Result<bool> {
-            let stderr = child.stderr.take().context("stderr")?;
-            let socket = wait_ready(stderr, &socket, Duration::from_secs(30))?;
-            let mut client = Rpc::connect(&socket)?;
+            let mut client = Rpc::connect(&app.socket)?;
             let deadline = Instant::now() + Duration::from_secs(20);
             let window = loop {
                 let windows = client.call("windows", serde_json::json!({}))?;
@@ -679,60 +671,144 @@ mod capture {
             };
             std::thread::sleep(Duration::from_secs_f32(settle));
             let window_id = window["id"].as_u64();
-            let recorded = composited(session, child.id(), png, &mut client, window_id, motion)?;
+            let recorded = composited(session, app.pid, png, &mut client, window_id, motion)?;
             Ok(recorded)
         })();
-        let _ = child.kill();
-        let _ = child.wait();
+        stop(session, app);
         let _ = std::fs::remove_file(&socket);
         result
+    }
+
+    /// A launched example and the automation socket it reported.
+    struct Launched {
+        pid: u32,
+        socket: PathBuf,
+        #[cfg(unix)]
+        child: std::process::Child,
+    }
+
+    /// The socket path in the automation server's ready line, if `line` is one.
+    fn ready_path(line: &str) -> Option<PathBuf> {
+        line.split("ND_AUTOMATION_LISTENING path=").nth(1).map(|path| PathBuf::from(path.trim()))
     }
 
     /// Linux captures run in a private headless Hyprland, so they draw nothing on the user's session,
     /// work over ssh, and get the same output and scale on every run.
     #[cfg(target_os = "linux")]
     type Session = ndshell::hyprland::Hyprland;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     struct Session;
+    /// Windows: processes ssh starts have no desktop to show a window on, so `ndshell agent`, which
+    /// runs in the logged-in user's session, launches the examples and captures their windows.
+    #[cfg(windows)]
+    struct Session(std::cell::RefCell<ndshell::agent::Client>);
+
+    #[cfg(windows)]
+    impl Session {
+        fn call(&self, request: serde_json::Value) -> Result<serde_json::Value> {
+            self.0.borrow_mut().call(request).map_err(|e| anyhow::anyhow!("ndshell agent: {e}"))
+        }
+    }
 
     #[cfg(target_os = "linux")]
     fn session() -> Result<Session> {
         ndshell::hyprland::Hyprland::start(Default::default()).map_err(|e| anyhow::anyhow!("headless Hyprland: {e}"))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     fn session() -> Result<Session> {
         Ok(Session)
     }
 
-    #[cfg(target_os = "linux")]
-    fn launcher(session: &Session, bin: &Path) -> Command {
-        session.command(bin)
+    #[cfg(windows)]
+    fn session() -> Result<Session> {
+        let client = ndshell::agent::Client::connect().map_err(anyhow::Error::msg)?;
+        Ok(Session(std::cell::RefCell::new(client)))
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn launcher(_session: &Session, bin: &Path) -> Command {
-        Command::new(bin)
-    }
-
-    /// Waits for the automation server's ready line on `stderr`, then keeps draining it so the app
-    /// never blocks on a full pipe.
-    fn wait_ready(stderr: std::process::ChildStderr, socket: &Path, timeout: Duration) -> Result<PathBuf> {
+    /// Starts `bin` and waits for its automation server's ready line on stderr, which a thread
+    /// keeps draining afterwards so the app never blocks on a full pipe.
+    #[cfg(unix)]
+    fn launch(
+        session: &Session,
+        bin: &Path,
+        env: &[(String, String)],
+        socket: &Path,
+        timeout: Duration,
+    ) -> Result<Launched> {
+        use std::io::{BufRead, BufReader};
+        #[cfg(target_os = "linux")]
+        let mut cmd = session.command(bin);
+        #[cfg(target_os = "macos")]
+        let mut cmd = {
+            let _ = session;
+            Command::new(bin)
+        };
+        cmd.envs(env.iter().map(|(k, v)| (k, v))).stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().with_context(|| format!("launching {}", bin.display()))?;
+        let stderr = child.stderr.take().context("stderr")?;
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut sent = false;
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if !sent && let Some(path) = line.split("ND_AUTOMATION_LISTENING path=").nth(1) {
-                    let _ = send.send(PathBuf::from(path.trim()));
+                if !sent && let Some(path) = ready_path(&line) {
+                    let _ = send.send(path);
                     sent = true;
                 }
             }
         });
-        match receive.recv_timeout(timeout) {
-            Ok(path) => Ok(path),
-            Err(_) if socket.exists() => Ok(socket.to_path_buf()),
-            Err(_) => bail!("the app never reported its automation socket"),
+        let socket = match receive.recv_timeout(timeout) {
+            Ok(path) => path,
+            Err(_) if socket.exists() => socket.to_path_buf(),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("the app never reported its automation socket");
+            }
+        };
+        Ok(Launched { pid: child.id(), socket, child })
+    }
+
+    #[cfg(unix)]
+    fn stop(_session: &Session, mut app: Launched) {
+        let _ = app.child.kill();
+        let _ = app.child.wait();
+    }
+
+    /// Starts `bin` through the agent and polls the output it keeps for the ready line.
+    #[cfg(windows)]
+    fn launch(
+        session: &Session,
+        bin: &Path,
+        env: &[(String, String)],
+        _socket: &Path,
+        timeout: Duration,
+    ) -> Result<Launched> {
+        let env: serde_json::Map<String, serde_json::Value> =
+            env.iter().map(|(k, v)| (k.clone(), serde_json::Value::from(v.as_str()))).collect();
+        let launched =
+            session.call(serde_json::json!({ "cmd": "launch", "exe": bin.display().to_string(), "env": env }))?;
+        let pid = launched["pid"].as_u64().context("the agent reported no pid")? as u32;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let output = session.call(serde_json::json!({ "cmd": "output", "pid": pid }))?;
+            let lines: Vec<&str> =
+                output["lines"].as_array().into_iter().flatten().filter_map(|l| l.as_str()).collect();
+            if let Some(socket) = lines.iter().find_map(|l| ready_path(l)) {
+                return Ok(Launched { pid, socket });
+            }
+            if !output["exited"].is_null() || Instant::now() > deadline {
+                let _ = session.call(serde_json::json!({ "cmd": "kill", "pid": pid }));
+                let tail = lines[lines.len().saturating_sub(20)..].join("\n");
+                bail!("the app never reported its automation socket (exit {}):\n{tail}", output["exited"]);
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    #[cfg(windows)]
+    fn stop(session: &Session, app: Launched) {
+        let _ = session.call(serde_json::json!({ "cmd": "kill", "pid": app.pid }));
     }
 
     #[cfg(target_os = "macos")]
@@ -829,17 +905,60 @@ mod capture {
         Ok(false)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    /// The window as DWM composes it (Windows.Graphics.Capture through the agent), frame
+    /// included, so the Mica backdrop and the title bar are in the picture.
+    #[cfg(windows)]
     fn composited(
-        _session: &Session,
-        _pid: u32,
+        session: &Session,
+        pid: u32,
         png: &Path,
-        client: &mut Rpc,
-        window: Option<u64>,
+        _client: &mut Rpc,
+        _window: Option<u64>,
         _motion: Option<(&nd_docs::examples::Motion, &Path)>,
     ) -> Result<bool> {
-        client.call("screenshot", serde_json::json!({ "path": png, "window": window }))?;
+        let mut info = session.call(serde_json::json!({ "cmd": "window", "pid": pid, "timeout_ms": 5000 }))?;
+        let hwnd = info["hwnd"].as_i64().context("the agent reported no window handle")?;
+        // Windows keeps a process the agent starts out of the foreground, and an inactive window
+        // draws its title bar and backdrop differently. A click on the caption activates it
+        // without pressing a control.
+        if info["foreground"] != true {
+            let frame: Vec<i64> = info["frame"].as_array().into_iter().flatten().filter_map(|v| v.as_i64()).collect();
+            if let [x, y, w, _] = frame[..] {
+                let caption = caption_points(x, y, w).into_iter().find(|at| {
+                    let hit = session.call(serde_json::json!({ "cmd": "hit_test", "hwnd": hwnd, "at": at }));
+                    hit.is_ok_and(|h| h["code"] == HTCAPTION)
+                });
+                if let Some(at) = caption {
+                    session.call(serde_json::json!({ "cmd": "click", "at": at }))?;
+                    std::thread::sleep(Duration::from_millis(300));
+                    info = session.call(serde_json::json!({ "cmd": "window_info", "hwnd": hwnd }))?;
+                }
+            }
+        }
+        if info["foreground"] != true {
+            println!("  the window is not in the foreground: it is captured with its inactive look");
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        session.call(serde_json::json!({ "cmd": "capture", "hwnd": hwnd, "out": png.display().to_string() }))?;
         Ok(false)
+    }
+
+    /// `WM_NCHITTEST`'s answer for the caption.
+    #[cfg(windows)]
+    const HTCAPTION: i64 = 2;
+
+    /// Points along the top of a window frame at (`x`, `y`), `w` wide, where an empty stretch of
+    /// caption is likeliest: rows below the resize border, from the middle outwards.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn caption_points(x: i64, y: i64, w: i64) -> Vec<[i64; 2]> {
+        let mut points = Vec::new();
+        for dy in [12, 20, 6, 28] {
+            for step in 0..8 {
+                let offset = (step + 1) / 2 * w / 16 * if step % 2 == 0 { 1 } else { -1 };
+                points.push([x + w / 2 + offset, y + dy]);
+            }
+        }
+        points
     }
 
     #[cfg(target_os = "macos")]
@@ -861,14 +980,15 @@ mod capture {
 
     /// A blocking client for the app's automation socket.
     struct Rpc {
-        stream: std::os::unix::net::UnixStream,
+        stream: nd_automation::protocol::Stream,
         next: u64,
     }
 
     impl Rpc {
         fn connect(path: &Path) -> Result<Self> {
-            let stream = std::os::unix::net::UnixStream::connect(path)
-                .with_context(|| format!("connecting to {}", path.display()))?;
+            let stream =
+                nd_automation::protocol::connect(path).with_context(|| format!("connecting to {}", path.display()))?;
+            #[cfg(unix)]
             stream.set_read_timeout(Some(Duration::from_secs(30)))?;
             Ok(Self { stream, next: 1 })
         }
@@ -910,7 +1030,29 @@ mod capture {
                     .unwrap_or_else(|| "Linux".into());
                 format!("{name}, Hyprland")
             }
-            Os::Windows => "Windows".into(),
+            Os::Windows => windows_version(
+                &run("reg", &["query", r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"]).unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// "Windows 11 25H2" from `reg query` of the CurrentVersion key. The key's ProductName still
+    /// says Windows 10 on Windows 11, so the major version comes from the build number.
+    fn windows_version(reg: &str) -> String {
+        let value = |name: &str| {
+            reg.lines().find_map(|line| {
+                let mut words = line.split_whitespace();
+                (words.next() == Some(name)).then(|| words.nth(1)).flatten().map(str::to_owned)
+            })
+        };
+        let major = match value("CurrentBuild").and_then(|b| b.parse::<u32>().ok()) {
+            Some(build) if build >= 22_000 => "Windows 11",
+            Some(_) => "Windows 10",
+            None => return "Windows".into(),
+        };
+        match value("DisplayVersion") {
+            Some(version) => format!("{major} {version}"),
+            None => major.into(),
         }
     }
 
@@ -938,6 +1080,35 @@ mod capture {
     fn civil_dates() {
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(20_740), "2026-10-14");
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn ready_lines_name_the_socket() {
+        let line = r"ND_AUTOMATION_LISTENING path=\\.\pipe\nd-automation-00ff ";
+        assert_eq!(ready_path(line), Some(PathBuf::from(r"\\.\pipe\nd-automation-00ff")));
+        assert_eq!(ready_path("[nd] window opened"), None);
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn caption_points_start_mid_window_and_stay_inside_it() {
+        let points = caption_points(100, 50, 800);
+        assert_eq!(points[0], [500, 62]);
+        assert_eq!(points[1], [450, 62]);
+        assert_eq!(points[2], [550, 62]);
+        assert!(points.iter().all(|[x, y]| (100..900).contains(x) && (50..80).contains(y)));
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn windows_versions_come_from_the_build_number() {
+        let reg = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\r\n    \
+                   CurrentBuild    REG_SZ    26200\r\n    DisplayVersion    REG_SZ    25H2\r\n    \
+                   ProductName    REG_SZ    Windows 10 Pro\r\n";
+        assert_eq!(windows_version(reg), "Windows 11 25H2");
+        assert_eq!(windows_version("    CurrentBuild    REG_SZ    19045\r\n"), "Windows 10");
+        assert_eq!(windows_version(""), "Windows");
     }
 }
 

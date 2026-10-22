@@ -204,6 +204,8 @@ the repository.
   and dark, and records its source hash in the capture manifest. `--stale` takes only the examples
   whose capture is missing or out of date. A changed example shows "not captured yet" until you
   capture it again.
+  On Windows the examples are launched and captured by `ndshell agent`, which runs in the
+  logged-in user's session (`ndshell agent install`), so the command also works over ssh.
 
 ```sh
 nd docs check --require macos && nd docs capture --stale

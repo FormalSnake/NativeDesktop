@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -138,6 +139,40 @@ pub fn parse_response(frame: Value) -> Result<(Value, Result<Value, RpcError>), 
     Ok((id, Ok(result)))
 }
 
+/// The named pipe a socket path stands for on Windows: the path itself when it already names a
+/// pipe (`\\.\pipe\..`), else a pipe named after it, so `ND_AUTOMATION_SOCKET` and the
+/// per-pid default keep working unchanged.
+pub fn pipe_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if text.starts_with(r"\\.\pipe\") {
+        return path.to_owned();
+    }
+    // FNV-1a: stable across processes, unlike `DefaultHasher`.
+    let hash = text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    PathBuf::from(format!(r"\\.\pipe\nd-automation-{hash:016x}"))
+}
+
+/// A client's connection to an app's automation server.
+#[cfg(unix)]
+pub type Stream = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+pub type Stream = interprocess::local_socket::Stream;
+
+/// Connects to the server listening on `path`: the Unix socket itself, or on Windows the named
+/// pipe it stands for ([`pipe_path`]).
+#[cfg(unix)]
+pub fn connect(path: &Path) -> io::Result<Stream> {
+    Stream::connect(path)
+}
+
+#[cfg(windows)]
+pub fn connect(path: &Path) -> io::Result<Stream> {
+    use interprocess::local_socket::GenericFilePath;
+    use interprocess::local_socket::prelude::*;
+    let pipe = pipe_path(path);
+    Stream::connect(pipe.as_path().to_fs_name::<GenericFilePath>()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +195,14 @@ mod tests {
         let (_, result) = parse_response(response(Value::from(1), Err(e.clone()))).unwrap();
         assert_eq!(result.unwrap_err(), e);
         assert_eq!(e.kind(), Some(RpcErrorCode::WaitForTimeout));
+    }
+
+    #[test]
+    fn pipe_names_are_stable_and_pipes_pass_through() {
+        let pipe = pipe_path(Path::new("/tmp/nd-docs-1-light.sock"));
+        assert_eq!(pipe, pipe_path(Path::new("/tmp/nd-docs-1-light.sock")));
+        assert!(pipe.to_string_lossy().starts_with(r"\\.\pipe\nd-automation-"));
+        assert_ne!(pipe, pipe_path(Path::new("/tmp/nd-docs-1-dark.sock")));
+        assert_eq!(pipe_path(&pipe), pipe);
     }
 }

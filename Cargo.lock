@@ -5105,7 +5105,6 @@ dependencies = [
 name = "nd-test"
 version = "0.6.1"
 dependencies = [
- "interprocess",
  "nd-automation",
  "nd-core",
  "nd-gpui",
