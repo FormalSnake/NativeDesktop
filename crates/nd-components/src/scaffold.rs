@@ -180,6 +180,8 @@ impl ScopedContainer for Scaffold {
     }
 }
 
+impl FluentBuilder for Scaffold {}
+
 impl IntoElement for Scaffold {
     fn into_any_element(self) -> AnyElement {
         let under = self.content_under_toolbar;
