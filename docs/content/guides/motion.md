@@ -114,8 +114,10 @@ presentation("now-playing", &self.expanded)
     .bg(cx.theme().surface.base)
 ```
 
-`image(..).blur(radius)` decodes the picture a few pixels across and stretches it, which gives
-the same wash of its colours on every backend. Lay a scrim of a surface token over it for text.
+`image(..).blur(radius)` decodes the picture at eight pixels per radius, blurs it with each edge
+pixel standing in for what lies past it, and draws it a little past its box on every side, so the
+wash keeps the picture's colours right up to the box's edges on every backend. Lay a scrim of a
+surface token over it for text.
 
 ## Player layout
 

@@ -185,6 +185,8 @@ pub struct DecodeRequest {
     pub fit: ImageFit,
     /// Straight sRGB RGBA every pixel takes, keeping its own alpha times the tint's.
     pub tint: Option<[u8; 4]>,
+    /// A gaussian blur's sigma in tenths of a decoded pixel, edges held; 0 for none.
+    pub blur: u32,
 }
 
 impl DecodeRequest {
@@ -201,7 +203,13 @@ impl DecodeRequest {
                 _ => px.div_ceil(EDGE_STEP) * EDGE_STEP,
             }
         };
-        Self { source, width: step(width), height: step(height), fit, tint: None }
+        Self { source, width: step(width), height: step(height), fit, tint: None, blur: 0 }
+    }
+
+    /// The same request blurred by `sigma` decoded pixels.
+    pub fn blurred(mut self, sigma: f32) -> Self {
+        self.blur = (sigma.max(0.) * 10.).round() as u32;
+        self
     }
 
     /// The same request drawn in `tint` (a theme token).
@@ -792,9 +800,22 @@ fn apply_tint(decoded: &mut Decoded, [r, g, b, a]: [u8; 4]) {
     }
 }
 
+/// A gaussian blur over every frame, each edge pixel standing in for what lies past it, so the
+/// picture keeps its own colour to its edges.
+fn apply_blur(decoded: &mut Decoded, sigma: f32) {
+    let (w, h) = (decoded.width, decoded.height);
+    for frame in &mut decoded.frames {
+        let Some(image) = RgbaImage::from_raw(w, h, frame.rgba.to_vec()) else { continue };
+        frame.rgba = Arc::from(image::imageops::fast_blur(&image, sigma).into_raw());
+    }
+}
+
 /// Decodes `bytes` for `request`, in its tint when it has one.
 pub fn decode(bytes: &[u8], request: &DecodeRequest, animation_budget: usize) -> Result<Decoded, String> {
     let mut decoded = decode_untinted(bytes, request, animation_budget)?;
+    if request.blur > 0 {
+        apply_blur(&mut decoded, request.blur as f32 / 10.);
+    }
     if let Some(tint) = request.tint {
         apply_tint(&mut decoded, tint);
     }

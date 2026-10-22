@@ -85,6 +85,8 @@ pub(crate) struct SlotState {
     source: RefCell<Option<ImageSource>>,
     fit: Cell<ImageFit>,
     tint: Cell<Option<nd_ui::prelude::Hsla>>,
+    /// The blur's sigma in decoded pixels.
+    blur: Cell<f32>,
     animate: Cell<bool>,
     request: RefCell<Option<DecodeRequest>>,
     decoded: RefCell<Option<Arc<Decoded>>>,
@@ -110,6 +112,7 @@ impl ImageSlot {
             source: RefCell::new(None),
             fit: Cell::new(ImageFit::Cover),
             tint: Cell::new(None),
+            blur: Cell::new(0.),
             animate: Cell::new(true),
             request: RefCell::new(None),
             decoded: RefCell::new(None),
@@ -127,6 +130,13 @@ impl ImageSlot {
     /// Draws the picture in `tint`, keeping its alpha; takes effect with the next request.
     pub fn set_tint(&self, tint: Option<nd_ui::prelude::Hsla>) {
         if self.0.tint.replace(tint) != tint {
+            *self.0.request.borrow_mut() = None;
+        }
+    }
+
+    /// Blurs the picture by `sigma` decoded pixels; takes effect with the next request.
+    pub fn set_blur(&self, sigma: f32) {
+        if self.0.blur.replace(sigma) != sigma {
             *self.0.request.borrow_mut() = None;
         }
     }
@@ -183,7 +193,8 @@ impl ImageSlot {
         if w <= 0. || h <= 0. {
             return;
         }
-        let request = DecodeRequest::at(source, w, h, scale as f32, s.fit.get()).tinted(s.tint.get());
+        let request =
+            DecodeRequest::at(source, w, h, scale as f32, s.fit.get()).tinted(s.tint.get()).blurred(s.blur.get());
         if s.request.borrow().as_ref() == Some(&request) {
             return;
         }
@@ -371,7 +382,18 @@ impl Input for ImageInner {
             self.slot.0.layer.setCornerRadius(radius);
             // SAFETY: the layer is ours and on the main thread; clearing the mask is plain KVC.
             unsafe { self.slot.0.layer.setMask(None) };
-            self.slot.place(bounds, self.props.borrow().decode_scale(scale_of(&self.view) as f32).into());
+            let screen = scale_of(&self.view) as f32;
+            let props = self.props.borrow();
+            self.slot.set_blur(props.blur_sigma(screen));
+            let bleed = f64::from(props.bleed(screen));
+            let frame = objc2_foundation::NSRect::new(
+                objc2_foundation::NSPoint::new(bounds.origin.x - bleed, bounds.origin.y - bleed),
+                objc2_foundation::NSSize::new(bounds.size.width + 2. * bleed, bounds.size.height + 2. * bleed),
+            );
+            if let Some(layer) = self.view.layer() {
+                layer.setMasksToBounds(bleed > 0.);
+            }
+            self.slot.place(frame, props.decode_scale(screen).into());
             return;
         };
         // The picture fills the whole box, the room under it included; the mask cuts the bubble

@@ -37,20 +37,41 @@ pub struct ImageProps {
     pub tint: Option<Hsla>,
     /// Cut to a message bubble with its tail on this side: a picture ending a run of messages.
     pub tail: Option<BubbleSide>,
-    /// Softens the picture to colour washes about this many points across: decoded that small
-    /// and stretched, the same on every backend, for a backdrop behind content.
+    /// Softens the picture to colour washes about this many points across, for a backdrop behind
+    /// content: decoded small, blurred with its edges held, and drawn past the box on every side
+    /// so the box's edges keep the picture's colour.
     pub blur: Option<f32>,
     pub enabled: bool,
     pub tooltip: Option<SharedString>,
     pub style: StyleRefinement,
 }
 
+/// Decoded pixels across one blur radius: enough that the stretched picture shows no steps.
+const BLUR_DETAIL: f32 = 8.;
+
 impl ImageProps {
     /// The pixels per point to decode at: the screen's, or far fewer for a blurred picture.
     pub fn decode_scale(&self, scale: f32) -> f32 {
         match self.blur {
-            Some(radius) if radius > 1. => scale.min(1. / radius),
+            Some(radius) if radius > 1. => scale.min(BLUR_DETAIL / radius),
             _ => scale,
+        }
+    }
+
+    /// The gaussian's sigma in decoded pixels; 0 for a sharp picture.
+    pub fn blur_sigma(&self, scale: f32) -> f32 {
+        match self.blur {
+            Some(radius) if radius > 1. => radius * self.decode_scale(scale) / 2.,
+            _ => 0.,
+        }
+    }
+
+    /// Points a blurred picture is drawn past its box on each side. The box clips it; past the
+    /// box are the texture's outermost pixels, which a stretched draw fades into its neighbours.
+    pub fn bleed(&self, scale: f32) -> f32 {
+        match self.blur {
+            Some(radius) if radius > 1. => 2. / self.decode_scale(scale),
+            _ => 0.,
         }
     }
 

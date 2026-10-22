@@ -74,21 +74,24 @@ fn decode_scales_down_to_the_box_and_never_up() {
     let source = ImageSource::bytes("wide", bytes.clone());
     let cover = decode(
         &bytes,
-        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover, tint: None },
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Cover, tint: None, blur: 0 },
         1 << 30,
     )
     .unwrap();
     assert_eq!((cover.width, cover.height), (256, 128), "cover fills the shorter side");
     let contain = decode(
         &bytes,
-        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain, tint: None },
+        &DecodeRequest { source: source.clone(), width: 128, height: 128, fit: ImageFit::Contain, tint: None, blur: 0 },
         1 << 30,
     )
     .unwrap();
     assert_eq!((contain.width, contain.height), (128, 64), "contain fits the longer side");
-    let big =
-        decode(&bytes, &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover, tint: None }, 1 << 30)
-            .unwrap();
+    let big = decode(
+        &bytes,
+        &DecodeRequest { source, width: 4096, height: 4096, fit: ImageFit::Cover, tint: None, blur: 0 },
+        1 << 30,
+    )
+    .unwrap();
     assert_eq!((big.width, big.height), (800, 400), "never scaled up");
     assert_eq!((big.source_width, big.source_height), (800, 400));
     assert_eq!(big.frames.len(), 1);
@@ -104,6 +107,7 @@ fn animated_gifs_keep_every_frame_and_slow_down_too_fast_delays() {
         height: 0,
         fit: ImageFit::Cover,
         tint: None,
+        blur: 0,
     };
     let d = decode(&bytes, &request, 1 << 30).unwrap();
     assert!(d.is_animated());
@@ -123,6 +127,7 @@ fn an_animation_over_budget_drops_frames_and_keeps_its_length() {
         height: 0,
         fit: ImageFit::Cover,
         tint: None,
+        blur: 0,
     };
     let one_frame = 16 * 16 * 4;
     let d = decode(&bytes, &request, one_frame * 3).unwrap();
@@ -182,7 +187,7 @@ fn downloads_land_on_disk_and_a_new_process_reads_them_back() {
         })
     };
     let url = ImageSource::url("https://example.com/art.png");
-    let request = DecodeRequest { source: url.clone(), width: 0, height: 0, fit: ImageFit::Cover, tint: None };
+    let request = DecodeRequest { source: url.clone(), width: 0, height: 0, fit: ImageFit::Cover, tint: None, blur: 0 };
     load(&make(fetches.clone()), request.clone()).unwrap();
     let second = make(fetches.clone());
     assert_eq!(second.intrinsic_size(&url), Some((20, 10)), "the header reads from the disk cache");
@@ -208,6 +213,7 @@ fn a_failure_is_remembered_instead_of_retried_at_once() {
         height: 0,
         fit: ImageFit::Cover,
         tint: None,
+        blur: 0,
     };
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
     assert_eq!(load(&p, request.clone()).unwrap_err(), "404");
@@ -230,6 +236,7 @@ fn memory_evicts_least_recent_but_never_what_was_just_shown() {
         height: 0,
         fit: ImageFit::Cover,
         tint: None,
+        blur: 0,
     };
     load(&p, req("a")).unwrap();
     load(&p, req("b")).unwrap();
@@ -817,4 +824,26 @@ fn video_carries_play_state_as_props_and_reports_its_events() {
     rig.cx.run_until_idle();
     let s = rig.state();
     assert_eq!((s.ready.len(), s.ended, s.failed.as_slice()), (1, 1, &["gone".to_string()][..]));
+}
+
+#[test]
+fn a_blurred_picture_keeps_its_colour_to_its_edges() {
+    let mut image = RgbaImage::from_pixel(40, 40, Rgba([200, 40, 60, 255]));
+    for y in 0..40 {
+        for x in 20..40 {
+            image.put_pixel(x, y, Rgba([30, 60, 180, 255]));
+        }
+    }
+    let mut bytes = Vec::new();
+    image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png).unwrap();
+    let source = ImageSource::bytes("halves", bytes.clone());
+    let request = DecodeRequest::at(source, 40., 40., 1., ImageFit::Cover).blurred(4.);
+    let blurred = decode(&bytes, &request, 1 << 30).unwrap();
+    let rgba = &blurred.frames[0].rgba;
+    let at = |x: u32, y: u32| &rgba[((y * blurred.width + x) * 4) as usize..][..4];
+    assert_eq!(at(0, 0), [200, 40, 60, 255], "the corner keeps the picture's colour");
+    assert_eq!(at(0, 20), at(5, 20), "no fade toward the edge");
+    assert_eq!(at(39, 39), [30, 60, 180, 255]);
+    let middle = at(20, 20);
+    assert!(middle[0] > 30 && middle[0] < 200, "the halves blend across the middle: {middle:?}");
 }

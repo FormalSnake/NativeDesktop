@@ -296,13 +296,16 @@ pub(super) fn image(
             (None, None) => (natural.width, natural.height),
         },
     };
-    let request = p
-        .source
-        .clone()
-        .map(|s| DecodeRequest::at(s, size.0, size.1, p.decode_scale(window.scale_factor()), p.fit).tinted(p.tint));
+    let scale = window.scale_factor();
+    let bleed = p.bleed(scale);
+    let request = p.source.clone().map(|s| {
+        DecodeRequest::at(s, size.0 + 2. * bleed, size.1 + 2. * bleed, p.decode_scale(scale), p.fit)
+            .tinted(p.tint)
+            .blurred(p.blur_sigma(scale))
+    });
     picture_state.borrow_mut().attach(Some(ctl.sink.clone()), b.backend.state.borrow().app.clone());
     Picture::want(&picture_state, request, window, cx);
-    let crop = (p.fit == ImageFit::Cover).then(|| size.0 / size.1.max(1.));
+    let crop = (p.fit == ImageFit::Cover).then(|| (size.0 + 2. * bleed) / (size.1 + 2. * bleed).max(1.));
     let shown = Picture::current(&picture_state, p.animate, crop, window, cx);
 
     let mut root = div()
@@ -319,6 +322,18 @@ pub(super) fn image(
     };
     let root = with_style(root, &p.style);
     match shown {
+        Some(image) if bleed > 0. => root
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-bleed))
+                    .left(px(-bleed))
+                    .w(px(size.0 + 2. * bleed))
+                    .h(px(size.1 + 2. * bleed))
+                    .child(picture(image, p.fit, &StyleRefinement::default())),
+            )
+            .into_any_element(),
         Some(image) => root.child(picture(image, p.fit, &p.style)).into_any_element(),
         None => {
             let fill = theme.surface.raised;
