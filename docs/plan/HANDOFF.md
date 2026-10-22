@@ -6,7 +6,8 @@ guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
 
 ## Where things are
 
-`main` is at `30e8e952`. Merged late on 2026-10-22: fmui-pill-nobar (`da716faf`, the macOS pill is
+`main` is at `48b07503` (fm-hero-linux: the player cover travels above the bar both ways on
+Linux; docs Worker, syntax highlighting). Earlier: `30e8e952`. Merged late on 2026-10-22: fmui-pill-nobar (`da716faf`, the macOS pill is
 plain Liquid Glass with no scroll edge band behind it; the top toolbar is stock NSToolbar) and
 fix-share-crash (`30e8e952`, nd's panic hook ends with `_exit(101)` so a panic off the main thread
 no longer runs the GPU driver's exit handlers mid-frame). Earlier that day: fmui-pill-progress,
@@ -117,6 +118,9 @@ Replies on these PRs are the user's to write.
 
 ## Rules that bit us (keep them)
 
+Macbook disk (2026-10-22): app worktrees (FormalMusic, Messages) build into their own `target/` on
+the internal disk, and nine of them filled it (ENOSPC, three lanes stopped). Heavy builds go to
+g815; a lane runs `cargo clean` in its own worktree when it finishes.
 No `rm`/`mv` on variable paths; never `pkill -f` by pattern; never git reset/checkout/restore/stash;
 one heavy macbook build at a time; every merge pushed to GitHub main. Agents must never type into
 the real Messages.app or the port running on the user's real account: composer and send tests run
