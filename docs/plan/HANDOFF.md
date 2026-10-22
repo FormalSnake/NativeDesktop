@@ -6,7 +6,18 @@ guidelines in `docs/dev/hig/{macos,linux,windows}.md`.
 
 ## Where things are
 
-`main` on GitHub (FormalStudio/NativeDesktop) is at `8249438c`. Merged since the last handoff:
+`main` is at `acc49740`. Later on 2026-10-22: fmui-pill-progress, fm-motion (`player_layout`,
+heroes, `image().blur()`, lyrics depth of field), fmui-scroll (scroll edges, full-bleed shelves;
+media goldens re-recorded), gate-toolchain, fm-blur-edges (blur decodes at 8 px per radius, edges
+replicated), gnome-split (one header bar per pane), cef-ext-popup-view (Linux extension popups in
+an nd view). g815 runs FormalMusic 9fa5817 (nix b80fbe1f; Replay Mix plays the clicked row).
+Open: share crash plus playback with no UI (new lane), fmui-pill-nobar (no blur band behind the
+macOS pill, user 2026-10-22), fmui-now-playing (playing row, Playing from header, Up next
+contrast), motion queue fm-hero-linux, fm-lyrics-motion (match FormalShell and Kopuz), fm-bar-narrow
+(plus nav.rs clippy), docs-captures-2 held (Linux controls must follow button-layout), Windows 11 VM
+check for every FormalMusic branch (user 2026-10-22). Never grim the user's real outputs.
+
+Earlier, at `8249438c`. Merged before that:
 fmui-pill-clear (macOS player pill is plain system Liquid Glass again, no tint), msg-linux-4
 (drawn submenus open beside their parent, flip, clamp), docs-captures (all 13 examples captured on
 macOS, Linux and Windows, light and dark; Windows transport for `nd docs capture`; Windows frame
