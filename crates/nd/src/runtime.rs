@@ -44,7 +44,8 @@ pub mod prelude {
         system_item, titlebar, toolbar_sidebar_toggle,
     };
     pub use crate::chrome::{
-        ArtworkActions, Presentation, PresentationExt, artwork_actions, hover_menu_button, presentation,
+        ArtworkActions, Equalizer, Presentation, PresentationExt, artwork_actions, equalizer, hover_menu_button,
+        presentation,
     };
     pub use crate::chrome::{
         Attachment, Avatar, BubbleSide, ChatBubble, ChatMessage, Composer, ComposerEvent, Draft, FilesDropped, Image,

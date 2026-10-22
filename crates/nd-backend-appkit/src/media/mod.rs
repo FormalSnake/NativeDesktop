@@ -8,6 +8,7 @@
 //! contents decoded by the shared pipeline off the main thread.
 
 mod chat;
+mod equalizer;
 pub(crate) mod image;
 mod lyrics;
 mod seek;
@@ -17,7 +18,7 @@ mod video;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use nd_components::media::{AvatarKind, ChatBubbleKind, ImageKind, LyricsKind, SeekBarKind, ShelfKind, VideoKind};
+use nd_components::media::{AvatarKind, ChatBubbleKind, EqualizerKind, ImageKind, LyricsKind, SeekBarKind, ShelfKind, VideoKind};
 use nd_ui::prelude::Hsla;
 use objc2::rc::Retained;
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
@@ -36,6 +37,7 @@ pub(crate) fn register() {
     crate::custom::register::<LyricsKind>(lyrics::LyricsWidget);
     crate::custom::register::<ShelfKind>(shelf::ShelfWidget);
     crate::custom::register::<VideoKind>(video::VideoWidget);
+    crate::custom::register::<EqualizerKind>(equalizer::EqualizerWidget);
 }
 
 /// What a media view does with input and layout. The view holds it weakly; the node's native
