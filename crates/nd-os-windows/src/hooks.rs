@@ -33,6 +33,8 @@ pub struct WindowsHooks {
     expose: bool,
     diag: bool,
     chrome: RefCell<HashMap<WindowId, Rc<Chrome>>>,
+    /// Whether each window's frame and Mica are set dark.
+    dark: RefCell<HashMap<WindowId, bool>>,
     colors_changed: RefCell<Option<ColorsChanged>>,
 }
 
@@ -43,6 +45,7 @@ impl Default for WindowsHooks {
             expose: flag("ND_DEBUG_EXPOSE"),
             diag: flag("ND_DIAG_WINDOW"),
             chrome: RefCell::default(),
+            dark: RefCell::default(),
             colors_changed: RefCell::default(),
         }
     }
@@ -55,6 +58,17 @@ impl WindowsHooks {
 
     fn chrome(&self, window: WindowId) -> Option<Rc<Chrome>> {
         self.chrome.borrow().get(&window).cloned()
+    }
+
+    /// Sets Mica and the frame's scheme when `dark` changed for `window`.
+    fn set_dark(&self, window: WindowId, hwnd: windows::Win32::Foundation::HWND, dark: bool) {
+        if self.dark.borrow().get(&window) == Some(&dark) {
+            return;
+        }
+        if let Err(e) = backdrop::apply(hwnd, Backdrop::Mica, dark) {
+            eprintln!("nd: Mica unavailable: {e}");
+        }
+        self.dark.borrow_mut().insert(window, dark);
     }
 
     /// The title row for the window's current size, its buttons as tall as the app's title rows
@@ -90,9 +104,7 @@ impl OsHooks for WindowsHooks {
                 return;
             }
         };
-        if let Err(e) = backdrop::apply(chrome.hwnd(), Backdrop::Mica, dark(gpui_window)) {
-            eprintln!("nd: Mica unavailable: {e}");
-        }
+        self.set_dark(window, chrome.hwnd(), dark(gpui_window));
         let handle = gpui_window.window_handle();
         let async_cx = cx.to_async();
         let diag = self.diag;
@@ -146,6 +158,9 @@ impl OsHooks for WindowsHooks {
         gpui_window: &mut gpui::Window,
     ) -> Option<AnyElement> {
         let chrome = self.chrome(window)?;
+        // The app's theme can override the system appearance, so the frame and Mica follow the
+        // background the window draws with, not the system setting.
+        self.set_dark(window, chrome.hwnd(), look.background.l < 0.5);
         if gpui_window.is_fullscreen() {
             return None;
         }
@@ -191,6 +206,7 @@ impl OsHooks for WindowsHooks {
 
     fn window_closed(&self, window: WindowId) {
         self.chrome.borrow_mut().remove(&window);
+        self.dark.borrow_mut().remove(&window);
     }
 }
 
