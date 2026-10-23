@@ -5,7 +5,6 @@
 mod blocks;
 pub mod content;
 mod embed;
-pub mod live;
 
 use std::collections::HashMap;
 use std::rc::Rc;

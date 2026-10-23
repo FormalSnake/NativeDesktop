@@ -279,6 +279,8 @@ pub fn index_html(title: &str, bin: &str, base_path: Option<&str>) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">{base}
 <title>{title}</title>
+<link rel="modulepreload" href="./{bin}.js">
+<link rel="preload" href="./{bin}_bg.wasm" as="fetch" type="application/wasm" crossorigin>
 <style>
 :root {{ color-scheme: light dark; }}
 html, body {{ margin: 0; height: 100%; overflow: hidden; background: #ffffff; }}

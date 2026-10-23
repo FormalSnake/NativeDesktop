@@ -6,7 +6,7 @@
 //! package = "hello"         # cargo package (defaults to name)
 //! title = "Hello"
 //! summary = "The smallest app: a toolbar, a button and a count."
-//! web = true                # builds for wasm32; the docs app runs it live
+//! web = true                # builds for wasm32; the docs site runs it live
 //! env = { HELLO_DEMO = "1" }
 //! ```
 
@@ -165,7 +165,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-struct Fnv(u64);
+pub(crate) struct Fnv(pub(crate) u64);
 
 impl Default for Fnv {
     fn default() -> Self {
@@ -174,7 +174,7 @@ impl Default for Fnv {
 }
 
 impl Fnv {
-    fn write(&mut self, bytes: &[u8]) {
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.0 ^= u64::from(*byte);
             self.0 = self.0.wrapping_mul(0x0100_0000_01b3);

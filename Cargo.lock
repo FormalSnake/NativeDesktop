@@ -4873,14 +4873,23 @@ dependencies = [
 name = "nd-docs-app"
 version = "0.6.1"
 dependencies = [
+ "nd",
+ "nd-docs",
+ "nd-docs-run",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nd-docs-run"
+version = "0.6.1"
+dependencies = [
  "gallery",
  "hello",
  "nd",
- "nd-docs",
  "overrides",
  "scroll-bench",
- "serde",
- "serde_json",
+ "web-sys",
 ]
 
 [[package]]

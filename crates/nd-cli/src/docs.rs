@@ -2,12 +2,13 @@
 //!
 //! - `check`: every page loads (snippets, examples and directives resolve), the link check, the
 //!   prose check over pages and `nd new` templates, and the capture report. `--compile` builds
-//!   every registered example (and the web ones for wasm), `--web` loads the docs app and each
-//!   web example in headless Chrome and fails on a blank canvas, `--require macos` fails on a
-//!   missing or stale macOS capture.
+//!   every registered example (and the web ones for wasm), `--web` loads each web example from
+//!   the site's `run/` bundle in headless Chrome and fails on a blank canvas, `--require macos`
+//!   fails on a missing or stale macOS capture.
 //! - `build`: the static site (an HTML page and the raw markdown per page, `llms.txt`,
-//!   `llms-full.txt`) with the docs app's web bundle under `app/`, code blocks highlighted by
-//!   `scripts/docs-highlight` (Node). `serve` builds and serves it.
+//!   `llms-full.txt`), the captures under `shots/` and the live examples' web bundle under
+//!   `run/`, code blocks highlighted by `scripts/docs-highlight` (Node). `serve` builds and
+//!   serves it.
 //! - `capture`: runs each example through the test harness on this OS, light and dark, and
 //!   records the captures with the example's source hash. On Windows the examples are launched
 //!   and captured by `ndshell agent` in the desktop session, so it also runs over ssh.
@@ -24,6 +25,8 @@ use nd_docs::examples::Example;
 use crate::web::{self, WebProject};
 
 const APP_PACKAGE: &str = "nd-docs-app";
+/// The bundle the pages' live examples load from `/run/`.
+const RUN_PACKAGE: &str = "nd-docs-run";
 
 #[derive(Args, Debug)]
 pub struct DocsArgs {
@@ -35,7 +38,7 @@ pub struct DocsArgs {
 pub enum DocsCommand {
     /// Pages, links, prose and captures; `--compile` and `--web` for the slower checks.
     Check(CheckArgs),
-    /// The static site (HTML, raw markdown, llms.txt) with the docs app under app/.
+    /// The static site (HTML, raw markdown, llms.txt) with the live examples under run/.
     Build(BuildArgs),
     /// Build, then serve the site locally.
     Serve(ServeArgs),
@@ -51,7 +54,7 @@ pub struct CheckArgs {
     /// `cargo check` every registered example, and the web ones for wasm32.
     #[arg(long)]
     pub compile: bool,
-    /// Build the docs app and each web example for the browser and load them in headless Chrome.
+    /// Build the site and load each web example from its run/ bundle in headless Chrome.
     #[arg(long)]
     pub web: bool,
     /// Also list external links (they are not fetched).
@@ -129,9 +132,9 @@ fn default_out(repo: &Path) -> PathBuf {
 fn build(repo: &Path, out: Option<PathBuf>, debug: bool) -> Result<PathBuf> {
     let site = nd_docs::load(repo)?;
     let out = out.unwrap_or_else(|| default_out(repo));
-    let project = in_dir(repo, || WebProject::load(Some(APP_PACKAGE)))?;
-    web::build_web(&project, &out.join("app"), debug)?;
-    nd_docs::export(&site, &Manifest::load(repo)?, &out)?;
+    let project = in_dir(repo, || WebProject::load(Some(RUN_PACKAGE)))?;
+    web::build_web(&project, &out.join("run"), debug)?;
+    nd_docs::export(&site, &Manifest::load(repo)?, repo, &out)?;
     highlight(repo, &out)?;
     Ok(out)
 }
@@ -277,7 +280,7 @@ fn compile(repo: &Path, examples: &[Example]) -> Result<bool> {
     let all: Vec<&Example> = examples.iter().collect();
     println!("nd docs: compile {} examples and the docs app", all.len());
     let mut native = cargo();
-    native.current_dir(repo).args(["check", "--all-targets", "-p", APP_PACKAGE]);
+    native.current_dir(repo).args(["check", "--all-targets", "-p", APP_PACKAGE, "-p", RUN_PACKAGE]);
     for e in &all {
         native.args(["-p", &e.package]);
     }
@@ -286,7 +289,17 @@ fn compile(repo: &Path, examples: &[Example]) -> Result<bool> {
     let web: Vec<&Example> = examples.iter().filter(|e| e.web).collect();
     println!("nd docs: compile {} web examples and the docs app for {}", web.len(), web::WASM_TARGET);
     let mut wasm = cargo();
-    wasm.current_dir(repo).args(["check", "--lib", "--bins", "--target", web::WASM_TARGET, "-p", APP_PACKAGE]);
+    wasm.current_dir(repo).args([
+        "check",
+        "--lib",
+        "--bins",
+        "--target",
+        web::WASM_TARGET,
+        "-p",
+        APP_PACKAGE,
+        "-p",
+        RUN_PACKAGE,
+    ]);
     for e in &web {
         wasm.args(["-p", &e.package]);
     }
@@ -469,36 +482,31 @@ fn web_embeds(repo: &Path, site: &nd_docs::Site) -> Result<bool> {
     crate::project::fresh_dir(&work)?;
     let mut ok = true;
     let site_dir = build(repo, Some(work.join("site")), false)?;
-    // Every fresh capture the app shows must be in the bundle it loads them from.
+    // Every fresh capture a page shows must be in the repository the build reads it from.
     let manifest = Manifest::load(repo)?;
     for example in &site.examples {
         for os in Os::ALL {
             if let State::Fresh(c) = manifest.state(example, os) {
-                for file in [Some(&c.light), Some(&c.dark), c.recording.as_ref()].into_iter().flatten() {
-                    let path = site_dir.join("app/assets/captures").join(&example.name).join(file);
+                for file in [&c.light, &c.dark] {
+                    let path = repo.join(captures::DIR).join(&example.name).join(file);
                     if !path.is_file() {
-                        println!("  missing from the bundle: {}", path.display());
+                        println!("  missing capture: {}", path.display());
                         ok = false;
                     }
                 }
             }
         }
     }
-    let mut targets = vec![("docs app".to_owned(), site_dir.join("app"))];
+    // Each web example as its page's Run live button loads it.
+    let (port, _server) = serve_background(&site_dir.join("run"))?;
     for example in site.examples.iter().filter(|e| e.web) {
-        let project = in_dir(repo, || WebProject::load(Some(&example.package)))?;
-        let out = work.join("live").join(&example.name);
-        web::build_web(&project, &out, false)?;
-        targets.push((example.name.clone(), out));
-    }
-    for (name, dir) in targets {
-        let (port, _server) = serve_background(&dir)?;
-        let colours = colours_at(&format!("http://127.0.0.1:{port}/"), &work, &name.replace(' ', "-"))?;
+        let url = format!("http://127.0.0.1:{port}/?example={}", example.name);
+        let colours = colours_at(&url, &work, &example.name)?;
         // A canvas that never drew is one flat colour: the page background.
         let loaded = colours > 4;
-        println!("  {} {name} ({colours} colours)", if loaded { "ok  " } else { "FAIL" });
+        println!("  {} {} ({colours} colours)", if loaded { "ok  " } else { "FAIL" }, example.name);
         if !loaded {
-            explain_blank(&dir, &format!("http://127.0.0.1:{port}/"), &work, &name.replace(' ', "-"));
+            explain_blank(&site_dir.join("run"), &url, &work, &example.name);
         }
         ok &= loaded;
     }

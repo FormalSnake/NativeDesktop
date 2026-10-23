@@ -1,7 +1,12 @@
-//! The examples the Web tab runs live. Their windows open in this process: in-canvas windows on
-//! the web, native windows on the desktop.
+//! The web examples the docs run live: on the site in this crate's own bundle (`/run/`), in the
+//! docs app in its own process. Their windows are in-canvas windows on the web, native windows on
+//! the desktop.
 
 use nd::prelude::*;
+
+pub fn app() -> Application {
+    Application::new(nd::manifest!())
+}
 
 /// Opens example `name`'s window, for every example with `web = true` in docs/examples.toml.
 pub fn opener(name: &str) -> Option<fn(&mut App)> {

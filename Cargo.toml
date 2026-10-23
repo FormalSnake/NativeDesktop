@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "examples/*", "docs/app"]
+members = ["crates/*", "examples/*", "docs/app", "docs/run"]
 # Published GPUI crates with nd's patch queue applied, written by scripts/gpui-fork.
 exclude = ["crates/nd-gpui/vendor", "crates/nd-terminal/vendor"]
 

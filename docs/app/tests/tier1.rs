@@ -23,8 +23,8 @@ fn every_page_opens_from_the_sidebar(cx: &mut TestApp) {
 fn every_web_example_has_an_opener(cx: &mut TestApp) {
     let content = Content::load().unwrap_or_else(|e| panic!("the docs content: {e}"));
     for example in content.site.examples.iter().filter(|e| e.web) {
-        let open = nd_docs_app::live::opener(&example.name)
-            .unwrap_or_else(|| panic!("{} has web = true but no opener in docs/app/src/live.rs", example.name));
+        let open = nd_docs_run::opener(&example.name)
+            .unwrap_or_else(|| panic!("{} has web = true but no opener in docs/run/src/lib.rs", example.name));
         let before = cx.window_ids().count();
         open(cx);
         cx.run_until_idle();

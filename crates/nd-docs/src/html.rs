@@ -1,15 +1,18 @@
-//! The static site: one HTML page per docs page, rendered from the same blocks the docs app
-//! draws, so readers and crawlers without wasm (agents included) get every page. Page `a/b` is
-//! written to `a/b.html` and linked as `/a/b`; `a/index` is linked as `/a/`. The docs app itself
-//! sits under `/app/`, and capture images are loaded from its bundle.
+//! The docs site: one HTML page per docs page, rendered from the same blocks the docs app draws,
+//! so it needs no wasm to read (agents included). Page `a/b` is written to `a/b.html` and linked
+//! as `/a/b`; `a/index` is linked as `/a/`. Captures are content-hashed copies under `/shots/`. A
+//! web example runs live in an iframe on `/run/` (`docs/run`), loaded when the reader asks.
 
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::Result;
 
 use crate::captures::{Manifest, Os, State};
-use crate::examples::Example;
+use crate::examples::{Example, Fnv};
 use crate::model::{Block, Inline, Link, Page, Site, SourceRef};
 
 pub const SITE_URL: &str = "https://native.formalsnake.dev";
@@ -59,15 +62,33 @@ fn esc(text: &str) -> String {
     out
 }
 
-/// Writes every page, `404.html`, `robots.txt`, `sitemap.xml` and the `_headers` file for
-/// Cloudflare's static assets.
-pub fn write(site: &Site, captures: &Manifest, out: &Path) -> Result<()> {
+/// What rendering needs beyond the site: the capture manifest, the published shots, and whether
+/// the page being rendered has shown an example yet (the first one loads eagerly, it is often
+/// the largest paint).
+struct Ctx<'a> {
+    captures: &'a Manifest,
+    shots: HashMap<String, Shot>,
+    eager: Cell<bool>,
+}
+
+/// A capture as the pages reference it, with its pixel size so the page reserves its box.
+struct Shot {
+    href: String,
+    width: u32,
+    height: u32,
+}
+
+/// Writes every page, `404.html`, `robots.txt`, `sitemap.xml`, and the `_headers` and
+/// `_redirects` files for Cloudflare's static assets. Captures are read from `repo`.
+pub fn write(site: &Site, captures: &Manifest, repo: &Path, out: &Path) -> Result<()> {
+    let ctx = Ctx { captures, shots: shots(site, captures, repo, out)?, eager: Cell::new(true) };
     for page in &site.pages {
         let path = out.join(format!("{}.html", page.id));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, render_page(site, captures, page))?;
+        ctx.eager.set(true);
+        std::fs::write(&path, render_page(site, &ctx, page))?;
     }
     std::fs::write(out.join("404.html"), not_found(site))?;
     std::fs::write(out.join("robots.txt"), format!("User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n"))?;
@@ -80,10 +101,97 @@ pub fn write(site: &Site, captures: &Manifest, out: &Path) -> Result<()> {
     sitemap.push_str("</urlset>\n");
     std::fs::write(out.join("sitemap.xml"), sitemap)?;
     std::fs::write(out.join("_headers"), HEADERS)?;
+    std::fs::write(out.join("_redirects"), REDIRECTS)?;
     Ok(())
 }
 
+/// Publishes every fresh capture under `/shots/` with its content hash in the name, as lossless
+/// WebP when `cwebp` is on PATH (about a quarter of the PNG's bytes) and as the PNG otherwise.
+/// Keyed by `example/file`.
+fn shots(site: &Site, captures: &Manifest, repo: &Path, out: &Path) -> Result<HashMap<String, Shot>> {
+    let mut sources = Vec::new();
+    for example in &site.examples {
+        for os in Os::ALL {
+            if let State::Fresh(c) = captures.state(example, os) {
+                for file in [&c.light, &c.dark] {
+                    let png = repo.join(crate::captures::DIR).join(&example.name).join(file);
+                    if png.is_file() {
+                        sources.push((example.name.as_str(), file.clone(), png));
+                    }
+                }
+            }
+        }
+    }
+    let dir = out.join("shots");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    let webp = Command::new("cwebp").arg("-version").output().is_ok_and(|o| o.status.success());
+    let jobs = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut shots = HashMap::new();
+    for chunk in sources.chunks(jobs) {
+        let mut encoded = Vec::new();
+        if webp {
+            let children = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, (_, _, png))| {
+                    // Lossless, keeping the ICC profile: captures carry the display's.
+                    Command::new("cwebp")
+                        .args(["-quiet", "-lossless", "-z", "6", "-metadata", "icc"])
+                        .arg(png)
+                        .arg("-o")
+                        .arg(dir.join(format!(".{i}.webp")))
+                        // libpng warns about every capture's iCCP chunk; the exit status is checked.
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            for (i, mut child) in children.into_iter().enumerate() {
+                let status = child.wait()?;
+                anyhow::ensure!(status.success(), "cwebp failed on {} ({status})", chunk[i].2.display());
+                let tmp = dir.join(format!(".{i}.webp"));
+                encoded.push(std::fs::read(&tmp)?);
+                std::fs::remove_file(tmp)?;
+            }
+        }
+        for (i, (example, file, png)) in chunk.iter().enumerate() {
+            let png_bytes = std::fs::read(png)?;
+            let (width, height) = png_size(&png_bytes).unwrap_or_default();
+            let (bytes, ext) = match encoded.get(i) {
+                Some(webp) => (webp.as_slice(), "webp"),
+                None => (png_bytes.as_slice(), "png"),
+            };
+            let mut hash = Fnv::default();
+            hash.write(bytes);
+            let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
+            let name = format!("{example}/{stem}-{:016x}.{ext}", hash.0);
+            let path = dir.join(&name);
+            std::fs::create_dir_all(path.parent().unwrap_or(&dir))?;
+            std::fs::write(&path, bytes)?;
+            shots.insert(format!("{example}/{file}"), Shot { href: format!("/shots/{name}"), width, height });
+        }
+    }
+    Ok(shots)
+}
+
+/// Width and height from a PNG's IHDR chunk.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let be = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    Some((be(16)?, be(20)?))
+}
+
+/// `/app/` served the docs app's web build; links to it land on the site.
+const REDIRECTS: &str = "/app/ / 301\n/app/* / 301\n";
+
+/// Shots are content-hashed, so they never change under their name.
 const HEADERS: &str = "\
+/shots/*
+  Cache-Control: public, max-age=31536000, immutable
 /*.md
   Content-Type: text/markdown; charset=utf-8
 /llms.txt
@@ -92,14 +200,14 @@ const HEADERS: &str = "\
   Content-Type: text/plain; charset=utf-8
 ";
 
-fn render_page(site: &Site, captures: &Manifest, page: &Page) -> String {
+fn render_page(site: &Site, ctx: &Ctx, page: &Page) -> String {
     let mut body = String::new();
     let _ = writeln!(body, "<h1>{}</h1>", esc(&page.title));
     if !page.description.is_empty() {
         let _ = writeln!(body, "<p class=\"lede\">{}</p>", esc(&page.description));
     }
     for block in &page.blocks {
-        render_block(&mut body, site, captures, block);
+        render_block(&mut body, site, ctx, block);
     }
     let _ = writeln!(
         body,
@@ -149,15 +257,18 @@ fn shell(site: &Site, current: Option<&Page>, title: &str, description: &str, bo
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 {head}<style>{CSS}</style>
+<script type="speculationrules">{SPECULATION}</script>
 </head>
 <body>
-<header class="top"><a class="brand" href="/">NativeDesktop</a><nav class="links"><a class="to-pages" href="#pages">Pages</a><a href="/app/">Docs app</a><a href="/llms.txt">llms.txt</a><a href="{REPO_URL}">GitHub</a></nav></header>
+<header class="top"><a class="brand" href="/">NativeDesktop</a><nav class="links"><a class="to-pages" href="#pages">Pages</a><button class="find" type="button" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K">Search</button><a href="/llms.txt">llms.txt</a><a href="{REPO_URL}">GitHub</a></nav></header>
 <div class="layout">
 <main>
 {body}</main>
 <nav class="sidebar" id="pages" aria-label="Docs pages">
 {nav}</nav>
 </div>
+<dialog id="search" aria-label="Search pages"><label for="search-q">Search pages</label><input id="search-q" type="search" autocomplete="off" spellcheck="false"><ul></ul></dialog>
+<script>{SCRIPT}</script>
 </body>
 </html>
 "##,
@@ -186,7 +297,7 @@ fn inlines(out: &mut String, runs: &[Inline]) {
     }
 }
 
-fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Block) {
+fn render_block(out: &mut String, site: &Site, ctx: &Ctx, block: &Block) {
     match block {
         Block::Heading { level, anchor, text } => {
             let level = (*level).clamp(2, 6);
@@ -219,7 +330,7 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
                 // A tight item is one paragraph: no <p> around it.
                 match item.as_slice() {
                     [Block::Paragraph(runs)] => inlines(out, runs),
-                    blocks => blocks.iter().for_each(|b| render_block(out, site, captures, b)),
+                    blocks => blocks.iter().for_each(|b| render_block(out, site, ctx, b)),
                 }
                 out.push_str("</li>\n");
             }
@@ -227,7 +338,7 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
         }
         Block::Quote(blocks) => {
             out.push_str("<blockquote>\n");
-            blocks.iter().for_each(|b| render_block(out, site, captures, b));
+            blocks.iter().for_each(|b| render_block(out, site, ctx, b));
             out.push_str("</blockquote>\n");
         }
         Block::Table { header, rows } => {
@@ -252,13 +363,13 @@ fn render_block(out: &mut String, site: &Site, captures: &Manifest, block: &Bloc
         Block::Rule => out.push_str("<hr>\n"),
         Block::Example(name) => {
             if let Some(example) = site.example(name) {
-                render_example(out, captures, example);
+                render_example(out, ctx, example);
             }
         }
     }
 }
 
-fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
+fn render_example(out: &mut String, ctx: &Ctx, example: &Example) {
     let _ = writeln!(
         out,
         "<figure class=\"example\">\n<figcaption><strong>Example: {}.</strong> {} Source in <a href=\"{}\">examples/{}</a>.",
@@ -267,20 +378,39 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
         repo_url(&format!("examples/{}", example.name)),
         esc(&example.name),
     );
+    out.push_str("</figcaption>\n");
     if example.web {
-        out.push_str(" It also runs live in the <a href=\"/app/\">docs app</a>.");
+        let _ = writeln!(
+            out,
+            "<div class=\"live\" data-example=\"{name}\" data-title=\"{title}\"><button type=\"button\">Run live</button>\
+             <span class=\"source\">Runs {title} in this page as WebAssembly.</span></div>",
+            name = esc(&example.name),
+            title = esc(&example.title),
+        );
     }
-    out.push_str("</figcaption>\n<div class=\"shots\">\n");
+    out.push_str("<div class=\"shots\">\n");
+    // The first example on a page is often above the fold and its largest paint.
+    let eager = ctx.eager.replace(false);
+    let mut first = eager;
     for os in Os::ALL {
-        if let State::Fresh(c) = captures.state(example, os) {
-            let dir = format!("/app/assets/captures/{}", example.name);
+        if let State::Fresh(c) = ctx.captures.state(example, os) {
+            let shot = |file: &str| ctx.shots.get(&format!("{}/{file}", example.name));
+            // A capture missing from the repository has no shot; `nd docs check --web` fails on it.
+            let href = |file: &str| shot(file).map(|s| s.href.clone()).unwrap_or_default();
+            let size =
+                shot(&c.light).map_or(String::new(), |s| format!(" width=\"{}\" height=\"{}\"", s.width, s.height));
+            let loading = match (eager, std::mem::take(&mut first)) {
+                (true, true) => " fetchpriority=\"high\"",
+                (true, false) => "",
+                _ => " loading=\"lazy\" decoding=\"async\"",
+            };
             let _ = writeln!(
                 out,
-                "<div class=\"shot\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dir}/{dark}\">\
-                 <img src=\"{dir}/{light}\" alt=\"{title} on {os}\" loading=\"lazy\"></picture>\
+                "<div class=\"shot\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"{dark}\">\
+                 <img src=\"{light}\"{size} alt=\"{title} on {os}\"{loading}></picture>\
                  <p class=\"source\">Captured on {on}, {date}.</p></div>",
-                dark = esc(&c.dark),
-                light = esc(&c.light),
+                dark = esc(&href(&c.dark)),
+                light = esc(&href(&c.light)),
                 title = esc(&example.title),
                 os = os.label(),
                 on = esc(&c.captured_on),
@@ -290,6 +420,25 @@ fn render_example(out: &mut String, captures: &Manifest, example: &Example) {
     }
     out.push_str("</div>\n</figure>\n");
 }
+
+/// Prerenders a docs page when the pointer rests on its link (or on pointerdown on touch), so
+/// the click lands on a page that is already drawn. Live examples, Markdown and text files are
+/// left out.
+const SPECULATION: &str = r#"{"prerender":[{"where":{"and":[{"href_matches":"/*"},{"not":{"href_matches":"/run/*"}},{"not":{"href_matches":"/*.md"}},{"not":{"href_matches":"/*.txt"}}]},"eagerness":"moderate"}]}"#;
+
+/// Run live swaps its block for the example's iframe; Search (and secondary-K, as in the docs
+/// app) filters the sidebar's page titles in a modal dialog, Enter opening the first match.
+const SCRIPT: &str = r#"
+for(const b of document.querySelectorAll('.live button'))b.addEventListener('click',()=>{const d=b.closest('.live'),f=document.createElement('iframe');f.src='/run/?example='+encodeURIComponent(d.dataset.example);f.title=d.dataset.title+', running live';d.replaceChildren(f);f.focus()});
+const dlg=document.getElementById('search'),q=dlg.querySelector('input'),list=dlg.querySelector('ul'),pages=[...document.querySelectorAll('.sidebar li a')].map(a=>[a.textContent,a.getAttribute('href')]);
+function show(){const t=q.value.trim().toLowerCase(),hits=pages.filter(([n])=>n.toLowerCase().includes(t));list.replaceChildren(...hits.map(([n,h])=>{const li=document.createElement('li'),a=document.createElement('a');a.href=h;a.textContent=n;li.append(a);return li}));if(!hits.length){const li=document.createElement('li');li.className='none';li.textContent='No page titles match “'+q.value.trim()+'”.';list.append(li)}}
+function find(){q.value='';show();dlg.showModal()}
+q.addEventListener('input',show);
+q.addEventListener('keydown',e=>{const a=list.querySelector('a');if(e.key==='Enter'&&a)location.href=a.href});
+dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close()});
+document.querySelector('.find').addEventListener('click',find);
+addEventListener('keydown',e=>{if(e.key==='k'&&(e.metaKey||e.ctrlKey)){e.preventDefault();dlg.open?dlg.close():find()}});
+"#;
 
 /// Colours are `nd-theme`'s baked palette (`palette.rs`), light and dark.
 const CSS: &str = r#"
@@ -331,6 +480,21 @@ hr{border:0;border-top:1px solid var(--separator);margin:32px 0}
 .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:16px;margin-top:12px}
 .shots img{max-width:100%;height:auto;display:block;border-radius:6px}
 .shot .source{margin:6px 0 0}
+.live{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:12px}
+.live .source{margin:0}
+.live button{font:inherit;font-size:14px;font-weight:600;padding:6px 14px;min-height:32px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;transition:scale .15s ease-out}
+.live button:active{scale:.96}
+.live iframe{display:block;width:100%;aspect-ratio:4/3;border:1px solid var(--separator);border-radius:6px;background:var(--surface)}
+.find{font:inherit;padding:0;border:0;background:none;color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+#search{width:min(520px,calc(100% - 32px));margin-top:12vh;padding:12px;border:1px solid var(--separator);border-radius:12px;background:var(--raised);color:var(--text)}
+#search::backdrop{background:#00000059}
+#search label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text2);margin:0 0 6px}
+#search input{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--separator);border-radius:6px;background:var(--surface);color:var(--text)}
+#search ul{list-style:none;margin:8px 0 0;padding:0;max-height:50vh;overflow-y:auto;overscroll-behavior:contain}
+#search li a{display:block;padding:6px 8px;border-radius:6px;color:var(--text);text-decoration:none}
+#search li:first-child a{background:var(--accent-container)}
+#search li a:hover{background:var(--separator)}
+#search .none{padding:6px 8px;color:var(--text2)}
 footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--separator);font-size:13px;color:var(--text2)}
 @media (max-width:760px){
 .layout{grid-template-columns:minmax(0,1fr)}
@@ -373,10 +537,33 @@ mod tests {
             ..Default::default()
         };
         let site = Site { pages: vec![page.clone()], ..Default::default() };
-        let html = render_page(&site, &Manifest::default(), &page);
+        let manifest = Manifest::default();
+        let ctx = Ctx { captures: &manifest, shots: HashMap::new(), eager: Cell::new(true) };
+        let html = render_page(&site, &ctx, &page);
         assert!(html.contains("<h1>A &lt;b&gt;</h1>"));
         assert!(html.contains("<h2 id=\"x\">"));
         assert!(html.contains("<code class=\"language-rust\">a &lt; b</code>"));
         assert!(html.contains("href=\"/a.md\""));
+    }
+
+    #[test]
+    fn web_examples_get_a_run_button() {
+        let page = Page {
+            id: "a".into(),
+            title: "A".into(),
+            blocks: vec![Block::Example("hello".into()), Block::Example("terminal".into())],
+            ..Default::default()
+        };
+        let example = |name: &str, web| Example { name: name.into(), title: name.into(), web, ..Default::default() };
+        let site = Site {
+            pages: vec![page.clone()],
+            examples: vec![example("hello", true), example("terminal", false)],
+            ..Default::default()
+        };
+        let manifest = Manifest::default();
+        let ctx = Ctx { captures: &manifest, shots: HashMap::new(), eager: Cell::new(true) };
+        let html = render_page(&site, &ctx, &page);
+        assert_eq!(html.matches("class=\"live\"").count(), 1);
+        assert!(html.contains("data-example=\"hello\""));
     }
 }

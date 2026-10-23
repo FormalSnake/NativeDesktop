@@ -90,10 +90,10 @@ pub fn load(repo: &Path) -> Result<Site> {
 }
 
 /// `<out>/<id>.md` and `<out>/<id>.html` for every page, `<out>/llms.txt` (an index) and
-/// `llms-full.txt` (every page in sidebar order), for agents and anyone reading without the app.
+/// `llms-full.txt` (every page in sidebar order), for agents and anyone reading the markdown.
 /// Links in the markdown are rewritten to absolute URLs, so a page read on its own or inside
 /// `llms-full.txt` still points somewhere real.
-pub fn export(site: &Site, captures: &captures::Manifest, out: &Path) -> Result<()> {
+pub fn export(site: &Site, captures: &captures::Manifest, repo: &Path, out: &Path) -> Result<()> {
     std::fs::create_dir_all(out)?;
     let site_url = html::SITE_URL;
     let mut index = format!(
@@ -123,7 +123,7 @@ pub fn export(site: &Site, captures: &captures::Manifest, out: &Path) -> Result<
     }
     std::fs::write(out.join("llms.txt"), index)?;
     std::fs::write(out.join("llms-full.txt"), full)?;
-    html::write(site, captures, out)
+    html::write(site, captures, repo, out)
 }
 
 /// `markdown` from page `id` with every relative inline link made absolute: pages to their
