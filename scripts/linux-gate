@@ -21,6 +21,9 @@
 # root's disk has less than $ND_LINUX_FREE_FLOOR_GB free (default 30, so Steam is not squeezed), the
 # least recently used ones are dropped, under the build lock so no running build loses its target.
 # A dropped lane's dev shell profile (~/.cache/nd-build/profiles/<lane>, a GC root) goes with it.
+# Lanes compile through one sccache ($ND_LINUX_BUILD_ROOT/sccache, $ND_LINUX_CACHE_GB, default 20).
+# Its Rust keys hold the target path, so it does not share crates between lanes, but an evicted lane
+# that comes back to the same path takes them from the cache instead of compiling them at two jobs.
 # The lock, holder file and profiles stay in ~/.cache/nd-build: nix roots must live on the root disk,
 # and a run refuses to start with under $ND_LINUX_ROOT_FLOOR_GB (default 5) free there.
 #
@@ -41,6 +44,7 @@ target=${ND_LINUX_TARGET:-"$targets/${branch//\//-}"}
 # directory: pinned here so a run that cds into an app checkout without one still finds a toolchain.
 toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$root/rust-toolchain.toml")
 cap=${ND_LINUX_TARGET_CAP_GB:-80}
+cache=${ND_LINUX_CACHE_GB:-20}
 floor=${ND_LINUX_FREE_FLOOR_GB:-30}
 rootfloor=${ND_LINUX_ROOT_FLOOR_GB:-5}
 limit=${ND_LINUX_GATE_TIMEOUT_MIN:-30}
@@ -76,7 +80,7 @@ done
 echo \"linux-gate: targets at \$gb GB (cap $cap)\"; df -h / \"$buildroot\" | tail -2"
   body="printf '%s | %s | since %s\\n' $branch $(printf %q "$desc") \"\$(date +%T)\" > ~/.cache/nd-build/build.holder
 $evict
-timeout --kill-after=30 ${limit}m nice -n 19 ionice -c3 nix develop --profile \"$profiles/${branch//\//-}\" \"path:\$HOME/$dir\" -c env RUSTUP_TOOLCHAIN=$toolchain CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CEF_PATH=\"$buildroot/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")
+timeout --kill-after=30 ${limit}m nice -n 19 ionice -c3 nix develop --profile \"$profiles/${branch//\//-}\" \"path:\$HOME/$dir\" -c env RUSTUP_TOOLCHAIN=$toolchain CARGO_TARGET_DIR=\"\$t\" CARGO_BUILD_BUILD_DIR=\"\$t\" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 ND_RUSTC_WRAPPER=sccache SCCACHE_DIR=\"$buildroot/sccache\" SCCACHE_CACHE_SIZE=${cache}G CEF_PATH=\"$buildroot/cef\" nice -n 19 ionice -c3 bash -c $(printf %q "$1")
 rc=\$?
 rm -f ~/.cache/nd-build/build.holder
 if [ \$rc = 124 ] || [ \$rc = 137 ]; then echo \"ND_GATE_TIMEOUT after $limit min\"; fi
