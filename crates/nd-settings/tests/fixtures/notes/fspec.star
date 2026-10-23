@@ -10,7 +10,7 @@
 _NAME = "notes"
 _DISPLAY = "Notes"
 _REPO = "https://github.com/FormalStudio/notes"
-_BUILD = "set -e; cd \"$FSPEC_SRC\"; if [ -e rust-toolchain.toml ] || [ -e rust-toolchain ]; then rustup toolchain install; else rustup default stable; fi; zig=$(mktemp -d); curl -fsSL \"https://ziglang.org/download/0.16.0/zig-$(uname -m)-linux-0.16.0.tar.xz\" | tar -xJ -C \"$zig\"; PATH=\"$zig/zig-$(uname -m)-linux-0.16.0:$PATH\" cargo build --release --locked -p notes; install -Dm755 target/release/notes \"$FSPEC_OUT/bin/notes\""
+_BUILD = "set -e; cd \"$FSPEC_SRC\"; if [ -e rust-toolchain.toml ] || [ -e rust-toolchain ]; then rustup toolchain install; else rustup default stable; fi; zig=$(mktemp -d); curl -fsSL \"https://ziglang.org/download/0.16.0/zig-$(uname -m)-linux-0.16.0.tar.xz\" | tar -xJ -C \"$zig\"; ND_NO_UPDATES=1 PATH=\"$zig/zig-$(uname -m)-linux-0.16.0:$PATH\" cargo build --release --locked -p notes; install -Dm755 target/release/notes \"$FSPEC_OUT/bin/notes\""
 _IMAGES = {
     "opensuse-tumbleweed": ("registry.opensuse.org/opensuse/tumbleweed", ["rustup", "gcc", "gcc-c++", "make", "pkgconf", "git-core", "curl", "tar", "xz", "fontconfig-devel", "freetype2-devel", "libxkbcommon-devel", "libxkbcommon-x11-devel", "wayland-devel", "vulkan-devel", "libX11-devel", "alsa-devel", "dbus-1-devel", "libopenssl-devel"]),
 }
