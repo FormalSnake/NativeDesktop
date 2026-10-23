@@ -23,7 +23,8 @@ pub struct Pin {
 #[derive(Clone, PartialEq)]
 pub struct MapProps {
     pub center: LatLng,
-    /// Web map zoom level: 0 is the whole world, 18 is a street.
+    /// The map shows at least `360 / 2^zoom` degrees of latitude and of longitude: 0 is the whole
+    /// world, 18 is a street.
     pub zoom: f64,
     pub pins: Vec<Pin>,
 }

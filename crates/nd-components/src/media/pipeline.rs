@@ -327,7 +327,9 @@ fn app_name() -> String {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
-    let mut response = ureq::get(url).call().map_err(|e| e.to_string())?;
+    // Tile servers such as OpenStreetMap's refuse requests that do not name the application.
+    let agent = format!("{} (NativeDesktop/{})", app_name(), env!("CARGO_PKG_VERSION"));
+    let mut response = ureq::get(url).header("User-Agent", &agent).call().map_err(|e| e.to_string())?;
     response.body_mut().with_config().limit(64 << 20).read_to_vec().map_err(|e| e.to_string())
 }
 

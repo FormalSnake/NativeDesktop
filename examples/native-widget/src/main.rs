@@ -22,13 +22,22 @@ struct Places {
 impl Places {
     fn new(_cx: &mut Context<Self>) -> Self {
         let places = vec![
-            Place { name: "Lisbon", at: LatLng { lat: 38.7223, lng: -9.1393 }, visited: true },
-            Place { name: "Porto", at: LatLng { lat: 41.1579, lng: -8.6291 }, visited: false },
+            Place { name: "Antwerpen", at: LatLng { lat: 51.2194, lng: 4.4025 }, visited: true },
+            Place { name: "Arrecife", at: LatLng { lat: 28.9630, lng: -13.5477 }, visited: false },
             Place { name: "Las Palmas", at: LatLng { lat: 28.1235, lng: -15.4363 }, visited: true },
         ];
-        let center = places[0].at;
-        Self { places, selected: 0, center, zoom: 11.0 }
+        let (center, zoom) = fit(places.iter().map(|p| p.at));
+        Self { places, selected: 0, center, zoom }
     }
+}
+
+/// The centre and zoom that show every point with a margin.
+fn fit(points: impl Iterator<Item = LatLng> + Clone) -> (LatLng, f64) {
+    let (lat0, lat1) = points.clone().fold((90.0f64, -90.0f64), |(lo, hi), p| (lo.min(p.lat), hi.max(p.lat)));
+    let (lng0, lng1) = points.fold((180.0f64, -180.0f64), |(lo, hi), p| (lo.min(p.lng), hi.max(p.lng)));
+    let span = (lat1 - lat0).max(lng1 - lng0) * 1.6;
+    let center = LatLng { lat: (lat0 + lat1) / 2.0, lng: (lng0 + lng1) / 2.0 };
+    (center, (360.0 / span.max(1e-3)).log2())
 }
 
 impl Render for Places {
