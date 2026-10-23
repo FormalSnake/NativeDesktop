@@ -5,6 +5,7 @@
 //! controls' (`Build::ctl`), so a released node drops it.
 
 mod chat;
+mod equalizer;
 pub(crate) mod image;
 mod lyrics;
 pub(crate) mod paint;
@@ -17,7 +18,7 @@ pub(crate) use video::released as video_released;
 use std::any::TypeId;
 
 use nd_components::{
-    AvatarKind, ChatBubbleKind, IconKind, IconProps, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind,
+    AvatarKind, ChatBubbleKind, EqualizerKind, IconKind, IconProps, ImageKind, LyricsKind, SeekBarKind, SeekBarProps, ShelfKind,
     VideoKind,
 };
 use nd_core::NodeId;
@@ -69,6 +70,8 @@ impl Build<'_> {
             chat::avatar(self, id, props.downcast_ref()?, &marks, window, cx)
         } else if is::<VideoKind>(kind) {
             video::video(self, id, props.downcast_ref()?, &marks, window, cx)
+        } else if is::<EqualizerKind>(kind) {
+            equalizer::equalizer(self, props.downcast_ref()?, window)
         } else if is::<IconKind>(kind) {
             let props: &IconProps = props.downcast_ref()?;
             let color = props.style.text.color.unwrap_or(self.theme().text.secondary);

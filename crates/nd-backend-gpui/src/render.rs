@@ -501,7 +501,9 @@ impl<'a> Build<'a> {
             NodeKind::View => {
                 let props = node.props.downcast_ref::<DivProps>().expect("View node needs DivProps");
                 let own = solid(&props.style);
-                let surface = own.is_none().then(|| self.top().surface).flatten();
+                // Any background of its own, a transparent one included, stands in for the surface
+                // a flipped scope paints, as on AppKit.
+                let surface = props.style.background.is_none().then(|| self.top().surface).flatten();
                 let painted = self.paints.borrow().len();
                 let element = self.painted(id, own.or(surface), props.style.text.color, "view", || {
                     self.view(id, props, surface, children(window, cx), window)

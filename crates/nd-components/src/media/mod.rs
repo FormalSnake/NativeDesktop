@@ -10,6 +10,7 @@
 mod chat;
 mod clock;
 mod composer;
+mod equalizer;
 mod hover;
 mod image;
 mod lyrics;
@@ -27,6 +28,10 @@ pub use chat::{
 pub use clock::{PlaybackClock, format_clock, parse_clock};
 pub use composer::{
     ATTACHMENT_THUMB, Attachment, COMPOSER_LINES, COMPOSER_ROW, Composer, ComposerEvent, Draft, Outgoing, composer,
+};
+pub use equalizer::{
+    EQUALIZER, Equalizer, EqualizerKind, EqualizerMetrics, EqualizerProps, bar_frames as equalizer_bars, equalizer,
+    level as equalizer_level,
 };
 pub use hover::{ArtworkActions, BuildMenu, OnPlay, artwork_actions, hover_menu_button};
 pub use image::{Image, ImageFailed, ImageKind, ImageLoaded, ImageProps, UNKNOWN_ASPECT, image, image_placeholder};
