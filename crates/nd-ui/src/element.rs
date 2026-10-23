@@ -1098,17 +1098,6 @@ pub struct WindowControlsProps {
     /// A layout slot the size of the controls: the backend moves the real buttons onto the
     /// slot's rect on every layout pass, so they ride with whatever moves the slot.
     pub embedded: bool,
-    /// Which of the OS's two groups an embedded slot takes, where the OS splits them by the
-    /// desktop's button layout (GNOME); `None` takes both. A split header puts the leading
-    /// group at the start of its sidebar header and the trailing one at the end of its content
-    /// header. macOS and Windows keep one group and ignore it.
-    pub side: Option<WindowControlsSide>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum WindowControlsSide {
-    Leading,
-    Trailing,
 }
 
 /// The window's own controls (traffic lights on macOS, ARCHITECTURE.md 5.4). The buttons stay
@@ -1118,7 +1107,7 @@ pub struct WindowControls(NativeElement<WindowControlsProps>);
 
 #[track_caller]
 pub fn window_controls() -> WindowControls {
-    let props = WindowControlsProps { at: None, embedded: false, side: None };
+    let props = WindowControlsProps { at: None, embedded: false };
     let element = NativeElement::new::<WindowControls>(Key::Site(Location::caller()), props);
     WindowControls(element.absolute())
 }
@@ -1130,18 +1119,6 @@ impl WindowControls {
         self.0.props_mut().at = None;
         self.0.style().position = Some(nd_gpui::gpui::Position::Relative);
         self
-    }
-
-    /// Embedded, only the controls the desktop puts at the window's start.
-    pub fn leading(mut self) -> Self {
-        self.0.props_mut().side = Some(WindowControlsSide::Leading);
-        self.embedded()
-    }
-
-    /// Embedded, only the controls the desktop puts at the window's end.
-    pub fn trailing(mut self) -> Self {
-        self.0.props_mut().side = Some(WindowControlsSide::Trailing);
-        self.embedded()
     }
 
     pub fn props(&self) -> &WindowControlsProps {

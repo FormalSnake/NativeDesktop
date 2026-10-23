@@ -44,6 +44,12 @@ impl Notes {
         })
         .detach();
 
+        // The top note opens at launch, selected in the list, as in Notes.app.
+        if let Some(first) = notes.read(cx).list().items().first().copied() {
+            notes.update(cx, |notes, cx| notes.select(first, cx));
+            editor.update(cx, |editor, cx| editor.open(first, window, cx));
+        }
+
         Self {
             library,
             notes,

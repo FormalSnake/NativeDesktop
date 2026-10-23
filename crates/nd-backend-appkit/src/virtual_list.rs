@@ -276,6 +276,57 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY: NSTableRowView has no subclassing requirements and this type does not implement Drop.
+    #[unsafe(super(NSTableRowView, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    pub struct NdListRowView;
+
+    impl NdListRowView {
+        /// The rounded highlight inset from the row's ends that Notes' and Mail's lists draw.
+        /// The table stays full width (`NSTableViewStyle::Inset` would narrow the cells under
+        /// rows nd already laid out at the column's width).
+        #[unsafe(method(drawSelectionInRect:))]
+        fn draw_selection(&self, _rect: NSRect) {
+            let b = self.bounds();
+            let inset = NSRect::new(
+                objc2_foundation::NSPoint::new(b.origin.x + 10., b.origin.y),
+                objc2_foundation::NSSize::new((b.size.width - 20.).max(0.), b.size.height),
+            );
+            let color = if self.isEmphasized() {
+                NSColor::selectedContentBackgroundColor()
+            } else {
+                NSColor::unemphasizedSelectedContentBackgroundColor()
+            };
+            color.setFill();
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(inset, 8., 8.).fill();
+        }
+
+        #[unsafe(method(setSelected:))]
+        fn set_selected(&self, selected: bool) {
+            let _: () = unsafe { msg_send![super(self), setSelected: selected] };
+            redraw_text(self);
+        }
+
+        #[unsafe(method(setEmphasized:))]
+        fn set_emphasized(&self, emphasized: bool) {
+            let _: () = unsafe { msg_send![super(self), setEmphasized: emphasized] };
+            redraw_text(self);
+        }
+    }
+);
+
+/// The row's text recolours with its selection (`NdTextView::drawn`); layer-backed, it only
+/// redraws when asked.
+fn redraw_text(view: &NSView) {
+    for sub in view.subviews() {
+        if sub.downcast_ref::<crate::views::NdTextView>().is_some() {
+            sub.setNeedsDisplay(true);
+        }
+        redraw_text(&sub);
+    }
+}
+
 impl NdHoverRowView {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(HoverRowIvars::default());
@@ -329,15 +380,17 @@ define_class!(
             id.map(|id| Retained::into_super(shared.container(id, col)))
         }
 
-        /// A table's rows get the hover fill Music's song tables have; a source list and a plain
-        /// list of mixed rows keep AppKit's own row view.
+        /// A table's rows get the hover fill Music's song tables have, a plain list's rows the
+        /// rounded selection of Notes' list; a source list keeps AppKit's own row view.
         #[unsafe(method_id(tableView:rowViewForRow:))]
         fn row_view_for(&self, table: &NSTableView, _row: NSInteger) -> Option<Retained<NSTableRowView>> {
             let shared = &self.ivars().shared;
-            let hovers = matches!(*shared.kind.borrow(), ListKind::Table(_))
-                && shared.selection.get() != Selection::None
-                && table.style() != NSTableViewStyle::SourceList;
-            hovers.then(|| Retained::into_super(NdHoverRowView::new(MainThreadMarker::from(self))))
+            let own = shared.selection.get() != Selection::None && table.style() != NSTableViewStyle::SourceList;
+            let mtm = MainThreadMarker::from(self);
+            own.then(|| match *shared.kind.borrow() {
+                ListKind::Table(_) => Retained::into_super(NdHoverRowView::new(mtm)),
+                _ => Retained::into_super(unsafe { msg_send![NdListRowView::alloc(mtm), init] }),
+            })
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]

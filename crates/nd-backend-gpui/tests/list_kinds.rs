@@ -14,6 +14,7 @@ use nd_gpui::gpui::{
     HeadlessAppContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
 };
 use nd_ui::WindowId;
+use nd_ui::backend::Backend;
 use nd_ui::prelude::*;
 use nd_virtual::{ListState, SortChanged, SortDirection, TreeNode, column, grid, list, table, tree};
 
@@ -341,8 +342,46 @@ pub fn scroll_into_view_reaches_a_row_below_the_fold() {
     assert!(shows(&host), "row 14 shows whole after ScrollIntoView");
 }
 
+/// A plain list's selected row takes the platform's selection: WinUI's ListView a subtle fill
+/// with the accent pill at its leading edge, libadwaita's list view the theme's accent tint.
+pub fn selected_row_follows_the_platform() {
+    for preset in [nd_theme::Preset::Fluent, nd_theme::Preset::Adwaita] {
+        let mut cx = headless();
+        let mut opened = None;
+        let host = cx.update(|cx| {
+            GpuiHost::builder().quit_when_empty(false).start(cx, |app| {
+                let backend = app.backend_as::<nd_backend_gpui::GpuiBackend>().expect("GPUI backend").clone();
+                backend.set_theme(nd_theme::ThemeRegistry::new(preset));
+                let handle = app.open_window(WindowOptions::main("kinds").size(size(px(300.), px(300.))), |_, cx| {
+                    cx.new(|cx| {
+                        let mut list = ListState::new(cx);
+                        list.set_items((0..4).collect::<Vec<u32>>(), cx);
+                        list.select(1, cx);
+                        Plain { list }
+                    })
+                });
+                opened = Some(handle.id());
+            })
+        });
+        frames(&mut cx, &host, 6);
+        let window = opened.expect("window");
+        let theme = nd_theme::ThemeRegistry::new(preset).app_theme().clone();
+        let paints = host.backend().paints(window).expect("paints");
+        let fill = paints.iter().find(|p| p.label == "list selection").expect("a selection fill");
+        let pill = paints.iter().find(|p| p.label == "list selection pill");
+        if preset == nd_theme::Preset::Fluent {
+            assert_eq!(pill.map(|p| p.color), Some(theme.accent), "WinUI's accent pill");
+            assert_ne!(fill.color, theme.selection, "WinUI's subtle fill, not the accent tint");
+        } else {
+            assert!(pill.is_none(), "libadwaita has no pill");
+            assert_eq!(fill.color, theme.selection, "libadwaita's accent tint");
+        }
+    }
+}
+
 fn main() {
-    let tests: [(&str, fn()); 5] = [
+    let tests: [(&str, fn()); 6] = [
+        ("gate_m5::gpui_kinds::selected_row_follows_the_platform", selected_row_follows_the_platform),
         ("gate_m5::gpui_kinds::row_hover_follows_the_pointer", row_hover_follows_the_pointer),
         (
             "gate_m5::gpui_kinds::scroll_into_view_reaches_a_row_below_the_fold",

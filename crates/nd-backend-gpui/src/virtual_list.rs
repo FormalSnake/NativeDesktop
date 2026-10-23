@@ -86,15 +86,16 @@ pub(crate) struct VirtualList {
     pub selection_color: Hsla,
     /// Under the row the pointer is over, in a list whose rows select or activate.
     pub hover_color: Hsla,
-    pub sidebar: SidebarSelection,
+    /// The rounded inset selection of a sidebar, and of every list under WinUI; `None` fills
+    /// the row edge to edge, as libadwaita's list views do.
+    pub rounded: Option<RoundedSelection>,
     pub disclosure_color: Hsla,
     /// libadwaita's raised and undershoot shades at the scroll edges, under that look.
     pub edges: Option<(Hsla, Hsla)>,
 }
 
-/// How an inset list (a sidebar's) draws its selection.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SidebarSelection {
+pub(crate) struct RoundedSelection {
     /// From the list's edges.
     pub inset: f32,
     pub radius: f32,
@@ -405,8 +406,7 @@ impl gpui::Element for VirtualList {
         window.with_content_mask(Some(ContentMask { bounds: view }), |window| {
             if let Some((_, b)) = hovered.filter(|(r, _)| !selected_rows.contains(r)) {
                 let full = Bounds::new(point(view.origin.x, b.origin.y), size(view.size.width, b.size.height));
-                if self.props.inset {
-                    let s = self.sidebar;
+                if let Some(s) = self.rounded {
                     let inner = Bounds::new(
                         point(full.origin.x + px(s.inset), full.origin.y + px(1.)),
                         size(full.size.width - px(s.inset * 2.), full.size.height - px(2.)),
@@ -417,9 +417,7 @@ impl gpui::Element for VirtualList {
                 }
             }
             for b in &prepainted.selected {
-                if self.props.inset {
-                    // A sidebar's selection: inset from the edges, rounded.
-                    let s = self.sidebar;
+                if let Some(s) = self.rounded {
                     let inner = Bounds::new(
                         point(b.origin.x + px(s.inset), b.origin.y + px(1.)),
                         size(b.size.width - px(s.inset * 2.), b.size.height - px(2.)),

@@ -695,7 +695,11 @@ mod capture {
             ("ND_THEME_JSON".into(), String::new()),
             ("ND_CLIENT_DECORATIONS".into(), "1".into()),
         ]);
-        let app = launch(session, bin, &env, &socket, Duration::from_secs(30))?;
+        // Chromium on the headless labwc's Wayland hands off-screen pages back black; its own
+        // headless Ozone draws them, and an off-screen page needs no display server.
+        #[cfg(target_os = "linux")]
+        env.push(("ND_CEF_OZONE".into(), "headless".into()));
+        let app = launch(session, bin, &env, &socket, &run.join("app.log"), Duration::from_secs(30))?;
         let result = (|| -> Result<bool> {
             let mut client = Rpc::connect(&app.socket)?;
             let deadline = Instant::now() + Duration::from_secs(20);
@@ -773,16 +777,17 @@ mod capture {
     }
 
     /// Starts `bin` and waits for its automation server's ready line on stderr, which a thread
-    /// keeps draining afterwards so the app never blocks on a full pipe.
+    /// keeps draining into `log` afterwards so the app never blocks on a full pipe.
     #[cfg(unix)]
     fn launch(
         session: &Session,
         bin: &Path,
         env: &[(String, String)],
         socket: &Path,
+        log: &Path,
         timeout: Duration,
     ) -> Result<Launched> {
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Write};
         #[cfg(target_os = "linux")]
         let mut cmd = session.command(bin);
         #[cfg(target_os = "macos")]
@@ -793,10 +798,12 @@ mod capture {
         cmd.envs(env.iter().map(|(k, v)| (k, v))).stdout(Stdio::null()).stderr(Stdio::piped());
         let mut child = cmd.spawn().with_context(|| format!("launching {}", bin.display()))?;
         let stderr = child.stderr.take().context("stderr")?;
+        let mut log = std::fs::File::create(log).with_context(|| format!("{}", log.display()))?;
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut sent = false;
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let _ = writeln!(log, "{line}");
                 if !sent && let Some(path) = ready_path(&line) {
                     let _ = send.send(path);
                     sent = true;
@@ -828,6 +835,7 @@ mod capture {
         bin: &Path,
         env: &[(String, String)],
         _socket: &Path,
+        _log: &Path,
         timeout: Duration,
     ) -> Result<Launched> {
         let env: serde_json::Map<String, serde_json::Value> =

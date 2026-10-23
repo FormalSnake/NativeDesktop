@@ -602,7 +602,7 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
             if let Some(props) = self.ivars().props.borrow().as_ref() {
-                attributed(props, self.family().as_deref()).drawWithRect_options_context(
+                attributed(&self.drawn(props), self.family().as_deref()).drawWithRect_options_context(
                     self.bounds(),
                     draw_options(),
                     None,
@@ -655,8 +655,47 @@ impl NdTextView {
         this
     }
 
+    /// As drawn, which is what the appearance audit reads.
     pub(crate) fn look(&self) -> Option<TextLook> {
-        self.ivars().props.borrow().clone()
+        self.ivars().props.borrow().as_ref().map(|p| self.drawn(p))
+    }
+
+    /// `props` as drawn in a selected row of a plain list ([`NdListRowView`]): white on the
+    /// emphasized selection, as Mail's rows are, and on the grey one each colour made to read at
+    /// 4.5:1 on it, which `secondaryLabelColor` alone does not.
+    fn drawn(&self, props: &TextLook) -> TextLook {
+        let Some(emphasized) = self.selected_row() else { return props.clone() };
+        let appearance = objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(&**self);
+        let resolve = |c: &objc2_app_kit::NSColor| crate::system_colors::resolve(c, &appearance);
+        let under = resolve(&objc2_app_kit::NSColor::controlBackgroundColor())
+            .zip(resolve(&objc2_app_kit::NSColor::unemphasizedSelectedContentBackgroundColor()));
+        let map = |color: Color| match under {
+            _ if emphasized => Color::Rgba(1., 1., 1., 1.),
+            Some((list, selection)) => resolve(&color.ns_color()).map_or(color, |c| {
+                Color::from(nd_theme::color::legible(c, &[nd_theme::color::over(selection, list)], 4.5))
+            }),
+            None => color,
+        };
+        let mut look = props.clone();
+        look.color = map(look.color);
+        for run in &mut look.runs {
+            run.color = run.color.map(map);
+        }
+        look
+    }
+
+    /// Whether this text sits in a selected plain list row, and whether that selection is the
+    /// emphasized one.
+    fn selected_row(&self) -> Option<bool> {
+        // SAFETY: the view hierarchy is only read, on the main thread.
+        let mut view = unsafe { self.superview() };
+        while let Some(v) = view {
+            if let Some(row) = v.downcast_ref::<crate::virtual_list::NdListRowView>() {
+                return row.isSelected().then(|| row.isEmphasized());
+            }
+            view = unsafe { v.superview() };
+        }
+        None
     }
 
     pub(crate) fn set_props(&self, props: &TextLook) {

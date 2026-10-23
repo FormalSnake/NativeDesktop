@@ -205,6 +205,8 @@ struct Ink {
     background: Hsla,
     /// The surface a scope that flipped the scheme leaves for its node to paint.
     surface: Option<Hsla>,
+    /// Inside a selected list row: dim text darkens until it reads at 4.5:1 on the selection.
+    legible: bool,
 }
 
 /// What a text run is drawn at, for its paint record.
@@ -292,6 +294,7 @@ impl<'a> Build<'a> {
             refinement: None,
             scopes: Vec::new(),
             surface: None,
+            legible: false,
         };
         Self {
             backend,
@@ -451,6 +454,7 @@ impl<'a> Build<'a> {
             refinement: Some(composed),
             scopes,
             surface,
+            legible: outer.legible,
         });
         let out = inside();
         self.ink.borrow_mut().pop();
@@ -539,7 +543,9 @@ impl<'a> Build<'a> {
                 }
                 let opacity = props.style.opacity.unwrap_or(1.);
                 // Never left to GPUI's default (black): every run carries the colour it is audited at.
-                let color = props.style.text.color.unwrap_or(self.top().text);
+                let ink = self.top();
+                let color = props.style.text.color.unwrap_or(ink.text);
+                let color = if ink.legible { nd_theme::color::legible(color, &[ink.background], 4.5) } else { color };
                 let fill = solid(&props.style);
                 self.text_run(id, &props.text, run_of(&props.style), Some(with_alpha(color, color.a * opacity)), fill);
                 d.style().text.color = Some(color);
@@ -633,14 +639,29 @@ impl<'a> Build<'a> {
         let fluent = theme.preset == nd_theme::Preset::Fluent;
         // A sidebar's selection is the platform's subtle one, the surface under it one hover
         // step deeper: libadwaita's navigation sidebar tints the row with a tenth of the text
-        // colour, WinUI's navigation view with its subtle fill and an accent pill. Other lists
-        // keep the pressed control fill.
-        let selection = if props.inset { theme.hover(self.top().background) } else { look.control_active };
-        let sidebar = crate::virtual_list::SidebarSelection {
+        // colour, WinUI's navigation view with its subtle fill and an accent pill. WinUI's
+        // ListView selects the same way; libadwaita's list views fill the whole row with the
+        // accent at a quarter, the theme's selection.
+        let subtle = props.inset || fluent;
+        let selection = if subtle { theme.hover(self.top().background) } else { theme.selection };
+        let rounded = subtle.then(|| crate::virtual_list::RoundedSelection {
             inset: if fluent { 4. } else { 6. },
             radius: theme.radius.md.as_f32(),
             pill: fluent.then_some(theme.accent),
-        };
+        });
+        if !props.selected.is_empty() {
+            let mut marks =
+                vec![crate::nav::Mark { label: "list selection".into(), color: selection, under: vec![], text: None }];
+            if let Some(pill) = rounded.and_then(|r| r.pill) {
+                marks.push(crate::nav::Mark {
+                    label: "list selection pill".into(),
+                    color: pill,
+                    under: vec![selection],
+                    text: None,
+                });
+            }
+            self.record_marks(id, marks);
+        }
         let rows = node
             .children
             .iter()
@@ -654,11 +675,12 @@ impl<'a> Build<'a> {
                     .as_ref()?
                     .get::<nd_virtual::RowTag>()?
                     .clone();
-                let fill = props.selected.contains(&tag.row).then_some(selection);
-                let element = self.painted(*c, fill, None, "selected row", || {
+                let selected = props.selected.contains(&tag.row);
+                let element = self.painted(*c, selected.then_some(selection), None, "selected row", || {
                     if tag.expandable {
                         self.painted(*c, Some(self.top().text), None, "disclosure", || ());
                     }
+                    self.ink.borrow_mut().last_mut().expect("the row's ink").legible = selected;
                     self.node(*c, window, cx)
                 });
                 Some(crate::virtual_list::Row { tag, node: *c, element })
@@ -689,7 +711,7 @@ impl<'a> Build<'a> {
             window_id: self.window_id,
             selection_color: selection,
             hover_color,
-            sidebar,
+            rounded,
             disclosure_color: self.top().text,
             edges: crate::scrollbar::adwaita_edge_colors(&theme),
         }
@@ -1078,13 +1100,7 @@ impl<'a> Build<'a> {
     /// The OS's own controls where it draws them (macOS traffic lights, server decorations);
     /// drawn buttons only under client-side decorations, for the actions the compositor offers.
     fn window_controls(&self, props: &WindowControlsProps, window: &mut gpui::Window) -> AnyElement {
-        let cx = ChromeContext {
-            window: self.window_id,
-            at: props.at,
-            embedded: props.embedded,
-            side: props.side,
-            look: self.look(),
-        };
+        let cx = ChromeContext { window: self.window_id, at: props.at, look: self.look() };
         if let Some(custom) = self.hooks.window_controls(&cx, window) {
             return custom;
         }

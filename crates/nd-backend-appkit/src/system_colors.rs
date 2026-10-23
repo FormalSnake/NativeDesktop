@@ -10,7 +10,7 @@ use nd_theme::{OsTheme, PaletteRefinement, Scheme, SystemMetrics};
 use nd_ui::prelude::{Hsla, Rgba};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSButton, NSColor, NSColorSpace,
     NSControlSize, NSFont, NSFontTextStyle, NSFontTextStyleBody, NSFontTextStyleCaption1, NSFontTextStyleFootnote,
@@ -21,6 +21,14 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSDictionary, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
     NSObject, NSObjectProtocol, NSString,
 };
+
+/// `color` resolved under `appearance`.
+pub(crate) fn resolve(color: &NSColor, appearance: &NSAppearance) -> Option<Hsla> {
+    let out = Cell::new(None);
+    let block = RcBlock::new(|| out.set(hsla(color.retain())));
+    appearance.performAsCurrentDrawingAppearance(&block);
+    out.take()
+}
 
 pub(crate) fn hsla(color: Retained<NSColor>) -> Option<Hsla> {
     let c = color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;

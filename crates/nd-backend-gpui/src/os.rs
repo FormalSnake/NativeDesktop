@@ -23,9 +23,6 @@ pub struct ChromeContext {
     pub window: WindowId,
     /// Pinned position (`window_controls().at(..)`); `None` means the OS side.
     pub at: Option<Point>,
-    /// An embedded slot (`window_controls().embedded()`), and the group it takes.
-    pub embedded: bool,
-    pub side: Option<nd_ui::WindowControlsSide>,
     pub look: Look,
 }
 

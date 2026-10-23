@@ -10,9 +10,9 @@ use nd_ui::Keystroke;
 use nd_ui::semantics::{
     ActionError, Capture, MouseButton, PointerPhase, Probe, SemanticAction, SyntheticInput, WindowState,
 };
+use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{AnyThread, Message};
 use objc2_app_kit::{
     NSAppearanceCustomization, NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSEventModifierFlags,
     NSEventType, NSScreen, NSView,
@@ -22,20 +22,18 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSDictionary, NSPoint, NSProcessInfo, NSString};
 
-use std::cell::Cell;
 use std::collections::HashMap;
 
-use block2::RcBlock;
 use nd_theme::color::{over, with_alpha};
 use nd_ui::Scope;
 use nd_ui::prelude::Hsla;
 use nd_ui::semantics::{Paint, PaintKind};
 use objc2_app_kit::{
-    NSAppearance, NSBackgroundStyle, NSColor, NSColorType, NSControl, NSFont, NSTableRowView, NSTableView, NSTextField,
+    NSBackgroundStyle, NSColor, NSColorType, NSControl, NSFont, NSTableRowView, NSTableView, NSTextField,
 };
 
 use super::{AppKitBackend, Native, State, WindowRecord};
-use crate::system_colors::hsla;
+use crate::system_colors::resolve;
 use crate::views::{NdLayerView, NdTextView};
 
 fn rect(r: objc2_foundation::NSRect) -> Rect {
@@ -478,13 +476,6 @@ impl AppKitBackend {
 }
 
 /// `color` as it draws under `appearance`.
-fn resolve(color: &NSColor, appearance: &NSAppearance) -> Option<Hsla> {
-    let out = Cell::new(None);
-    let block = RcBlock::new(|| out.set(hsla(color.retain())));
-    appearance.performAsCurrentDrawingAppearance(&block);
-    out.take()
-}
-
 struct Walk<'a> {
     state: &'a State,
     owners: HashMap<*const NSView, NodeId>,
