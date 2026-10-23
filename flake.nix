@@ -145,6 +145,10 @@
             # of them bypasses the pin, and mixing compilers in one build dir fails with E0514.
             export PATH="''${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
             unset RUSTC CARGO RUSTDOC
+            # scripts/rustc-guard compiles through sccache. Its Rust keys hold the build dir, so a build
+            # dir rebuilt after a `cargo clean` or an eviction hits; worktrees do not share. Off with
+            # ND_RUSTC_WRAPPER=.
+            export ND_RUSTC_WRAPPER="''${ND_RUSTC_WRAPPER-sccache}"
           ''
           + lib.optionalString stdenv.hostPlatform.isDarwin ''
             unset SDKROOT DEVELOPER_DIR MACOSX_DEPLOYMENT_TARGET NIX_CFLAGS_COMPILE NIX_LDFLAGS
@@ -154,6 +158,10 @@
             PATH=$(printf %s "$PATH" | tr ':' '\n' | grep -v -e '-xcbuild-' -e '-xcrun' -e '-cctools' -e '-clang' -e '-binutils' -e '-rustc-wrapper' -e '-cargo-1' | paste -sd: -)
             export PATH="/usr/bin:$PATH"
             for v in $(env | sed -n 's/^\(NIX_\(CC\|BINTOOLS\|CFLAGS\|LDFLAGS\|HARDENING\|APPLE\)[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+            # The sccache cache sits on the cache drive with the build dirs.
+            if [ -z "''${SCCACHE_DIR:-}" ] && [ -d "/Volumes/Kyan Drive" ]; then
+              export SCCACHE_DIR="/Volumes/Kyan Drive/dev-cache.noindex/sccache" SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-30G}"
+            fi
             # nd-cef's build script downloads the CEF binary distribution (about 500 MB unpacked) into
             # $CEF_PATH; on the macbook that is the cache drive, next to the cargo build dir. Anywhere
             # else (CI runners) it falls back to the user cache.

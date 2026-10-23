@@ -18,7 +18,7 @@ Tier 3 posts real HID events through `crates/ndshell`. Its preflight fails the t
 
 The AppKit test binaries own the main thread (`harness = false`) and answer nextest's `--list` and `--exact` themselves (`crates/nd-backend-appkit/tests/harness`), one test per binary.
 
-A cold build takes about 5 minutes (longer while other builds run). Intermediate artifacts go to `/Volumes/Kyan Drive/dev-cache.noindex/cargo-target/nativedesktop/` through `build.build-dir`; `scripts/rustc-guard` fails the build when the drive is missing. Without the drive: `CARGO_BUILD_BUILD_DIR=$PWD/target/build ND_ALLOW_LOCAL_BUILD=1 cargo ...`.
+A cold build takes about 5 minutes (longer while other builds run). Intermediate artifacts go to `/Volumes/Kyan Drive/dev-cache.noindex/cargo-target/nativedesktop/` through `build.build-dir`; `scripts/rustc-guard` fails the build when the drive is missing. Without the drive: `CARGO_BUILD_BUILD_DIR=$PWD/target/build ND_ALLOW_LOCAL_BUILD=1 cargo ...`. The shell compiles through sccache (`ND_RUSTC_WRAPPER=sccache`, cache in `dev-cache.noindex/sccache`, 30 GB). sccache keys Rust crates by their build dir, so a build dir rebuilt after `cargo clean` or an E0514 takes its crates from the cache (hello: 263 s cold, 123 s from the cache at two jobs), while a new worktree still compiles them once. `ND_RUSTC_WRAPPER=` turns it off.
 
 The shell puts rustup's proxies first, exports no `SDKROOT` or `DEVELOPER_DIR`, and puts `/usr/bin` ahead of every nix cc, cctools, binutils and `xcrun` (also ones inherited from the calling environment). Check with `command -v rustc xcrun strip` (expect `~/.cargo/bin/rustc`, `/usr/bin/xcrun`, `/usr/bin/strip`). The strip matters: rustc runs `strip` on release builds, and a nix strip corrupts proc-macro dylibs ("mis-aligned LINKEDIT"), so plain `cargo build --release` works inside the shell and needs no `CARGO_PROFILE_RELEASE_STRIP=none`. Swift build scripts call `/usr/bin/xcrun` and `/usr/bin/swift` by absolute path, which the shell leaves alone. If a build fails with E0514, two compilers touched the same build dir: leave the shell, then `cargo clean`.
 
@@ -57,7 +57,8 @@ Every test that puts a window on screen or needs key status holds the machine-wi
 ## Remote Linux hosts (g815, e1504g)
 
 - Never build on e1504g. Build on g815 and copy the binary over; delete it after measuring.
-- On g815, every NativeDesktop checkout shares `CARGO_TARGET_DIR=$HOME/.cache/nd-build/target`. Check `df -h /` before large builds and stop under 15 GB free.
+- On g815, `scripts/linux-gate` gives each lane its own target under `/mnt/steamlib/nd-build/targets` and one sccache (`/mnt/steamlib/nd-build/sccache`, 20 GB), so a lane evicted by the LRU cap and rebuilt at the same path takes its third-party crates from the cache. Check `df -h /` before large builds and stop under 15 GB free.
+- Start-up, idle and frame budgets of a GPUI app without touching the desktop: `ndshell headless -- scripts/budget/headless.sh <binary>` in the dev shell (a private headless Hyprland).
 - Unattended runs: the hosts power off unless g815 is in FormalShell overnight mode
   (`formalshell ipc --any-display call overnight enable`, with `XDG_RUNTIME_DIR=/run/user/1000`).
   Leave power profile, brightness and overnight state alone while it is on, and keep the fans quiet:

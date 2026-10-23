@@ -91,10 +91,13 @@ fn run(args: &[String]) -> Result<(), String> {
     if let ["shot", rest @ ..] = args.as_slice() {
         return shot(rest);
     }
+    if let ["headless", rest @ ..] = args.as_slice() {
+        return headless(rest);
+    }
     let ["drag", rest @ ..] = args.as_slice() else {
         return Err(format!(
             "{USAGE} | ndshell drag <x> <y> <dx> <dy> <steps> <step_ms> <output_w> <output_h> \
-             | ndshell shot <out.png> <seconds> <scale> -- <command>..."
+             | ndshell shot <out.png> <seconds> <scale> -- <command>... | ndshell headless -- <command>..."
         ));
     };
     let n: Vec<f64> =
@@ -187,6 +190,21 @@ fn shot(args: &[&str]) -> Result<(), String> {
     encoder.write_header().and_then(|mut wr| wr.write_image_data(&rgba)).map_err(|e| format!("{out}: {e}"))?;
     println!("ndshell: wrote {out} ({w}x{h})");
     Ok(())
+}
+
+/// `ndshell headless -- <command>...` runs the command as a client of a private headless Hyprland
+/// (1600x1000 at 60 Hz) and exits with its status, so budget scripts can open windows on a machine
+/// whose own outputs are in use (`scripts/budget/headless.sh`).
+#[cfg(target_os = "linux")]
+fn headless(args: &[&str]) -> Result<(), String> {
+    let ["--", program, rest @ ..] = args else {
+        return Err("usage: ndshell headless -- <command>...".into());
+    };
+    let hyprland = ndshell::hyprland::Hyprland::start(ndshell::hyprland::Options::default())?;
+    // Without a keyboard on the seat no window gets keyboard focus (see `shot`).
+    let _keyboard = ndshell::wayland::VirtualInput::connect(&hyprland)?;
+    let status = hyprland.command(program).args(rest).status().map_err(|e| format!("{program}: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("{program} exited with {status}")) }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
