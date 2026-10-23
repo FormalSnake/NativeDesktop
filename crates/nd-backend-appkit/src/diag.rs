@@ -4,6 +4,8 @@
 //! After the first frame, `ND_DEBUG_PANIC=1` sends the window three synthetic inputs and then
 //! panics, `ND_DEBUG_HANG_MS=<ms>` blocks the main thread that long, and `ND_DEBUG_CRASH=1`
 //! waits for the crash snapshot and writes through an unmapped address.
+//! `ND_EXIT_AFTER_FIRST_FRAME=1` prints `nd-budget: first_frame unix_ms=<ms>` and quits, as the
+//! GPUI host does (`nd-backend-gpui/src/budget.rs`).
 
 use dispatch2::DispatchQueue;
 use nd_diag::{InputRecord, PostToMain};
@@ -140,6 +142,12 @@ fn synthetic_inputs(window: &NdWindow) -> Vec<Retained<NSEvent>> {
 
 /// Runs the debug trigger the environment asks for, once the first frame is up.
 pub(crate) fn after_first_frame(window: &NdWindow) {
+    if env_flag("ND_EXIT_AFTER_FIRST_FRAME") {
+        let unix_ms =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+        println!("nd-budget: first_frame unix_ms={unix_ms}");
+        crate::events::defer(|| std::process::exit(0));
+    }
     if env_flag("ND_DEBUG_PANIC") {
         let events = synthetic_inputs(window);
         let window = objc2::Message::retain(window);
