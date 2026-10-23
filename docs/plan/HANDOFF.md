@@ -34,6 +34,11 @@ restarted from their worktrees the same evening.
   the rule; kopuzd 511770 was untouched, the new instance is pid 4034736.
 - Merged on nd main: fm-lyrics-glide (`cad26429`), docs-perf and docs-one-site (`2f35ddeb`: WebP shots,
   prerender on hover, live examples on their pages, search dialog, `/app/` redirects to `/`).
+- fspec: nd generator and `fspec.toml` layer merged (`e00211dd`, fixture fix `de4968e1`). FormalMusic
+  main and nd-port `ea01945e` and Messages main, nd-port, nd-port-linux `20f4bbf4` ship a generated
+  `fspec.star` (load with `gh:FormalStudio/<app>@main//fspec.star`). nixmgr switches e1504g once
+  formalspec confirms e1504g runs fspec 08549fd or later.
+- now-playing merged in nd (`0a05d464`); FormalMusic release `5506019` (now-playing, lyrics) deploying.
 - Next app bump: lyrics (nd cad26429, app lyrics-glide ee1bd5a) and fm-bar-narrow once its narrow-width
   look test passes.
 
