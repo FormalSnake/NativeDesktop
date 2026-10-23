@@ -38,7 +38,9 @@ restarted from their worktrees the same evening.
   main and nd-port `ea01945e` and Messages main, nd-port, nd-port-linux `20f4bbf4` ship a generated
   `fspec.star` (load with `gh:FormalStudio/<app>@main//fspec.star`). nixmgr switches e1504g once
   formalspec confirms e1504g runs fspec 08549fd or later.
-- now-playing merged in nd (`0a05d464`); FormalMusic release `5506019` (now-playing, lyrics) deploying.
+- now-playing merged in nd (`0a05d464`); FormalMusic release `5506019` (now-playing, lyrics) installed via nix
+  `604282ab` on g815 and the macbook and relaunched on both. On g815 `nixos-rebuild switch` crashed twice
+  (SIGSEGV in nix auto-GC); the built closure was activated by hand, worth a look.
 - Next app bump: lyrics (nd cad26429, app lyrics-glide ee1bd5a) and fm-bar-narrow once its narrow-width
   look test passes.
 
