@@ -151,6 +151,8 @@ Replies on these PRs are the user's to write.
 
 ## Rules that bit us (keep them)
 
+Relaunch after install (Kyan, 2026-10-23): after installing a new release of an nd app, quit the running
+instance by PID and relaunch the new build on that machine. kopuzd keeps running.
 Macbook disk (2026-10-22): app worktrees (FormalMusic, Messages) build into their own `target/` on
 the internal disk, and nine of them filled it (ENOSPC, three lanes stopped). Heavy builds go to
 g815; a lane runs `cargo clean` in its own worktree when it finishes.
