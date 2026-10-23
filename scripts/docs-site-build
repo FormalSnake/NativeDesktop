@@ -41,6 +41,8 @@ fi
 PATH="$wasmopt/bin:$webp/bin:$PATH"
 export PATH
 
-# .cargo/config.toml points build-dir at the macbook's external drive.
-CARGO_BUILD_BUILD_DIR="$root/target/build" ND_WASM_BINDGEN="$bindgen" \
-  cargo run -p nd-cli --no-default-features -- docs build
+# .cargo/config.toml points build-dir at the macbook's external drive. nd-cli only parses and
+# writes files here, so it skips the dev profile's optimised dependencies and debug info (its
+# build was 4 of the 11 minutes); the docs app's wasm is built with the release profile.
+CARGO_BUILD_BUILD_DIR="$root/target/build" ND_WASM_BINDGEN="$bindgen" CARGO_PROFILE_DEV_DEBUG=0 \
+  cargo run --config 'profile.dev.package."*".opt-level=0' -p nd-cli --no-default-features -- docs build
