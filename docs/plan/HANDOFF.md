@@ -40,8 +40,10 @@ Lanes in flight, each in its own worktree with work saved there:
   header padding and centred title on Linux), native-widget-map (Antwerpen, Arrecife, Las Palmas;
   drawn map), docs-perf then docs-one-site, build-speed (nd and apps), fspec (nd .star generator;
   formalspec 08549fd has gh: loads and origin(); e1504g needs that fspec first), Kopuz PR
-  `mpris-app-identity` (merge when CI is green and CodeRabbit is resolved).
-Needs Kyan: delete the old Pages project `nativedesktop` (domain already moved), a Kopuz release.
+  `mpris-app-identity` merged as Kopuz-org/kopuz#807 (`d0c915a9`): kopuzd applies `--app-id`/`--app-name`
+  to MPRIS on Linux; Kopuz itself still reports "Kopuz". Not yet checked on a real Linux desktop.
+Needs Kyan: delete the old Pages project `nativedesktop` (domain already moved), a Kopuz release
+with #807 so the flake can move past v0.22.0.
 
 ## Open lanes (each in its own worktree, branch named after the lane)
 
