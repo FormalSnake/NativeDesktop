@@ -61,8 +61,8 @@ Lanes in flight, each in its own worktree with work saved there:
   of the hero fix not done.
 - Now playing: nd fmui-now-playing 052ae26b and app now-playing 2d0dcbf rebased locally, not pushed;
   scrim 60 to 70 percent at app `crates/app/src/root.rs:64` uncommitted, g815 look run queued.
-- docs-captures-2 (list selection, Notes editor, full recapture), toolbar-search (centred search,
-  header padding and centred title on Linux), native-widget-map (Antwerpen, Arrecife, Las Palmas;
+- docs-captures-2 (list selection, Notes editor, full recapture), toolbar-search landed (b6f0d8be, macOS goldens
+  ffa2bbf6; Linux and macOS tests green, Windows and FormalMusic unchecked, g815 offline), native-widget-map (Antwerpen, Arrecife, Las Palmas;
   drawn map), docs-perf then docs-one-site, build-speed (nd and apps), fspec (nd .star generator;
   formalspec 08549fd has gh: loads and origin(); e1504g needs that fspec first), Kopuz PR
   `mpris-app-identity` merged as Kopuz-org/kopuz#807 (`d0c915a9`): kopuzd applies `--app-id`/`--app-name`
