@@ -14,10 +14,10 @@ use std::time::Duration;
 use nd_backend_gpui::GpuiHost;
 use nd_components::forms::{PastedImage, TextChanged, TextSubmitted, text_area};
 use nd_components::{
-    Attachment, BubbleSide, ChatMessage, ComposerEvent, Draft, ImageLoaded, ImageSource, LyricClicked, LyricLine,
+    Attachment, BubbleSide, ChatMessage, ComposerEvent, Draft, Icon, ImageLoaded, ImageSource, LyricClicked, LyricLine,
     Lyrics, LyricsFollowChanged, NowPlaying, Person, PlaybackClock, Reaction, RunPosition, SeekPhase, Seeked,
-    ShelfArrows, ShelfHandle, ShelfScrolled, avatar, avatar_group, chat_bubble, chat_row, composer, image,
-    image_placeholder, lyrics_view, player_bar, seek_bar, shelf,
+    ShelfArrows, ShelfHandle, ShelfScrolled, TransportLayout, avatar, avatar_group, chat_bubble, chat_row, composer,
+    icon_button, image, image_placeholder, lyrics_view, player_bar, seek_bar, shelf,
 };
 use nd_gpui::gpui::{HeadlessAppContext, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase};
 use nd_gpui::gpui::{WindowAppearance, point as gpoint, px as gpx};
@@ -288,6 +288,57 @@ fn open_in(preset: Preset, appearance: WindowAppearance) -> Rig {
     host.backend().set_theme(registry);
     settle(&mut cx, &host);
     Rig { cx, host, window: window.expect("window"), log, view }
+}
+
+/// Player bars below the width that keeps their extra controls, in both layouts that take them.
+struct NarrowBars;
+
+/// Bar widths in points under the 440 where a full bar drops its trailing controls. The pill
+/// drops them under 400, so at 420 it keeps them and loses only its volume slider.
+const NARROW: [f32; 2] = [360., 420.];
+
+impl Render for NarrowBars {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let now = NowPlaying::new("A song title long enough to truncate in a narrow bar")
+            .subtitle("The Night Shift")
+            .artwork(picture("art", [60, 40, 140], [200, 80, 160]))
+            .clock(PlaybackClock::paused(secs(72.)))
+            .duration(secs(214.))
+            .volume(0.6, false);
+        let layouts = [("full", TransportLayout::Full), ("pill", TransportLayout::Pill)];
+        v_flex().p(px(16.)).gap(px(16.)).children(layouts.into_iter().flat_map(|(name, layout)| {
+            let now = now.clone();
+            NARROW.into_iter().map(move |w| {
+                let id = format!("{name}-{w}");
+                player_bar(id.clone(), now.clone())
+                    .layout(layout)
+                    .accessory(icon_button(format!("{id}.more"), Icon::Ellipsis))
+                    .trailing(icon_button(format!("{id}.queue"), Icon::ListMusic))
+                    .open_button(icon_button(format!("{id}.open"), Icon::ChevronUp))
+                    .w(px(w))
+            })
+        }))
+    }
+}
+
+fn open_narrow_bars() -> (HeadlessAppContext, GpuiHost, WindowId) {
+    let mut cx = headless();
+    let mut window = None;
+    let host = cx.update(|cx| {
+        GpuiHost::builder().quit_when_empty(false).start(cx, |app| {
+            let handle = app
+                .open_window(WindowOptions::main("bars").title("Bars").size(size(px(480.), px(320.))), |_, cx| {
+                    cx.new(|_| NarrowBars)
+                });
+            window = Some(handle.id());
+        })
+    });
+    host.backend().set_theme(ThemeRegistry::new(Preset::current()));
+    // A bar learns its width from its first layout and drops controls on the next frame.
+    for _ in 0..3 {
+        settle(&mut cx, &host);
+    }
+    (cx, host, window.expect("window"))
 }
 
 fn open() -> Rig {
@@ -650,6 +701,53 @@ mod media {
         quiet(&mut rig);
     }
 
+    pub fn a_narrow_bar_keeps_its_open_button_and_stays_inside_its_width() {
+        let (_cx, host, window) = open_narrow_bars();
+        let tree = host.read(|app| app.semantic_window(window).expect("window"));
+        let node = |id: &str| find(&tree.root, &|n| n.test_id.as_deref() == Some(id));
+        for (name, cut) in [("full", 440.), ("pill", 400.)] {
+            for w in NARROW {
+                let id = format!("{name}-{w}");
+                let bar = node(&id).and_then(|n| n.bounds).unwrap_or_else(|| panic!("{id} laid out"));
+                assert_eq!(bar.size.width, w, "{id}: the bar takes the width it was given");
+                let open = node(&format!("{id}.open")).unwrap_or_else(|| panic!("{id}: the open button stays"));
+                assert!(open.visible, "{id}: the open button is on screen");
+                let narrow = w < cut;
+                assert_eq!(
+                    node(&format!("{id}.queue")).is_none(),
+                    narrow,
+                    "{id}: the trailing controls go under {cut}"
+                );
+                assert_eq!(
+                    node(&format!("{id}.more")).is_none(),
+                    narrow,
+                    "{id}: the song's own buttons go under {cut}"
+                );
+                let right = bar.origin.x + bar.size.width;
+                for n in node(&id).expect("bar").iter() {
+                    let Some(b) = n.bounds.filter(|b| b.size.width > 0.) else { continue };
+                    let label = n.test_id.as_deref().unwrap_or(&n.name);
+                    assert!(
+                        b.origin.x >= bar.origin.x - 0.5 && b.origin.x + b.size.width <= right + 0.5,
+                        "{id}: {label} spans {}..{}, outside the bar's {}..{right}",
+                        b.origin.x,
+                        b.origin.x + b.size.width,
+                        bar.origin.x,
+                    );
+                }
+            }
+        }
+        // `ND_SHOT=<dir>` keeps a picture of the bars for review.
+        if let Some(dir) = std::env::var_os("ND_SHOT")
+            && nd_gpui::gpui_platform::current_headless_renderer().ok().flatten().is_some()
+        {
+            let capture = host.job(|app| app.capture(window)).expect("capture");
+            let path = PathBuf::from(dir).join("narrow-bars.png");
+            std::fs::create_dir_all(path.parent().expect("dir")).expect("shot dir");
+            std::fs::write(&path, &capture.png).expect("write shot");
+        }
+    }
+
     pub fn goldens() {
         // GPUI renders headless only on macOS (Metal) and Linux (wgpu); Windows captures arrive
         // with the Fluent goldens (M3).
@@ -739,6 +837,10 @@ fn main() {
         ("media::disabled_button_takes_no_click", media::disabled_button_takes_no_click),
         ("media::echo", media::echo),
         ("media::reentrancy", media::reentrancy),
+        (
+            "media::a_narrow_bar_keeps_its_open_button_and_stays_inside_its_width",
+            media::a_narrow_bar_keeps_its_open_button_and_stays_inside_its_width,
+        ),
         ("media::goldens", media::goldens),
     ];
     harness(&args, &tests);

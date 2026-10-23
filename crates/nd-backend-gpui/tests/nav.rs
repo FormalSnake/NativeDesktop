@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nd_backend_gpui::GpuiHost;
-use nd_backend_gpui::nav::{Marks, banner_view, palette_overlay, source_tree_view, theme_for, toast_view};
+use nd_backend_gpui::nav::{Marks, Paint, banner_view, palette_overlay, source_tree_view, theme_for, toast_view};
 use nd_components::*;
 use nd_core::semantic::Role;
 use nd_gpui::gpui::{self, HeadlessAppContext};
@@ -287,11 +287,10 @@ impl gpui::Render for Golden {
                 NodeId(1),
                 &golden_tree(),
                 None,
-                &theme,
                 false,
                 None,
                 &Default::default(),
-                &Marks::default(),
+                Paint { theme: &theme, marks: &Marks::default() },
             )))
             .child(
                 gpui::div()

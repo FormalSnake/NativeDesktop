@@ -346,18 +346,25 @@ pub enum TreeInput {
     Row(SharedString, gpui::Bounds<Pixels>),
 }
 
+/// What a drawn nav view paints with: the theme, and where it records its marks.
+#[derive(Clone, Copy)]
+pub struct Paint<'a> {
+    pub theme: &'a Theme,
+    pub marks: &'a Marks,
+}
+
 /// The drawn source tree: section headers, rows indented by depth with a disclosure, the
 /// badge and the trailing actions, and the empty state when there are no rows.
 pub fn source_tree_view(
     id: NodeId,
     props: &SourceTreeProps,
     hovered: Option<&SharedString>,
-    theme: &Theme,
     compact: bool,
     on_input: Option<OnInput<TreeInput>>,
     art: &HashMap<SharedString, Arc<gpui::RenderImage>>,
-    marks: &Marks,
+    paint: Paint<'_>,
 ) -> gpui::Stateful<gpui::Div> {
+    let Paint { theme, marks } = paint;
     let (body, footnote) = (theme.type_scale.body, theme.type_scale.footnote);
     // WinUI's NavigationView: an icon per item, a subtle fill with an accent pill on the selected
     // one, and an icon-only rail when the pane is compact.
@@ -1538,7 +1545,7 @@ impl Build<'_> {
         let theme = self.theme();
         let theme = &*theme;
         let marks = Marks::default();
-        let element = self.nav_element(id, kind, node, theme, &marks, window, cx);
+        let element = self.nav_element(id, kind, node, Paint { theme, marks: &marks }, window, cx);
         self.record_marks(id, marks.take());
         element
     }
@@ -1548,11 +1555,11 @@ impl Build<'_> {
         id: NodeId,
         kind: WidgetKind,
         node: &Node,
-        theme: &Theme,
-        marks: &Marks,
+        paint: Paint<'_>,
         window: &mut gpui::Window,
         cx: &mut gpui::App,
     ) -> Option<AnyElement> {
+        let Paint { theme, marks } = paint;
         let emit = self.backend.state.borrow().events.emitter(id);
         let wake = self.wake.clone();
         if is::<CommandPaletteKind>(kind) {
@@ -1685,11 +1692,10 @@ impl Build<'_> {
                 id,
                 props,
                 hovered.as_ref(),
-                theme,
                 self.in_hidden_sidebar(node),
                 Some(on_input),
                 &art,
-                marks,
+                paint,
             );
             return Some(
                 style
