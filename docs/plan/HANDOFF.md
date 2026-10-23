@@ -70,6 +70,16 @@ Lanes in flight, each in its own worktree with work saved there:
 Needs Kyan: delete the old Pages project `nativedesktop` (domain already moved), a Kopuz release
 with #807 so the flake can move past v0.22.0.
 
+Needs g815 (offline since about 03:15, Linux, LAN and its Windows side; likely powered off):
+1. Relaunch FormalMusic `c1bc6a8` on g815 (`uwsm app`, SIGTERM the old pid first).
+2. Windows checks: toolbar-search (`C:\nd\search` still in the guest), the fm-hero fix.
+3. docs-captures-2 `1d6003ce`: native-widget on Linux, the Linux browser shot, every Windows shot.
+   Its macOS shots need the macbook unlocked (it was locked at 07:19).
+4. Build FormalMusic mold `2e808a8` in the Linux dev shell, then fast-forward main to it.
+5. build-speed numbers: sccache through `scripts/linux-gate`, `scripts/budget/headless.sh`, per-test times.
+6. The `nixos-rebuild` auto-GC SIGSEGV seen on switch.
+e1504g (up, quiet) takes no heavy compiles, so none of these move there.
+
 ## Open lanes (each in its own worktree, branch named after the lane)
 
 - **FormalMusic motion** (`nativedesktop-wt-fm-motion` branch fm-hero-linux, `formalmusic-wt-motion`
