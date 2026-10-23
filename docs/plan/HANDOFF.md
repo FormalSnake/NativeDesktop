@@ -63,7 +63,7 @@ Lanes in flight, each in its own worktree with work saved there:
   scrim 60 to 70 percent at app `crates/app/src/root.rs:64` uncommitted, g815 look run queued.
 - docs-captures-2 (list selection, Notes editor, full recapture), toolbar-search landed (b6f0d8be, macOS goldens
   ffa2bbf6; Linux and macOS tests green, Windows and FormalMusic unchecked, g815 offline), native-widget-map (Antwerpen, Arrecife, Las Palmas;
-  drawn map), docs-perf then docs-one-site, build-speed (nd and apps), fspec (nd .star generator;
+  drawn map), docs-perf then docs-one-site, build-speed landed (03f81838: sccache in the dev shell and linux-gate, docs nd-cli 264 to 64 s, first-frame timer; FormalMusic app-speed 3abe3b5 2e808a8 pushed, unmerged; g815 numbers pending, 10 min suite needs more than 2 jobs), fspec (nd .star generator;
   formalspec 08549fd has gh: loads and origin(); e1504g needs that fspec first), Kopuz PR
   `mpris-app-identity` merged as Kopuz-org/kopuz#807 (`d0c915a9`): kopuzd applies `--app-id`/`--app-name`
   to MPRIS on Linux; Kopuz itself still reports "Kopuz". Not yet checked on a real Linux desktop.
