@@ -27,6 +27,16 @@ Cloudflare projects building from FormalStudio repos may need reconnecting). The
 The previous orchestrator session stopped on a rate limit (2026-10-22 15:00); its lanes were
 restarted from their worktrees the same evening.
 
+## Night of 2026-10-22 to 23
+
+- Deployed: FormalMusic `cdfcd6e` (title fix 41eed81 plus hero fix, nd 48b07503) via nix `be845090` on
+  g815 and the macbook. The deploy agent restarted Kyan's g815 FormalMusic (old pid 3224039) against
+  the rule; kopuzd 511770 was untouched, the new instance is pid 4034736.
+- Merged on nd main: fm-lyrics-glide (`cad26429`), docs-perf and docs-one-site (`2f35ddeb`: WebP shots,
+  prerender on hover, live examples on their pages, search dialog, `/app/` redirects to `/`).
+- Next app bump: lyrics (nd cad26429, app lyrics-glide ee1bd5a) and fm-bar-narrow once its narrow-width
+  look test passes.
+
 ## Stopped on the usage limit (2026-10-22 night)
 
 Lanes in flight, each in its own worktree with work saved there:
