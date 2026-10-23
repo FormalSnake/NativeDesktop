@@ -17,8 +17,9 @@
 //!   `resync_after` of no scrolling resume it.
 //! - Depth: rows fade and blur with their distance from the anchor through [`DEPTH_OPACITY`]
 //!   and [`DEPTH_BLUR`], easing on the theme's slow timing as the anchor moves; lit rows draw
-//!   in the primary ink at full size, the rest in the secondary ink at [`UNLIT_SCALE`]. While
-//!   the user scrolls, every row is sharp and whole; resync brings the depth back.
+//!   in the primary ink at full size, the rest in the secondary ink at [`UNLIT_SCALE`], growing
+//!   and shrinking over [`LIT_SCALE`]. The row under the pointer is sharp. While the user
+//!   scrolls, every row is sharp and whole; resync brings the depth back.
 //! - Unsynced lyrics are a plain column; a click on a synced row seeks to its start.
 
 use std::sync::Arc;
@@ -48,6 +49,10 @@ pub const ANCHOR_AT: f32 = 0.42;
 pub const SCROLL: Duration = Duration::from_millis(500);
 pub const SCROLL_CURVE: [f32; 4] = [0.38, 1.21, 0.22, 1.0];
 pub const UNLIT_SCALE: f32 = 0.85;
+/// A row growing to full size as it lights, and shrinking as it goes out: 350 ms on a curve
+/// that overshoots a little, as FormalShell's lyrics do.
+pub const LIT_SCALE: Duration = Duration::from_millis(350);
+pub const LIT_SCALE_CURVE: [f32; 4] = [0.42, 1.67, 0.21, 0.9];
 /// Opacity by distance from the anchor in viewport spans: on the anchor, then a third, two
 /// thirds and a full span away.
 pub const DEPTH_OPACITY: [f32; 4] = [1.0, 0.7, 0.45, 0.25];
@@ -368,12 +373,14 @@ fn depth_step(steps: &[f32; 4], distance: usize, span: f32) -> f32 {
 }
 
 /// A synced row's opacity and blur. While the user scrolls every row is sharp and whole, so the
-/// lyrics read as a page; following brings the depth of field back.
-pub fn row_depth(lit: bool, distance: usize, span: f32, following: bool) -> (f32, f32) {
+/// lyrics read as a page; following brings the depth of field back. The row under the pointer
+/// is sharp at its faded opacity, so the line about to be clicked reads.
+pub fn row_depth(lit: bool, distance: usize, span: f32, following: bool, hovered: bool) -> (f32, f32) {
     if lit || !following {
         return (1., 0.);
     }
-    (depth_opacity(distance, span), depth_blur(distance, span))
+    let blur = if hovered { 0. } else { depth_blur(distance, span) };
+    (depth_opacity(distance, span), blur)
 }
 
 /// Where the anchor row's top sits in the viewport, for a viewport `height` points tall.
