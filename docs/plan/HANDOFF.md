@@ -41,8 +41,11 @@ restarted from their worktrees the same evening.
 - now-playing merged in nd (`0a05d464`); FormalMusic release `5506019` (now-playing, lyrics) installed via nix
   `604282ab` on g815 and the macbook and relaunched on both. On g815 `nixos-rebuild switch` crashed twice
   (SIGSEGV in nix auto-GC); the built closure was activated by hand, worth a look.
-- Next app bump: lyrics (nd cad26429, app lyrics-glide ee1bd5a) and fm-bar-narrow once its narrow-width
-  look test passes.
+- Merged on nd main: fm-bar-narrow (`4d84f31a`), native-widget-map (`066c0265`: drawn OSM map on
+  Linux and Windows, places Antwerpen, Arrecife, Las Palmas). FormalMusic `c1bc6a8` (narrow bar, fspec)
+  installed via nix `aea3aca3` on both; relaunched on the macbook. g815 dropped off the network right
+  after its switch (ssh and Tailscale time out, about 06:30), so its relaunch and every g815 build or VM
+  run are blocked until it is back: needs Kyan to wake or reconnect it.
 
 ## Stopped on the usage limit (2026-10-22 night)
 
