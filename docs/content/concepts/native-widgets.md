@@ -49,9 +49,10 @@ any built-in:
 ## The drawn fallback
 
 The fallback in [drawn.rs](../../../examples/native-widget/src/map_view/drawn.rs) uses a `canvas`
-to paint a 3x3 block of OpenStreetMap tiles around the center. It draws the pins on top and pans
-when you drag. It's a real map, with the attribution that OpenStreetMap requires, and the web and
-Linux builds ship it. Write the fallback first. It defines the props and events, and the native
+to paint the OpenStreetMap tiles that cover the view, and a second `canvas` to draw the pins on top.
+It fits the region to its size the way MapKit does, so both show the same places, and it pans when
+you drag. It's a real map, with the attribution that OpenStreetMap requires, and the web, Linux and
+Windows builds ship it. The image pipeline downloads each tile once into its disk cache. Write the fallback first. It defines the props and events, and the native
 version then has to match them.
 
 ## The AppKit side
