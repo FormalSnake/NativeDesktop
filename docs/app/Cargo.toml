@@ -16,10 +16,7 @@ nd-docs = { path = "../../crates/nd-docs" }
 serde.workspace = true
 serde_json.workspace = true
 # The examples the Web tab runs live, in this process.
-hello = { path = "../../examples/hello" }
-gallery = { path = "../../examples/gallery" }
-overrides = { path = "../../examples/overrides" }
-scroll-bench = { path = "../../examples/scroll" }
+nd-docs-run = { path = "../run" }
 
 [build-dependencies]
 nd = { path = "../../crates/nd", default-features = false, features = ["build"] }

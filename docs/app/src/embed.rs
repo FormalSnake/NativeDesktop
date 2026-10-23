@@ -7,7 +7,7 @@ use nd_docs::captures::{Os, State};
 use nd_docs::examples::Example;
 
 use crate::blocks::open_url;
-use crate::{Docs, live, repo_url};
+use crate::{Docs, repo_url};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -100,7 +100,7 @@ impl Docs {
 }
 
 fn web_tab(example: &Example, key: &str, theme: &Theme) -> AnyElement {
-    match live::opener(&example.name).filter(|_| example.web) {
+    match nd_docs_run::opener(&example.name).filter(|_| example.web) {
         Some(open) => h_flex()
             .gap(theme.spacing.md)
             .child(button(format!("{key}/run"), "Run live").on_click(move |_, _, cx| open(cx)))

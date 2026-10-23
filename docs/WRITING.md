@@ -1,8 +1,9 @@
 # Writing the docs
 
-The docs are pages in `docs/content`, shown by the docs app (`docs/app`, an nd app: native on the
-desktop, the docs site on the web) and exported as raw markdown plus `llms.txt` by
-`nd docs build`. `nd docs check` fails on anything below that is broken.
+The docs are pages in `docs/content`. `nd docs build` turns them into the docs site (static
+HTML, with the web examples running live from `docs/run`) plus raw markdown and `llms.txt`; the
+docs app (`docs/app`) shows the same pages natively on the desktop. `nd docs check` fails on
+anything below that is broken.
 
 ## Pages
 

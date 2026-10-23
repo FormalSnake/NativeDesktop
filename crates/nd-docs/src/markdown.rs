@@ -160,8 +160,8 @@ pub fn page(id: &str, text: &str, cx: &PageContext<'_>) -> Result<Page> {
 
 fn example_markdown(example: &Example, base: &str) -> String {
     format!(
-        "> **Example: {}.** Source in [examples/{}]({}). Live on the web and captured on macOS, Linux \
-         and Windows in the docs app.\n\n",
+        "> **Example: {}.** Source in [examples/{}]({}). Its page on the docs site shows it captured \
+         on macOS, Linux and Windows.\n\n",
         example.title,
         example.name,
         relative_to(base, &format!("examples/{}", example.name))

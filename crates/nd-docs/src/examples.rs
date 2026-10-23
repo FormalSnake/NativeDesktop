@@ -6,7 +6,7 @@
 //! package = "hello"         # cargo package (defaults to name)
 //! title = "Hello"
 //! summary = "The smallest app: a toolbar, a button and a count."
-//! web = true                # builds for wasm32; the docs app runs it live
+//! web = true                # builds for wasm32; the docs site runs it live
 //! env = { HELLO_DEMO = "1" }
 //! ```
 
