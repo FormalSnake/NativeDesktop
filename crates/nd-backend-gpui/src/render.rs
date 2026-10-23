@@ -268,6 +268,9 @@ pub(crate) struct Build<'a> {
     pub(crate) title_bottom: Cell<f32>,
     /// The header bars of the scaffold being built when its toolbar splits over its panes.
     pub(crate) split: RefCell<Option<crate::drawn::SplitHeaders>>,
+    /// The toolbar search field being built to fill its title bar slot (WinUI's TitleBar
+    /// content), whatever width the app gave it.
+    pub(crate) fill_field: Cell<Option<NodeId>>,
     /// Drawing a closed overlay's last subtree as it animates out: its nodes are released, so
     /// controls keep no state for them and start nothing (a video would play on unheard).
     pub(crate) ghost: bool,
@@ -307,6 +310,7 @@ impl<'a> Build<'a> {
             under_title: RefCell::default(),
             title_bottom: Cell::default(),
             split: RefCell::default(),
+            fill_field: Cell::default(),
             ghost: false,
         }
     }

@@ -81,6 +81,21 @@ Fills are the text colour (`currentColor`) at a share, so they work on any surfa
   and AdwOverlaySplitView do: the sidebar's (sidebar colour, start window controls, the toggle and
   leading items) and the content's (title, the other items, end window controls). `drawn.rs`
   `split_headers`.
+- Header bar layout (`_header-bar.scss`): box padding `6px 7px 7px 7px` under a -1 px margin,
+  so the first start widget sits 6 px from the edge; start and end widgets 6 px apart. The
+  title widget is centred between the start widgets (up to the first flexible space) and the
+  end ones, bold and ellipsized when short of room, in every header of a split view. `drawn.rs`
+  `title_row` (`Center::Title`).
+- Search ([HIG search pattern](https://developer.gnome.org/hig/patterns/nav/search.html):
+  "The standard pattern for search in GNOME utilizes a search bar which slides down from
+  beneath the header bar", toggled by a header bar search button, hidden until used). A toolbar
+  `search_field` draws as a flat 34 px search toggle where the app placed the field (checked
+  `$selected_color`: 10%, 13% hovered, 19% pressed) and a `GtkSearchBar` under the header that
+  holds it (the content's in a split view): the field centred at the app's width, 6 px all round,
+  no shade, as a toolbar view's top bar draws it. Opening focuses the field; the bar stays open
+  while the field has text or focus, so Ctrl+F (focus) opens it; Esc or the toggle closes it
+  and clears the field, as leaving search mode does. Not matched yet: the 250 ms revealer slide
+  and type-to-search. `drawn.rs` `search_toggle`, `search_bar`.
 - Window controls: 24 px circles at 10/15/30% of the text colour (close included, never red),
   16 px symbolic icons. `nd-os-linux/src/hooks.rs` `window_controls`.
 

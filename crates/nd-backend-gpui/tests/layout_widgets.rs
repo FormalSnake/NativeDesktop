@@ -60,6 +60,8 @@ enum Kind {
     Centered,
     /// A window's chrome: a titled toolbar over a sidebar with a source list and the content.
     Chrome,
+    /// Notes' toolbar: the sidebar toggle, a button, a flexible space and a search field.
+    Search,
 }
 
 #[derive(Default)]
@@ -75,6 +77,7 @@ struct Scene {
     ratio: f32,
     /// The app keeps its ratio whatever the user drags.
     refuse: bool,
+    search: Option<Entity<TextFieldState>>,
 }
 
 impl Render for Scene {
@@ -132,6 +135,21 @@ impl Render for Scene {
                     .item(button("catch-up", "Catch Me Up"))
                     .item(button("call", "Call"));
                 return scaffold().toolbar(bar).content(text("Body")).into_any_element();
+            }
+            Kind::Search => {
+                let search = self.search.get_or_insert_with(|| cx.new(|_| TextFieldState::default())).clone();
+                return scaffold()
+                    .toolbar(
+                        toolbar()
+                            .title("Notes")
+                            .sidebar_toggle()
+                            .item(button("new", "New"))
+                            .flexible_space()
+                            .item(search_field("find", &search).w(px(220.))),
+                    )
+                    .sidebar(sidebar().min_w(px(220.)).child(text("Folders")))
+                    .content(text("Body"))
+                    .into_any_element();
             }
             Kind::Chrome => {
                 let folders = source_list("folders")
@@ -205,7 +223,7 @@ fn open_in(kind: Kind, preset: Preset, scheme: Scheme) -> Opened {
             let options = WindowOptions::main("layout").size(size(px(800.), px(560.)));
             let options = if matches!(kind, Kind::Bar { .. }) { options.title("Notes") } else { options };
             let handle =
-                app.open_window(options, |_, cx| cx.new(|_| Scene { kind, log: l, ratio: 0.5, refuse: false }));
+                app.open_window(options, |_, cx| cx.new(|_| Scene { kind, log: l, ratio: 0.5, refuse: false, search: None }));
             opened = Some((handle.id(), handle.root().clone()));
         })
     });
@@ -319,7 +337,7 @@ impl Opened {
             let mut other = None;
             self.host.update(cx, |app| {
                 let handle = app.open_window(WindowOptions::main("other").size(size(px(200.), px(100.))), |_, cx| {
-                    cx.new(|_| Scene { kind: Kind::Plain, log: Rc::default(), ratio: 0.5, refuse: false })
+                    cx.new(|_| Scene { kind: Kind::Plain, log: Rc::default(), ratio: 0.5, refuse: false, search: None })
                 });
                 other = Some(handle.id());
             });
@@ -517,7 +535,7 @@ mod gate_m6 {
         let second = o.cx.update(|cx| {
             o.host.update(cx, |app| {
                 app.open_window(WindowOptions::main("second").size(size(px(400.), px(300.))), |_, cx| {
-                    cx.new(|_| Scene { kind: Kind::Split, log, ratio: 0.5, refuse: false })
+                    cx.new(|_| Scene { kind: Kind::Split, log, ratio: 0.5, refuse: false, search: None })
                 })
                 .id()
             })
@@ -548,6 +566,50 @@ mod gate_m6 {
         assert_eq!(o.showing().as_deref(), Some("Notes"), "Return leaves it open");
         o.keys(&["escape"]);
         assert_eq!(o.showing(), None, "Esc closes it");
+    }
+
+    /// libadwaita's header bar centres its title between the start and end widgets, so the
+    /// content's header starts with its first button, 6 px in (the `layout-search` golden
+    /// shows the title in the middle).
+    pub fn gpui_header_bar_centres_its_title() {
+        let o = open(Kind::Search);
+        let content = o.node("nd-content").bounds.expect("content laid out");
+        let new = o.node("new").bounds.expect("new laid out");
+        assert!(
+            (new.origin.x - content.origin.x - 6.).abs() < 1.,
+            "the first start widget sits 6 px in, as the header bar's box padding puts it: {}",
+            new.origin.x - content.origin.x
+        );
+    }
+
+    /// GNOME's search pattern: the header holds a search toggle, and the search bar with the
+    /// field slides out under it; Esc closes it again.
+    pub fn gpui_toolbar_search_is_a_toggle_and_a_search_bar_on_linux() {
+        let mut o = open(Kind::Search);
+        assert!(o.node("find").bounds.is_none(), "the field waits in a closed search bar");
+        let toggle = o.node("nd-toolbar-item-1").bounds.expect("search toggle laid out");
+        assert!(toggle.origin.y < 47. && (toggle.size.width - 34.).abs() < 1., "a 34 px header button: {toggle:?}");
+        o.click(Point { x: toggle.origin.x + 17., y: toggle.origin.y + 17. });
+        let find = o.node("find").bounds.expect("the search bar opened");
+        let content = o.node("nd-content").bounds.expect("content laid out");
+        assert!(find.origin.y >= 47., "under the header bar: {find:?}");
+        let centre = find.origin.x + find.size.width / 2.;
+        assert!((centre - (content.origin.x + content.size.width / 2.)).abs() < 1., "centred in the bar: {find:?}");
+        assert!(o.node("find").focused, "opening the bar focuses the field");
+        o.keys(&["escape"]);
+        assert!(o.node("find").bounds.is_none(), "Esc closes the search bar");
+    }
+
+    /// WinUI's title bar: the search box is the bar's content, centred and stretched to the
+    /// Gallery's 580 px where the window has room.
+    pub fn gpui_toolbar_search_fills_the_title_bar_on_windows() {
+        let o = open_in(Kind::Search, Preset::Fluent, Scheme::Light);
+        let find = o.node("find").bounds.expect("search laid out");
+        let new = o.node("new").bounds.expect("new laid out");
+        assert!(find.origin.y < 48., "in the title bar: {find:?}");
+        assert!(find.size.width > 220., "stretched past the app's width: {find:?}");
+        assert!(find.size.width <= 580.5, "no wider than 580: {find:?}");
+        assert!(find.origin.x > new.origin.x + new.size.width, "after the leading items: {find:?}");
     }
 
     /// libadwaita's split view: an open sidebar runs the full height under its own header bar,
@@ -586,14 +648,14 @@ mod gate_m6 {
         }
         let mut failed = Vec::new();
         for scheme in [Scheme::Light, Scheme::Dark] {
-            for view in ["split", "status", "alert", "about", "chrome", "chrome-backdrop"] {
+            for view in ["split", "status", "alert", "about", "chrome", "chrome-backdrop", "search", "search-open"] {
                 if let Err(e) = golden(view, scheme) {
                     failed.push(e);
                 }
             }
             // WinUI's ContentDialog, drawn on Linux as `ND_PRESET=fluent` shows it.
             if cfg!(target_os = "linux") {
-                for view in ["alert-fluent", "about-fluent", "chrome-fluent", "chrome-backdrop-fluent"] {
+                for view in ["alert-fluent", "about-fluent", "chrome-fluent", "chrome-backdrop-fluent", "search-fluent"] {
                     if let Err(e) = golden(view, scheme) {
                         failed.push(e);
                     }
@@ -619,6 +681,7 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
         "split" => Kind::Split,
         "status" => Kind::Status,
         v if v.starts_with("chrome") => Kind::Chrome,
+        v if v.starts_with("search") => Kind::Search,
         _ => Kind::Plain,
     };
     let (shown, preset) = match view.strip_suffix("-fluent") {
@@ -627,7 +690,7 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
     };
     let mut o = open_in(kind, preset, scheme);
     match shown {
-        "chrome" => o.activate(),
+        "chrome" | "search" | "search-open" => o.activate(),
         "chrome-backdrop" => o.deactivate(),
         "alert" => o.alert(
             Alert::confirm("Delete the note?", "Delete").message("The note and its attachments are removed for good."),
@@ -641,6 +704,10 @@ fn golden(view: &str, scheme: Scheme) -> Result<(), String> {
                 .copyright("© 2026 CanaryCoders"),
         ),
         _ => {}
+    }
+    if shown == "search-open" {
+        let toggle = o.node("nd-toolbar-item-1").bounds.ok_or("no search toggle")?;
+        o.click(Point { x: toggle.origin.x + toggle.size.width / 2., y: toggle.origin.y + toggle.size.height / 2. });
     }
     let handle = o.host.window_handle(o.window).ok_or("no window")?;
     let image = o.cx.capture_screenshot(handle).map_err(|e| e.to_string())?;
@@ -706,6 +773,15 @@ fn main() {
         ("gate_m6::gpui_alert_queues_and_blocks_input", gate_m6::gpui_alert_queues_and_blocks_input),
         ("gate_m6::gpui_alert_modal_covers_every_window", gate_m6::gpui_alert_modal_covers_every_window),
         ("gate_m6::gpui_alert_about_opens_and_closes", gate_m6::gpui_alert_about_opens_and_closes),
+        ("gate_m6::gpui_header_bar_centres_its_title", gate_m6::gpui_header_bar_centres_its_title),
+        (
+            "gate_m6::gpui_toolbar_search_is_a_toggle_and_a_search_bar_on_linux",
+            gate_m6::gpui_toolbar_search_is_a_toggle_and_a_search_bar_on_linux,
+        ),
+        (
+            "gate_m6::gpui_toolbar_search_fills_the_title_bar_on_windows",
+            gate_m6::gpui_toolbar_search_fills_the_title_bar_on_windows,
+        ),
         (
             "gate_m6::gpui_toolbar_splits_into_a_header_bar_per_pane",
             gate_m6::gpui_toolbar_splits_into_a_header_bar_per_pane,

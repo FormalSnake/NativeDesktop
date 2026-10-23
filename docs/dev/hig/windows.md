@@ -100,6 +100,21 @@ title row's content at half opacity (primary text at 50% lands within a step of 
 leaves the navigation pane as it is; Mica's inactive fallback is the OS's. `drawn.rs` (Toolbar),
 `Build::inactive`.
 
+## Title bar search
+
+A toolbar `search_field` is the title bar's search box. The
+[title bar design guidance](https://learn.microsoft.com/windows/apps/design/basics/titlebar-design)
+says a search box is "centered to the window" and responsive; the
+[TitleBar control](https://learn.microsoft.com/windows/apps/develop/ui/controls/title-bar) takes
+it as its `Content`, and the WinUI 3 Gallery (`MainWindow.xaml`) stretches an `AutoSuggestBox`
+there with `MaxWidth="580"`. nd centres the field on the window between the leading run (pane
+toggle, title, items) and the trailing items, stretches it up to 580 px and never under the width
+the app gave it; when the leading or trailing run needs more room, the box moves off centre
+instead of covering them, then shrinks to that width. The row is 48 px, TitleBarExpandedHeight.
+TitleBar's compact state (title hidden once the content no longer fits, `TitleBar.cpp`
+`OnSizeChanged`) is not matched: nd's title truncates. `drawn.rs` (`Center::Search`,
+`toolbar_search`), `forms/text.rs` (`fill_field`).
+
 ## Focus visual
 
 Two rings outside the control, each 2 px: FocusStrokeColorOuter (`#E4000000` light, `#FFFFFF`

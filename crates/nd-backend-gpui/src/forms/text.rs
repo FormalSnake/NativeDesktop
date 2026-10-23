@@ -1087,7 +1087,8 @@ pub(crate) fn text_field(
         let event = FieldIconClicked { edge: IconEdge::Trailing };
         field = field.child(edge_button(&ctl, "trailing", Glyph::of(icon.icon), icon.label.clone(), event, p.enabled));
     }
-    with_style(field, &p.style).into_any_element()
+    let field = with_style(field, &p.style);
+    if b.fill_field.get() == Some(id) { field.w_full().into_any_element() } else { field.into_any_element() }
 }
 
 pub(crate) fn text_area(

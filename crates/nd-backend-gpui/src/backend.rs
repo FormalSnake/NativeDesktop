@@ -130,6 +130,8 @@ pub struct GpuiBackend {
     /// Scaffolds whose sidebar the drawn toolbar toggle hid, as AppKit's split view collapses
     /// it without the app's state changing.
     pub(crate) hidden_sidebars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
+    /// Toolbar search fields whose libadwaita search bar the header's toggle revealed.
+    pub(crate) search_bars: Rc<RefCell<std::collections::HashSet<NodeId>>>,
     /// Sidebars and inspectors sliding open or shut, by pane.
     pub(crate) pane_slides: crate::drawn::PaneSlides,
     /// Collapsed `edge_reveal()` sidebars sliding in and out over the content, by pane.
@@ -202,6 +204,7 @@ impl GpuiBackend {
             overlay_exits: crate::overlay::Exits::default(),
             drawn: Rc::default(),
             hidden_sidebars: Rc::default(),
+            search_bars: Rc::default(),
             pane_slides: Rc::default(),
             reveals: Rc::default(),
             splits: Rc::default(),

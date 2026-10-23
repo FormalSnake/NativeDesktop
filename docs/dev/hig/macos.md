@@ -51,6 +51,11 @@ in `system_colors.rs`; the source list and palette set fonts from them.
   [toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars): a real
   `NSToolbar` in the unified style with full-size content; system items for the sidebar toggle,
   flexible space and the sidebar tracking separator. `toolbar.rs`, `platform.rs`.
+- [Search fields](https://developer.apple.com/design/human-interface-guidelines/search-fields):
+  a toolbar `search_field` is an `NSSearchField` in its own toolbar item where the app puts it,
+  the trailing end after a flexible space in Notes, as Mail and Notes place theirs. Windows
+  centres it in the title bar and Linux puts it in a search bar (their HIG files); the app
+  code is the same.
 - [Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars) and
   [split views](https://developer.apple.com/design/human-interface-guidelines/split-views):
   `NSSplitViewController` with `NSSplitViewItem(sidebarWithViewController:)`, so the system draws

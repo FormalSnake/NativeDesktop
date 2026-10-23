@@ -26,6 +26,8 @@ use crate::backend::Node;
 use crate::forms::glyph::{Glyph, glyph};
 use crate::render::{Build, Run};
 use nd_components::icon::Icon;
+use nd_components::{FieldStyle, TextChanged, TextFieldKind, TextFieldProps};
+use nd_gpui::gpui::SharedString;
 
 fn is<W: 'static>(kind: WidgetKind) -> bool {
     kind.type_id == TypeId::of::<W>()
@@ -176,22 +178,69 @@ impl Build<'_> {
                 None => pane,
             }
         } else if is::<Toolbar>(kind) || is::<Titlebar>(kind) {
+            let preset = theme.preset;
+            let search = self.toolbar_search(node);
+            // WinUI's TitleBar takes a search box as its content, centred and stretched (the
+            // Gallery's AutoSuggestBox); libadwaita's header bar shows a toggle for it instead
+            // and the search bar under the header (`search_bar`).
+            let fill = search.filter(|_| preset == nd_theme::Preset::Fluent);
+            self.fill_field.set(fill.map(|(_, field, _)| field));
             let mut items = children(window, cx);
+            self.fill_field.set(None);
             // A centred item (Messages' conversation) sits at the middle of its row.
-            let mut centered = node.children.iter().position(|c| {
-                self.nodes.get(c).and_then(|n| n.props.downcast_ref::<ToolbarItemProps>()).is_some_and(|p| p.centered)
-            });
-            let title = self.toolbar_title(id, node);
+            let mut centered = node
+                .children
+                .iter()
+                .position(|c| {
+                    self.nodes
+                        .get(c)
+                        .and_then(|n| n.props.downcast_ref::<ToolbarItemProps>())
+                        .is_some_and(|p| p.centered)
+                })
+                .map(|c| (c, Center::Item));
+            if centered.is_none()
+                && let Some((at, _, min)) = fill
+            {
+                centered = Some((at, Center::Search { min }));
+            }
+            let over_sidebar = self.over_sidebar(node);
+            if let Some((at, title)) = self.toolbar_title(id, node) {
+                // libadwaita centres the title widget between the start and end widgets; the
+                // start ones run up to the first flexible space.
+                let adwaita = preset == nd_theme::Preset::Adwaita && centered.is_none();
+                let at = if adwaita {
+                    let system = |c: &NodeId| {
+                        self.nodes.get(c).and_then(|n| n.props.downcast_ref::<SystemItemProps>()).map(|p| p.item)
+                    };
+                    node.children[at..]
+                        .iter()
+                        .position(|c| system(c) == Some(SystemItem::FlexibleSpace))
+                        .map_or(items.len(), |p| at + p)
+                } else {
+                    at
+                };
+                if let Some((c, _)) = centered.as_mut()
+                    && at <= *c
+                {
+                    *c += 1;
+                }
+                if adwaita {
+                    centered = Some((at, Center::Title));
+                }
+                items.insert(at, title);
+            }
+            let bar = search
+                .filter(|_| preset == nd_theme::Preset::Adwaita)
+                .and_then(|(_, field, _)| self.search_bar(field, window, cx));
+            let with_bar = |header: AnyElement, bar: Option<AnyElement>| match bar {
+                Some(bar) => div().w_full().flex_none().flex().flex_col().child(header).child(bar).into_any_element(),
+                None => header,
+            };
             if self.split.borrow().as_ref().is_some_and(|s| node.parent == Some(s.scaffold)) {
                 // Split over the panes: what sits over the sidebar heads the sidebar, the title
                 // and the rest head the content. The bar itself takes no room.
-                let over_sidebar = self.over_sidebar(node);
-                let mut rest = items.split_off(over_sidebar);
-                let mut centered = centered.and_then(|c| c.checked_sub(over_sidebar));
-                if let Some((_, title)) = title {
-                    rest.insert(0, title);
-                    centered = centered.map(|c| c + 1);
-                }
+                let rest = items.split_off(over_sidebar);
+                let centered = centered.and_then(|(c, k)| Some((c.checked_sub(over_sidebar)?, k)));
                 let mut split = self.split.borrow_mut();
                 let split = split.as_mut().expect("split headers");
                 let (sidebar, content, inspector) = split.insets(self.insets);
@@ -204,8 +253,8 @@ impl Build<'_> {
                     sidebar,
                     window,
                 ));
-                split.content =
-                    Some(self.title_row(id, ElementId::Integer(id.0), node, rest, centered, content, window));
+                let header = self.title_row(id, ElementId::Integer(id.0), node, rest, centered, content, window);
+                split.content = Some(with_bar(header, bar));
                 if let Some(insets) = inspector {
                     split.inspector = Some(self.title_row(
                         id,
@@ -219,16 +268,15 @@ impl Build<'_> {
                 }
                 return Some(div().into_any_element());
             }
-            if let Some((at, title)) = title {
-                if let Some(c) = centered.as_mut()
-                    && at <= *c
-                {
-                    *c += 1;
-                }
-                items.insert(at, title);
-            }
-            self.title_row(id, ElementId::Integer(id.0), node, items, centered, self.insets, window)
+            let header = self.title_row(id, ElementId::Integer(id.0), node, items, centered, self.insets, window);
+            with_bar(header, bar)
+        } else if is::<ToolbarItem>(kind)
+            && theme.preset == nd_theme::Preset::Adwaita
+            && let Some((field, _)) = self.search_field_in(node)
+        {
+            self.search_toggle(id, field, window)
         } else if is::<ToolbarItem>(kind) {
+            let fills = self.fill_field.get().is_some_and(|f| node.children.contains(&f));
             // The item occludes the title row under it, so a press on it is never a window drag
             // (on Windows, never the caption). That also hides it from the window root's pointer
             // listeners, which GPUI only calls where the root is hovered: the item hands its own
@@ -239,6 +287,7 @@ impl Build<'_> {
             let at = |p: gpui::Point<gpui::Pixels>| nd_core::Point { x: p.x.as_f32(), y: p.y.as_f32() };
             div()
                 .flex()
+                .when(fills, |d| d.w_full())
                 .occlude()
                 .capture_any_mouse_down(move |e, window, cx| {
                     if e.button == MouseButton::Left {
@@ -620,7 +669,7 @@ impl Build<'_> {
         element_id: ElementId,
         node: &Node,
         items: Vec<AnyElement>,
-        centered: Option<usize>,
+        centered: Option<(usize, Center)>,
         insets: nd_ui::TitlebarInsets,
         window: &mut gpui::Window,
     ) -> AnyElement {
@@ -648,17 +697,28 @@ impl Build<'_> {
         *row.style() = with_titlebar_insets(&merged, row_insets);
         let mut items = items;
         let items = match centered {
-            Some(c) if c < items.len() => {
+            Some((c, kind)) if c < items.len() => {
                 let after: Vec<AnyElement> = items.split_off(c + 1);
                 let center = items.pop().expect("the centred item");
+                let center = match kind {
+                    Center::Item => div().flex_none().child(center),
+                    // A title gives way first, ellipsized, as a header bar's title label does.
+                    Center::Title => div().flex().min_w_0().overflow_hidden().child(center),
+                    // WinUI's title bar search: stretched up to the Gallery's 580 px, never
+                    // under the width the app gave the field.
+                    Center::Search { min } => {
+                        div().flex().flex_basis(px(SEARCH_MAX)).max_w(px(SEARCH_MAX)).min_w(px(min)).child(center)
+                    }
+                };
                 let side = || div().flex().flex_row().items_center().gap(s.sm).flex_1().flex_basis(px(0.));
                 // The insets are spacers, not padding: a group's padding would add to its flex
                 // basis and push the centre off the middle by half the inset.
-                let inset = |w: f32| div().flex_none().w(px(w));
+                // A zero inset adds no spacer: the group's gap would still push its first item in.
+                let inset = |w: f32| (w > 0.).then(|| div().flex_none().w(px(w)));
                 vec![
-                    side().child(inset(insets.leading)).children(items).into_any_element(),
-                    div().flex_none().child(center).into_any_element(),
-                    side().justify_end().children(after).child(inset(insets.trailing)).into_any_element(),
+                    side().children(inset(insets.leading)).children(items).into_any_element(),
+                    center.into_any_element(),
+                    side().justify_end().children(after).children(inset(insets.trailing)).into_any_element(),
                 ]
             }
             _ => items,
@@ -691,6 +751,135 @@ impl Build<'_> {
             .when(edge, |d| d.border_b_1().border_color(look.border))
             .child(row)
             .into_any_element()
+    }
+
+    /// The search field a toolbar item holds, with its props, when the item is one.
+    fn search_field_in(&self, item: &Node) -> Option<(NodeId, &TextFieldProps)> {
+        let [field] = item.children.as_slice() else { return None };
+        let node = self.nodes.get(field).filter(|n| is_kind::<TextFieldKind>(n))?;
+        let props = props::<TextFieldProps>(node).filter(|p| p.field == FieldStyle::Search)?;
+        Some((*field, props))
+    }
+
+    /// A toolbar's first search field: the item's index, the field and the width the app gave it.
+    fn toolbar_search(&self, node: &Node) -> Option<(usize, NodeId, f32)> {
+        node.children.iter().enumerate().find_map(|(at, c)| {
+            let item = self.nodes.get(c).filter(|n| is_kind::<ToolbarItem>(n))?;
+            let (field, props) = self.search_field_in(item)?;
+            let width = match props.style.size.width {
+                Some(gpui::Length::Definite(gpui::DefiniteLength::Absolute(gpui::AbsoluteLength::Pixels(w)))) => {
+                    w.as_f32()
+                }
+                _ => SEARCH_MIN,
+            };
+            Some((at, field, width))
+        })
+    }
+
+    /// Whether a toolbar search field's libadwaita search bar shows: the toggle opened it, or
+    /// the field holds text or focus (Ctrl+F moves focus there), which keeps it open.
+    fn search_shown(&self, field: NodeId, window: &gpui::Window) -> bool {
+        let text = self.nodes.get(&field).and_then(props::<TextFieldProps>).is_some_and(|p| !p.text.is_empty());
+        let requested = self.backend.focus_requests.borrow().get(&self.window_id) == Some(&Some(field));
+        let focused = self.backend.form_drawn.borrow().get(&field).is_some_and(|d| d.focus.is_focused(window));
+        let mut bars = self.backend.search_bars.borrow_mut();
+        if text || requested || focused {
+            bars.insert(field);
+        }
+        bars.contains(&field)
+    }
+
+    /// Opens or closes a toolbar search field's search bar. Opening focuses the field; closing
+    /// clears it and gives up its focus, as `GtkSearchBar` leaves search mode.
+    fn search_mode(&self, field: NodeId) -> impl Fn(bool, &mut gpui::Window, &mut gpui::App) + 'static {
+        let backend = self.backend.clone();
+        let (wake, window_id) = (self.wake.clone(), self.window_id);
+        let emit = self.backend.state.borrow().events.emitter(field);
+        let text = self.nodes.get(&field).and_then(props::<TextFieldProps>).is_some_and(|p| !p.text.is_empty());
+        move |open, window, cx| {
+            if open {
+                backend.search_bars.borrow_mut().insert(field);
+                backend.focus_requests.borrow_mut().insert(window_id, Some(field));
+                backend.platform_focus.borrow_mut().push((window_id, Some(field)));
+            } else {
+                backend.search_bars.borrow_mut().remove(&field);
+                let mut requests = backend.focus_requests.borrow_mut();
+                if requests.get(&window_id) == Some(&Some(field)) {
+                    requests.remove(&window_id);
+                }
+                drop(requests);
+                let focused = backend.form_drawn.borrow().get(&field).is_some_and(|d| d.focus.is_focused(window));
+                if focused {
+                    window.blur(cx);
+                    backend.platform_focus.borrow_mut().push((window_id, None));
+                }
+                if text {
+                    emit.emit(TextChanged { text: SharedString::default() });
+                }
+            }
+            wake(cx);
+            window.refresh();
+        }
+    }
+
+    /// libadwaita's search button: a flat toggle in the header bar, checked while the search
+    /// bar shows.
+    fn search_toggle(&self, id: NodeId, field: NodeId, window: &mut gpui::Window) -> AnyElement {
+        let theme = self.theme();
+        let ink = self.ink_text();
+        let shown = self.search_shown(field, window);
+        // `%button_basic_flat`: 7% hovered, 16% pressed; checked `$selected_color` 10%, 13%
+        // hovered, 19% pressed.
+        let tint = |share: f32| nd_theme::color::with_alpha(ink, ink.a * share);
+        let (rest, hover, active) =
+            if shown { (tint(0.10), tint(0.13), tint(0.19)) } else { (gpui::transparent_black(), tint(0.07), tint(0.16)) };
+        let mode = self.search_mode(field);
+        div()
+            .id(ElementId::Integer(id.0))
+            .flex_none()
+            .size(theme.control.regular)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(theme.radius.md)
+            .bg(rest)
+            .hover(move |s| s.bg(hover))
+            .active(move |s| s.bg(active))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| mode(!shown, window, cx))
+            .child(glyph(Glyph::Search, px(16.), ink, px(1.75)))
+            .into_any_element()
+    }
+
+    /// libadwaita's search bar under the header that holds the toggle: the field centred in
+    /// a flat bar, as a toolbar view's top bar draws `GtkSearchBar` (6 px all round, no
+    /// shade). Esc leaves search mode. `None` while it is closed.
+    fn search_bar(&self, field: NodeId, window: &mut gpui::Window, cx: &mut gpui::App) -> Option<AnyElement> {
+        if !self.search_shown(field, window) {
+            self.backend.bounds.borrow_mut().remove(&field);
+            if let Some(node) = self.nodes.get(&field) {
+                self.forget_bounds(node);
+            }
+            return None;
+        }
+        let mode = self.search_mode(field);
+        Some(
+            div()
+                .w_full()
+                .flex_none()
+                .flex()
+                .justify_center()
+                .p(px(6.))
+                .on_key_down(move |e: &gpui::KeyDownEvent, window, cx| {
+                    if e.keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        mode(false, window, cx);
+                    }
+                })
+                .child(self.node(field, window, cx))
+                .into_any_element(),
+        )
     }
 
     /// How many of a toolbar's items sit over the sidebar: the sidebar toggle, the tracking
@@ -805,3 +994,19 @@ impl SplitHeaders {
 fn is_kind<W: 'static>(node: &Node) -> bool {
     matches!(node.kind, nd_ui::backend::NodeKind::Widget(w) if is::<W>(w))
 }
+
+/// What sits at the middle of a title row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Center {
+    /// The app's centred item (`centered_item`), at its own size.
+    Item,
+    /// libadwaita's title widget.
+    Title,
+    /// WinUI's title bar search box; `min` is the width the app gave the field.
+    Search { min: f32 },
+}
+
+/// The Gallery's `AutoSuggestBox` `MaxWidth` in the title bar.
+const SEARCH_MAX: f32 = 580.;
+/// A toolbar search field's least width when the app gave it none.
+const SEARCH_MIN: f32 = 200.;
