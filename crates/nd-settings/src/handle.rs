@@ -13,7 +13,7 @@ use toml::{Table, Value};
 use crate::edit::{FileState, edit_document, file_state, write_atomic};
 use crate::layers::{self, Context, LayerKind, LayerRef, LoadError, Loaded, Paths, candidate_files};
 use crate::schema::SettingsSchema;
-use crate::{Reload, Settings, nix};
+use crate::{Reload, Settings, fspec, nix};
 
 /// How to find and read one app's settings.
 #[derive(Clone, Debug)]
@@ -82,6 +82,11 @@ pub enum KeyState {
         option: String,
         file: Option<PathBuf>,
     },
+    /// Set by `fspec.toml`. `option` names the key in the app's fspec module call.
+    ManagedByFspec {
+        option: String,
+        file: Option<PathBuf>,
+    },
     /// A higher layer wins over anything an edit could write.
     Overridden {
         by: LayerRef,
@@ -129,6 +134,10 @@ pub enum WriteError {
     ManagedByNix {
         option: String,
     },
+    /// The key is set by `fspec.toml`; edit `option` in the fspec spec instead.
+    ManagedByFspec {
+        option: String,
+    },
     Overridden {
         by: LayerRef,
     },
@@ -142,6 +151,7 @@ impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ManagedByNix { option } => write!(f, "managed by Nix, change `{option}`"),
+            Self::ManagedByFspec { option } => write!(f, "managed by fspec, change `{option}`"),
             Self::Overridden { by } => write!(f, "overridden by {by}"),
             Self::UnknownKey(key) => write!(f, "no setting named `{key}`"),
             Self::Invalid(e) => write!(f, "{e}"),
@@ -254,6 +264,7 @@ impl<T: Settings> SettingsHandle<T> {
         let target_rank = if self.write_target().overlay { LayerKind::Local } else { LayerKind::User };
         match source.kind {
             LayerKind::Nix => KeyState::ManagedByNix { option: self.nix_option(key), file: source.origin },
+            LayerKind::Fspec => KeyState::ManagedByFspec { option: self.fspec_option(key), file: source.origin },
             kind if kind > target_rank => KeyState::Overridden { by: source },
             _ => KeyState::Editable,
         }
@@ -270,6 +281,20 @@ impl<T: Settings> SettingsHandle<T> {
         let combined = state.loaded.combined();
         let value = layers::get_path(&combined, key)?;
         Some(format!("{} = {};", self.nix_option(key), nix::literal(value)))
+    }
+
+    /// `<app>(settings = {...})["<key>"]...`, where `key` lives in the app's fspec module call.
+    pub fn fspec_option(&self, key: &str) -> String {
+        fspec::option_path(&self.inner.opts.app, key)
+    }
+
+    /// The `settings = {...}` argument of the app's fspec module that sets `key` to its current
+    /// value ("Copy as fspec").
+    pub fn copy_as_fspec(&self, key: &str) -> Option<String> {
+        let state = self.inner.state.read().expect("settings lock");
+        let combined = state.loaded.combined();
+        let value = layers::get_path(&combined, key)?;
+        Some(fspec::settings_literal(key, value))
     }
 
     /// Sets `key` to `value` in the write target, keeping comments and order.
@@ -291,6 +316,7 @@ impl<T: Settings> SettingsHandle<T> {
         }
         match self.key_state(key) {
             KeyState::ManagedByNix { option, .. } => return Err(WriteError::ManagedByNix { option }),
+            KeyState::ManagedByFspec { option, .. } => return Err(WriteError::ManagedByFspec { option }),
             KeyState::Overridden { by } => return Err(WriteError::Overridden { by }),
             KeyState::Editable => {}
         }
@@ -373,7 +399,9 @@ impl<T: Settings> SettingsHandle<T> {
     pub(crate) fn watch_dirs(&self) -> Vec<PathBuf> {
         let paths = &self.inner.opts.paths;
         let mut dirs = BTreeSet::new();
-        for file in [Some(&paths.user), Some(&paths.local), paths.managed.as_ref()].into_iter().flatten() {
+        for file in
+            [Some(&paths.user), Some(&paths.local), Some(&paths.fspec), paths.managed.as_ref()].into_iter().flatten()
+        {
             if let Some(dir) = file.parent() {
                 dirs.insert(dir.to_owned());
             }
@@ -389,6 +417,7 @@ impl<T: Settings> SettingsHandle<T> {
         let named = |p: &Path| p.file_name() == name;
         named(&paths.user)
             || named(&paths.local)
+            || named(&paths.fspec)
             || paths.managed.as_deref().is_some_and(named)
             || (path.extension().is_some_and(|e| e == "toml")
                 && path.parent().and_then(Path::file_name) == paths.drop_in_dir.file_name())

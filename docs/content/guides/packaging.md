@@ -155,5 +155,5 @@ new" view only one time. No example app draws that view yet.
 
 `nd::update::Unavailable` says why a process doesn't update: there's no `[updates]` table, the
 build set `ND_NO_UPDATES=1`, the binary runs from `/nix/store`, it's the web, or Velopack didn't
-install the binary (`cargo run`, tests). `mkApp` sets `ND_NO_UPDATES=1` for Nix builds, because
-Nix owns the files there. The web build compiles the updater out. See [web](web.md).
+install the binary (`cargo run`, tests). `mkApp` and the generated `fspec.star` set
+`ND_NO_UPDATES=1`, because Nix or fspec owns the files there. The web build compiles the updater out. See [web](web.md).

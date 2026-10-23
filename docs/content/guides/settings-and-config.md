@@ -1,6 +1,6 @@
 +++
 title = "Settings and config"
-description = "The app manifest, user settings as a TOML file with layers and Nix support, machine state, local sockets, and SQLite."
+description = "The app manifest, user settings as a TOML file with layers and Nix and fspec support, machine state, local sockets, and SQLite."
 +++
 
 An app has three kinds of configuration, each in its own place. Your choices as the developer
@@ -79,10 +79,11 @@ read-only. A key that a Nix-managed file sets is shown read-only, with its optio
 2. A Nix-managed file (any config file that resolves into `/nix/store`).
 3. The user's `config.toml`.
 4. Drop-ins in `config.d/*.toml`, in name order.
-5. `config.local.toml`, a writable overlay.
-6. Environment variables named `<APP>_KEY`, where `__` nests (`NOTES_EDITOR__FONT_SIZE` sets
+5. `fspec.toml`, which fspec writes from your spec (see [fspec](#fspec)).
+6. `config.local.toml`, a writable overlay.
+7. Environment variables named `<APP>_KEY`, where `__` nests (`NOTES_EDITOR__FONT_SIZE` sets
    `editor.font_size`).
-7. Command-line overrides.
+8. Command-line overrides.
 
 The directory is `~/Library/Application Support/<app>` on macOS, `$XDG_CONFIG_HOME/<app>` on
 Linux, and `%APPDATA%\<app>` on Windows. `ND_APP_CONFIG_DIR` overrides it when set. Every key
@@ -116,6 +117,44 @@ for `programs.<app>.settings`, and `--check` fails when the file is out of date.
 ([nix/hm-module.nix](../../../nix/hm-module.nix)): `settings` written to `config.toml`, `theme`
 tokens, `autostart`, and `environmentFile`. Its checks include clippy, nextest, the module eval,
 and a check that the settings schema is in sync. Updates are off for a binary under `/nix/store`.
+
+## fspec
+
+On a machine that [fspec](https://github.com/FormalStudio/FormalSpec) manages, the app installs
+and updates through fspec instead of Nix. Each app ships a generated `fspec.star` at its repo
+root, and a spec loads it straight from the app's repo:
+
+```python
+load("gh:FormalStudio/formalmusic@main//fspec.star", "formalmusic")
+
+hosts = [host("e1504g", platform = "x86_64-linux", system = tumbleweed(), modules = [
+    formalmusic(settings = {"playback": {"quality": "high"}}, autostart = True),
+])]
+```
+
+`@main` tracks the branch, so `fspec update` moves the lock to its newest commit. `@<commit>`
+pins it. The package builds the same commit its `fspec.star` came from: `fspec build` compiles it
+on Linux in a Tumbleweed container, with Zig for the terminal widget and `ND_NO_UPDATES=1`. `rev`
+builds another commit, and `source` takes any fspec source instead (macOS needs one, since there's
+no build recipe for it yet). The other arguments match the home-manager module: `settings` is
+written to `fspec.toml`, `theme` to `theme.json`, `autostart` adds a user service tied to the
+graphical session, and `environment_file` passes secrets to it. Removing the module removes the
+app, its files and its unit, and moves the config directory to fspec's trash.
+
+`settings` is checked when the spec is evaluated. An unknown key, a value of the wrong type, a
+choice that isn't listed, or a number out of `range` fails the plan with the key's path. fspec
+copies `fspec.toml` instead of linking it, so the layer sits above the user's files, and the spec
+wins. Its keys are read-only, with `WriteError::ManagedByFspec` and a "Copy as fspec" literal.
+Every other key stays editable in `config.toml`.
+
+<!-- docs:snippet crates/nd-settings/tests/schema_fspec.rs#fspec -->
+
+`fspec.star` is generated from the same schema as the Nix options, so the two can't drift.
+`nd_settings::fspec::star_module(&App::new(name, repo), &schema)` returns the file. An app checks
+it in the test that already checks `nix/settings-options.nix`. `nd-fspec-gen --schema
+settings.schema.json --name <app> --repo <url> --out fspec.star` writes it from a committed
+schema, and `--check` fails when the file is out of date. `App::build_deps` adds openSUSE packages
+that the app's own crates need on top of nd's.
 
 ## Machine state
 

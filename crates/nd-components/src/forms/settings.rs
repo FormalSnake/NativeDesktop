@@ -119,6 +119,7 @@ fn field_row<T: Settings>(field: &Field, values: &Value, handle: Option<&Setting
     };
     match &state {
         KeyState::ManagedByNix { option, .. } => note(format!("Set in your Nix configuration: {option}")),
+        KeyState::ManagedByFspec { option, .. } => note(format!("Set in your fspec spec: {option}")),
         KeyState::Overridden { by } => note(format!("Overridden by {}", by.label)),
         KeyState::Editable => {}
     }

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Layered TOML settings, live reload, comment-preserving writes, Nix-managed detection, Store<T>, home-manager module generator."
+description = "Layered TOML settings, live reload, comment-preserving writes, Nix-managed detection, Store<T>, home-manager and fspec module generators."
 
 [lib]
 name = "nd_settings"
@@ -13,6 +13,10 @@ name = "nd_settings"
 [[bin]]
 name = "nd-hm-gen"
 path = "src/bin/nd-hm-gen.rs"
+
+[[bin]]
+name = "nd-fspec-gen"
+path = "src/bin/nd-fspec-gen.rs"
 
 [dependencies]
 nd-settings-derive = { path = "../nd-settings-derive" }
