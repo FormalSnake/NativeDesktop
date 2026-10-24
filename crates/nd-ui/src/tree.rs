@@ -127,6 +127,13 @@ fn shown(
     (Rc::new(div), layout)
 }
 
+/// A div's props drawn fully transparent, its layout untouched.
+fn hidden(props: &Props) -> Props {
+    let mut div = props.downcast_ref::<DivProps>().expect("div").clone();
+    div.style.opacity = Some(0.);
+    Rc::new(div)
+}
+
 /// The values that put an element whose frame at rest is `home` (with `targets` there) onto
 /// `source`: its size when given in points, else a scale about its centre.
 fn pose_on(targets: &Values, source: Rect, home: Rect) -> Values {
@@ -218,7 +225,7 @@ pub(crate) struct Tree {
     /// put the ones going back on their source's frame.
     away_pending: Vec<NodeId>,
     hero_away: HashMap<NodeId, Values>,
-    /// Heroes that went back with reduce motion: they stay where they are, already landed.
+    /// Heroes that went back with reduce motion: hidden from the frame they go, already landed.
     away_done: HashSet<NodeId>,
     /// A hero's frame at rest, for going back from mid-flight.
     hero_home: HashMap<NodeId, Rect>,
@@ -482,6 +489,9 @@ impl Tree {
             && !self.away_pending.contains(&id)
         {
             self.away_pending.push(id);
+            if reduce {
+                self.away_done.insert(id);
+            }
         }
         let (shown_props, shown_layout) = shown(&self.lit, self.hero_away.get(&id), id, &el.props, &el.layout);
         let transform = shown_props.downcast_ref::<DivProps>().map_or_else(Transform::default, |d| d.transform);
@@ -506,10 +516,11 @@ impl Tree {
         }
         // A hero mounting shows nothing until its frame is known; then it starts on its source.
         if node.is_none() && hero.is_some_and(|h| !h.away) && !reduce {
-            let mut hidden = el.props.downcast_ref::<DivProps>().expect("div").clone();
-            hidden.style.opacity = Some(0.);
-            el.props = Rc::new(hidden);
+            el.props = hidden(&el.props);
             self.heroes_pending.push(id);
+        }
+        if self.away_done.contains(&id) {
+            el.props = hidden(&el.props);
         }
         self.pending_motion = Some(Animated { state, props: base.0, layout: base.1 });
         el
@@ -670,7 +681,10 @@ impl Tree {
             }
             let moving = anim.state.is_moving();
             let (shown_props, shown_layout) = shown(&self.lit, self.hero_away.get(&id), id, &anim.props, &anim.layout);
-            let (props, layout) = present_div(&shown_props, &shown_layout, &anim.state.sample(now));
+            let (mut props, layout) = present_div(&shown_props, &shown_layout, &anim.state.sample(now));
+            if self.away_done.contains(&id) {
+                props = hidden(&props);
+            }
             if !node.props.props_eq(&*props) {
                 let patch = PropsPatch { old: mem::replace(&mut node.props, props), new: node.props.clone() };
                 self.tx.push(Op::Update { node: id, patch });

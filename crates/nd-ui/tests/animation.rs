@@ -354,3 +354,22 @@ fn reduce_motion_lands_a_hero_going_back_at_once() {
     cx.run_until_idle();
     assert_eq!(*landed.borrow(), 1, "lands once, not on every render");
 }
+
+#[test]
+fn reduce_motion_hides_a_hero_going_back_in_the_frame_it_goes() {
+    let mut cx = TestApp::new();
+    cx.set_reduce_motion(true);
+    let handle =
+        cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: true, away: false, landed: Rc::default() }));
+    cx.run_until_idle();
+    let cover = node(&cx, "cover");
+    handle.root().update(&mut cx, |p, cx| {
+        p.away = true;
+        cx.notify();
+    });
+    cx.frame();
+    assert_eq!(props(&cx, cover).style.opacity, Some(0.), "not left at its expanded frame");
+    step(&mut cx, FRAME);
+    cx.run_until_idle();
+    assert_eq!(props(&cx, cover).style.opacity, Some(0.), "stays hidden");
+}
