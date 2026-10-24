@@ -78,9 +78,9 @@ light = "windows-light.png"
 dark = "windows-dark.png"
 
 [native-widget.macos]
-hash = "7586d6e61679bc44"
+hash = "d3571d614f1e3185"
 captured_on = "macOS 27.0"
-date = "2026-10-22"
+date = "2026-10-24"
 light = "macos-light.png"
 dark = "macos-dark.png"
 
