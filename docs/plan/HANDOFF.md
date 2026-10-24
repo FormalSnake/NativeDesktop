@@ -45,7 +45,9 @@ restarted from their worktrees the same evening.
   headers, Notes editor fills its column, native list selection on all three (test
   `selected_row_follows_the_platform`), Linux browser shot via headless Ozone, 2x Linux shots. Left:
   native-widget on macOS and Linux, the Linux browser shot, every Windows shot. Needs g815 online and the
-  macbook unlocked. Notes' AppKit audit fails on the sidebar badge contrast, also on main.
+  macbook unlocked.
+- notes-badge-contrast merged (`0ec51ead`): sidebar counts use the legible secondary token, legible
+  colours resolve under plain Aqua or Dark Aqua; Notes appearance audit passes on macOS, Linux and Windows unchecked.
 - Merged on nd main: fm-bar-narrow (`4d84f31a`), native-widget-map (`066c0265`: drawn OSM map on
   Linux and Windows, places Antwerpen, Arrecife, Las Palmas). FormalMusic `c1bc6a8` (narrow bar, fspec)
   installed via nix `aea3aca3` on both; relaunched on the macbook. g815 dropped off the network right
