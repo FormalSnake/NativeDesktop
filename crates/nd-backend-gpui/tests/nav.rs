@@ -212,6 +212,22 @@ mod gate_m6 {
         assert_eq!(by_test_id(&o.host, o.window, "toasts").name, "");
     }
 
+    /// WinUI's icon rail: a row with artwork keeps its cover there, as it does expanded.
+    pub fn gpui_rail_rows_keep_their_artwork() {
+        use gpui::AppContext as _;
+        if nd_gpui::gpui_platform::current_headless_renderer().ok().flatten().is_none() {
+            println!("skipped: GPUI has no headless renderer on this OS");
+            return;
+        }
+        let mut cx = headless();
+        let handle =
+            cx.open_window(gpui::size(gpui::px(48.), gpui::px(120.)), |_, cx| cx.new(|_| Rail)).expect("window");
+        cx.run_until_parked();
+        let shot = cx.capture_screenshot(handle.into()).expect("screenshot");
+        let cover = shot.pixels().filter(|p| p[0] > 200 && p[1] < 60 && p[2] > 200).count();
+        assert!(cover >= 200, "the rail draws the row's cover ({cover} cover pixels)");
+    }
+
     pub fn gpui_nav_goldens() {
         // GPUI renders headless only on macOS (Metal) and Linux (wgpu); Windows captures arrive
         // with the Fluent goldens (M3).
@@ -322,6 +338,50 @@ impl gpui::Render for Golden {
     }
 }
 
+/// A collapsed Fluent sidebar holding one playlist row with a magenta cover.
+struct Rail;
+
+impl gpui::Render for Rail {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        use gpui::{IntoElement, ParentElement, Styled};
+        use nd_theme::{Metrics, Palette, Preset, Theme};
+        let preset = Preset::Fluent;
+        let theme = Theme::derive(
+            preset,
+            Scheme::Light,
+            Palette::baked_for(preset, Scheme::Light),
+            Metrics::preset(preset),
+            1.,
+        );
+        let props = SourceTreeProps {
+            nodes: vec![
+                source_node("gym", "GYM")
+                    .icon(Icon::ListMusic)
+                    .artwork(ImageSource::Bytes { key: "gym".into(), bytes: Arc::from(&b""[..]) }),
+            ],
+            ..golden_tree()
+        };
+        let magenta = image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 255, 255]));
+        let art = std::collections::HashMap::from([(
+            gpui::SharedString::from("gym"),
+            Arc::new(gpui::RenderImage::new(vec![image::Frame::new(magenta)])),
+        )]);
+        gpui::div()
+            .size_full()
+            .bg(theme.surface.sidebar)
+            .child(source_tree_view(
+                NodeId(1),
+                &props,
+                None,
+                true,
+                None,
+                &art,
+                Paint { theme: &theme, marks: &Marks::default() },
+            ))
+            .into_any_element()
+    }
+}
+
 fn golden_path(view: GoldenView, scheme: Scheme) -> PathBuf {
     let view = match view {
         GoldenView::Sidebar => "sidebar",
@@ -385,6 +445,7 @@ fn main() {
     let tests: Vec<(&str, fn())> = vec![
         ("gate_m6::gpui_palette_types_completes_and_activates", gate_m6::gpui_palette_types_completes_and_activates),
         ("gate_m6::gpui_toasts_time_out_in_order", gate_m6::gpui_toasts_time_out_in_order),
+        ("gate_m6::gpui_rail_rows_keep_their_artwork", gate_m6::gpui_rail_rows_keep_their_artwork),
         ("gate_m6::gpui_nav_goldens", gate_m6::gpui_nav_goldens),
     ];
     let has = |flag: &str| args.iter().any(|a| a == flag);

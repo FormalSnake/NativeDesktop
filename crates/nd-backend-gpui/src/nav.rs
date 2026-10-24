@@ -575,14 +575,29 @@ pub fn source_tree_view(
             .rounded(theme.radius.md)
             .text_color(fg)
             .children(pill);
+        // A cover in the icon's place, at the sidebar's icon size with Music's corners.
+        let cover = art.get(&node.id).map(|image| {
+            let mut corners = div().rounded(px(4.));
+            let corners = corners.style().clone();
+            div().flex_none().size(px(nd_components::SOURCE_ART)).child(crate::media::image::picture(
+                image.clone(),
+                ImageFit::Cover,
+                &corners,
+            ))
+        });
         if compact {
-            row = row.justify_center().child(icon.unwrap_or_else(|| {
-                crate::fluent_icons::glyph(
-                    nd_components::Icon::FileText.segoe_fluent().unwrap_or_default(),
-                    px(16.),
-                    fg,
-                )
-            }));
+            row = row.justify_center().child(match cover {
+                Some(cover) => cover.into_any_element(),
+                None => icon
+                    .unwrap_or_else(|| {
+                        crate::fluent_icons::glyph(
+                            nd_components::Icon::FileText.segoe_fluent().unwrap_or_default(),
+                            px(16.),
+                            fg,
+                        )
+                    })
+                    .into_any_element(),
+            });
         } else {
             // WinUI: the icon 12 px in, the label 16 px past it, children indented to the label.
             // libadwaita: 8 px in from either edge.
@@ -601,20 +616,10 @@ pub fn source_tree_view(
                 .pl(lead + indent * depth as f32)
                 .pr(trail)
                 .children(leading)
-                .children(match (art.get(&node.id), icon) {
-                    // A cover in the icon's place, at the sidebar's icon size with Music's corners.
-                    (Some(image), _) => {
+                .children(match (cover, icon) {
+                    (Some(cover), _) => {
                         let gap = if fluent { icon_gap } else { theme.spacing.md };
-                        let mut corners = div().rounded(px(4.));
-                        let corners = corners.style().clone();
-                        Some(
-                            div()
-                                .flex_none()
-                                .size(px(nd_components::SOURCE_ART))
-                                .mr(gap)
-                                .child(crate::media::image::picture(image.clone(), ImageFit::Cover, &corners))
-                                .into_any_element(),
-                        )
+                        Some(cover.mr(gap).into_any_element())
                     }
                     (None, Some(icon)) => Some(icon.mr(icon_gap).into_any_element()),
                     // A symbolic icon in the text colour, 12 px before the title on libadwaita.
