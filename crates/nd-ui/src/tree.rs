@@ -218,6 +218,8 @@ pub(crate) struct Tree {
     /// put the ones going back on their source's frame.
     away_pending: Vec<NodeId>,
     hero_away: HashMap<NodeId, Values>,
+    /// Heroes that went back with reduce motion: they stay where they are, already landed.
+    away_done: HashSet<NodeId>,
     /// A hero's frame at rest, for going back from mid-flight.
     hero_home: HashMap<NodeId, Rect>,
     /// Nodes that report their size, laid out at a new one this frame.
@@ -375,6 +377,7 @@ impl Tree {
             hero_waits: HashMap::new(),
             away_pending: Vec::new(),
             hero_away: HashMap::new(),
+            away_done: HashSet::new(),
             hero_home: HashMap::new(),
             resized: Vec::new(),
         }
@@ -468,11 +471,16 @@ impl Tree {
         };
         spec.animation = tokens.resolve(spec.animation, reduce);
         let hero = div.hero.clone();
-        let away = hero.as_ref().is_some_and(|h| h.away) && !reduce;
+        let away = hero.as_ref().is_some_and(|h| h.away);
         if !away {
             self.hero_away.remove(&id);
+            self.away_done.remove(&id);
             self.away_pending.retain(|n| *n != id);
-        } else if node.is_some() && !self.hero_away.contains_key(&id) && !self.away_pending.contains(&id) {
+        } else if node.is_some()
+            && !self.hero_away.contains_key(&id)
+            && !self.away_done.contains(&id)
+            && !self.away_pending.contains(&id)
+        {
             self.away_pending.push(id);
         }
         let (shown_props, shown_layout) = shown(&self.lit, self.hero_away.get(&id), id, &el.props, &el.layout);
@@ -604,6 +612,12 @@ impl Tree {
         self.heroes_pending.append(&mut self.heroes_still_pending);
         for id in mem::take(&mut self.away_pending) {
             let Some(hero) = self.hero_of(id).filter(|h| h.away) else { continue };
+            // Reduce motion leaves out the travel, so the view around it waits on nothing.
+            if reduce {
+                self.away_done.insert(id);
+                stranded.push(id);
+                continue;
+            }
             let Some(source) = self.source_rect(backend, &hero) else {
                 stranded.push(id);
                 continue;
@@ -941,6 +955,7 @@ impl Tree {
                 self.lit.remove(&n);
                 self.hovered_groups.remove(&n);
                 self.hero_away.remove(&n);
+                self.away_done.remove(&n);
                 self.hero_home.remove(&n);
                 self.tx.push(Op::Release { node: n });
                 for s in node.slots {

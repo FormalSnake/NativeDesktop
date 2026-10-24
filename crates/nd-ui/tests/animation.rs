@@ -252,10 +252,12 @@ fn a_themed_animation_follows_the_apps_motion_tokens() {
 struct Presented {
     open: bool,
     away: bool,
+    landed: Rc<RefCell<u32>>,
 }
 
 impl Render for Presented {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let landed = self.landed.clone();
         div().size_full().child(div().id("thumb").absolute().left(px(10.)).top(px(250.)).size(px(40.))).when(
             self.open,
             |root| {
@@ -266,7 +268,8 @@ impl Render for Presented {
                             .absolute()
                             .size(px(200.))
                             .hero_from("thumb", self.away)
-                            .animate(Animation::linear(Duration::from_millis(200))),
+                            .animate(Animation::linear(Duration::from_millis(200)))
+                            .on_animation_end(move |_, _, _| *landed.borrow_mut() += 1),
                     ),
                 )
             },
@@ -277,7 +280,8 @@ impl Render for Presented {
 #[test]
 fn a_hero_comes_in_from_its_source_frame_and_goes_back_to_it() {
     let mut cx = TestApp::new();
-    let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false }));
+    let handle =
+        cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false, landed: Rc::default() }));
     handle.root().update(&mut cx, |p, cx| {
         p.open = true;
         cx.notify();
@@ -315,7 +319,8 @@ fn a_hero_comes_in_from_its_source_frame_and_goes_back_to_it() {
 fn reduce_motion_shows_a_hero_in_place() {
     let mut cx = TestApp::new();
     cx.set_reduce_motion(true);
-    let handle = cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false }));
+    let handle =
+        cx.open_window(WINDOW, |_, cx| cx.new(|_| Presented { open: false, away: false, landed: Rc::default() }));
     handle.root().update(&mut cx, |p, cx| {
         p.open = true;
         cx.notify();
@@ -324,4 +329,28 @@ fn reduce_motion_shows_a_hero_in_place() {
     let cover = node(&cx, "cover");
     assert_eq!(props(&cx, cover).style.opacity, None, "not held back");
     assert_eq!(props(&cx, cover).transform.offset, (0., 0.));
+}
+
+#[test]
+fn reduce_motion_lands_a_hero_going_back_at_once() {
+    let mut cx = TestApp::new();
+    cx.set_reduce_motion(true);
+    let landed = Rc::new(RefCell::new(0));
+    let handle = cx.open_window(WINDOW, {
+        let landed = landed.clone();
+        move |_, cx| cx.new(|_| Presented { open: true, away: false, landed })
+    });
+    cx.run_until_idle();
+    let cover = node(&cx, "cover");
+    *landed.borrow_mut() = 0;
+    handle.root().update(&mut cx, |p, cx| {
+        p.away = true;
+        cx.notify();
+    });
+    cx.run_until_idle();
+    assert_eq!(*landed.borrow(), 1, "a presentation waiting on it can close");
+    assert_eq!(props(&cx, cover).transform.offset, (0., 0.), "no travel");
+    handle.root().update(&mut cx, |_, cx| cx.notify());
+    cx.run_until_idle();
+    assert_eq!(*landed.borrow(), 1, "lands once, not on every render");
 }
