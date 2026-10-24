@@ -54,6 +54,12 @@ restarted from their worktrees the same evening.
   build stopped: Windows C: hit 0 bytes free (2.47 GB now, not ours). To finish: free ~10 GB, rerun
   `C:\nd\icon\build.ps1`, install via `Update.exe apply --package`, check with `C:\nd\icon\icon-check.ps1`,
   bump Messages' nd and merge to messages main.
+- FormalMusic Windows packaging held, same disk blocker. nd `win-files` (`1fa73150`, pushed, unmerged) adds
+  `[windows] files` copied beside the exe; nd-cli windows tests pass. FormalMusic `windows-package`
+  (`b98a8ca`) ships kopuzd.exe and the ico, spawns the sibling kopuzd before `PATH`, adds
+  `scripts/package-windows.ps1`. Unverified: build, package, install, boot. Resume after ~10 GB free with
+  `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc`, run the old install's `uninstall.ps1` first (its
+  `FormalMusic.lnk` clashes), and quit Kopuz 0.21.0 so the bundled kopuzd is used. Merge both once installed.
 - Merged on nd main: fm-bar-narrow (`4d84f31a`), native-widget-map (`066c0265`: drawn OSM map on
   Linux and Windows, places Antwerpen, Arrecife, Las Palmas). FormalMusic `c1bc6a8` (narrow bar, fspec)
   installed via nix `aea3aca3` on both; relaunched on the macbook. g815 dropped off the network right
