@@ -48,6 +48,12 @@ restarted from their worktrees the same evening.
   macbook unlocked.
 - notes-badge-contrast merged (`0ec51ead`): sidebar counts use the legible secondary token, legible
   colours resolve under plain Aqua or Dark Aqua; Notes appearance audit passes on macOS, Linux and Windows unchecked.
+- windows-app-icon merged (`1f19ebbc`): `nd::build::app()` embeds `[app] icon` as exe icon resource 1,
+  which GPUI's window class and the tray fallback load; installed Messages exes had none, so taskbar and
+  tray were blank. Not yet compiled on Windows. Messages 0.1.1 (branch `windows-icon-release` `1ae5e4f`)
+  build stopped: Windows C: hit 0 bytes free (2.47 GB now, not ours). To finish: free ~10 GB, rerun
+  `C:\nd\icon\build.ps1`, install via `Update.exe apply --package`, check with `C:\nd\icon\icon-check.ps1`,
+  bump Messages' nd and merge to messages main.
 - Merged on nd main: fm-bar-narrow (`4d84f31a`), native-widget-map (`066c0265`: drawn OSM map on
   Linux and Windows, places Antwerpen, Arrecife, Las Palmas). FormalMusic `c1bc6a8` (narrow bar, fspec)
   installed via nix `aea3aca3` on both; relaunched on the macbook. g815 dropped off the network right
