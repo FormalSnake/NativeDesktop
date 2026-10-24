@@ -1072,6 +1072,12 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
+        // A press on a drag area belongs to `DefWindowProc`: its move loop, Snap, and maximize
+        // on double click. Dispatched, the element that owns the area takes it (it starts its
+        // own move on other platforms), and the window never moves.
+        if wparam.0 as u32 == HTCAPTION {
+            return None;
+        }
         if let Some(mut func) = self.state.callbacks.input.take() {
             let scale_factor = self.state.scale_factor.get();
             let mut cursor_point = POINT {
