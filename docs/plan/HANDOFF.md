@@ -49,17 +49,14 @@ restarted from their worktrees the same evening.
 - notes-badge-contrast merged (`0ec51ead`): sidebar counts use the legible secondary token, legible
   colours resolve under plain Aqua or Dark Aqua; Notes appearance audit passes on macOS, Linux and Windows unchecked.
 - windows-app-icon merged (`1f19ebbc`): `nd::build::app()` embeds `[app] icon` as exe icon resource 1,
-  which GPUI's window class and the tray fallback load; installed Messages exes had none, so taskbar and
-  tray were blank. Not yet compiled on Windows. Messages 0.1.1 (branch `windows-icon-release` `1ae5e4f`)
-  build stopped: Windows C: hit 0 bytes free (2.47 GB now, not ours). To finish: free ~10 GB, rerun
-  `C:\nd\icon\build.ps1`, install via `Update.exe apply --package`, check with `C:\nd\icon\icon-check.ps1`,
-  bump Messages' nd and merge to messages main.
-- FormalMusic Windows packaging held, same disk blocker. nd `win-files` (`1fa73150`, pushed, unmerged) adds
-  `[windows] files` copied beside the exe; nd-cli windows tests pass. FormalMusic `windows-package`
-  (`b98a8ca`) ships kopuzd.exe and the ico, spawns the sibling kopuzd before `PATH`, adds
-  `scripts/package-windows.ps1`. Unverified: build, package, install, boot. Resume after ~10 GB free with
-  `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc`, run the old install's `uninstall.ps1` first (its
-  `FormalMusic.lnk` clashes), and quit Kopuz 0.21.0 so the bundled kopuzd is used. Merge both once installed.
+  which GPUI's window class and the tray fallback load. Messages 0.1.1 shipped (messages main `ac189c6`),
+  applied through `Update.exe`; `messages.exe` and the stub now carry resource 1 (16 and 32 px). Not yet
+  seen on screen. `C:\nd\icon\build.ps1` refuses to build while Fortnite runs, by design.
+- FormalMusic Windows packaging merged: nd `[windows] files` copied beside the exe, FormalMusic
+  `windows-package` (`c833412`) ships kopuzd.exe and spawns the sibling before `PATH`. 0.1.0 installed
+  via Velopack at `%LOCALAPPDATA%\dev.formalsnake.formalmusic`; bundled kopuzd 0.22.0 spawned and attached.
+  Builds need `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-msvc`; .NET 8 SDK lives in `%LOCALAPPDATA%\nd\dotnet`
+  for vpk. Log shows "crash helper unavailable" once at startup, not looked at.
 - Merged on nd main: fm-bar-narrow (`4d84f31a`), native-widget-map (`066c0265`: drawn OSM map on
   Linux and Windows, places Antwerpen, Arrecife, Las Palmas). FormalMusic `c1bc6a8` (narrow bar, fspec)
   installed via nix `aea3aca3` on both; relaunched on the macbook. g815 dropped off the network right
