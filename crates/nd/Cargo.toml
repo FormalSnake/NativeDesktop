@@ -15,7 +15,7 @@ default = ["runtime"]
 # (`nd-os-linux`, `nd-os-windows`, `nd-os-web` re-export it); on macOS only `gpui` brings it, so
 # AppKit apps never link `gpui_macos`. One dependency key cannot be optional per target.
 runtime = ["dep:nd-core", "dep:nd-ui", "dep:nd-virtual", "dep:nd-diag", "dep:nd-gpui", "dep:nd-macros", "dep:nd-backend-appkit", "dep:nd-automation", "dep:nd-theme", "dep:nd-components", "dep:nd-icons", "dep:nd-settings", "dep:nd-update", "dep:nd-system", "dep:futures-channel", "dep:nd-os-linux", "dep:nd-os-windows", "dep:nd-os-web", "dep:serde", "dep:serde_json"]
-build = ["dep:toml"]
+build = ["dep:toml", "dep:image", "dep:embed-resource"]
 # `settings_form::<T>()` over nd-settings' schema.
 settings-ui = ["runtime", "nd-components/settings"]
 test = ["runtime", "nd-ui/test-support", "dep:wasm-bindgen-test"]
@@ -49,6 +49,9 @@ nd-icons = { workspace = true, optional = true }
 nd-settings = { workspace = true, optional = true }
 nd-virtual = { workspace = true, optional = true }
 toml = { version = "0.9", optional = true }
+# `nd::build::app()` turns `[app] icon` into the Windows executable's icon resource.
+image = { version = "0.25", default-features = false, features = ["png", "ico"], optional = true }
+embed-resource = { version = "3.0", optional = true }
 nd-update = { workspace = true, optional = true, features = ["client"] }
 nd-terminal = { workspace = true, optional = true }
 nd-system = { workspace = true, optional = true }

@@ -6,7 +6,8 @@
 //! `OUT_DIR`, builds it into one static library and emits the link arguments for the app's
 //! binaries. Every package must export a library product named like its package. Packages that
 //! depend on the framework package take its path from the `ND_SWIFT_PATH` environment variable.
-//! On Windows it raises the main thread's stack to 8 MB. On Linux it gives the app's binaries an
+//! On Windows it raises the main thread's stack to 8 MB and embeds `[app] icon` as the executable's
+//! icon. On Linux it gives the app's binaries an
 //! `$ORIGIN` run path, so the Chromium runtime web views link (`libcef.so`) loads from beside the
 //! executable, where builds and packages put it. On the web it does nothing.
 
@@ -15,6 +16,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use image::ExtendedColorType;
+use image::codecs::ico::{IcoEncoder, IcoFrame};
 
 const PINNED: &str = include_str!("../swift-toolchain.toml");
 const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
@@ -26,7 +30,14 @@ pub fn app() {
     }
     match env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => {}
-        Ok("windows") => return windows_stack(),
+        Ok("windows") => {
+            windows_stack();
+            if let Err(message) = windows_icon() {
+                println!("cargo::error=nd::build::app: {message}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Ok("linux") => return println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN"),
         _ => return,
     }
@@ -46,6 +57,38 @@ fn windows_stack() {
         "-Wl,--stack,8388608"
     };
     println!("cargo::rustc-link-arg={flag}");
+}
+
+/// Embeds `[app] icon` as icon resource 1. GPUI's window class, the tray's fallback icon,
+/// Explorer and the taskbar all read that resource, so without it every one of them is blank.
+fn windows_icon() -> Result<(), String> {
+    let manifest_dir = PathBuf::from(var("CARGO_MANIFEST_DIR")?);
+    let config = manifest_dir.join("nativedesktop.toml");
+    let Ok(text) = fs::read_to_string(&config) else { return Ok(()) };
+    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", config.display()))?;
+    let Some(icon) = table.get("app").and_then(|a| a.get("icon")).and_then(|v| v.as_str()) else { return Ok(()) };
+    let source = manifest_dir.join(icon);
+    println!("cargo::rerun-if-changed={}", source.display());
+    if source.extension().is_some_and(|e| e == "icon") {
+        return Err(format!("{}: Icon Composer bundles cannot be embedded; point app.icon at a PNG", source.display()));
+    }
+    let image = image::open(&source).map_err(|e| format!("{}: {e}", source.display()))?.into_rgba8();
+    let frames = [16u32, 20, 24, 32, 40, 48, 64, 256]
+        .iter()
+        .map(|&size| {
+            let frame = image::imageops::resize(&image, size, size, image::imageops::FilterType::Lanczos3);
+            IcoFrame::as_png(frame.as_raw(), size, size, ExtendedColorType::Rgba8)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let out_dir = PathBuf::from(var("OUT_DIR")?);
+    let ico = out_dir.join("app.ico");
+    let file = fs::File::create(&ico).map_err(|e| format!("{}: {e}", ico.display()))?;
+    IcoEncoder::new(std::io::BufWriter::new(file)).encode_images(&frames).map_err(|e| e.to_string())?;
+    let rc = out_dir.join("app-icon.rc");
+    let path = ico.to_str().ok_or("non-UTF-8 OUT_DIR")?.replace('\\', "/");
+    write_if_changed(&rc, &format!("1 ICON \"{path}\"\n"))?;
+    embed_resource::compile(&rc, embed_resource::NONE).manifest_required().map_err(|e| e.to_string())
 }
 
 fn build() -> Result<(), String> {

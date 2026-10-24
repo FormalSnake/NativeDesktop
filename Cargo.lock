@@ -4614,7 +4614,9 @@ dependencies = [
 name = "nd"
 version = "0.6.1"
 dependencies = [
+ "embed-resource",
  "futures-channel",
+ "image",
  "nd",
  "nd-automation",
  "nd-backend-appkit",
