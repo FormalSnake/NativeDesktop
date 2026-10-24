@@ -368,6 +368,18 @@ define_class!(
             self.addTrackingArea(&area);
         }
 
+        // An unemphasized selection leaves the cells' background style at Normal, so they hear
+        // about it here.
+        #[unsafe(method(setSelected:))]
+        fn set_selected(&self, selected: bool) {
+            let _: () = unsafe { msg_send![super(self), setSelected: selected] };
+            for sub in self.subviews().iter() {
+                if let Some(cell) = sub.downcast_ref::<NdSourceCell>() {
+                    cell.recolour(cell.backgroundStyle());
+                }
+            }
+        }
+
         #[unsafe(method(mouseEntered:))]
         fn mouse_entered(&self, _event: &NSEvent) {
             self.show_actions(true);
@@ -597,8 +609,16 @@ impl NdSourceCell {
             NSColor::secondaryLabelColor()
         };
         iv.caption.setTextColor(Some(&secondary));
-        // Counts recede behind the title, as in Notes' and Mail's sidebars.
-        let badge = if style == NSBackgroundStyle::Emphasized { secondary } else { NSColor::tertiaryLabelColor() };
+        // Counts recede behind the title, as in Notes' and Mail's sidebars, at the secondary text
+        // token. On the unemphasized selection grey that token is under 4.5:1, so a selected
+        // row's count takes the title's colour.
+        let selected =
+            unsafe { self.superview() }.and_then(|v| v.downcast::<NSTableRowView>().ok()).is_some_and(|r| r.isSelected());
+        let badge = match style {
+            NSBackgroundStyle::Emphasized => secondary,
+            _ if selected => NSColor::labelColor(),
+            _ => crate::look::Color::Legible(crate::look::SystemText::Secondary).ns_color(),
+        };
         iv.badge.setTextColor(Some(&badge));
     }
 

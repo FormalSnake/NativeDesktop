@@ -59,8 +59,13 @@ impl Color {
 /// control backgrounds: `secondaryLabelColor` and `systemRed` alone fall short on white (3.95:1,
 /// 3.57:1), and the theme holds its text tokens to that ratio. A dynamic colour, resolved under
 /// whatever appearance draws it, so a label made before its window keeps the window's scheme.
+/// It resolves under that appearance's plain Aqua or Dark Aqua, as the theme's tokens do: under
+/// a sidebar's vibrant appearance the system label colours turn opaque greys.
 fn legible(text: SystemText) -> Retained<NSColor> {
     let provider = block2::RcBlock::new(move |appearance: std::ptr::NonNull<objc2_app_kit::NSAppearance>| {
+        // SAFETY: AppKit hands the provider a live appearance for the duration of the call.
+        let drawing = unsafe { appearance.as_ref() };
+        let base = crate::system_colors::appearance_for(crate::system_colors::scheme_of(drawing));
         let resolved = std::cell::Cell::new(None);
         let block = block2::RcBlock::new(|| {
             let under = [NSColor::windowBackgroundColor(), NSColor::controlBackgroundColor()];
@@ -68,8 +73,7 @@ fn legible(text: SystemText) -> Retained<NSColor> {
             let color = crate::system_colors::hsla(text.ns_color());
             resolved.set(color.map(|c| nd_theme::color::legible(c, &under, 4.5)));
         });
-        // SAFETY: AppKit hands the provider a live appearance for the duration of the call.
-        unsafe { appearance.as_ref() }.performAsCurrentDrawingAppearance(&block);
+        base.as_deref().unwrap_or(drawing).performAsCurrentDrawingAppearance(&block);
         let color = resolved.take().map_or_else(NSColor::labelColor, |c| Color::from(c).ns_color());
         std::ptr::NonNull::new(Retained::autorelease_ptr(color)).expect("a colour")
     });
