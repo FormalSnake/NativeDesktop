@@ -1,5 +1,6 @@
 //! Windows: a branded Velopack `Setup.exe` (name, icon, splash, publisher, accent and shortcuts
-//! from `[windows]`), an MSI on request, Azure Artifact Signing when configured.
+//! from `[windows]`), an MSI on request, Azure Artifact Signing when configured. `files` are
+//! copied beside the executable.
 //!
 //! Signing with Azure runs only on a Windows host (`vpk` signs through signtool there); a cross
 //! pack from macOS or Linux signs only through `ND_WINDOWS_SIGN_TEMPLATE`, a command with
@@ -30,6 +31,7 @@ pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
     std::fs::create_dir_all(&dir)?;
     std::fs::copy(&exe, dir.join(format!("{}.exe", project.bin)))
         .with_context(|| format!("copying {}", exe.display()))?;
+    copy_files(project, &dir)?;
     let ico = match &project.config.app.icon {
         Some(source) => {
             let path = work.join("app.ico");
@@ -44,6 +46,16 @@ pub fn package(project: &Project, opts: &Options) -> Result<Packed> {
     vpk::run(&vpk, &pack_args(project, opts, &dir, ico.as_deref(), &signing, cfg!(windows)))?;
     let setup = opts.releases.join(format!("{}-{}-Setup.exe", project.id(), opts.channel));
     Ok(Packed { app: dir, installer: setup.exists().then_some(setup), releases: opts.releases.clone() })
+}
+
+fn copy_files(project: &Project, dir: &Path) -> Result<()> {
+    for file in &project.config.windows.files {
+        let source = project.resolve(file);
+        let name = source.file_name().with_context(|| format!("windows.files: `{file}` names no file"))?;
+        std::fs::copy(&source, dir.join(name))
+            .with_context(|| format!("windows.files: copying {}", source.display()))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +194,20 @@ signing = "azure"
         assert!(native.starts_with("pack "));
         assert!(native.contains("--msi --instLocation PerUser"));
         assert!(native.contains("--azureTrustedSignFile m.json"));
+    }
+
+    #[test]
+    fn files_land_beside_the_executable() {
+        let p = project("[app]\nid = \"a.b\"\n[windows]\nfiles = [\"bin/helper.exe\"]\n");
+        std::fs::create_dir_all(p.root.join("bin")).unwrap();
+        std::fs::write(p.root.join("bin/helper.exe"), b"helper").unwrap();
+        let dir = p.root.join("app");
+        std::fs::create_dir_all(&dir).unwrap();
+        copy_files(&p, &dir).unwrap();
+        assert_eq!(std::fs::read(dir.join("helper.exe")).unwrap(), b"helper");
+
+        let missing = project("[app]\nid = \"a.b\"\n[windows]\nfiles = [\"gone.exe\"]\n");
+        assert!(copy_files(&missing, &missing.root).unwrap_err().to_string().contains("gone.exe"));
     }
 
     #[test]

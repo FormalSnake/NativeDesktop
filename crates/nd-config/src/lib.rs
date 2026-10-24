@@ -216,6 +216,9 @@ pub struct Windows {
     #[schemars(regex(pattern = r"^#[0-9A-Fa-f]{6}$"))]
     pub accent: Option<String>,
     pub signing: Option<WindowsSigning>,
+    /// Files copied beside the executable, relative to this file, for example a helper `.exe`
+    /// the app starts.
+    pub files: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
