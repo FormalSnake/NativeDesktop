@@ -16,14 +16,14 @@ use windows::Media::{
 };
 use windows::Storage::Streams::RandomAccessStreamReference;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::WinRT::{ISystemMediaTransportControlsInterop, RO_INIT_SINGLETHREADED, RoInitialize};
 use windows::Win32::UI::Shell::{
-    ILCreateFromPathW, ILFree, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFY_ICON_MESSAGE,
-    NOTIFYICONDATAW, OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OAIF_REGISTER_EXT, OPENASINFO, SHARD_PATHW, SHAddToRecentDocs,
-    SHOpenFolderAndSelectItems, SHOpenWithDialog, SetCurrentProcessExplicitAppUserModelID, Shell_NotifyIconW,
-    ShellExecuteW,
+    GetCurrentProcessExplicitAppUserModelID, ILCreateFromPathW, ILFree, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD,
+    NIM_DELETE, NIM_MODIFY, NOTIFY_ICON_MESSAGE, NOTIFYICONDATAW, OAIF_ALLOW_REGISTRATION, OAIF_EXEC,
+    OAIF_REGISTER_EXT, OPENASINFO, SHARD_PATHW, SHAddToRecentDocs, SHOpenFolderAndSelectItems, SHOpenWithDialog,
+    SetCurrentProcessExplicitAppUserModelID, Shell_NotifyIconW, ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -51,12 +51,18 @@ pub struct WindowsBackend {
 
 impl WindowsBackend {
     pub fn new(app: &AppIdentity) -> Self {
-        // Toasts and the media flyout name the app through the Start menu shortcut carrying this id.
-        // SAFETY: a valid string for the duration of the call.
-        unsafe {
-            let _ = SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(app.id.as_str()));
+        // Toasts, the media flyout and taskbar grouping match the process to its shortcut by
+        // AUMID. An installed app already has Velopack's (`velopack.<id>`, the one its shortcuts
+        // carry) from `nd_update::startup`, so only an uninstalled run sets the app id.
+        let mut app = app.clone();
+        match current_aumid() {
+            Some(aumid) => app.id = aumid,
+            // SAFETY: a valid string for the duration of the call.
+            None => unsafe {
+                let _ = SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(app.id.as_str()));
+            },
         }
-        Self { app: app.clone(), clipboard: ClipboardWorker::new(), events: OnceLock::new(), shell: OnceLock::new() }
+        Self { app, clipboard: ClipboardWorker::new(), events: OnceLock::new(), shell: OnceLock::new() }
     }
 
     fn emitter(&self) -> Emitter {
@@ -75,6 +81,17 @@ impl WindowsBackend {
 
 fn wide(s: &str) -> HSTRING {
     HSTRING::from(s)
+}
+
+/// The process's explicit AUMID, if something already set one.
+fn current_aumid() -> Option<String> {
+    // SAFETY: the returned string is the caller's to free with `CoTaskMemFree`.
+    unsafe {
+        let id = GetCurrentProcessExplicitAppUserModelID().ok()?;
+        let aumid = id.to_string().ok();
+        CoTaskMemFree(Some(id.0.cast()));
+        aumid.filter(|s| !s.is_empty())
+    }
 }
 
 impl Backend for WindowsBackend {
