@@ -81,7 +81,8 @@ beside its executable; see [webview](webview.md#linux) for the system libraries 
 which runs only on a Windows host. A cross pack from macOS or Linux signs with
 `ND_WINDOWS_SIGN_TEMPLATE`, a command that contains `{{file}}`. Without it, the pack fails
 instead of shipping unsigned by accident. `Setup.exe` doesn't register file associations or URL
-schemes yet.
+schemes yet. `files` lists paths, relative to `nativedesktop.toml`, that are copied beside the
+executable, such as a helper `.exe` the app starts.
 
 ## Releases and updates
 
