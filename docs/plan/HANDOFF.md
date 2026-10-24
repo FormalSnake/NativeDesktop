@@ -70,7 +70,7 @@ Lanes in flight, each in its own worktree with work saved there:
 Needs Kyan: delete the old Pages project `nativedesktop` (domain already moved), a Kopuz release
 with #807 so the flake can move past v0.22.0.
 
-Needs g815 (offline since about 03:15, Linux, LAN and its Windows side; likely powered off):
+Needs g815 (offline overnight; on 2026-10-24 Kyan is gaming on its Windows side all day, so no ssh, builds or VM until he frees it; nd app updates on Windows are his):
 1. Relaunch FormalMusic `c1bc6a8` on g815 (`uwsm app`, SIGTERM the old pid first).
 2. Windows checks: toolbar-search (`C:\nd\search` still in the guest), the fm-hero fix.
 3. docs-captures-2 `1d6003ce`: native-widget on Linux, the Linux browser shot, every Windows shot.
