@@ -41,7 +41,7 @@ restarted from their worktrees the same evening.
 - now-playing merged in nd (`0a05d464`); FormalMusic release `5506019` (now-playing, lyrics) installed via nix
   `604282ab` on g815 and the macbook and relaunched on both. On g815 `nixos-rebuild switch` crashed twice
   (SIGSEGV in nix auto-GC); the built closure was activated by hand, worth a look.
-- docs-captures-2 `1d6003ce` (pushed, held): Linux window controls follow button-layout in the split
+- docs-captures-2 `4e80bd39` (pushed, held, macOS 13/13 fresh): Linux window controls follow button-layout in the split
   headers, Notes editor fills its column, native list selection on all three (test
   `selected_row_follows_the_platform`), Linux browser shot via headless Ozone, 2x Linux shots. Left:
   native-widget on macOS and Linux, the Linux browser shot, every Windows shot. Needs g815 online and the
@@ -73,7 +73,7 @@ with #807 so the flake can move past v0.22.0.
 Needs g815 (offline overnight; on 2026-10-24 Kyan is gaming on its Windows side all day, so no ssh, builds or VM until he frees it; nd app updates on Windows are his):
 1. Relaunch FormalMusic `c1bc6a8` on g815 (`uwsm app`, SIGTERM the old pid first).
 2. Windows checks: toolbar-search (`C:\nd\search` still in the guest), the fm-hero fix.
-3. docs-captures-2 `1d6003ce`: native-widget on Linux, the Linux browser shot, every Windows shot.
+3. docs-captures-2 `4e80bd39`: native-widget on Linux, the Linux browser shot, every Windows shot.
    Its macOS shots need the macbook unlocked (it was locked at 07:19).
 4. Build FormalMusic mold `2e808a8` in the Linux dev shell, then fast-forward main to it.
 5. build-speed numbers: sccache through `scripts/linux-gate`, `scripts/budget/headless.sh`, per-test times.
